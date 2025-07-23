@@ -1,0 +1,63 @@
+name: 🐛 Bug Report
+description: Report a bug or issue
+title: "[BUG] "
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
+        - platform
+        - data-warehousing
+        - ml-genai
+        - data-engineering
+        - launch-accelerator
+        - data-science
+    validations:
+      required: true
+
+  - type: input
+    id: project
+    attributes:
+      label: Project Name
+      placeholder: e.g., customer-churn-prediction
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What's the bug?
+      placeholder: Describe what happened vs what you expected
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to reproduce?
+      placeholder: |
+        1. Step one...
+        2. Step two...
+        3. See error...
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: |
+        - Cloud
+        - Databricks Runtime:
+        - Python Version:
+        - Other details:
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues first
+          required: true
+        - label: No sensitive information included
+          required: true

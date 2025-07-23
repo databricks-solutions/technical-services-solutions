@@ -7,11 +7,11 @@ This repository contains a comprehensive collection of code examples, demos, and
 The repository is organized into the following categories:
 
 - **Platform/**
-- **Datawarehousing/**
+- **Data Warehousing/**
 - **ML & GenAI/**
 - **Data Engineering/**
 - **Launch Accelerator/**
-- **Datascience/**
+- **Data Science/**
 
 Each project within these categories should follow a consistent naming convention and include its own README with specific installation and usage instructions.
 

@@ -6,12 +6,14 @@ This repository contains a comprehensive collection of code examples, demos, and
 
 The repository is organized into the following categories:
 
-- **Platform/**
-- **Data Warehousing/**
-- **ML & GenAI/**
-- **Data Engineering/**
-- **Launch Accelerator/**
-- **Data Science/**
+Here are the folders in markdown format:
+
+- [**Platform**](platform)
+- [**Data Warehousing**](data-warehousing)
+- [**ML & GenAI**](ml-genai)
+- [**Data Engineering**](data-engineering)
+- [**Launch Accelerator**](launch-accelerator)
+- [**Data Science**](data-science)
 
 Each project within these categories should follow a consistent naming convention and include its own README with specific installation and usage instructions.
 

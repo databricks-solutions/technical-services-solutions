@@ -6,7 +6,7 @@ This repository contains a comprehensive collection of code examples, demos, and
 
 The repository is organized into the following categories:
 
-Here are the folders in markdown format:
+Here is the repo structure:
 
 - [**Platform**](platform)
 - [**Data Warehousing**](data-warehousing)

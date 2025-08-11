@@ -41,10 +41,6 @@ New projects should be created inside the appropriate category directory and mus
 **Databricks support doesn't cover this content.** For questions or bugs:
 
 1. **Issues**: Open a GitHub issue for technical problems or feature requests
-2. **Regional SME Support**: For additional assistance, reach out to your Regional Subject Matter Expert:
-   - **AMER**
-   - **APJ**
-   - **EMEA**
 
 The team will provide help on a best-effort basis.
 

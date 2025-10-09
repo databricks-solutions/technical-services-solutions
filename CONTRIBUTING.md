@@ -1,204 +1,127 @@
-# Contributing to Technical Services Solutions
+# Repository Structure and Guidelines Proposal
 
-This guide outlines the requirements and processes for contributing code examples, demos, and scripts.
+## Description
+This PR establishes the foundational structure, documentation, and contribution guidelines for the Technical Services Solutions repository. This client-facing repository will serve as a centralized hub for code examples, demos, and scripts that accelerate client implementations across Databricks solutions.
 
-## Contribution Requirements
+## Category
+- [x] core-platform
+- [x] data-engineering
+- [x] data-governance
+- [x] data-warehousing  
+- [x] genai-ml
+- [x] launch-accelerator
+- [x] workspace-setup
 
-All contributions are expected to follow these mandatory guidelines:
+## Type of Change
+- [x] New project
+- [ ] Bug fix
+- [ ] Enhancement
+- [x] Documentation
 
-### Security and Compliance Standards
+## Project Details
+**Project Name:** Repository Foundation and Guidelines
+**Purpose:** Establish consistent structure, security guidelines, and contribution processes for client-facing solutions
+**Technologies Used:** Markdown, GitHub Templates, Documentation Standards
 
-**CRITICAL REQUIREMENTS - NO EXCEPTIONS:**
-
-- ✅ **No non-public information** - This repo must not contain any customer data, PII, or proprietary information
-- ✅ **No credentials** - No access tokens, PATs, passwords, or any authentication credentials
-- ✅ **Synthetic data only** - Use only data generated with Faker, dbldatagen tool, or LLAMA-4 (following fine-tuning terms)
-- ✅ **Proper licensing** - All 3rd party code/assets must be acknowledged with appropriate license (Apache, BSD, MIT, or DB license)
-- ✅ **Peer review mandatory** - All content must be reviewed by at least one team member and/or relevant SME
-
-### Repository Structure
-
-Your contribution must be placed in the appropriate category:
-
-```
-Technical-Services-Solutions/
-├── Platform/
-├── Datawarehousing/
-├── ML & GenAI/
-├── Data Engineering/
-├── Launch Accelerator/
-└── Datascience/
-```
-
-### Project Standards
-
-**Naming Convention:**
-- Use consistent, descriptive project names
-- Follow kebab-case format (e.g., `customer-churn-prediction`)
-- Names should clearly indicate the project's purpose
-
-**Required Files:**
-- **README.md** - Following the repository template
-- **.gitignore** - To prevent unnecessary files from being committed
-- **requirements.txt** or equivalent dependency file
-
-## Contribution Process
-
-### 1. Create a New Project
-
-All new projects must be submitted via **Pull Request** with:
-
-**PR Description Must Include:**
-- Project purpose and functionality
-- Target category (Platform, Data Engineering, etc.)
-- Technologies and dependencies used
-- Expected audience/use case
-- Confirm project is functional on databricks
-
-### 2. Project Structure Template
-
-Each project should follow a similar structure to ensure consistency and ease of navigation. While not mandatory to be identical, these guidelines help maintain organization across all projects:
+## Repository Structure
+This PR introduces a standardized six-category structure:
 
 ```
-your-project-name/
-├── README.md
-├── .gitignore
-├── requirements.txt
-├── src/
-│   └── [your code files]
-├── notebooks/
-│   └── [databricks notebooks]
-├── data/
-│   └── [synthetic sample data only]
-└── docs/
-    └── [additional documentation]
+technical-services-solutions/
+├── platform/                 # Core platform configurations and utilities
+├── data-warehousing/         # Data warehousing patterns and solutions
+├── ml-genai/                # Machine learning and generative AI implementations
+├── data-engineering/        # ETL/ELT pipelines and data processing workflows
+├── launch-accelerator/      # Quick-start templates and accelerators
+└── data-science/           # Analytics and data science notebooks
 ```
 
-### 3. README Template
+## Key Features
 
-Your project README must follow this template:
+### 📋 Documentation Framework
+- **README.md**: Comprehensive repository overview with structure, installation guidance, and support channels
+- **CONTRIBUTING.md**: Detailed contribution guidelines with security requirements and project standards
+- Clear Regional SME support structure (AMER, APJ, EMEA)
 
-```markdown
-# REPO NAME
+### 🔒 Security & Compliance Standards
+- No customer data, PII, or proprietary information
+- No credentials, tokens, or passwords
+- Synthetic data only (Faker, dbldatagen, LLAMA-4)
+- Mandatory third-party license acknowledgment
+- Peer review and SME validation requirements
 
-Fill here a description at a functional level - what is this content doing
+### 📝 GitHub Templates
+- **Issue Templates**: Bug reports, feature requests, and questions with category-specific fields
+- **Pull Request Template**: Streamlined submission process with security checklists
+- **Template Configuration**: Links to Regional SME support and Databricks resources
 
-## Video Overview
+### 🏗️ Project Standards
+- Consistent naming conventions (lowercase with hyphens)
+- Standardized project structure recommendations
+- Mandatory README requirements for each project
+- Category-specific adaptations for different solution types
 
-Include a GIF overview of what your project does. Use a service like Quicktime, Zoom or Loom to create the video, then convert to a GIF.
+## Testing
+- [x] Code runs without errors
+- [x] Documentation is complete
+- [x] Used only synthetic data
 
-## Installation
+## Security Compliance ✅
+- [x] No customer data, PII, or proprietary information
+- [x] No credentials or access tokens
+- [x] Only synthetic data used
+- [x] Third-party licenses acknowledged
+- [x] .gitignore configured properly
 
-Include details on how to use and install this content. 
+## Files
+**New Files Added:**
+- [x] README.md - Repository overview and structure
+- [x] CONTRIBUTING.md - Contribution guidelines and security requirements
+- [x] .gitignore - Comprehensive ignore patterns
+- [x] .github/ISSUE_TEMPLATE/bug_report.yml
+- [x] .github/ISSUE_TEMPLATE/feature_request.yml
+- [x] .github/ISSUE_TEMPLATE/question.yml
+- [x] .github/ISSUE_TEMPLATE/config.yml
+- [x] .github/pull_request_template.md
 
-## License
+## Impact & Benefits
 
-&copy; 2025 Databricks, Inc. All rights reserved.
-The source in this notebook is provided subject to the Databricks License [https://databricks.com/db-license-source].
-All included or referenced third party libraries are subject to the licenses set forth below.
+### For Contributors
+- Clear guidelines for creating high-quality, client-ready solutions
+- Streamlined submission process with automated templates
+- Consistent project structure across all categories
+- Security compliance built into the workflow
 
-| library                                | description             | license    | source                                              |
-|----------------------------------------|-------------------------|------------|-----------------------------------------------------|
-```
+### For Clients
+- Easy navigation with logical category organization
+- Consistent documentation and installation instructions
+- Quality assurance through mandatory peer review
+- Reliable support channels through Regional SMEs
 
-### 4. Code Review Process
+### For Repository Owners
+- Automated quality control through templates
+- Clear compliance monitoring framework
+- Scalable structure for future growth
+- Reduced maintenance overhead with standardized processes
 
-**Review Requirements:**
-- **Technical Review** - At least one code reviewer must approve
-- **SME Review** - Subject Matter Expert review for domain-specific content
+## Review
+- [x] Ready for technical review
+- [x] SME review needed
 
-**Review Criteria:**
-- Code quality and documentation
-- Adherence to security guidelines
-- Proper error handling
-- Performance considerations
-- Reusability and maintainability
+**Requested Reviewers:**
+- Repository owners for overall structure approval
+- Regional SMEs for support process validation
+- Security team for compliance framework review
 
-## Git Best Practices
+## Next Steps
+After approval, this foundation will enable:
+1. Creation of initial project templates for each category
+2. Onboarding of the first client-facing solutions
+3. Implementation of automated compliance checks
+4. Regional SME training on support processes
 
-### Branching Strategy
-- Create feature branches from `main`
-- Use descriptive branch names: `feature/category/project-name`
-- Example: `feature/data-engineering/real-time-streaming-pipeline`
+---
 
-### Commit Messages
-- Use clear, descriptive commit messages
-- Start with action verb (Add, Update, Fix, Remove)
-- Example: "Add customer segmentation ML pipeline for retail use case"
+**By submitting this PR, I confirm I have followed the CONTRIBUTING.md guidelines and security requirements.**
 
-### .gitignore Requirements
-Ensure your `.gitignore` includes:
-
-```
-# Databricks
-.databricks/
-*.dbc
-
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-env/
-pip-log.txt
-pip-delete-this-directory.txt
-.tox
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.log
-.git
-.mypy_cache
-.pytest_cache
-.hypothesis
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# Credentials (NEVER COMMIT)
-*.key
-*.pem
-*.p12
-*.pfx
-*config.json
-*credentials*
-*.env
-
-# OS
-.DS_Store
-Thumbs.db
-```
-
-## Repository Maintenance
-
-### Annual Reviews
-- Project owners conduct annual reviews
-- Outdated projects should be updated or archived
-
-### Issue Management
-- **Technical Issues**: Use GitHub Issues
-- **Regional Support**: Contact your Regional SME (AMER, APJ, EMEA)
-- **Security Violations**: Immediate escalation to repository owners
-
-## Getting Started
-
-1. **Clone** the repository
-2. **Create** a feature branch from main
-3. **Develop** your solution following guidelines
-4. **Test** thoroughly with synthetic data
-5. **Document** using the README template
-6. **Submit** a Pull Request with detailed description
-7. **Collaborate** with reviewers for approval
-
-## Questions?
-
-For contribution questions or guidance:
-- Open a GitHub Discussion
-- Contact repository owners
-- Reach out to your Regional SME
-
-**Remember**: This is a client-facing repository. All contributions should be well-documented to facilitate users' use.
+This PR establishes the foundation for a world-class client-facing repository that balances ease of use with enterprise security standards.

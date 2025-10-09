@@ -4,12 +4,13 @@
 Brief description of what this PR does and why.
 
 ## Category
-- [ ] platform
-- [ ] data-warehousing  
-- [ ] ml-genai
+- [ ] core-platform
 - [ ] data-engineering
+- [ ] data-governance
+- [ ] data-warehousing  
+- [ ] genai-ml
 - [ ] launch-accelerator
-- [ ] data-science
+- [ ] workspace-setup
 
 ## Type of Change
 - [ ] New project

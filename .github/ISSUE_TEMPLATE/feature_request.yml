@@ -9,12 +9,12 @@ body:
       label: Category
       options:
         - core-platform
+        - data-engineering
+        - data-governance
         - data-warehousing
         - genai-ml
-        - data-engineering
         - launch-accelerator
-        - data-governance
-        - cross-category
+        - workspace-setup
     validations:
       required: true
 

@@ -8,12 +8,12 @@ body:
     attributes:
       label: Category
       options:
-        - platform
+        - core-platform
         - data-warehousing
-        - ml-genai
+        - genai-ml
         - data-engineering
         - launch-accelerator
-        - data-science
+        - data-governance
     validations:
       required: true
 

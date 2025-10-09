@@ -8,12 +8,12 @@ The repository is organized into the following categories:
 
 Here is the repo structure:
 
-- [**Platform**](platform)
+- [**Platform**](core-platform)
 - [**Data Warehousing**](data-warehousing)
-- [**ML & GenAI**](ml-genai)
+- [**ML & GenAI**](genai-ml)
 - [**Data Engineering**](data-engineering)
 - [**Launch Accelerator**](launch-accelerator)
-- [**Data Science**](data-science)
+- [**Data Science**](data-governance)
 
 Each project within these categories should follow a consistent naming convention and include its own README with specific installation and usage instructions.
 

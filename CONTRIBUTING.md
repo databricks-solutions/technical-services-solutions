@@ -28,12 +28,13 @@ This PR introduces a standardized six-category structure:
 
 ```
 technical-services-solutions/
-├── platform/                 # Core platform configurations and utilities
-├── data-warehousing/         # Data warehousing patterns and solutions
-├── ml-genai/                # Machine learning and generative AI implementations
-├── data-engineering/        # ETL/ELT pipelines and data processing workflows
-├── launch-accelerator/      # Quick-start templates and accelerators
-└── data-science/           # Analytics and data science notebooks
+├── core-platform/                 # Core platform configurations and utilities
+├── data-engineering/              # ETL/ELT pipelines and data processing workflows
+├── data-governance/               # Data Governance patterns and solutions
+├── data-warehousing/              # Data warehousing patterns and solutions
+├── genai-ml/                      # Machine learning and generative AI implementations
+├── launch-accelerator/            # Quick-start templates and accelerators
+└── workspace-setup/               # Workspace Setup configurations and utilities
 ```
 
 ## Key Features
@@ -62,6 +63,7 @@ technical-services-solutions/
 - Category-specific adaptations for different solution types
 
 ## Testing
+- [x] Add Unit Testing when possible
 - [x] Code runs without errors
 - [x] Documentation is complete
 - [x] Used only synthetic data

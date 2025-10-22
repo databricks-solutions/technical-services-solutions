@@ -1,0 +1,75 @@
+# =============================================================================
+# Databricks Configuration
+# =============================================================================
+
+# Your Databricks account ID (found in Databricks Account Console)
+databricks_account_id = "your-databricks-account-id"
+
+# Prefix for Databricks resources (workspace name, storage config, etc.)
+prefix = "my-databricks-workspace"
+
+# Prefix for AWS resources (VPC, S3, IAM, etc.)
+resource_prefix = "my-databricks-workspace"
+
+# =============================================================================
+# AWS Configuration
+# =============================================================================
+
+# AWS region where resources will be deployed
+region = "us-west-2"
+
+# Optional: Additional tags for AWS resources
+# tags = {
+#   Environment = "production"
+#   Team        = "data-engineering"
+#   CostCenter  = "engineering"
+# }
+
+# =============================================================================
+# Network Configuration
+# =============================================================================
+
+# Option 1: Create new VPC (leave vpc_id empty and specify network config)
+vpc_id              = ""
+vpc_cidr_range      = "10.0.0.0/16"
+availability_zones  = ["us-west-2a", "us-west-2b"]
+private_subnets_cidr = ["10.0.1.0/24", "10.0.2.0/24"]
+public_subnets_cidr  = ["10.0.101.0/24", "10.0.102.0/24"]
+
+# Option 2: Use existing VPC (uncomment and specify IDs)
+# vpc_id     = "vpc-xxxxxxxxx"
+# subnet_ids = ["subnet-xxxxxxxxx", "subnet-yyyyyyyyy"]
+
+# =============================================================================
+# Security Group Configuration
+# =============================================================================
+
+# Optional: Use existing security groups (leave empty to use VPC default)
+security_group_ids = []
+
+# Egress ports for Databricks connectivity
+sg_egress_ports = [443, 3306, 6666, 2443, 8443, 8444, 8445, 8446, 8447, 8448, 8449, 8450, 8451]
+
+# =============================================================================
+# Unity Catalog Metastore Configuration
+# =============================================================================
+
+# Option 1: Create new metastore (leave metastore_id empty and specify name)
+metastore_id   = ""
+metastore_name = "my-unity-catalog-metastore"
+
+# Option 2: Use existing metastore (uncomment and specify ID)
+# metastore_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+# Optional: Metastore owners
+# metastore_owner_usernames   = ["user1@example.com", "user2@example.com"]
+# metastore_owners_group_name = "metastore-owners"
+
+# =============================================================================
+# Workspace Access Configuration
+# =============================================================================
+
+# Optional: Workspace administrators
+# workspace_admin_usernames    = ["admin1@example.com", "admin2@example.com"]
+# workspace_admins_group_name = "workspace-admins"
+

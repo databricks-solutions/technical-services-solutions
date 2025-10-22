@@ -144,4 +144,28 @@ metastore_id   = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 metastore_name = ""  # Not required when using existing
 ```
 
+## File Structure
+
+This project uses a flat, organized structure with purpose-specific files instead of a monolithic `main.tf`:
+
+```
+tf/
+├── versions.tf           # Terraform and provider version constraints
+├── providers.tf          # Provider configurations (AWS, Databricks)
+├── variables.tf          # All input variable definitions
+├── outputs.tf            # All output values
+├── terraform.tfvars.example  # Configuration template
+├── workspace.tf          # Databricks workspace and MWS resources
+├── network.tf            # VPC, subnets, and networking
+├── security_group.tf     # Security group rules
+├── credential.tf         # IAM cross-account role and policies
+├── root_s3_bucket.tf     # S3 bucket for workspace root storage
+└── metastore.tf          # Unity Catalog metastore
+
+```
+
+**Note:** There is no `main.tf` file in this project. Instead, resources are organized into descriptive, purpose-specific files. 
+
+Terraform will automatically load all `.tf` files in the directory, so the absence of `main.tf` doesn't affect functionality.
+
 

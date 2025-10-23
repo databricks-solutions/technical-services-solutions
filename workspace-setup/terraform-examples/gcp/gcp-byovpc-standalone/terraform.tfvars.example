@@ -7,3 +7,4 @@ databricks_account_console_url = "https://accounts.gcp.databricks.com"
 databricks_workspace_name      = "<workspace-name>"
 databricks_admin_user          = "<admin-user-email>"
 
+subnet_cidr = "10.10.0.0/20"

@@ -90,10 +90,6 @@ terraform output
 Key output:
 - `workspace_url`: The URL of the created Databricks workspace
 
-### Customization
-- Subnet CIDR: Provide your desired CIDR via `subnet_cidr` in `terraform.tfvars` (e.g., `10.10.0.0/20`).
-- Regions/Projects: Change `google_region` and `google_project_name` in `terraform.tfvars` according to your GCP project requirements.
-
 ### Troubleshooting
 - Permission errors (403): Ensure your GSA has the required roles and that the correct project is set in `gcloud`.
 - API not enabled: Run the API enablement command shown above.
@@ -117,8 +113,8 @@ This module provisions a GCP network and a Databricks workspace attached to that
 
 High-level diagram:
 ```
-GCP Project
-├─ VPC (google_compute_network.databricks_vpc)
+Databricks Workspace Creation
+├─ GCP Standalone VPC (google_compute_network.databricks_vpc)
 │  ├─ Subnet (google_compute_subnetwork.databricks_subnet) [CIDR: var.subnet_cidr]
 │  ├─ Router (google_compute_router.databricks_router)
 │  └─ NAT (google_compute_router_nat.databricks_nat)

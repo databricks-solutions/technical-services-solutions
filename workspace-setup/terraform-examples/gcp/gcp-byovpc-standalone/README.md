@@ -41,7 +41,7 @@ Follow these steps to add the service account to the Databricks account console:
 **(RECOMMENDED) For more refined and granular level of permissions, use service account impersonation, see [service-account-impersonation.md](service-account-impersonation.md).**
 
 ### Variables
-All variable definitions are in `variables.tf`. Provide values via `terraform.tfvars` (auto-loaded, no flags needed).
+All variable definitions are in `variables.tf`. Refer to `terraform.tfvars.example` as a template and provide the values during runtime in CLI.
 
 - `google_service_account_email` (string, required): Email of the GSA used by providers
 - `google_project_name` (string, required): GCP project ID
@@ -52,7 +52,36 @@ All variable definitions are in `variables.tf`. Provide values via `terraform.tf
 - `databricks_admin_user` (string, required): Admin user email to add to the workspace (must be a valid Databricks user at the Account level)
  - `subnet_cidr` (string, required): CIDR block for the Databricks subnet
 
-Example `terraform.tfvars`:
+Pass variables via CLI (For example, refer below):
+```
+terraform plan \
+  -var 'google_service_account_email=<sa>@<project>.iam.gserviceaccount.com' \
+  -var 'google_project_name=<project>' \
+  -var 'google_region=us-central1' \
+  -var 'databricks_account_id=<account-id>' \
+  -var 'databricks_account_console_url=https://accounts.gcp.databricks.com' \
+  -var 'databricks_workspace_name=<workspace-name>' \
+  -var 'databricks_admin_user=<admin-user-email>' \
+  -var 'subnet_cidr=10.10.0.0/20'
+
+# Use the same -var flags with `terraform apply`
+```
+
+Or with environment variables (TF_VAR_ prefix):
+```
+export TF_VAR_google_service_account_email=<sa>@<project>.iam.gserviceaccount.com
+export TF_VAR_google_project_name=<project>
+export TF_VAR_google_region=us-central1
+export TF_VAR_databricks_account_id=<account-id>
+export TF_VAR_databricks_account_console_url=https://accounts.gcp.databricks.com
+export TF_VAR_databricks_workspace_name=<workspace-name>
+export TF_VAR_databricks_admin_user=<admin-user-email>
+export TF_VAR_subnet_cidr=10.10.0.0/20
+
+terraform apply
+```
+
+Example `terraform.tfvars.example`:
 ```
 google_service_account_email = "<sa>@<project>.iam.gserviceaccount.com"
 google_project_name          = "<project>"
@@ -66,11 +95,11 @@ databricks_admin_user          = "<admin-user-email>"
 subnet_cidr = "10.10.0.0/20"
 ```
 
-### What Gets Created
+### What Gets Created by the terraform script
 - Google Compute Network (VPC)
 - Google Subnetwork in the specified region (CIDR is configurable via `subnet_cidr`)
 - Google Cloud Router and Cloud NAT (Auto-allocated IPs)
-- Databricks MWS Network configuration that references the GCP VPC/subnet
+- By default, Databricks creates GCS buckets for cloud storage
 - Databricks Workspace attached to that network
 - Admin user added to the workspace
 

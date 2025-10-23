@@ -4,11 +4,13 @@ This repository deploys a Customer-managed network on Google Cloud and provision
 
 ### Repository Structure
 - `variables.tf`: All input variable definitions
-- `versions.tf`: Terraform and provider configuration (Google, Databricks)
-- `main.tf`: All GCP and Databricks resources and data sources
+- `versions.tf`: Terraform required providers and versions
+- `providers.tf`: Provider configuration (Google, Databricks)
+- `network.tf`: GCP VPC, subnet, router, and NAT resources
+- `databricks.tf`: Databricks MWS network, workspace, and admin user
 - `outputs.tf`: All outputs
-- `terraform.tfvars`: File containing all input variable values
-- `service-account-impersonation.MD`: Guide for GSA impersonation
+- `terraform.tfvars.example`: Example variable values (do not commit real secrets)
+- `service-account-impersonation.md`: Guide for GSA impersonation
 
 ### Prerequisites
 - Terraform installed (v1.3+ recommended)
@@ -36,7 +38,7 @@ Follow these steps to add the service account to the Databricks account console:
 - [Add](https://docs.gcp.databricks.com/administration-guide/users-groups/users.html#add-users-to-your-account-using-the-account-console) service-account as an accounts user.
 - [Assign](https://docs.gcp.databricks.com/administration-guide/users-groups/users.html#assign-account-admin-roles-to-a-user) accounts admin role to the service account.
 
-**(RECOMMENDED) For more refined and granular level of permissions, use service account impersonation, see [service-account-impersonation.MD](service-account-impersonation.MD).**
+**(RECOMMENDED) For more refined and granular level of permissions, use service account impersonation, see [service-account-impersonation.md](service-account-impersonation.md).**
 
 ### Variables
 All variable definitions are in `variables.tf`. Provide values via `terraform.tfvars` (auto-loaded, no flags needed).
@@ -48,6 +50,7 @@ All variable definitions are in `variables.tf`. Provide values via `terraform.tf
 - `databricks_account_console_url` (string, required): Databricks Accounts host URL (e.g., `https://accounts.gcp.databricks.com`)
 - `databricks_workspace_name` (string, required): Name for the Databricks workspace
 - `databricks_admin_user` (string, required): Admin user email to add to the workspace (must be a valid Databricks user at the Account level)
+ - `subnet_cidr` (string, required): CIDR block for the Databricks subnet
 
 Example `terraform.tfvars`:
 ```
@@ -59,11 +62,13 @@ databricks_account_id          = "<account-id>"
 databricks_account_console_url = "https://accounts.gcp.databricks.com"
 databricks_workspace_name      = "<workspace-name>"
 databricks_admin_user          = "<admin-user-email>"
+
+subnet_cidr = "10.10.0.0/20"
 ```
 
 ### What Gets Created
 - Google Compute Network (VPC)
-- Google Subnetwork in the specified region (`10.10.0.0/20` CIDR by default in this repo - Change this CIDR if required)
+- Google Subnetwork in the specified region (CIDR is configurable via `subnet_cidr`)
 - Google Cloud Router and Cloud NAT (Auto-allocated IPs)
 - Databricks MWS Network configuration that references the GCP VPC/subnet
 - Databricks Workspace attached to that network
@@ -86,7 +91,7 @@ Key output:
 - `workspace_url`: The URL of the created Databricks workspace
 
 ### Customization
-- Subnet CIDR: The subnet CIDR is currently set to `10.10.0.0/20` in `main.tf`. Update the `ip_cidr_range` in `google_compute_subnetwork.databricks_subnet` if you need a different range.
+- Subnet CIDR: Provide your desired CIDR via `subnet_cidr` in `terraform.tfvars` (e.g., `10.10.0.0/20`).
 - Regions/Projects: Change `google_region` and `google_project_name` in `terraform.tfvars` according to your GCP project requirements.
 
 ### Troubleshooting
@@ -100,4 +105,48 @@ To destroy all created resources:
 ```
 terraform destroy
 ```
+
+
+### Architecture
+This module provisions a GCP network and a Databricks workspace attached to that network.
+
+- Google provider creates VPC, subnet, router, and NAT in your project.
+- Databricks Accounts provider creates the MWS network reference and workspace.
+- Databricks Workspace provider targets the created workspace to add the admin user.
+- Resource names include a short random suffix to avoid collisions.
+
+High-level diagram:
+```
+GCP Project
+├─ VPC (google_compute_network.databricks_vpc)
+│  ├─ Subnet (google_compute_subnetwork.databricks_subnet) [CIDR: var.subnet_cidr]
+│  ├─ Router (google_compute_router.databricks_router)
+│  └─ NAT (google_compute_router_nat.databricks_nat)
+└─ Databricks (Accounts)
+   ├─ MWS Network (databricks_mws_networks.databricks_network) → references VPC/Subnet
+   └─ Workspace (databricks_mws_workspaces.databricks_workspace)
+      └─ Workspace (provider alias "workspace")
+         ├─ data.databricks_group.admins
+         └─ databricks_user.admin
+```
+
+### Validation
+After applying, validate with the following:
+
+- Terraform:
+  - `terraform validate`
+  - `terraform plan` (should show no changes immediately after apply)
+  - `terraform output -raw workspace_url`
+
+- GCP network resources (use your project ID):
+```
+gcloud compute networks list --filter="name~^databricks-vpc-" --project <PROJECT_ID>
+gcloud compute networks subnets list --filter="name~^databricks-subnet-" --regions <REGION> --project <PROJECT_ID>
+gcloud compute routers list --filter="name~^databricks-router-" --regions <REGION> --project <PROJECT_ID>
+gcloud compute routers nats list --router=$(gcloud compute routers list --filter="name~^databricks-router-" --regions <REGION> --project <PROJECT_ID> --format="value(name)" | head -1) --region <REGION> --project <PROJECT_ID>
+```
+
+- Databricks workspace:
+  - Open the URL from `terraform output -raw workspace_url` in a browser.
+  - Verify the workspace loads and the user exists in the workspace admin console.
 

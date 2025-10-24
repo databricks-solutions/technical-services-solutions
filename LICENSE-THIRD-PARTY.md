@@ -8,7 +8,7 @@ All third-party dependencies in this project are licensed under the MIT License.
 
 ---
 
-## MIT License Text
+## MIT License
 
 Copyright 2025 Shared Technical Services
 

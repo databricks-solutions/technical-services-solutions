@@ -45,17 +45,6 @@ New projects should be created inside the appropriate category directory and mus
 
 The team will provide help on a best-effort basis.
 
-## Security and Compliance
-
-This repository adheres to strict security guidelines:
-
-- ✅ No customer data, PII, or proprietary information
-- ✅ No access tokens, PATs, passwords, or credentials
-- ✅ Only synthetic data generated using Faker, dbldatagen, or LLAMA-4
-- ✅ All 3rd party code properly licensed and acknowledged
-- ✅ Peer review required for all submissions
-- ✅ Annual repository reviews by owners
-
 ## Important Disclaimers
 
 ⚠️ **Please Note**: 

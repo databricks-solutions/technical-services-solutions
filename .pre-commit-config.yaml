@@ -1,5 +1,7 @@
 repos:
   - repo: https://github.com/pivotal/LicenseFinder
-    rev: v7.1.0 # You probably want the latest tag.
+    rev: v7.1.0
     hooks:
       - id: license-finder
+        stages: [pre-commit, pre-push]
+        files: ''

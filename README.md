@@ -62,4 +62,4 @@ The source in this repository is provided subject to the Databricks License
 
 ### Open Source Dependencies
 All included or referenced third-party open source libraries in this repository are subject 
-to their respective licenses as documented in [LICENSE-THIRD-PARTY.md](./LICENSE-THIRD-PARTY.md).
+to their respective licenses as documented in [LICENSE-THIRD-PARTY](./LICENSE-THIRD-PARTY.md).

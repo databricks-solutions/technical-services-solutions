@@ -100,7 +100,7 @@ variable "security_group_ids" {
 variable "sg_egress_ports" {
   description = "List of egress ports to allow in security group rules"
   type        = list(number)
-  default     = [443, 3306, 6666, 2443, 8443, 8444, 8445, 8446, 8447, 8448, 8449, 8450, 8451]
+  default     = [443, 3306, 2443, 8443, 8444, 8445, 8446, 8447, 8448, 8449, 8450, 8451]
 }
 
 # =============================================================================

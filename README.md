@@ -56,9 +56,10 @@ The team will provide help on a best-effort basis.
 
 ## License
 
-&copy; 2025 Databricks, Inc. All rights reserved. The source in this repository is provided subject to the Databricks License [https://databricks.com/db-license-source]. 
-All included or referenced third party libraries are subject to the licenses set forth below.
+&copy; 2025 Databricks, Inc. All rights reserved.
+The source in this repository is provided subject to the Databricks License
+[Databricks License](https://databricks.com/db-license-source).
 
-| library | description | license | source |
-|---------|-------------|---------|--------|
-| | | | |
+### Open Source Dependencies
+All included or referenced third-party open source libraries in this repository are subject 
+to their respective licenses as documented in [LICENSE-THIRD-PARTY.md](./LICENSE-THIRD-PARTY.md).

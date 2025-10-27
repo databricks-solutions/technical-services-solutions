@@ -14,10 +14,6 @@ variable "databricks_account_id" {
   description = "Databricks Account ID"
   type        = string
 }
-variable "databricks_account_console_url" {
-  description = "Databricks Accounts host URL (e.g., https://accounts.gcp.databricks.com)"
-  type        = string
-}
 variable "databricks_workspace_name" {
   description = "Name for the Databricks workspace"
   type        = string

@@ -47,7 +47,6 @@ All variable definitions are in `variables.tf`. Refer to `terraform.tfvars.examp
 - `google_project_name` (string, required): GCP project ID
 - `google_region` (string, required): GCP region for resources (e.g., `us-central1`)
 - `databricks_account_id` (string, required): Databricks Account ID
-- `databricks_account_console_url` (string, required): Databricks Accounts host URL (e.g., `https://accounts.gcp.databricks.com`)
 - `databricks_workspace_name` (string, required): Name for the Databricks workspace
 - `databricks_admin_user` (string, required): Admin user email to add to the workspace (must be a valid Databricks user at the Account level)
  - `subnet_cidr` (string, required): CIDR block for the Databricks subnet
@@ -59,7 +58,6 @@ terraform plan \
   -var 'google_project_name=<project>' \
   -var 'google_region=us-central1' \
   -var 'databricks_account_id=<account-id>' \
-  -var 'databricks_account_console_url=https://accounts.gcp.databricks.com' \
   -var 'databricks_workspace_name=<workspace-name>' \
   -var 'databricks_admin_user=<admin-user-email>' \
   -var 'subnet_cidr=10.10.0.0/20'
@@ -73,7 +71,6 @@ export TF_VAR_google_service_account_email=<sa>@<project>.iam.gserviceaccount.co
 export TF_VAR_google_project_name=<project>
 export TF_VAR_google_region=us-central1
 export TF_VAR_databricks_account_id=<account-id>
-export TF_VAR_databricks_account_console_url=https://accounts.gcp.databricks.com
 export TF_VAR_databricks_workspace_name=<workspace-name>
 export TF_VAR_databricks_admin_user=<admin-user-email>
 export TF_VAR_subnet_cidr=10.10.0.0/20
@@ -88,7 +85,6 @@ google_project_name          = "<project>"
 google_region                = "us-central1"
 
 databricks_account_id          = "<account-id>"
-databricks_account_console_url = "https://accounts.gcp.databricks.com"
 databricks_workspace_name      = "<workspace-name>"
 databricks_admin_user          = "<admin-user-email>"
 
@@ -122,7 +118,7 @@ Key output:
 ### Troubleshooting
 - Permission errors (403): Ensure your GSA has the required roles and that the correct project is set in `gcloud`.
 - API not enabled: Run the API enablement command shown above.
-- Databricks account host mismatch: Verify `databricks_account_console_url` is correct for GCP (`https://accounts.gcp.databricks.com`).
+ - Databricks account host is defaulted `https://accounts.gcp.databricks.com` for GCP.
 - Authentication failures: Re-run the impersonation commands to refresh `GOOGLE_OAUTH_ACCESS_TOKEN`.
 
 ### Teardown
@@ -130,7 +126,45 @@ To destroy all created resources:
 ```
 terraform destroy
 ```
+#### Terraform destroy: VPC "already being used" errors
+Example:
+```
+Error: Error waiting for Deleting Network: The network resource 'projects/<PROJECT_ID>/global/networks/databricks-vpc-<suffix>' is already being used by 'projects/<PROJECT_ID>/global/firewalls/databricks-<digits>-ingress'
+```
 
+Why this happens: GCP won’t let you delete a VPC while anything still references it (firewall rules, routes, subnets, VPNs, forwarding rules, etc.). If third-party tools created resources in your VPC (e.g., Databricks-managed firewall rules), you must remove those first.
+
+Quick steps:
+1) Destroy workspace and network in dependency order (if needed):
+```
+terraform destroy -target=databricks_mws_workspaces.databricks_workspace
+terraform destroy -target=google_compute_router_nat.databricks_nat -target=google_compute_router.databricks_router
+terraform destroy
+```
+
+2) If the VPC is still “in use”, check and delete dependent resources:
+- Firewall rules referencing the VPC:
+```
+gcloud compute firewall-rules list --filter="network~^databricks-vpc-" --project <PROJECT_ID>
+gcloud compute firewall-rules delete <RULE_NAME> --project <PROJECT_ID>
+```
+- NAT and Router (replace placeholders):
+```
+gcloud compute routers list --filter="name~^databricks-router-" --regions <REGION> --project <PROJECT_ID>
+gcloud compute routers nats list --router <ROUTER_NAME> --region <REGION> --project <PROJECT_ID>
+gcloud compute routers nats delete <NAT_NAME> --router <ROUTER_NAME> --region <REGION> --project <PROJECT_ID>
+gcloud compute routers delete <ROUTER_NAME> --region <REGION> --project <PROJECT_ID>
+```
+- Subnets:
+```
+gcloud compute networks subnets list --filter="network~^databricks-vpc-" --regions <REGION> --project <PROJECT_ID>
+gcloud compute networks subnets delete <SUBNET_NAME> --region <REGION> --project <PROJECT_ID>
+```
+
+3) Re-run:
+```
+terraform destroy
+```
 
 ### Architecture
 This module provisions a GCP network and a Databricks workspace attached to that network.

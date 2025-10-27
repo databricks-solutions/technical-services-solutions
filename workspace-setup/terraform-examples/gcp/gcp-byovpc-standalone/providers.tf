@@ -5,7 +5,7 @@ provider "google" {
 
 provider "databricks" {
   alias                  = "accounts"
-  host                   = var.databricks_account_console_url
+  host                   = "https://accounts.gcp.databricks.com"
   google_service_account = var.google_service_account_email
 }
 

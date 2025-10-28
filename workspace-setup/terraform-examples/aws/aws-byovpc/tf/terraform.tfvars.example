@@ -61,15 +61,4 @@ metastore_name = "my-unity-catalog-metastore"
 # Option 2: Use existing metastore (uncomment and specify ID)
 # metastore_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 
-# Optional: Metastore owners
-# metastore_owner_usernames   = ["user1@example.com", "user2@example.com"]
-# metastore_owners_group_name = "metastore-owners"
-
-# =============================================================================
-# Workspace Access Configuration
-# =============================================================================
-
-# Optional: Workspace administrators
-# workspace_admin_usernames    = ["admin1@example.com", "admin2@example.com"]
-# workspace_admins_group_name = "workspace-admins"
 

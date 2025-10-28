@@ -17,7 +17,7 @@ In this deployment, we define key configuration values, such as subscription ID,
 
 ### Option 1: Interactive user login (for users)
 
-```ps
+```sh
 az login
 ```
 
@@ -31,7 +31,7 @@ Steps to Create a Service Principal via Azure CLI:
 
 1. Log in to Azure via Azure CLI
 
-```ps
+```sh
 az login
 ```
 
@@ -41,20 +41,20 @@ This command opens a browser to authenticate your Azure user account.
 
 If you have multiple subscriptions, set your target subscription:
 
-```ps
+```sh
 az account set --subscription "<subscription-id>"
 ```
 
 You can find your subscription ID with:
 
-```ps
+```sh
 az account show
 ```
 
 3. Create the Service Principal
 Use the following command to create a service principal, specifying the name, role, and scope:
 
-```ps
+```sh
 az ad sp create-for-rbac --name "<sp-name>" --role <role> --scopes /subscriptions/<subscription-id>
 ```
 
@@ -75,7 +75,7 @@ You can now use the output values:
 
 For authentication in automation (like CI/CD or scripts), use:
 
-```ps
+```sh
 az login --service-principal -u <appId> -p <password> --tenant <tenant>
 ```
 

@@ -12,6 +12,7 @@ resource "azurerm_databricks_workspace" "this" {
     public_subnet_network_security_group_association_id  = azurerm_subnet_network_security_group_association.public.id
     private_subnet_network_security_group_association_id = azurerm_subnet_network_security_group_association.private.id
     storage_account_name                                 = var.root_storage_name
+    no_public_ip                                         = true
   }
 
   depends_on = [

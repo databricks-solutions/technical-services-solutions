@@ -62,26 +62,3 @@ variable "subnet_private_cidr" {
     type        = string
 }
 
-# =============================================================================
-# Customer Managed Keys Configuration
-# =============================================================================
-
-# variable "managed_services_cmk_key_vault_id" {
-#     description = "The Key Vault ID of the CMK for managed services encryption"
-#     type        = string
-# }
-
-# variable "managed_services_cmk_key_vault_key_id" {
-#     description = "The CMK ID for managed services encryption"
-#     type        = string
-# }
-
-# variable "managed_disk_cmk_key_vault_id" {
-#     description = "The Key Vault ID of the CMK for managed disks encryption"
-#     type        = string
-# }
-
-# variable "managed_disk_cmk_key_vault_key_id" {
-#     description = "The CMK ID for managed disks encryption"
-#     type        = string
-# }

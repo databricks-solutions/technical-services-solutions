@@ -116,16 +116,6 @@ You can use the `terraform.tfvars.example` file as a base for your variables. Le
 - subnet_private_cidr
     - The CIDR address of the second subnet
 
-Additional variables for Customer Managed Key encryption:
-- managed_services_cmk_key_vault_id
-    - The Key Vault ID of the CMK for managed services encryption
-- managed_services_cmk_key_vault_key_id
-    - The CMK ID for managed services encryption
-- managed_disk_cmk_key_vault_id
-    - The Key Vault ID of the CMK for managed disks encryption
-- managed_disk_cmk_key_vault_key_id
-    - The CMK ID for managed disks encryption
-
 
 ## Deploy
 

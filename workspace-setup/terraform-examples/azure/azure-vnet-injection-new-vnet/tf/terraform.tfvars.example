@@ -14,7 +14,7 @@ tags = {
 
 workspace_name = "databricks-workspace"
 root_storage_name = "databricksrootstorage"
-location = "West Europe"
+location = "westeurope"
 
 # =============================================================================
 # Network Configuration

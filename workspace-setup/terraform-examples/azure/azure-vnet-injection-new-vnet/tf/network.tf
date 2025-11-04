@@ -64,3 +64,39 @@ resource "azurerm_subnet_network_security_group_association" "private" {
   subnet_id                 = azurerm_subnet.private.id
   network_security_group_id = azurerm_network_security_group.this.id
 }
+
+################################################
+
+resource "azurerm_public_ip" "this" {
+  name                = "${local.network_prefix}-public-ip"
+  resource_group_name = azurerm_resource_group.this.name
+  location            = azurerm_resource_group.this.location
+  allocation_method   = "Static"
+  zones               = ["1"]
+  tags                = var.tags
+}
+
+resource "azurerm_nat_gateway" "this" {
+  name                = "${local.network_prefix}-nat-gateway"
+  resource_group_name = azurerm_resource_group.this.name
+  location            = azurerm_resource_group.this.location
+  sku_name            = "Standard"
+  idle_timeout_in_minutes = 10
+  zones               = ["1"]
+  tags                = var.tags
+}
+
+resource "azurerm_nat_gateway_public_ip_association" "this" {
+  nat_gateway_id       = azurerm_nat_gateway.this.id
+  public_ip_address_id = azurerm_public_ip.this.id
+}
+
+resource "azurerm_subnet_nat_gateway_association" "public_nat_gateway_association" {
+  subnet_id      = azurerm_subnet.public.id
+  nat_gateway_id = azurerm_nat_gateway.this.id
+}
+
+resource "azurerm_subnet_nat_gateway_association" "private_nat_gateway_association" {
+  subnet_id      = azurerm_subnet.private.id
+  nat_gateway_id = azurerm_nat_gateway.this.id
+}

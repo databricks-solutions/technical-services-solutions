@@ -13,3 +13,4 @@ resource "databricks_metastore_assignment" "this" {
   depends_on   = [databricks_mws_workspaces.this, time_sleep.wait_2_minutes]
 }
 
+

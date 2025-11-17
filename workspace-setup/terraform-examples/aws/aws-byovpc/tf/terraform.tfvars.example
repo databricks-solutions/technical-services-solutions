@@ -11,6 +11,9 @@ prefix = "my-databricks-workspace"
 # Prefix for AWS resources (VPC, S3, IAM, etc.)
 resource_prefix = "my-databricks-workspace"
 
+# Pricing tier of account (ENTERPRISE or PREMIUM)
+pricing_tier = "PREMIUM"
+
 # =============================================================================
 # AWS Configuration
 # =============================================================================

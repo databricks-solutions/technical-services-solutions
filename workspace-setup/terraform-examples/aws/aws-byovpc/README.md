@@ -65,6 +65,7 @@ databricks_account_id = "your-account-id"
 prefix                = "my-workspace"
 resource_prefix       = "my-workspace"
 region                = "us-west-2"
+pricing_tier          = "your-account-pricing-tier"
 
 # Network configuration
 vpc_cidr_range       = "10.0.0.0/16"

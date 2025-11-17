@@ -27,7 +27,7 @@ variable "resource_prefix" {
 variable "pricing_tier" {
   description = "Pricing tier for Databricks workspace"
   type        = string
-  default     = "PREMI"
+  default     = "PREMIUM"
   validation {
     condition     = contains(["ENTERPRISE", "PREMIUM"], var.pricing_tier)
     error_message = "resource_prefix must be either 'ENTERPRISE' or 'PREMIUM'."

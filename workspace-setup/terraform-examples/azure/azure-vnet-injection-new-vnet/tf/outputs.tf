@@ -23,7 +23,7 @@ output "nat_gateway_public_ip" {
 
 output "vnet_id" {
   description = "ID of the VNet used for the workspace"
-  value       = azurerm_virtual_network.this.id
+  value       = local.vnet.id
 }
 
 output "private_subnet_id" {

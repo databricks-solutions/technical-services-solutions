@@ -95,20 +95,34 @@ You can use the `terraform.tfvars.example` file as a base for your variables. Le
 
 ### List of variables
 
+- tenant_id
+    - You Azure tenant ID
 - azure_subscription_id
     - Your Azure Subscription ID
 - resource_group_name
     - The name of the resource group where the Databricks Workspace will be deployed
 - tags
     - A map of tags to assign to the resources
+- databricks_account_id
+    - ID of the Databricks Account
 - workspace_name
     - The name of the Databricks workspace
+- admin_user
+    - The email of the user to assign admin access to the workspace and the new metastore
 - root_storage_name
     - The name of the root storage account. Can only consist of lowercase letters and numbers, and must be between 3 and 24 characters long.
 - location
     - The Azure region to deploy the workspace to. See [supported regions](https://learn.microsoft.com/en-us/azure/databricks/resources/supported-regions).
+- existing_metastore_id
+    - The ID of the existing metastore. Leave empty to create a new metastore.
+- new_metastore_name
+    - The name of the new metastore.
+- create_new_vnet
+    - Whether to create a new VNet or use an existing one
 - vnet_name
     - The name of the virtual network
+- vnet_resource_group_name
+    - The name of the VNet resource group
 - cidr
     - The CIDR address of the virtual network
 - subnet_public_cidr
@@ -155,9 +169,10 @@ tf/
 ├── databricks.tf               # Databricks workspace
 ├── network.tf                  # VNet, subnets, and networking
 ├── outputs.tf                  # All output values
-├── providers.tf                # Provider configurations (Azure)
+├── providers.tf                # Provider configurations
 ├── terraform.tfvars.example    # Configuration template
 ├── variables.tf                # All input variable definitions
+├── versions.tf                 # Version of the providers
 ```
 
 **Note:** There is no `main.tf` file in this project. Instead, resources are organized into descriptive, purpose-specific files. 

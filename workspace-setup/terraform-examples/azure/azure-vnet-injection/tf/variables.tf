@@ -74,7 +74,7 @@ variable "existing_metastore_id" {
 }
 
 variable "new_metastore_name" {
-    description = "The name of the new metastore. Leave empty to use the metastore by ID."
+    description = "The name of the new metastore."
     type        = string
     default     = ""
     validation {
@@ -99,10 +99,9 @@ variable "vnet_name" {
 }
 
 variable "vnet_resource_group_name" {
-    description = "The name of the resource group where the existing VNet is located (optional)"
+    description = "The name of the VNet resource group"
     type        = string
 }
-
 
 variable "cidr" {
     description = "The CIDR address of the virtual network"

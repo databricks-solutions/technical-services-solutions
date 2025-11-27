@@ -2,6 +2,11 @@
 # Azure Configuration
 # =============================================================================
 
+variable "tenant_id" {
+    description = "Your Azure Tenant ID"
+    type        = string
+}
+
 variable "azure_subscription_id" {
     description = "Your Azure Subscription ID"
     type        = string
@@ -19,12 +24,23 @@ variable "tags" {
 }
 
 # =============================================================================
-# Databricks Workspace Configuration
+# Databricks Configuration
 # =============================================================================
+
+variable "databricks_account_id" {
+  description = "ID of the Databricks account"
+  type        = string
+  sensitive   = true
+}
 
 variable "workspace_name" {
     description = "The name of the Databricks workspace"
     type        = string  
+}
+
+variable "admin_user" {
+    description = "The email of the user to assign admin access to the workspace and the new metastore"
+    type        = string
 }
 
 variable "root_storage_name" {
@@ -51,14 +67,42 @@ variable "location" {
   }
 }
 
+variable "existing_metastore_id" {
+    description = "The ID of the existing metastore. Leave empty to create a new metastore."
+    type        = string
+    default     = ""
+}
+
+variable "new_metastore_name" {
+    description = "The name of the new metastore. Leave empty to use the metastore by ID."
+    type        = string
+    default     = ""
+    validation {
+        condition     = can(regex("^[a-zA-Z0-9_-]*$", var.metastore_name))
+        error_message = "metastore_name can only contain alphanumerical characters, hyphens, and underscores."
+    }
+}
+
 # =============================================================================
 # Network Configuration
 # =============================================================================
+
+variable "create_new_vnet" {
+    description = "Whether to create a new VNet"
+    type        = bool
+    default     = true
+}
 
 variable "vnet_name" {
     description = "The name of the virtual network"
     type        = string
 }
+
+variable "vnet_resource_group_name" {
+    description = "The name of the resource group where the existing VNet is located (optional)"
+    type        = string
+}
+
 
 variable "cidr" {
     description = "The CIDR address of the virtual network"
@@ -75,4 +119,3 @@ variable "subnet_private_cidr" {
     description = "The CIDR address of the second subnet"
     type        = string
 }
-

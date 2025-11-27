@@ -2,8 +2,8 @@
 # Azure Configuration
 # =============================================================================
 
+tenant_id = "xxx"
 azure_subscription_id = "xxx"
-resource_group_name = "new-resource-group"
 tags = {
     "Owner": "Name Of Owner"
 }
@@ -12,16 +12,22 @@ tags = {
 # Databricks Workspace Configuration
 # =============================================================================
 
+resource_group_name = "new-resource-group"
 workspace_name = "databricks-workspace"
+admin_user = "xx@xx.com"
 root_storage_name = "databricksrootstorage"
 location = "westeurope"
+databricks_account_id = "xxx-xxx"
+existing_metastore_id = "xxx-xxx"
+new_metastore_name = ""
 
 # =============================================================================
 # Network Configuration
 # =============================================================================
 
+create_new_vnet = true
 vnet_name = "vnet-name"
+vnet_resource_group_name = "vnet-resource-group-name"
 cidr = "10.0.0.0/16"
 subnet_public_cidr = "10.0.1.0/24"
 subnet_private_cidr = "10.0.2.0/24"
-

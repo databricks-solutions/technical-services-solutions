@@ -78,7 +78,7 @@ variable "new_metastore_name" {
     type        = string
     default     = ""
     validation {
-        condition     = can(regex("^[a-zA-Z0-9_-]*$", var.metastore_name))
+        condition     = can(regex("^[a-zA-Z0-9_-]*$", var.new_metastore_name))
         error_message = "metastore_name can only contain alphanumerical characters, hyphens, and underscores."
     }
 }

@@ -6,6 +6,22 @@ This repository contains practical, ready-to-deploy Terraform configurations for
 
 Unlike highly modularized Terraform examples, these scenarios are designed to be **self-contained and immediately deployable**, making them ideal for customers who are deploying Databricks with Terraform for the first time.
 
+## Important Notice
+
+These examples are designed as practical starting points based on real-world customer deployments. Please note:
+
+- Always review and customize according to your organization's requirements before deployment
+- These examples are **not covered** by Databricks Service Level Agreements (SLAs)
+- For official support, contact your Databricks representative
+
+## Additional Resources
+
+For more comprehensive examples and official documentation:
+
+- [Terraform Databricks Examples Repository](https://github.com/databricks/terraform-databricks-examples)
+- [Security Reference Architecture Templates](https://github.com/databricks/terraform-databricks-sra)
+- [Terraform Databricks Provider Documentation](https://registry.terraform.io/providers/databricks/databricks/latest/docs)
+
 ## Philosophy
 
 Our approach prioritizes **practicality over abstraction**:
@@ -55,13 +71,19 @@ This naming helps you quickly identify the right scenario for your needs.
 ## Available Scenarios
 
 ### AWS
-*Scenarios coming soon*
+| Scenario | Description |
+|----------|-------------|
+| [aws-byovpc](./aws/aws-byovpc/) | Deploy a Databricks workspace using "Bring Your Own VPC" (BYOVPC) pattern with Unity Catalog Metastore. Create a new VPC or use an existing one with full control over network infrastructure. |
 
 ### Azure
-*Scenarios coming soon*
+| Scenario | Description |
+|----------|-------------|
+| [azure-vnet-injection](./azure/azure-vnet-injection/) | Deploy a Databricks workspace with VNet injection. Create a new VNet or use an existing one with support for both user login and service principal authentication. |
 
 ### GCP
-*Scenarios coming soon*
+| Scenario | Description |
+|----------|-------------|
+| [gcp-byovpc-standalone](./gcp/gcp-byovpc-standalone/) | Deploy a Databricks workspace with Customer-managed VPC on Google Cloud. Includes VPC, subnet, Cloud Router, and Cloud NAT setup with service account impersonation support. |
 
 ## Prerequisites
 

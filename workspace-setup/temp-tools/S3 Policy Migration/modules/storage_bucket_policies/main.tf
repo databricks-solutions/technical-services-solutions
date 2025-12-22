@@ -164,15 +164,104 @@ locals {
     if doc != null
   }
 
-  # Filtered policies contain the guardrail statements we operate on.
-  # This map is also used as the apply target set (only these buckets get updated).
-  bucket_policy_statement_jsons_filtered = {
+  # Target buckets: policies that contain the IPDeny-style guardrail statement.
+  # We keep managing these buckets after the change so we don't risk deleting policies
+  # by dropping them from for_each on subsequent runs.
+  bucket_policy_statement_jsons_targeted = {
     for name, doc in local.bucket_policy_documents :
     name => [
       for stmt in try(doc.Statement, []) : jsonencode(stmt)
       if length(regexall(local.policy_filter_pattern, lower(jsonencode(stmt)))) > 0 &&
          try(stmt.Condition["StringNotEqualsIfExists"], null) != null &&
          try(stmt.Condition["NotIpAddressIfExists"], null) != null
+    ]
+    if doc != null
+  }
+
+  bucket_policies_targeted = {
+    for name, stmts_json in local.bucket_policy_statement_jsons_targeted :
+    name => local.bucket_policies_updated[name]
+    if length(stmts_json) > 0
+  }
+
+  # Filtered output should only include buckets/statements that STILL need the change.
+  bucket_policy_statement_jsons_filtered = {
+    for name, doc in local.bucket_policy_documents :
+    name => [
+      for stmt in try(doc.Statement, []) :
+      jsonencode(
+        merge(
+          stmt,
+          {
+            Condition = merge(
+              try(stmt.Condition, {}),
+              {
+                # Remove invalid aws:VpceOrgPaths from StringNotEqualsIfExists (AWS rejects it there)
+                StringNotEqualsIfExists = {
+                  for k, v in try(try(stmt.Condition, {})["StringNotEqualsIfExists"], {}) :
+                  k => v
+                  if k != "aws:VpceOrgPaths"
+                }
+                # Add org-path guardrail using an operator AWS accepts for this key
+                "ForAnyValue:StringNotLikeIfExists" = merge(
+                  try(try(stmt.Condition, {})["ForAnyValue:StringNotLikeIfExists"], {}),
+                  {
+                    "aws:VpceOrgPaths" = distinct(
+                      concat(
+                        (
+                          (
+                            try(try(try(stmt.Condition, {})["ForAnyValue:StringNotLikeIfExists"], {})["aws:VpceOrgPaths"], null)
+                          ) == null ?
+                          [] :
+                          (
+                            can(try(try(try(stmt.Condition, {})["ForAnyValue:StringNotLikeIfExists"], {})["aws:VpceOrgPaths"], null)[0]) ?
+                            [for v in try(try(try(stmt.Condition, {})["ForAnyValue:StringNotLikeIfExists"], {})["aws:VpceOrgPaths"], null) : tostring(v)] :
+                            [tostring(try(try(try(stmt.Condition, {})["ForAnyValue:StringNotLikeIfExists"], {})["aws:VpceOrgPaths"], null))]
+                          )
+                        ),
+                        (
+                          (
+                            try(try(stmt.Condition, {})["StringNotEqualsIfExists"]["aws:VpceOrgPaths"], null)
+                          ) == null ?
+                          [] :
+                          (
+                            can(try(try(stmt.Condition, {})["StringNotEqualsIfExists"]["aws:VpceOrgPaths"], null)[0]) ?
+                            [for v in try(try(stmt.Condition, {})["StringNotEqualsIfExists"]["aws:VpceOrgPaths"], null) : tostring(v)] :
+                            [tostring(try(try(stmt.Condition, {})["StringNotEqualsIfExists"]["aws:VpceOrgPaths"], null))]
+                          )
+                        ),
+                        [local.vpce_org_path]
+                      )
+                    )
+                  }
+                )
+              }
+            )
+          }
+        )
+      )
+      if length(regexall(local.policy_filter_pattern, lower(jsonencode(stmt)))) > 0 &&
+         try(stmt.Condition["StringNotEqualsIfExists"], null) != null &&
+         try(stmt.Condition["NotIpAddressIfExists"], null) != null &&
+         (
+           # Still needs update if old invalid placement exists OR new placement is missing required org path
+           try(try(stmt.Condition, {})["StringNotEqualsIfExists"]["aws:VpceOrgPaths"], null) != null
+           ||
+           !contains(
+             (
+               (
+                 try(try(try(stmt.Condition, {})["ForAnyValue:StringNotLikeIfExists"], {})["aws:VpceOrgPaths"], null)
+               ) == null ?
+               [] :
+               (
+                 can(try(try(try(stmt.Condition, {})["ForAnyValue:StringNotLikeIfExists"], {})["aws:VpceOrgPaths"], null)[0]) ?
+                 [for v in try(try(try(stmt.Condition, {})["ForAnyValue:StringNotLikeIfExists"], {})["aws:VpceOrgPaths"], null) : tostring(v)] :
+                 [tostring(try(try(try(stmt.Condition, {})["ForAnyValue:StringNotLikeIfExists"], {})["aws:VpceOrgPaths"], null))]
+               )
+             ),
+             local.vpce_org_path
+           )
+         )
     ]
     if doc != null
   }
@@ -186,16 +275,15 @@ locals {
     )
     if length(stmts_json) > 0
   }
-
-  bucket_policies_to_apply = {
-    for name, _ in local.bucket_policies_filtered :
-    name => local.bucket_policies_updated[name]
-  }
 }
 
 resource "aws_s3_bucket_policy" "updated" {
-  for_each = local.bucket_policies_to_apply
+  for_each = local.bucket_policies_targeted
 
   bucket = local.bucket_name_map[each.key]
   policy = each.value
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }

@@ -36,3 +36,9 @@ variable "bucket_arns_override" {
   type        = map(string)
   default     = {}
 }
+
+variable "debug" {
+  description = "When true, emit diagnostic outputs to help troubleshoot discovery and filtering."
+  type        = bool
+  default     = false
+}

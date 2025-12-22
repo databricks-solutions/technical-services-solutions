@@ -19,11 +19,16 @@ data "databricks_external_location" "by_name" {
 }
 
 locals {
-  external_location_bucket_arns = {
+  external_location_urls = {
     for name, location in data.databricks_external_location.by_name :
+    name => try(location.external_location_info[0].url, null)
+  }
+
+  external_location_bucket_arns = {
+    for name, url in local.external_location_urls :
     name => (
-      startswith(lower(location.url), "s3://") || startswith(lower(location.url), "s3a://") ?
-      "arn:aws:s3:::${split("/", regexreplace(location.url, "^s3a?://", ""))[0]}" :
+      url != null && (startswith(lower(url), "s3://") || startswith(lower(url), "s3a://")) ?
+      "arn:aws:s3:::${split("/", replace(replace(url, "s3a://", ""), "s3://", ""))[0]}" :
       null
     )
   }

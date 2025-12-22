@@ -48,7 +48,9 @@ module "workspace_credentials" {
 module "storage_bucket_policies" {
   source = "./modules/storage_bucket_policies"
 
-  bucket_arns = module.workspace_credentials.external_location_bucket_arns
+  # Use discovered external locations when available; allow manual override if
+  # discovery returns empty (e.g., due to permissions).
+  bucket_arns = length(var.bucket_arns_override) > 0 ? var.bucket_arns_override : module.workspace_credentials.external_location_bucket_arns
 }
 
 # Outputs
@@ -60,6 +62,11 @@ output "external_location_bucket_arns" {
 output "storage_bucket_policies" {
   description = "S3 bucket policies associated with storage credentials"
   value       = module.storage_bucket_policies.bucket_policies
+}
+
+output "storage_bucket_policies_filtered" {
+  description = "Filtered S3 bucket policies containing Databricks-related or network guardrail statements"
+  value       = module.storage_bucket_policies.bucket_policies_filtered
 }
 
 output "debug_external_location_names" {

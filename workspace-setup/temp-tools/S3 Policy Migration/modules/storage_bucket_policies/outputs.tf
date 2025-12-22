@@ -6,12 +6,17 @@ output "bucket_policies" {
   }
 }
 
+output "bucket_policies_filtered" {
+  description = "Filtered subset of bucket policies that include Databricks or network guardrail statements"
+  value       = local.bucket_policies_filtered
+}
+
 output "debug_input_bucket_arns" {
-  description = "Diagnostic map of bucket ARNs received by this module"
+  description = "Diagnostic view of the bucket ARNs provided to this module"
   value       = var.bucket_arns
 }
 
 output "debug_bucket_name_map" {
-  description = "Diagnostic view of how bucket ARNs are translated into bucket names"
+  description = "Diagnostic mapping of identifiers to resolved bucket names"
   value       = local.bucket_name_map
 }

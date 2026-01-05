@@ -1,0 +1,472 @@
+# AWS Permissions for Databricks Terraform Pre-Check
+# 
+# This file defines the IAM actions required for deploying Databricks workspaces.
+# Update this file when Databricks documentation changes.
+# 
+# Reference: https://docs.databricks.com/aws/en/admin/workspace/create-uc-workspace
+# Last updated: 2025-01
+
+# =============================================================================
+# VPC TYPE PERMISSIONS (Cross-Account Role)
+# =============================================================================
+
+vpc_types:
+  # Databricks-managed VPC - Full permissions for Databricks to create/manage VPC
+  databricks_managed:
+    description: "Databricks creates and manages the entire VPC infrastructure"
+    ec2_actions:
+      - ec2:AllocateAddress
+      - ec2:AssignPrivateIpAddresses
+      - ec2:AssociateDhcpOptions
+      - ec2:AssociateIamInstanceProfile
+      - ec2:AssociateRouteTable
+      - ec2:AttachInternetGateway
+      - ec2:AttachVolume
+      - ec2:AuthorizeSecurityGroupEgress
+      - ec2:AuthorizeSecurityGroupIngress
+      - ec2:CancelSpotInstanceRequests
+      - ec2:CreateDhcpOptions
+      - ec2:CreateFleet
+      - ec2:CreateInternetGateway
+      - ec2:CreateLaunchTemplate
+      - ec2:CreateLaunchTemplateVersion
+      - ec2:CreateNatGateway
+      - ec2:CreateRoute
+      - ec2:CreateRouteTable
+      - ec2:CreateSecurityGroup
+      - ec2:CreateSubnet
+      - ec2:CreateTags
+      - ec2:CreateVolume
+      - ec2:CreateVpc
+      - ec2:CreateVpcEndpoint
+      - ec2:DeleteDhcpOptions
+      - ec2:DeleteFleets
+      - ec2:DeleteInternetGateway
+      - ec2:DeleteLaunchTemplate
+      - ec2:DeleteLaunchTemplateVersions
+      - ec2:DeleteNatGateway
+      - ec2:DeleteRoute
+      - ec2:DeleteRouteTable
+      - ec2:DeleteSecurityGroup
+      - ec2:DeleteSubnet
+      - ec2:DeleteTags
+      - ec2:DeleteVolume
+      - ec2:DeleteVpc
+      - ec2:DeleteVpcEndpoints
+      - ec2:DescribeAvailabilityZones
+      - ec2:DescribeFleetHistory
+      - ec2:DescribeFleetInstances
+      - ec2:DescribeFleets
+      - ec2:DescribeIamInstanceProfileAssociations
+      - ec2:DescribeInstanceStatus
+      - ec2:DescribeInstances
+      - ec2:DescribeInternetGateways
+      - ec2:DescribeLaunchTemplates
+      - ec2:DescribeLaunchTemplateVersions
+      - ec2:DescribeNatGateways
+      - ec2:DescribePrefixLists
+      - ec2:DescribeReservedInstancesOfferings
+      - ec2:DescribeRouteTables
+      - ec2:DescribeSecurityGroups
+      - ec2:DescribeSpotInstanceRequests
+      - ec2:DescribeSpotPriceHistory
+      - ec2:DescribeSubnets
+      - ec2:DescribeVolumes
+      - ec2:DescribeVpcs
+      - ec2:DetachInternetGateway
+      - ec2:DisassociateIamInstanceProfile
+      - ec2:DisassociateRouteTable
+      - ec2:GetLaunchTemplateData
+      - ec2:GetSpotPlacementScores
+      - ec2:ModifyFleet
+      - ec2:ModifyLaunchTemplate
+      - ec2:ModifyVpcAttribute
+      - ec2:ReleaseAddress
+      - ec2:ReplaceIamInstanceProfileAssociation
+      - ec2:RequestSpotInstances
+      - ec2:RevokeSecurityGroupEgress
+      - ec2:RevokeSecurityGroupIngress
+      - ec2:RunInstances
+      - ec2:TerminateInstances
+
+  # Customer-managed VPC with default restrictions
+  customer_managed_default:
+    description: "Customer provides VPC, Databricks manages compute resources"
+    ec2_actions:
+      - ec2:AssociateDhcpOptions
+      - ec2:AssociateIamInstanceProfile
+      - ec2:AssociateRouteTable
+      - ec2:AttachInternetGateway
+      - ec2:AttachVolume
+      - ec2:AuthorizeSecurityGroupEgress
+      - ec2:AuthorizeSecurityGroupIngress
+      - ec2:CancelSpotInstanceRequests
+      - ec2:CreateDhcpOptions
+      - ec2:CreateFleet
+      - ec2:CreateLaunchTemplate
+      - ec2:CreateLaunchTemplateVersion
+      - ec2:CreateRoute
+      - ec2:CreateSecurityGroup
+      - ec2:CreateTags
+      - ec2:CreateVolume
+      - ec2:DeleteDhcpOptions
+      - ec2:DeleteFleets
+      - ec2:DeleteLaunchTemplate
+      - ec2:DeleteLaunchTemplateVersions
+      - ec2:DeleteRoute
+      - ec2:DeleteSecurityGroup
+      - ec2:DeleteTags
+      - ec2:DeleteVolume
+      - ec2:DescribeAvailabilityZones
+      - ec2:DescribeFleetHistory
+      - ec2:DescribeFleetInstances
+      - ec2:DescribeFleets
+      - ec2:DescribeIamInstanceProfileAssociations
+      - ec2:DescribeInstanceStatus
+      - ec2:DescribeInstances
+      - ec2:DescribeInternetGateways
+      - ec2:DescribeLaunchTemplates
+      - ec2:DescribeLaunchTemplateVersions
+      - ec2:DescribeNatGateways
+      - ec2:DescribePrefixLists
+      - ec2:DescribeReservedInstancesOfferings
+      - ec2:DescribeRouteTables
+      - ec2:DescribeSecurityGroups
+      - ec2:DescribeSpotInstanceRequests
+      - ec2:DescribeSpotPriceHistory
+      - ec2:DescribeSubnets
+      - ec2:DescribeVolumes
+      - ec2:DescribeVpcAttribute
+      - ec2:DescribeVpcs
+      - ec2:DetachInternetGateway
+      - ec2:DisassociateIamInstanceProfile
+      - ec2:DisassociateRouteTable
+      - ec2:GetLaunchTemplateData
+      - ec2:GetSpotPlacementScores
+      - ec2:ModifyFleet
+      - ec2:ModifyLaunchTemplate
+      - ec2:ReplaceIamInstanceProfileAssociation
+      - ec2:RequestSpotInstances
+      - ec2:RevokeSecurityGroupEgress
+      - ec2:RevokeSecurityGroupIngress
+      - ec2:RunInstances
+      - ec2:TerminateInstances
+
+  # Customer-managed VPC with custom restrictions (same as default, but ARN-scoped)
+  customer_managed_custom:
+    description: "Customer provides VPC with resource-level IAM restrictions"
+    note: "Same actions as customer_managed_default but scoped to specific VPC/Subnet ARNs"
+    ec2_actions: []  # Inherits from customer_managed_default
+
+# Common IAM actions required for all VPC types
+common_iam_actions:
+  - iam:CreateServiceLinkedRole
+  - iam:PutRolePolicy
+
+# =============================================================================
+# TERRAFORM RESOURCE PERMISSIONS
+# =============================================================================
+
+resources:
+  cross_account_role:
+    name: "Cross-Account IAM Role"
+    terraform_type: "aws_iam_role"
+    description: "IAM role that Databricks control plane assumes to manage resources"
+    actions:
+      - iam:CreateRole
+      - iam:GetRole
+      - iam:DeleteRole
+      - iam:TagRole
+      - iam:UntagRole
+      - iam:UpdateAssumeRolePolicy
+      - iam:PutRolePolicy
+      - iam:DeleteRolePolicy
+      - iam:GetRolePolicy
+      - iam:AttachRolePolicy
+      - iam:DetachRolePolicy
+      - iam:ListRolePolicies
+      - iam:ListAttachedRolePolicies
+
+  instance_profile:
+    name: "Instance Profile"
+    terraform_type: "aws_iam_instance_profile"
+    description: "Instance profile attached to Databricks cluster nodes"
+    actions:
+      - iam:CreateRole
+      - iam:CreateInstanceProfile
+      - iam:GetInstanceProfile
+      - iam:DeleteInstanceProfile
+      - iam:AddRoleToInstanceProfile
+      - iam:RemoveRoleFromInstanceProfile
+      - iam:PassRole
+      - iam:ListInstanceProfilesForRole
+
+  s3_root_bucket:
+    name: "S3 Root Bucket (DBFS)"
+    terraform_type: "aws_s3_bucket"
+    description: "S3 bucket for Databricks File System (DBFS) root storage"
+    actions:
+      - s3:CreateBucket
+      - s3:DeleteBucket
+      - s3:GetBucketLocation
+      - s3:ListBucket
+      - s3:GetBucketAcl
+      - s3:PutBucketAcl
+      - s3:GetBucketPolicy
+      - s3:PutBucketPolicy
+      - s3:DeleteBucketPolicy
+      - s3:GetBucketVersioning
+      - s3:PutBucketVersioning
+      - s3:GetEncryptionConfiguration
+      - s3:PutEncryptionConfiguration
+      - s3:GetBucketPublicAccessBlock
+      - s3:PutBucketPublicAccessBlock
+      - s3:GetBucketTagging
+      - s3:PutBucketTagging
+      - s3:GetObject
+      - s3:PutObject
+      - s3:DeleteObject
+
+  vpc:
+    name: "VPC"
+    terraform_type: "aws_vpc"
+    description: "Virtual Private Cloud for Databricks workspace"
+    actions:
+      - ec2:CreateVpc
+      - ec2:DeleteVpc
+      - ec2:DescribeVpcs
+      - ec2:ModifyVpcAttribute
+      - ec2:DescribeVpcAttribute
+      - ec2:CreateTags
+      - ec2:DeleteTags
+
+  subnets:
+    name: "Subnets"
+    terraform_type: "aws_subnet"
+    description: "Private subnets for Databricks clusters (minimum 2 in different AZs)"
+    actions:
+      - ec2:CreateSubnet
+      - ec2:DeleteSubnet
+      - ec2:DescribeSubnets
+      - ec2:ModifySubnetAttribute
+      - ec2:CreateTags
+      - ec2:DescribeAvailabilityZones
+
+  security_group:
+    name: "Security Group"
+    terraform_type: "aws_security_group"
+    description: "Security group for Databricks cluster communication"
+    actions:
+      - ec2:CreateSecurityGroup
+      - ec2:DeleteSecurityGroup
+      - ec2:DescribeSecurityGroups
+      - ec2:AuthorizeSecurityGroupIngress
+      - ec2:AuthorizeSecurityGroupEgress
+      - ec2:RevokeSecurityGroupIngress
+      - ec2:RevokeSecurityGroupEgress
+      - ec2:UpdateSecurityGroupRuleDescriptionsIngress
+      - ec2:UpdateSecurityGroupRuleDescriptionsEgress
+      - ec2:CreateTags
+
+  internet_gateway:
+    name: "Internet Gateway"
+    terraform_type: "aws_internet_gateway"
+    description: "Internet gateway for public subnet access"
+    actions:
+      - ec2:CreateInternetGateway
+      - ec2:DeleteInternetGateway
+      - ec2:DescribeInternetGateways
+      - ec2:AttachInternetGateway
+      - ec2:DetachInternetGateway
+      - ec2:CreateTags
+
+  nat_gateway:
+    name: "NAT Gateway"
+    terraform_type: "aws_nat_gateway"
+    description: "NAT gateway for private subnet outbound access"
+    actions:
+      - ec2:CreateNatGateway
+      - ec2:DeleteNatGateway
+      - ec2:DescribeNatGateways
+      - ec2:AllocateAddress
+      - ec2:ReleaseAddress
+      - ec2:DescribeAddresses
+      - ec2:CreateTags
+
+  route_tables:
+    name: "Route Tables"
+    terraform_type: "aws_route_table"
+    description: "Route tables for VPC traffic routing"
+    actions:
+      - ec2:CreateRouteTable
+      - ec2:DeleteRouteTable
+      - ec2:DescribeRouteTables
+      - ec2:CreateRoute
+      - ec2:DeleteRoute
+      - ec2:ReplaceRoute
+      - ec2:AssociateRouteTable
+      - ec2:DisassociateRouteTable
+      - ec2:CreateTags
+
+  vpc_endpoints:
+    name: "VPC Endpoints (PrivateLink)"
+    terraform_type: "aws_vpc_endpoint"
+    description: "VPC endpoints for private connectivity to AWS services"
+    deployment_modes: ["privatelink", "full"]
+    actions:
+      - ec2:CreateVpcEndpoint
+      - ec2:DeleteVpcEndpoints
+      - ec2:DescribeVpcEndpoints
+      - ec2:ModifyVpcEndpoint
+      - ec2:DescribeVpcEndpointServices
+      - ec2:DescribePrefixLists
+      - ec2:CreateTags
+
+  kms_key:
+    name: "KMS Key (CMK)"
+    terraform_type: "aws_kms_key"
+    description: "Customer-managed key for encryption"
+    deployment_modes: ["full"]
+    actions:
+      - kms:CreateKey
+      - kms:DescribeKey
+      - kms:EnableKey
+      - kms:DisableKey
+      - kms:ScheduleKeyDeletion
+      - kms:CreateAlias
+      - kms:DeleteAlias
+      - kms:UpdateAlias
+      - kms:GetKeyPolicy
+      - kms:PutKeyPolicy
+      - kms:CreateGrant
+      - kms:ListGrants
+      - kms:RevokeGrant
+      - kms:TagResource
+      - kms:UntagResource
+
+# =============================================================================
+# UNITY CATALOG PERMISSIONS
+# =============================================================================
+
+unity_catalog:
+  storage_credential:
+    description: "Permissions for Unity Catalog storage credential"
+    actions:
+      - s3:GetObject
+      - s3:PutObject
+      - s3:DeleteObject
+      - s3:ListBucket
+      - s3:GetBucketLocation
+      - kms:Decrypt
+      - kms:Encrypt
+      - kms:GenerateDataKey*
+      - sts:AssumeRole
+
+  file_events:
+    description: "Optional permissions for Unity Catalog file events"
+    optional: true
+    actions:
+      - s3:GetBucketNotification
+      - s3:PutBucketNotification
+      - sns:ListSubscriptionsByTopic
+      - sns:GetTopicAttributes
+      - sns:SetTopicAttributes
+      - sns:CreateTopic
+      - sns:TagResource
+      - sns:Publish
+      - sns:Subscribe
+      - sqs:CreateQueue
+      - sqs:DeleteMessage
+      - sqs:ReceiveMessage
+      - sqs:SendMessage
+      - sqs:GetQueueUrl
+      - sqs:GetQueueAttributes
+      - sqs:SetQueueAttributes
+      - sqs:TagQueue
+      - sqs:ChangeMessageVisibility
+      - sqs:PurgeQueue
+      - sqs:ListQueues
+      - sqs:ListQueueTags
+      - sns:ListTopics
+      - sns:Unsubscribe
+      - sns:DeleteTopic
+      - sqs:DeleteQueue
+
+# =============================================================================
+# DEPLOYMENT PROFILES
+# =============================================================================
+
+deployment_profiles:
+  standard:
+    description: "Basic workspace deployment"
+    resources:
+      - cross_account_role
+      - instance_profile
+      - s3_root_bucket
+      - vpc
+      - subnets
+      - security_group
+      - internet_gateway
+      - nat_gateway
+      - route_tables
+
+  privatelink:
+    description: "Workspace with Private Link connectivity"
+    inherits: standard
+    additional_resources:
+      - vpc_endpoints
+
+  unity_catalog:
+    description: "Workspace with Unity Catalog"
+    inherits: standard
+    additional_resources: []
+    additional_permissions:
+      - unity_catalog.storage_credential
+
+  full:
+    description: "Full deployment with all features"
+    resources:
+      - cross_account_role
+      - instance_profile
+      - s3_root_bucket
+      - vpc
+      - subnets
+      - security_group
+      - internet_gateway
+      - nat_gateway
+      - route_tables
+      - vpc_endpoints
+      - kms_key
+    additional_permissions:
+      - unity_catalog.storage_credential
+      - unity_catalog.file_events
+
+# =============================================================================
+# SERVICE QUOTAS
+# =============================================================================
+
+quotas:
+  vpc:
+    service_code: "vpc"
+    quota_code: "L-F678F1CE"
+    name: "VPCs per Region"
+    default_limit: 5
+    
+  elastic_ips:
+    service_code: "ec2"
+    quota_code: "L-0263D0A3"
+    name: "EC2-VPC Elastic IPs"
+    default_limit: 5
+    
+  security_groups_per_vpc:
+    service_code: "vpc"
+    quota_code: "L-2AFB9258"
+    name: "Security groups per VPC"
+    default_limit: 2500
+    
+  nat_gateways:
+    service_code: "vpc"
+    quota_code: "L-FE5A380F"
+    name: "NAT gateways per Availability Zone"
+    default_limit: 5
+

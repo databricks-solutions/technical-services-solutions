@@ -1,0 +1,267 @@
+# GCP Permissions for Databricks Terraform Pre-Check
+#
+# This file defines the IAM permissions required for deploying Databricks workspaces.
+# Update this file when Databricks documentation changes.
+#
+# Reference: https://docs.databricks.com/gcp/en/admin/workspace/
+# Last updated: 2025-01
+
+# =============================================================================
+# REQUIRED APIS
+# =============================================================================
+
+required_apis:
+  - api: compute.googleapis.com
+    description: "Compute Engine API for VMs and networking"
+    
+  - api: storage.googleapis.com
+    description: "Cloud Storage API for GCS buckets"
+    
+  - api: iam.googleapis.com
+    description: "IAM API for service accounts and permissions"
+    
+  - api: cloudresourcemanager.googleapis.com
+    description: "Resource Manager API for project management"
+    
+  - api: cloudkms.googleapis.com
+    description: "Cloud KMS API for encryption keys"
+    
+  - api: logging.googleapis.com
+    description: "Cloud Logging API for audit logs"
+    
+  - api: servicenetworking.googleapis.com
+    description: "Service Networking API for Private Google Access"
+
+# =============================================================================
+# TERRAFORM RESOURCE PERMISSIONS
+# =============================================================================
+
+resources:
+  vpc_network:
+    name: "VPC Network"
+    terraform_type: "google_compute_network"
+    description: "Custom VPC for Databricks workspace"
+    actions:
+      - compute.networks.create
+      - compute.networks.delete
+      - compute.networks.get
+      - compute.networks.updatePolicy
+
+  subnetwork:
+    name: "Subnetwork"
+    terraform_type: "google_compute_subnetwork"
+    description: "Subnet with Private Google Access enabled"
+    actions:
+      - compute.subnetworks.create
+      - compute.subnetworks.delete
+      - compute.subnetworks.get
+      - compute.subnetworks.update
+      - compute.subnetworks.use
+      - compute.subnetworks.setPrivateIpGoogleAccess
+
+  firewall:
+    name: "Firewall Rules"
+    terraform_type: "google_compute_firewall"
+    description: "Firewall rules for Databricks cluster communication"
+    actions:
+      - compute.firewalls.create
+      - compute.firewalls.delete
+      - compute.firewalls.get
+      - compute.firewalls.update
+
+  router:
+    name: "Cloud Router"
+    terraform_type: "google_compute_router"
+    description: "Cloud Router for NAT gateway"
+    actions:
+      - compute.routers.create
+      - compute.routers.delete
+      - compute.routers.get
+      - compute.routers.update
+
+  nat:
+    name: "Cloud NAT"
+    terraform_type: "google_compute_router_nat"
+    description: "Cloud NAT for private cluster egress"
+    actions:
+      - compute.routers.update
+      - compute.routers.get
+
+  service_account:
+    name: "Service Account"
+    terraform_type: "google_service_account"
+    description: "Service account for Databricks nodes"
+    actions:
+      - iam.serviceAccounts.create
+      - iam.serviceAccounts.delete
+      - iam.serviceAccounts.get
+      - iam.serviceAccounts.actAs
+      - iam.serviceAccountKeys.create
+      - iam.serviceAccountKeys.delete
+
+  iam_binding:
+    name: "IAM Binding"
+    terraform_type: "google_project_iam_binding"
+    description: "IAM role bindings for Databricks"
+    actions:
+      - resourcemanager.projects.getIamPolicy
+      - resourcemanager.projects.setIamPolicy
+
+  storage_bucket:
+    name: "GCS Bucket"
+    terraform_type: "google_storage_bucket"
+    description: "GCS bucket for Unity Catalog"
+    deployment_modes: ["unity", "full"]
+    actions:
+      - storage.buckets.create
+      - storage.buckets.delete
+      - storage.buckets.get
+      - storage.buckets.update
+      - storage.buckets.getIamPolicy
+      - storage.buckets.setIamPolicy
+      - storage.objects.create
+      - storage.objects.delete
+      - storage.objects.get
+      - storage.objects.list
+
+  kms_keyring:
+    name: "KMS Key Ring"
+    terraform_type: "google_kms_key_ring"
+    description: "KMS key ring for CMEK"
+    deployment_modes: ["full"]
+    actions:
+      - cloudkms.keyRings.create
+      - cloudkms.keyRings.get
+      - cloudkms.keyRings.getIamPolicy
+      - cloudkms.keyRings.setIamPolicy
+
+  kms_key:
+    name: "KMS Crypto Key"
+    terraform_type: "google_kms_crypto_key"
+    description: "KMS key for CMEK encryption"
+    deployment_modes: ["full"]
+    actions:
+      - cloudkms.cryptoKeys.create
+      - cloudkms.cryptoKeys.get
+      - cloudkms.cryptoKeys.update
+      - cloudkms.cryptoKeys.getIamPolicy
+      - cloudkms.cryptoKeys.setIamPolicy
+      - cloudkms.cryptoKeyVersions.useToEncrypt
+      - cloudkms.cryptoKeyVersions.useToDecrypt
+
+# =============================================================================
+# DEPLOYMENT PROFILES
+# =============================================================================
+
+deployment_profiles:
+  standard:
+    description: "Basic workspace deployment"
+    resources:
+      - vpc_network
+      - subnetwork
+      - firewall
+      - router
+      - nat
+      - service_account
+      - iam_binding
+
+  unity_catalog:
+    description: "Workspace with Unity Catalog"
+    inherits: standard
+    additional_resources:
+      - storage_bucket
+
+  full:
+    description: "Full deployment with all features"
+    resources:
+      - vpc_network
+      - subnetwork
+      - firewall
+      - router
+      - nat
+      - service_account
+      - iam_binding
+      - storage_bucket
+      - kms_keyring
+      - kms_key
+
+# =============================================================================
+# PREDEFINED ROLES
+# =============================================================================
+
+predefined_roles:
+  viewer:
+    role: "roles/viewer"
+    description: "Read-only access for verification checks"
+    
+  editor:
+    role: "roles/editor"
+    description: "Edit access for resource creation"
+    
+  compute_admin:
+    role: "roles/compute.admin"
+    description: "Full control of Compute Engine resources"
+    
+  storage_admin:
+    role: "roles/storage.admin"
+    description: "Full control of Cloud Storage resources"
+    
+  iam_admin:
+    role: "roles/iam.securityAdmin"
+    description: "IAM policy administration"
+
+# =============================================================================
+# QUOTAS
+# =============================================================================
+
+quotas:
+  networks:
+    metric: "compute.googleapis.com/networks"
+    name: "VPC Networks"
+    default_limit: 15
+    
+  subnetworks:
+    metric: "compute.googleapis.com/subnetworks"
+    name: "Subnetworks"
+    default_limit: 250
+    
+  firewalls:
+    metric: "compute.googleapis.com/firewalls"
+    name: "Firewall Rules"
+    default_limit: 500
+    
+  cpus:
+    metric: "compute.googleapis.com/cpus"
+    name: "CPUs (all regions)"
+    default_limit: 1000
+    
+  instances:
+    metric: "compute.googleapis.com/instances"
+    name: "VM Instances"
+    default_limit: 5000
+
+# =============================================================================
+# MINIMUM IAM REQUIREMENTS
+# =============================================================================
+
+minimum_iam:
+  read_only:
+    roles:
+      - roles/viewer
+    use_case: "View resources and run read-only checks"
+    
+  full_testing:
+    roles:
+      - roles/compute.admin
+      - roles/storage.admin
+      - roles/iam.serviceAccountAdmin
+    use_case: "Create temporary resources for permission testing"
+    
+  unity_catalog:
+    roles:
+      - roles/compute.admin
+      - roles/storage.admin
+      - roles/iam.serviceAccountAdmin
+      - roles/cloudkms.admin
+    use_case: "Full deployment with Unity Catalog and CMEK"
+

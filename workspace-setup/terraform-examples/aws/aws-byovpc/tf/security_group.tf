@@ -13,12 +13,23 @@ resource "aws_security_group_rule" "default_sg_egress_ports" {
 
 
 resource "aws_security_group_rule" "default_sg_self_ingress" {
-  count = var.vpc_id == "" ? 1 : 0
+  count             = var.vpc_id == "" ? 1 : 0
+  type              = "ingress"
+  from_port         = 0
+  to_port           = 65535
+  protocol          = "-1"
+  self              = true
+  security_group_id = module.vpc[0].default_security_group_id
+  description       = "Allow all inbound traffic from self"
+}
+
+resource "aws_security_group_rule" "default_sg_self_egress" {
+  count             = var.vpc_id == "" ? 1 : 0
   type              = "egress"
   from_port         = 0
   to_port           = 65535
   protocol          = "-1"
   self              = true
   security_group_id = module.vpc[0].default_security_group_id
-  description       = "Allow all traffic from self"
+  description       = "Allow all outbound traffic to self"
 }

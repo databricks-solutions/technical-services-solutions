@@ -129,6 +129,8 @@ You can use the `terraform.tfvars.example` file as a base for your variables. Le
     - The CIDR address of the first subnet
 - subnet_private_cidr
     - The CIDR address of the second subnet
+- managed_resource_group_name
+    - The name of the managed resource group
 
 
 ## Deploy

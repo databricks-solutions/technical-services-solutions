@@ -20,6 +20,7 @@ location = "westeurope"
 databricks_account_id = "xxx-xxx"
 existing_metastore_id = "xxx-xxx"
 new_metastore_name = ""
+managed_resource_group_name = null #optional. if no name is provided, azure will generate one on it's own
 
 # =============================================================================
 # Network Configuration

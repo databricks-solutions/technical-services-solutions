@@ -8,7 +8,10 @@ on:
 jobs:
   test-deploy:
     name: Test deployment
-    runs-on: linux-ubuntu-latest
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs/technical-services-solutions
     steps:
       - uses: actions/checkout@v4
         with:
@@ -17,6 +20,7 @@ jobs:
         with:
           node-version: 20
           cache: npm
+          cache-dependency-path: docs/technical-services-solutions/package-lock.json
 
       - name: Install dependencies
         run: npm ci

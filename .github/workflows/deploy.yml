@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: linux-ubuntu-latest
     defaults:
       run:
         working-directory: docs/technical-services-solutions
@@ -48,7 +48,7 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
+    runs-on: linux-ubuntu-latest
     needs: build
     steps:
       - name: Deploy to GitHub Pages

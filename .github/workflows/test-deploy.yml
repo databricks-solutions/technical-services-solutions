@@ -8,7 +8,7 @@ on:
 jobs:
   test-deploy:
     name: Test deployment
-    runs-on: ubuntu-latest
+    runs-on: linux-ubuntu-latest
     defaults:
       run:
         working-directory: docs/technical-services-solutions

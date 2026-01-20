@@ -61,6 +61,22 @@
   margin-top: 0.5rem;
 }
 
+.outlineButton {
+  background-color: transparent !important;
+  border: 2px solid #ffffff !important;
+  color: #ffffff !important;
+  font-weight: 600;
+  padding: 0.75rem 2rem;
+  transition: all 0.2s ease;
+}
+
+.outlineButton:hover {
+  background-color: #ffffff !important;
+  border-color: #ffffff !important;
+  color: #1b3139 !important;
+  transform: translateY(-2px);
+}
+
 .primaryButton {
   background-color: #ff3621 !important;
   border-color: #ff3621 !important;

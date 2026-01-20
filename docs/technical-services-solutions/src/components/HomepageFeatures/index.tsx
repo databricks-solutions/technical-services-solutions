@@ -1,5 +1,6 @@
-import {type ReactNode, useContext, useState} from 'react';
+import {type ReactNode, useContext} from 'react';
 import Heading from '@theme/Heading';
+import Link from '@docusaurus/Link';
 import {ScrollContext} from '@site/src/pages/index';
 import styles from './styles.module.css';
 
@@ -14,7 +15,7 @@ type ServiceItem = {
 const ServiceList: ServiceItem[] = [
   {
     title: 'Core Platform',
-    path: '/docs/intro',
+    path: '/docs/core-platform',
     color: '#ff3621',
     icon: (
       <svg viewBox="0 0 24 24" fill="currentColor" width="32" height="32">
@@ -30,7 +31,7 @@ const ServiceList: ServiceItem[] = [
   },
   {
     title: 'Data Engineering',
-    path: '/docs/intro',
+    path: '/docs/data-engineering',
     color: '#2272b4',
     icon: (
       <svg viewBox="0 0 24 24" fill="currentColor" width="32" height="32">
@@ -46,7 +47,7 @@ const ServiceList: ServiceItem[] = [
   },
   {
     title: 'Data Governance',
-    path: '/docs/intro',
+    path: '/docs/data-governance',
     color: '#00a972',
     icon: (
       <svg viewBox="0 0 24 24" fill="currentColor" width="32" height="32">
@@ -62,7 +63,7 @@ const ServiceList: ServiceItem[] = [
   },
   {
     title: 'Data Warehousing',
-    path: '/docs/intro',
+    path: '/docs/data-warehousing',
     color: '#ffab00',
     icon: (
       <svg viewBox="0 0 24 24" fill="currentColor" width="32" height="32">
@@ -79,7 +80,7 @@ const ServiceList: ServiceItem[] = [
   },
   {
     title: 'ML & GenAI',
-    path: '/docs/intro',
+    path: '/docs/ml-genai',
     color: '#98102a',
     icon: (
       <svg viewBox="0 0 24 24" fill="currentColor" width="32" height="32">
@@ -96,7 +97,7 @@ const ServiceList: ServiceItem[] = [
   },
   {
     title: 'Launch Accelerator',
-    path: '/docs/intro',
+    path: '/docs/launch-accelerator',
     color: '#ff5f46',
     icon: (
       <svg viewBox="0 0 24 24" fill="currentColor" width="32" height="32">
@@ -113,7 +114,7 @@ const ServiceList: ServiceItem[] = [
   },
   {
     title: 'Workspace Setup',
-    path: '/docs/intro',
+    path: '/docs/workspace-setup',
     color: '#1b5162',
     icon: (
       <svg viewBox="0 0 24 24" fill="currentColor" width="32" height="32">
@@ -130,50 +131,10 @@ const ServiceList: ServiceItem[] = [
   },
 ];
 
-type ModalProps = {
-  isOpen: boolean;
-  title: string;
-  onClose: () => void;
-};
-
-function Modal({isOpen, title, onClose}: ModalProps) {
-  if (!isOpen) return null;
-
-  return (
-    <div className={styles.modalOverlay} onClick={onClose}>
-      <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
-        <button className={styles.modalClose} onClick={onClose} aria-label="Close">
-          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M18 6L6 18M6 6l12 12"/>
-          </svg>
-        </button>
-        <div className={styles.modalIcon}>
-          <svg viewBox="0 0 24 24" width="64" height="64" fill="none">
-            <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" fill="#fff0d3" stroke="#ffab00" strokeWidth="1.5"/>
-            <path d="M12 9v4M12 17h.01" stroke="#ffab00" strokeWidth="2" strokeLinecap="round"/>
-          </svg>
-        </div>
-        <Heading as="h2" className={styles.modalTitle}>{title}</Heading>
-        <p className={styles.modalSubtitle}>Under Construction</p>
-        <p className={styles.modalMessage}>
-          This section is currently being developed. Check back soon for updates!
-        </p>
-        <button className={styles.modalButton} onClick={onClose}>
-          Got it
-        </button>
-      </div>
-    </div>
-  );
-}
-
-type ServiceCardProps = Omit<ServiceItem, 'path'> & {
-  onCardClick: (title: string) => void;
-};
-
-function ServiceCard({title, description, icon, color, onCardClick}: ServiceCardProps) {
+function ServiceCard({title, path, description, icon, color}: ServiceItem) {
   return (
     <div className={styles.cardCol}>
-      <button onClick={() => onCardClick(title)} className={styles.cardLink}>
+      <Link to={path} className={styles.cardLink}>
         <div className={styles.card}>
           <div className={styles.cardIconWrapper} style={{'--card-color': color} as React.CSSProperties}>
             <div className={styles.cardIcon}>
@@ -194,28 +155,16 @@ function ServiceCard({title, description, icon, color, onCardClick}: ServiceCard
             <span className={styles.tooltipDescription}>{description}</span>
           </div>
         </div>
-      </button>
+      </Link>
     </div>
   );
 }
 
 export default function HomepageFeatures(): ReactNode {
   const {showUpArrow} = useContext(ScrollContext);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [selectedTitle, setSelectedTitle] = useState('');
 
   const scrollToTop = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const handleCardClick = (title: string) => {
-    setSelectedTitle(title);
-    setModalOpen(true);
-  };
-
-  const closeModal = () => {
-    setModalOpen(false);
-    setSelectedTitle('');
   };
 
   return (
@@ -235,12 +184,11 @@ export default function HomepageFeatures(): ReactNode {
           <p>Ready-to-use code examples and accelerators for your Databricks implementation</p>
         </div>
         <div className={styles.cardGrid}>
-          {ServiceList.map(({path, ...props}, idx) => (
-            <ServiceCard key={idx} {...props} onCardClick={handleCardClick} />
+          {ServiceList.map((props, idx) => (
+            <ServiceCard key={idx} {...props} />
           ))}
         </div>
       </div>
-      <Modal isOpen={modalOpen} title={selectedTitle} onClose={closeModal} />
     </section>
   );
 }

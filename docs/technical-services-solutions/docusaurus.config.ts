@@ -73,8 +73,8 @@ const config: Config = {
         navbar: {
             title: 'STS - Technical Services Solutions',
             logo: {
-                alt: 'My Site Logo',
-                src: 'img/logo.svg',
+                alt: 'Databricks Logo',
+                src: 'img/databricks-logo.png',
             },
             items: [
                 {

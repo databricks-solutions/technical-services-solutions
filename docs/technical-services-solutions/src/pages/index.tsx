@@ -39,6 +39,11 @@ function HomepageHeader() {
             best practices, and battle-tested code examples.
           </p>
           <div className={styles.heroButtons}>
+            <Link
+              className={clsx('button button--lg', styles.outlineButton)}
+              to="/docs/intro">
+              Overview
+            </Link>
             <button
               className={clsx('button button--lg', styles.primaryButton)}
               onClick={scrollToSolutions}>

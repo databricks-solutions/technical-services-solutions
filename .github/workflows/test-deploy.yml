@@ -1,4 +1,4 @@
-name: Test deployment
+name: Test STS Static Docs
 
 on:
   pull_request:
@@ -8,7 +8,7 @@ on:
 jobs:
   test-deploy:
     name: Test deployment
-    runs-on: ubuntu-latest
+    runs-on: linux-ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:

@@ -19,7 +19,7 @@ This is a small Terraform “tool” that:
   - `s3:GetBucketPolicy`
   - `s3:PutBucketPolicy`
 - Databricks service principal credentials with access to:
-  - List external locations in the workspace
+  - List external locations in the metasotre attahced to the workspace
   - Read external location definitions
 
 ## Configure

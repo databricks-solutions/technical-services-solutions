@@ -127,10 +127,12 @@ class GCPChecker(BaseChecker):
         region: str = None, 
         project_id: str = None,
         credentials_file: str = None,
+        verify_only: bool = False,
     ):
         super().__init__(region)
         self.project_id = project_id
         self.credentials_file = credentials_file
+        self.verify_only = verify_only  # GCP already uses mostly read-only checks
         self._credentials = None
         self._project_info = None
     

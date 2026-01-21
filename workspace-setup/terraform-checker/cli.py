@@ -29,7 +29,7 @@ _dbx_precheck_completion() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
     
     # Main options
-    opts="--cloud --all --mode --vpc-type --region --output --profile --subscription-id --resource-group --project --credentials-file --verbose --dry-run --cleanup-orphans --json --log-level --log-file --config --quiet --version --help"
+    opts="--cloud --all --mode --vpc-type --region --output --profile --subscription-id --resource-group --project --credentials-file --verbose --dry-run --verify-only --cleanup-orphans --json --log-level --log-file --config --quiet --version --help"
     
     case "${prev}" in
         --cloud|-c)
@@ -89,6 +89,7 @@ _dbx_precheck() {
         '--credentials-file[GCP credentials]:file:_files -g "*.json"' \\
         '(-v --verbose)'{-v,--verbose}'[Verbose output]' \\
         '--dry-run[Dry run mode]' \\
+        '--verify-only[Read-only checks without resource creation]' \\
         '--cleanup-orphans[Cleanup orphaned resources]' \\
         '--json[JSON output]' \\
         '--log-level[Log level]:level:(${log_levels})' \\

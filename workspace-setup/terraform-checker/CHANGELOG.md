@@ -61,6 +61,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Immediate cleanup of temporary resources
 - Unique resource naming with UUID
 
+## [1.1.0] - 2026-01-21
+
+### Added
+
+- **Verify-Only Mode (`--verify-only`)**
+  - New CLI flag for read-only permission checks without creating temporary resources
+  - Useful for environments where resource creation requires approval
+  - Uses IAM policy simulation (AWS) and read-only API calls
+  - Falls back to warnings when write permissions cannot be verified
+
+- **AWS Deployment Mode Documentation**
+  - Added detailed deployment modes table (standard, privatelink, unity, full)
+  - Added VPC types table (databricks, customer, custom)
+  - Added Unity Catalog requirements section
+
+- **GCP Deployment Mode Documentation**
+  - Added deployment configurations table
+  - Added VPC configuration options
+  - Added Unity Catalog requirements for GCP
+  - Added Private Connectivity requirements
+
+### Changed
+
+- AWS, Azure, and GCP checkers now accept `verify_only` parameter
+- CLI help text updated with verify-only mode explanation
+- README.md expanded with comprehensive mode documentation for all clouds
+
 ## [Unreleased]
 
 ### Planned

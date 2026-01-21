@@ -104,9 +104,58 @@ python main.py --cloud aws --output report.txt
 # Dry-run (show what would be tested without creating resources)
 python main.py --cloud aws --dry-run
 
+# Verify-only mode (read-only checks, no resource creation)
+# Useful when resource creation requires approval
+python main.py --cloud aws --verify-only
+
 # Clean up any orphaned test resources
 python main.py --cleanup-orphans --cloud aws
 ```
+
+### Verify-Only Mode
+
+The `--verify-only` flag runs read-only permission checks without creating any temporary resources. This is useful when:
+
+- Resource creation requires approval from your organization
+- You want a quick validation of credentials and existing resources
+- You're in a restricted environment where resource creation is blocked
+
+**Limitations of verify-only mode:**
+- Cannot fully verify write permissions (e.g., create bucket, create VNet)
+- Uses IAM policy simulation when available, which may not reflect all conditions
+- Some permission checks will show as "WARNING" instead of definitive pass/fail
+
+For comprehensive permission validation, run without `--verify-only` to test with actual resource creation.
+
+## AWS Deployment Modes
+
+| Mode | VPC | Storage (Root Bucket) | Unity Catalog Storage | VPC Endpoints | Cross-Account Role |
+|------|-----|----------------------|----------------------|---------------|-------------------|
+| `standard` | Databricks or Customer | **You create** S3 bucket | N/A | N/A | **You create** |
+| `privatelink` | **You create** | **You create** S3 bucket | N/A | **You create** | **You create** |
+| `unity` | Databricks or Customer | **You create** S3 bucket | **You create** S3 bucket | N/A | **You create** |
+| `full` | **You create** | **You create** S3 bucket | **You create** S3 bucket | **You create** | **You create** |
+
+### AWS VPC Types
+
+| VPC Type | Description | Permissions Required |
+|----------|-------------|---------------------|
+| `databricks` | Databricks creates and manages the VPC | EC2 create/delete permissions for VPC, Subnets, NAT, IGW |
+| `customer` | You provide an existing VPC (default restrictions) | EC2 describe permissions, Security Group management |
+| `custom` | You provide an existing VPC (custom restrictions) | Same as `customer`, with custom CIDR/routing |
+
+### Unity Catalog Requirements (AWS)
+
+Per [Databricks documentation](https://docs.databricks.com/aws/en/connect/unity-catalog/cloud-storage/index.html):
+
+1. **S3 Bucket** - For Unity Catalog metastore data
+2. **IAM Role** - Cross-account role with trust policy for Databricks
+3. **S3 Permissions on Role:**
+   - `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject` - Read/write data
+   - `s3:ListBucket` - List bucket contents
+   - `s3:GetBucketLocation` - Get bucket region
+4. **KMS Permissions (if using CMK):**
+   - `kms:Encrypt`, `kms:Decrypt` - For encryption operations
 
 ## Azure Deployment Modes
 
@@ -129,6 +178,42 @@ Per [Microsoft documentation](https://learn.microsoft.com/en-us/azure/databricks
    - `Storage Queue Data Contributor` - For file events (optional)
 4. **RBAC Roles on Resource Group:**
    - `EventGrid EventSubscription Contributor` - For auto file events (optional)
+
+## GCP Deployment Modes
+
+GCP Databricks deployments use a simpler model compared to AWS and Azure. The main configurations are:
+
+| Configuration | VPC | Storage (GCS) | Unity Catalog Storage | Private Google Access | Cloud NAT |
+|--------------|-----|---------------|----------------------|----------------------|-----------|
+| **Standard** | Databricks or Customer | **You create** GCS bucket | N/A | Recommended | Recommended |
+| **With Unity Catalog** | Databricks or Customer | **You create** GCS bucket | **You create** GCS bucket | Recommended | Recommended |
+| **Private Connectivity** | **You create** | **You create** GCS bucket | Optional | **Required** | **Required** |
+
+### GCP VPC Configuration
+
+| VPC Type | Description | Requirements |
+|----------|-------------|--------------|
+| **Databricks-managed** | Databricks creates VPC in your project | `compute.networks.create`, `compute.subnetworks.create` |
+| **Customer-managed** | You provide an existing VPC | Custom mode VPC, Private Google Access enabled on subnets |
+
+### Unity Catalog Requirements (GCP)
+
+Per [Databricks documentation](https://docs.gcp.databricks.com/data-governance/unity-catalog/index.html):
+
+1. **GCS Bucket** - For Unity Catalog metastore data
+2. **Service Account** - With appropriate IAM roles
+3. **IAM Permissions on Bucket:**
+   - `storage.objects.create`, `storage.objects.delete` - Read/write data
+   - `storage.objects.get`, `storage.objects.list` - List/read objects
+   - `storage.buckets.get` - Get bucket metadata
+4. **Uniform Bucket-Level Access** - Recommended for Unity Catalog buckets
+
+### Private Connectivity Requirements (GCP)
+
+1. **Private Google Access** - Must be enabled on all subnets used by Databricks
+2. **Cloud NAT** - Required for clusters without public IPs to access internet
+3. **Firewall Rules** - Allow internal cluster communication
+4. **Cloud Router** - Required for Cloud NAT configuration
 
 ## Databricks-Specific Checks
 

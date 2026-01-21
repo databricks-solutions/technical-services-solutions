@@ -243,6 +243,7 @@ def run_aws_checks(
     profile: Optional[str],
     deployment_mode: DeploymentMode,
     vpc_type: VPCType,
+    verify_only: bool = False,
 ) -> tuple:
     """Run AWS checks and return the report and checker instance."""
     vpc_type_name = {
@@ -253,7 +254,10 @@ def run_aws_checks(
     
     click.echo(click.style(f"\n▶ Running AWS checks...", fg="yellow"))
     click.echo(f"   Mode: {deployment_mode.value} | VPC: {vpc_type_name}")
-    click.echo(click.style("   Testing with REAL temporary resources (create → verify → delete)", fg="cyan"))
+    if verify_only:
+        click.echo(click.style("   VERIFY-ONLY mode: Read-only checks (no resource creation)", fg="cyan"))
+    else:
+        click.echo(click.style("   Testing with REAL temporary resources (create → verify → delete)", fg="cyan"))
     
     try:
         checker = AWSChecker(
@@ -261,6 +265,7 @@ def run_aws_checks(
             profile=profile,
             deployment_mode=deployment_mode,
             vpc_type=vpc_type,
+            verify_only=verify_only,
         )
         report = checker.run_all_checks()
         
@@ -301,6 +306,7 @@ def run_azure_checks(
     subscription_id: Optional[str],
     resource_group: Optional[str],
     deployment_mode: str = "standard",
+    verify_only: bool = False,
 ) -> Optional[CheckReport]:
     """Run Azure checks and return the report."""
     from checkers.azure import AzureDeploymentMode
@@ -317,7 +323,10 @@ def run_azure_checks(
     
     click.echo(click.style("\n▶ Running Azure checks...", fg="yellow"))
     click.echo(f"   Mode: {mode_display}")
-    click.echo(click.style("   Testing with REAL temporary resources (create → verify → delete)", fg="cyan"))
+    if verify_only:
+        click.echo(click.style("   VERIFY-ONLY mode: Read-only checks (no resource creation)", fg="cyan"))
+    else:
+        click.echo(click.style("   Testing with REAL temporary resources (create → verify → delete)", fg="cyan"))
     
     try:
         checker = AzureChecker(
@@ -325,6 +334,7 @@ def run_azure_checks(
             subscription_id=subscription_id,
             resource_group=resource_group,
             deployment_mode=azure_mode,
+            verify_only=verify_only,
         )
         report = checker.run_all_checks()
         
@@ -349,15 +359,19 @@ def run_gcp_checks(
     region: Optional[str],
     project: Optional[str],
     credentials_file: Optional[str],
+    verify_only: bool = False,
 ) -> Optional[CheckReport]:
     """Run GCP checks and return the report."""
     click.echo(click.style("\n▶ Running GCP checks...", fg="yellow"))
+    if verify_only:
+        click.echo(click.style("   VERIFY-ONLY mode: Read-only checks (no resource creation)", fg="cyan"))
     
     try:
         checker = GCPChecker(
             region=region,
             project_id=project,
             credentials_file=credentials_file,
+            verify_only=verify_only,
         )
         report = checker.run_all_checks()
         
@@ -445,6 +459,11 @@ def run_gcp_checks(
     help="Show what would be tested WITHOUT creating any resources"
 )
 @click.option(
+    "--verify-only",
+    is_flag=True,
+    help="Run read-only checks without creating temporary resources (useful when resource creation requires approval)"
+)
+@click.option(
     "--cleanup-orphans",
     is_flag=True,
     help="Find and delete any leftover test resources (dbx-precheck-temp-*)"
@@ -494,6 +513,7 @@ def main(
     credentials_file: Optional[str],
     verbose: bool,
     dry_run: bool,
+    verify_only: bool,
     cleanup_orphans: bool,
     json_output: bool,
     log_level: str,
@@ -570,6 +590,13 @@ def main(
         show_dry_run_plan(mode, vpc_type)
         sys.exit(0)
     
+    # Handle verify-only mode
+    if verify_only:
+        click.echo(click.style("\n🔒 VERIFY-ONLY MODE - Read-only checks (no resource creation)", fg="cyan", bold=True))
+        click.echo("   This mode checks credentials, quotas, and existing resources without creating anything.")
+        click.echo("   Some permission checks may be limited. Use full mode for comprehensive validation.")
+        click.echo()
+    
     deployment_mode = get_deployment_mode(mode)
     vpc_type_enum = get_vpc_type(vpc_type)
     
@@ -612,32 +639,32 @@ def main(
         available = CredentialLoader.detect_available_clouds()
         
         if available.get("aws"):
-            report, checker = run_aws_checks(region, profile, deployment_mode, vpc_type_enum)
+            report, checker = run_aws_checks(region, profile, deployment_mode, vpc_type_enum, verify_only)
             if report:
                 reports.append(report)
                 aws_checker = checker
         
         if available.get("azure"):
-            report = run_azure_checks(region, subscription_id, resource_group, mode)
+            report = run_azure_checks(region, subscription_id, resource_group, mode, verify_only)
             if report:
                 reports.append(report)
         
         if available.get("gcp"):
-            report = run_gcp_checks(region, project, credentials_file)
+            report = run_gcp_checks(region, project, credentials_file, verify_only)
             if report:
                 reports.append(report)
     else:
         if cloud == "aws":
-            report, checker = run_aws_checks(region, profile, deployment_mode, vpc_type_enum)
+            report, checker = run_aws_checks(region, profile, deployment_mode, vpc_type_enum, verify_only)
             if report:
                 reports.append(report)
                 aws_checker = checker
         elif cloud == "azure":
-            report = run_azure_checks(region, subscription_id, resource_group, mode)
+            report = run_azure_checks(region, subscription_id, resource_group, mode, verify_only)
             if report:
                 reports.append(report)
         elif cloud == "gcp":
-            report = run_gcp_checks(region, project, credentials_file)
+            report = run_gcp_checks(region, project, credentials_file, verify_only)
             if report:
                 reports.append(report)
     

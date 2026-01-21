@@ -53,11 +53,13 @@ class AWSChecker(BaseChecker):
         profile: str = None,
         deployment_mode: DeploymentMode = DeploymentMode.STANDARD,
         vpc_type: VPCType = VPCType.CUSTOMER_MANAGED_DEFAULT,
+        verify_only: bool = False,
     ):
         super().__init__(region)
         self.profile = profile
         self.deployment_mode = deployment_mode
         self.vpc_type = vpc_type
+        self.verify_only = verify_only  # When True, skip resource creation tests
         self._session = None
         self._account_id = None
         self._arn = None
@@ -1157,9 +1159,106 @@ class AWSChecker(BaseChecker):
         """
         Check permissions for Storage Configuration (Root Bucket).
         Tests permissions by creating REAL temporary resources and cleaning up.
+        In verify_only mode, uses read-only checks and DryRun API calls.
         """
         category = CheckCategory(name="STEP 1: STORAGE CONFIGURATION (Root Bucket)")
         
+        if self.verify_only:
+            category.add_result(CheckResult(
+                name="Test Method",
+                status=CheckStatus.OK,
+                message="VERIFY-ONLY: Read-only checks (no resource creation)"
+            ))
+            
+            # Verify-only S3 checks
+            category.add_result(CheckResult(
+                name="── Step 1.1: S3 Bucket Operations (Read-Only) ──",
+                status=CheckStatus.OK,
+                message=""
+            ))
+            
+            s3 = self._get_client("s3")
+            
+            # Test ListBuckets
+            try:
+                s3.list_buckets()
+                category.add_result(CheckResult(
+                    name="  s3:ListBuckets",
+                    status=CheckStatus.OK,
+                    message="VERIFIED - Can list existing buckets"
+                ))
+            except Exception as e:
+                category.add_result(CheckResult(
+                    name="  s3:ListBuckets",
+                    status=CheckStatus.NOT_OK,
+                    message=f"DENIED: {str(e)[:80]}"
+                ))
+            
+            # Check IAM simulation for S3 actions
+            if self._can_simulate:
+                s3_actions = ["s3:CreateBucket", "s3:DeleteBucket", "s3:PutBucketVersioning", 
+                             "s3:PutBucketPolicy", "s3:PutEncryptionConfiguration"]
+                results = self._simulate_actions(s3_actions)
+                for action in s3_actions:
+                    status_str, message = results.get(action, ("error", "Unknown"))
+                    status = CheckStatus.OK if status_str == "allowed" else CheckStatus.WARNING
+                    category.add_result(CheckResult(
+                        name=f"  {action}",
+                        status=status,
+                        message=f"Simulated: {message}"
+                    ))
+            else:
+                category.add_result(CheckResult(
+                    name="  S3 Write Permissions",
+                    status=CheckStatus.WARNING,
+                    message="Cannot verify without IAM simulation or resource creation"
+                ))
+            
+            # Verify-only IAM checks
+            category.add_result(CheckResult(
+                name="── Step 1.2: IAM Role Operations (Read-Only) ──",
+                status=CheckStatus.OK,
+                message=""
+            ))
+            
+            iam = self._get_client("iam")
+            
+            try:
+                iam.list_roles(MaxItems=5)
+                category.add_result(CheckResult(
+                    name="  iam:ListRoles",
+                    status=CheckStatus.OK,
+                    message="VERIFIED - Can list existing roles"
+                ))
+            except Exception as e:
+                category.add_result(CheckResult(
+                    name="  iam:ListRoles",
+                    status=CheckStatus.NOT_OK,
+                    message=f"DENIED: {str(e)[:80]}"
+                ))
+            
+            if self._can_simulate:
+                iam_actions = ["iam:CreateRole", "iam:DeleteRole", "iam:PutRolePolicy", 
+                              "iam:CreatePolicy", "iam:DeletePolicy"]
+                results = self._simulate_actions(iam_actions)
+                for action in iam_actions:
+                    status_str, message = results.get(action, ("error", "Unknown"))
+                    status = CheckStatus.OK if status_str == "allowed" else CheckStatus.WARNING
+                    category.add_result(CheckResult(
+                        name=f"  {action}",
+                        status=status,
+                        message=f"Simulated: {message}"
+                    ))
+            else:
+                category.add_result(CheckResult(
+                    name="  IAM Write Permissions",
+                    status=CheckStatus.WARNING,
+                    message="Cannot verify without IAM simulation or resource creation"
+                ))
+            
+            return category
+        
+        # Full mode with resource creation
         category.add_result(CheckResult(
             name="Test Method",
             status=CheckStatus.OK,
@@ -1449,18 +1548,66 @@ class AWSChecker(BaseChecker):
                 ))
         
         # =====================================================================
-        # Step 2.3: Security Group Configuration - REAL TEST
+        # Step 2.3: Security Group Configuration - REAL TEST or VERIFY-ONLY
         # =====================================================================
-        category.add_result(CheckResult(
-            name="── Step 2.3: Security Group & Rules (REAL TEST) ──",
-            status=CheckStatus.OK,
-            message=""
-        ))
-        
-        # Use real resource creation to test SG permissions
-        sg_results = self._test_security_group_permissions()
-        for result in sg_results:
-            category.add_result(result)
+        if self.verify_only:
+            category.add_result(CheckResult(
+                name="── Step 2.3: Security Group & Rules (Read-Only) ──",
+                status=CheckStatus.OK,
+                message=""
+            ))
+            
+            # Read-only SG checks
+            try:
+                sgs = ec2.describe_security_groups(MaxResults=5)
+                sg_count = len(sgs.get("SecurityGroups", []))
+                category.add_result(CheckResult(
+                    name="  ec2:DescribeSecurityGroups",
+                    status=CheckStatus.OK,
+                    message=f"VERIFIED - Found {sg_count} security group(s)"
+                ))
+            except Exception as e:
+                category.add_result(CheckResult(
+                    name="  ec2:DescribeSecurityGroups",
+                    status=CheckStatus.NOT_OK,
+                    message=f"DENIED: {str(e)[:80]}"
+                ))
+            
+            # DryRun test for CreateSecurityGroup
+            status, msg = self._test_dryrun(
+                "ec2:CreateSecurityGroup",
+                lambda: ec2.create_security_group(
+                    GroupName="databricks-test",
+                    Description="test",
+                    VpcId="vpc-test",
+                    DryRun=True
+                ),
+            )
+            category.add_result(CheckResult(name="  ec2:CreateSecurityGroup (DryRun)", status=status, message=msg))
+            
+            if self._can_simulate:
+                sg_actions = ["ec2:AuthorizeSecurityGroupIngress", "ec2:AuthorizeSecurityGroupEgress",
+                             "ec2:RevokeSecurityGroupIngress", "ec2:DeleteSecurityGroup"]
+                results = self._simulate_actions(sg_actions)
+                for action in sg_actions:
+                    status_str, message = results.get(action, ("error", "Unknown"))
+                    status = CheckStatus.OK if status_str == "allowed" else CheckStatus.WARNING
+                    category.add_result(CheckResult(
+                        name=f"  {action}",
+                        status=status,
+                        message=f"Simulated: {message}"
+                    ))
+        else:
+            category.add_result(CheckResult(
+                name="── Step 2.3: Security Group & Rules (REAL TEST) ──",
+                status=CheckStatus.OK,
+                message=""
+            ))
+            
+            # Use real resource creation to test SG permissions
+            sg_results = self._test_security_group_permissions()
+            for result in sg_results:
+                category.add_result(result)
         
         # =====================================================================
         # Step 2.4: VPC Endpoints (if PrivateLink)

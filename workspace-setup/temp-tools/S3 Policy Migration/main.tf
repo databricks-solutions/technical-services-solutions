@@ -82,12 +82,3 @@ output "debug_metastore_summary" {
   value       = module.workspace_credentials.debug_metastore_summary
 }
 
-output "debug_input_bucket_arns" {
-  description = "Diagnostic view of the bucket ARNs passed into the storage bucket policy module"
-  value       = module.storage_bucket_policies.debug_input_bucket_arns
-}
-
-output "debug_bucket_name_map" {
-  description = "Diagnostic mapping of identifiers to resolved bucket names"
-  value       = module.storage_bucket_policies.debug_bucket_name_map
-}

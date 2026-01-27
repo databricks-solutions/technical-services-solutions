@@ -5,8 +5,8 @@ locals {
   }
 }
 
-data "aws_s3_bucket_policy" "this" {
-  for_each = local.bucket_name_map
-
-  bucket = each.value
+locals {
+  # We intentionally skip fetching bucket policies to avoid plan/apply failures
+  # when a bucket has no policy. This returns an empty map instead of erroring.
+  bucket_policies = {}
 }

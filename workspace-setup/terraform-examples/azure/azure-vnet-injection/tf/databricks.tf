@@ -4,6 +4,7 @@ resource "azurerm_databricks_workspace" "this" {
   location            = azurerm_resource_group.this.location
   sku                 = "premium"
   tags                = var.tags
+  managed_resource_group_name = var.managed_resource_group_name
 
   custom_parameters {
     virtual_network_id                                   = local.vnet.id

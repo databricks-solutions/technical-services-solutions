@@ -73,3 +73,25 @@ resource "databricks_metastore_assignment" "this" {
   workspace_id = azurerm_databricks_workspace.this.workspace_id
   metastore_id = var.existing_metastore_id == "" ? databricks_metastore.this[0].id : var.existing_metastore_id
 }
+
+# catalog creation
+
+module "connect_storage" {
+  source = "./modules/connect_storage"
+  create_storage_account = true
+  resource_group = azurerm_resource_group.this.name
+  location = azurerm_resource_group.this.location
+  storage_account_name = "gergeljkissa"
+  tags = var.tags
+}
+
+module "create_catalog" {
+  source = "./modules/catalog"
+  storage_account_id = module.connect_storage.storage_account_id
+  storage_account_name = module.connect_storage.storage_account_name
+  storage_credential_id = module.connect_storage.storage_credential_id
+  catalog_name = "demo"
+  storage_container_name = "demo"
+  force_destroy_external_location = true
+  force_destroy_catalog = true
+}

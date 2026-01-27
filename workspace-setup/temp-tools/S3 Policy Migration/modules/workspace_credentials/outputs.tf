@@ -15,10 +15,7 @@ output "debug_external_location_names" {
 
 output "debug_external_location_urls" {
   description = "Diagnostic map of external location names to their storage URLs"
-  value = {
-    for name, location in data.databricks_external_location.by_name :
-    name => location.url
-  }
+  value       = local.external_location_urls
 }
 
 output "debug_external_location_bucket_arns_full" {

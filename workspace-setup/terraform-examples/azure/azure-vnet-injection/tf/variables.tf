@@ -17,6 +17,16 @@ variable "resource_group_name" {
     type        = string
 }
 
+variable "managed_resource_group_name" {
+    description = "The name of managed resource group. This is optional field"
+    type = string
+    default     = null
+    validation {
+    condition     = var.managed_resource_group_name != var.resource_group_name
+    error_message = "Managed resource group name should not be same as resource group name"
+  }
+}
+
 variable "tags" {
     description = "A map of tags to assign to the resources"
     type        = map(string)

@@ -18,12 +18,6 @@ variable "client_secret" {
   sensitive   = true
 }
 
-variable "aws_region" {
-  description = "AWS region to use for S3 API calls"
-  type        = string
-  default     = "us-east-1"
-}
-
 variable "workspace_host" {
   description = "Databricks workspace URL"
   type        = string

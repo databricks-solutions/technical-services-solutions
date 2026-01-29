@@ -2,21 +2,11 @@
 
 terraform {
   required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 4.16"
-    }
     databricks = {
       source  = "databricks/databricks"
       version = ">= 1.16.0"
     }
   }
-}
-
-data "aws_caller_identity" "current" {}
-
-provider "aws" {
-  region = var.aws_region
 }
 
 # Account-level provider for service principal auth
@@ -45,40 +35,25 @@ module "workspace_credentials" {
   client_secret  = var.client_secret
 }
 
-module "storage_bucket_policies" {
-  source = "./modules/storage_bucket_policies"
-
-  bucket_arns = module.workspace_credentials.external_location_bucket_arns
-}
-
 # Outputs
-output "external_location_bucket_arns" {
-  description = "External location bucket ARNs for workspace"
-  value       = module.workspace_credentials.external_location_bucket_arns
+output "debug_external_location_bucket_arns" {
+  description = "Debug: external location bucket ARNs for workspace (null when debug=false)"
+  value       = var.debug ? module.workspace_credentials.external_location_bucket_arns : null
 }
 
-output "storage_bucket_policies" {
-  description = "S3 bucket policies associated with storage credentials"
-  value       = module.storage_bucket_policies.bucket_policies
+output "s3_bucket_arns_requiring_policy_update" {
+  description = "Guidance: S3 bucket ARNs backing external locations. Customers should update these bucket policies."
+  value       = distinct(values(module.workspace_credentials.external_location_bucket_arns))
 }
 
-output "debug_external_location_names" {
-  description = "Diagnostic list of external location names returned by the workspace"
-  value       = module.workspace_credentials.debug_external_location_names
-}
-
-output "debug_external_location_urls" {
-  description = "Diagnostic mapping of external location names to their storage URLs"
-  value       = module.workspace_credentials.debug_external_location_urls
-}
-
-output "debug_external_location_bucket_arns_full" {
-  description = "Diagnostic mapping of external locations to derived bucket ARNs prior to filtering"
-  value       = module.workspace_credentials.debug_external_location_bucket_arns_full
-}
-
-output "debug_metastore_summary" {
-  description = "Diagnostic summary of the workspace's current metastore assignment"
-  value       = module.workspace_credentials.debug_metastore_summary
+output "debug" {
+  description = "Diagnostic output (null when debug=false)"
+  value = var.debug ? {
+    external_location_names            = module.workspace_credentials.debug_external_location_names
+    external_location_urls             = module.workspace_credentials.debug_external_location_urls
+    external_location_bucket_arns_full = module.workspace_credentials.debug_external_location_bucket_arns_full
+    external_location_bucket_arns      = module.workspace_credentials.external_location_bucket_arns
+    metastore_summary                  = module.workspace_credentials.debug_metastore_summary
+  } : null
 }
 

@@ -1,0 +1,630 @@
+{
+  "version": 4,
+  "terraform_version": "1.11.0",
+  "serial": 22,
+  "lineage": "0bbc4b1c-13a3-ecd7-4233-f31c8eca2752",
+  "outputs": {
+    "generated_service_principal_name": {
+      "value": "databricks-sp-1dae4e26",
+      "type": "string"
+    },
+    "service_principal_info": {
+      "value": {
+        "application_id": "dd14b4d8-5690-4df2-94e0-762b9ba3665b",
+        "display_name": "databricks-sp-1dae4e26",
+        "id": "75302254477525",
+        "workspace_id": "2253190873532522"
+      },
+      "type": [
+        "object",
+        {
+          "application_id": "string",
+          "display_name": "string",
+          "id": "string",
+          "workspace_id": "string"
+        }
+      ]
+    },
+    "storage_credentials_arns": {
+      "value": {
+        "main": "arn:aws:iam::332745928618:role/eduardo-font-tf-metastore-role"
+      },
+      "type": [
+        "object",
+        {
+          "main": "string"
+        }
+      ]
+    }
+  },
+  "resources": [
+    {
+      "mode": "data",
+      "type": "aws_caller_identity",
+      "name": "current",
+      "provider": "provider[\"registry.terraform.io/hashicorp/aws\"]",
+      "instances": [
+        {
+          "schema_version": 0,
+          "attributes": {
+            "account_id": "332745928618",
+            "arn": "arn:aws:iam::332745928618:user/eduardo-tf",
+            "id": "332745928618",
+            "user_id": "AIDAU26JT56VLBMJHADWR"
+          },
+          "sensitive_attributes": []
+        }
+      ]
+    },
+    {
+      "mode": "data",
+      "type": "databricks_group",
+      "name": "admins",
+      "provider": "provider[\"registry.terraform.io/databricks/databricks\"].workspace",
+      "instances": [
+        {
+          "schema_version": 0,
+          "attributes": {
+            "acl_principal_id": "groups/admins",
+            "allow_cluster_create": true,
+            "allow_instance_pool_create": true,
+            "child_groups": [],
+            "databricks_sql_access": true,
+            "display_name": "admins",
+            "external_id": null,
+            "groups": [],
+            "id": "81672364457815",
+            "instance_profiles": [],
+            "members": [
+              "1505211544220156",
+              "73167959136938",
+              "77574795401304"
+            ],
+            "recursive": true,
+            "service_principals": [
+              "73167959136938",
+              "77574795401304"
+            ],
+            "users": [
+              "1505211544220156"
+            ],
+            "workspace_access": true,
+            "workspace_consume": false
+          },
+          "sensitive_attributes": []
+        }
+      ]
+    },
+    {
+      "mode": "data",
+      "type": "databricks_mws_workspaces",
+      "name": "all",
+      "provider": "provider[\"registry.terraform.io/databricks/databricks\"].mws",
+      "instances": [
+        {
+          "schema_version": 0,
+          "attributes": {
+            "id": "_",
+            "ids": {
+              "12-days-of-demos": 552521402508878,
+              "Alad1": 1331186222642836,
+              "Darwish ": 2682618608775269,
+              "Jill-Training": 335851961042540,
+              "LIR_WS_test": 303004280537082,
+              "LakeWatch_clamb": 3381785400806115,
+              "MCP Workspace": 3406264204654150,
+              "Parastou-aws-test": 3807542592933278,
+              "Zillow-test-permissions": 2548566665587601,
+              "ab-testing": 797449325447747,
+              "acao-eastus1-ws": 1659007010900971,
+              "acxiom-demo": 3331140932176222,
+              "acxiom-demo-curation": 1909571343274576,
+              "adb-dagm": 2886633297597644,
+              "aeuw-ws-sndbx-kanchwala-694": 1620271534111097,
+              "agent-spark-r2": 4089467511526923,
+              "agentic_demo_ws": 2044483995146274,
+              "ah-east-workspace": 2278650843507148,
+              "amit-demo-bp": 87897633527043,
+              "anw-test-ws": 871675392475123,
+              "apradana-serverless-jkt": 1839304385167258,
+              "apradana-serverless-sg": 1795119047626825,
+              "ar-classic-690rw7": 1625833747297121,
+              "ar-serverless-b1838e": 551259336269355,
+              "arash_databricks": 188414885262768,
+              "arnav-ws": 2522820596399445,
+              "atomsmasher-demo": 2259345671794203,
+              "audod": 2152208308805795,
+              "azetune1": 3175884850997824,
+              "azetune2": 432144140066871,
+              "bcline-Meijer-demo": 1469619676465177,
+              "bcline-dev-deploy": 2449554004446703,
+              "bcline-store-intel-demo": 4209918877836548,
+              "bcline-walgreens-demo": 3621594541833020,
+              "ben-demo": 2034006500233851,
+              "bir_serverless_workspace": 2489205609052859,
+              "bolun-demo": 2152887111806728,
+              "bridge_test_workspace": 2291992588277542,
+              "bulajicn": 4295759075746482,
+              "capitalone-test-workspace": 1188148475754034,
+              "cbtstsra2": 3409427643406289,
+              "cgdbdemos-serverless": 3413850234486901,
+              "cgdbdemos5q1m54": 2205216628973176,
+              "chi-vc-dev": 2672120209984706,
+              "chi_bricks_dev": 960998787860983,
+              "cicaktest-workspace": 44238080204138,
+              "dahora-demo-itau-consumer-shared": 1205646177856766,
+              "dahora-demo-itau-producer-core": 993518945740198,
+              "dbxbc-enterprise-test": 2039789470459221,
+              "dbxbc-private-test": 3701452257861465,
+              "dbxbc-public-test": 3545515795480113,
+              "delete-austin": 3880248732889302,
+              "delta-producer": 2824851351700118,
+              "delta-share-test": 4454081847271055,
+              "demo-hazang": 1120049049590727,
+              "demoh00sdw": 12982050137902,
+              "demoifd5ys": 865104634921898,
+              "demokiv79z": 2228010176292333,
+              "demomatty2-y3hhnj": 127459214705361,
+              "demonvgcty": 425585689517338,
+              "dh-lighthouse-deploy": 1010398769209889,
+              "dh-onboarding": 1352018155050367,
+              "digital-grid-do-not-erase": 4108782132484875,
+              "dnb-hackathon-prep": 633247740591321,
+              "doobri-serverless1": 1809340434761662,
+              "dperez-rcg-dataproduct-east": 2023763932262834,
+              "dperez-rcg-dataproduct-west": 4193399341040376,
+              "eduardo-font-tf": 2253190873532522,
+              "eduardo-lomonaco-testing-table-access": 4485499510859758,
+              "efranceschi": 806153421808439,
+              "ehoel-no-shield": 1800648137263853,
+              "ehoel-shield": 1072475747857797,
+              "esd-one-click": 1577896542919349,
+              "evangelos-ws": 3695705713352724,
+              "fabriciohq-workspace": 3168008453803755,
+              "fd-cleanroom-ws": 3891722768789325,
+              "fd-test-regional-nat": 2964106752481705,
+              "flightschoolapj-team4": 3277894882366185,
+              "fp_lab": 1555375147133236,
+              "francisco_martin_workspace": 3210725877447124,
+              "gardens-poc": 2928200003018397,
+              "gergeljkis-sra": 1755919982886085,
+              "ghaj": 1909262109479135,
+              "gk_test_new": 2557743528935766,
+              "gk_test_second": 2954587196584173,
+              "glue-interop-928618useast1-7rnzih": 1693800785069259,
+              "glue-interop-928618useast1-co0d7a": 1152583547283494,
+              "gr-test-ws": 1371503883449207,
+              "grant_toeneboehn_sandbox": 1682171330498953,
+              "grant_toeneboehn_sandbox_2": 3889330033307956,
+              "haley-byovpc": 3795017878092124,
+              "haley-serverless": 14058028561640,
+              "hanno": 1602474010847845,
+              "hareesh-test-tf-3": 3466034843494598,
+              "hareesh_test_1": 2950517184069930,
+              "hareesh_test_2": 3334572471410730,
+              "hari-dbt": 140908069315260,
+              "hinak-serverless-apne1-20251126": 1964316915890135,
+              "hnishisaka-aws-tokyo": 493470957370413,
+              "hnishisaka-demo": 3264571089235591,
+              "houssem-fevm": 2429295634763908,
+              "hp-srv-tst": 3201319820891247,
+              "hsdbaws": 1151746517773817,
+              "hsserverless": 1410806176291542,
+              "icmtest1": 4230254614750440,
+              "insung-ws": 3776331653148123,
+              "interac-poc-demo": 1300406051038496,
+              "ishikawa-demo": 397120666436794,
+              "ishikawa-serverless": 504365475543753,
+              "ishikawa-terraform": 139582333692309,
+              "ivanovich-custom-workspace": 3197542288366767,
+              "jaewoo-ws02": 3486987071313720,
+              "jaltman-workspace": 3475442669466327,
+              "jasonmiles-rolls-royce": 1071890974344226,
+              "jchampion": 4107784638426558,
+              "jimprovost": 2554330956762383,
+              "jisoo_ap_northeast_2": 4101532086673975,
+              "jmr_test": 1001512415076335,
+              "joeb-demo": 2231206629151280,
+              "joy-workspace": 1237258019105039,
+              "jpg-new-ws-test": 3336687238948257,
+              "jpg-serverless": 941119931364025,
+              "jpg-ws": 1880784471512102,
+              "juffermans_test": 3340704967329500,
+              "jy-hipaa": 2581665569960823,
+              "karaisvls": 1691392999571837,
+              "kat": 3300794991483212,
+              "kataoka-test": 1598499890033936,
+              "kevo-n8n": 660022434728472,
+              "kkochetov-temp": 885701925925022,
+              "kp-datahive": 848968745276367,
+              "kp-kep-pub2": 164127294095491,
+              "kp-kep-pvt1": 181085910865019,
+              "kp-nonpl": 1031631258312089,
+              "kp-serverless": 3879697833122750,
+              "kriti-test-workspace": 1621272679655619,
+              "kshimizu": 1548048026032414,
+              "kshimizu-serverless-ws": 4064270507796081,
+              "kuwano-workspace-001": 620977030675362,
+              "lakehouse": 2972738131968044,
+              "louis-demo": 4454116409573656,
+              "louis-demo-1": 3222652044206484,
+              "lyall-classic-sandbox": 3027180829362291,
+              "maersk": 184792744620224,
+              "mahe_dev_ws_uswest1": 4052177046713463,
+              "mahe_qa_ws_uswest1": 845114864937913,
+              "mahe_ws_dev_useast2": 3638350395252656,
+              "mahe_ws_dev_uswest2": 3061261358309531,
+              "martin-kalusa-account": 2252262868032716,
+              "mglbe": 3720643511924853,
+              "mglbe2": 3927098303818051,
+              "michele-test": 2974833888990459,
+              "minjae-demo": 4450249185561688,
+              "mk-test-workspace-123": 3753265964409537,
+              "mlamarca": 3328306677950231,
+              "mlamarca2": 2566925048084812,
+              "muki-dr-serverless-use1": 2075875617356505,
+              "muki-dr-serverless-usw2": 3679385307313057,
+              "my-serverless-workspace-cesar-onboarding": 4385521049577052,
+              "nabe-ws-tokyo": 3779421866988896,
+              "nadbul": 3201419991188099,
+              "nadjab": 1547140967944450,
+              "nadjards": 1874882098806077,
+              "ncss-1": 2798031198323248,
+              "ncss-2": 2121864642977033,
+              "neiva-lampkeeper-master": 1406813735457506,
+              "nimeht-mumbai-test": 359951958383459,
+              "ob-tf-full-db1": 3349998647322224,
+              "og_workspace": 1788277689136887,
+              "one-env-starscream": 3936955387099658,
+              "one-env-voyager": 3743000719316171,
+              "ousmane_space": 3259132236184453,
+              "pawan_snowflake_federation": 1972861626053256,
+              "pmracek-test": 764912300866478,
+              "porto-test": 3415398391926807,
+              "pz-lakebase-demo": 1141698030036405,
+              "rabi-demo-workspace": 2161677235342240,
+              "rajc_chingakham": 909057475883105,
+              "rate-test": 4353981754632683,
+              "rcherukk-test": 131330012284820,
+              "retailer-bricks": 2222334884018650,
+              "rodsant": 3161720360406364,
+              "rongzi-demobxg2ww": 764395783895224,
+              "ryan-werth-ws": 2033512470113202,
+              "ryanair-poc": 1117073004231653,
+              "ryanwerth-demo": 1497489885592031,
+              "sai-env": 1596880541133071,
+              "sai-vdm-serverless-sal3s9": 1965198064283908,
+              "sammyb-workspace": 2019705017518594,
+              "sanja-test-ws": 2951818913315119,
+              "sanket_kelkar_aws": 2600621040124234,
+              "sean-demo-workspace": 1420416090151483,
+              "sean-k-test-unfi": 1765140633224333,
+              "senkawa-mvtxcd": 143069719047350,
+              "senkawa_serverless_test": 4263400210130869,
+              "sg-ailakehouse": 622916282379884,
+              "sg-workspace-serverless": 4430556629651655,
+              "sgreen-aws": 1886908809301733,
+              "shuji-test": 4050725461946897,
+              "shukpa-test": 744151231084179,
+              "smollan_demo_account": 2405712384194859,
+              "snap-ds-consumer-hb0xkl": 1821245097779956,
+              "snap-ds-producer-hb0xkl": 4474757582317523,
+              "ss_kibbim": 4230625706328645,
+              "sts-julian-workspace-pl": 1425050404776719,
+              "sudong2": 3843163732585106,
+              "sv-new": 1548224227688291,
+              "sz-test": 3510676382564645,
+              "taku": 3960702181907309,
+              "taltas": 2785939474148594,
+              "taltas2": 1374137881965255,
+              "taltas_prod": 1454784454335670,
+              "test-adevinta": 1986900731284215,
+              "test-app-ws-sy": 3864201420822369,
+              "test-frontendPL": 4322913407403898,
+              "test-sb-dbdemos": 4105302935863646,
+              "test_rg": 542482449684820,
+              "test_viv": 3892043588944142,
+              "test_vivriti": 3373453422283502,
+              "testing-ec-serverless": 2027414799717534,
+              "th1125tf-ws": 1373934773791356,
+              "thinh-workspace": 4129222363981694,
+              "tlawrence": 2521466201804998,
+              "tm-nov-2025": 4269026082967652,
+              "tw-train-m-ws": 2227240664816539,
+              "tw-training-demo": 3672894177550834,
+              "tw-training-lighthouse": 375324887421774,
+              "twatanabe-workspace-us-west-2": 2431640981553246,
+              "utke-onboarding-workspace": 4370321680257659,
+              "vc_demo_tst": 2267319449584630,
+              "vdm-classic-874knw-guy": 1503857086528228,
+              "vdm-classic-f10x9r-motiva": 4136252214126576,
+              "vdm-classic-kd5pb6": 2627882374884467,
+              "vdm-mj-classic-wxv304": 1055487645216539,
+              "vdm-serverless-0fc0cp": 3111979440063525,
+              "vdm-serverless-42ylbq": 1026597622698517,
+              "vdm-serverless-6z4z01": 960019737745741,
+              "vdm-serverless-7ge5an": 1583478778894292,
+              "vdm-serverless-ajorna": 538878935462623,
+              "vdm-serverless-at": 254921222248490,
+              "vdm-serverless-at6zeh": 3648989378711037,
+              "vdm-serverless-b1lp16": 186974414479915,
+              "vdm-serverless-c1nun1": 200174688529250,
+              "vdm-serverless-dfxfs5-sanjeev": 1515814350613566,
+              "vdm-serverless-hlq7fr": 1060755256046038,
+              "vdm-serverless-ke6td3": 2050943202054463,
+              "vdm-serverless-kvk21h": 3401686910861217,
+              "vdm-serverless-lx8zod": 1758542945990816,
+              "vdm-serverless-m73rt3": 2131054272218758,
+              "vdm-serverless-p19gto": 1162100286352719,
+              "vdm-serverless-vktvs": 2710322724716738,
+              "vdm-serverless-wereru-guy": 234113220539499,
+              "vdm-serverless-xfokm1": 3084974701180782,
+              "vdm-serverless-xy4fzs": 2184142251010905,
+              "wayne-enterprises": 4259754376481901,
+              "wbgames-042vbo": 2508826780642023,
+              "well-costa-workspace": 876229650504233,
+              "wonka-industries": 2288744727716046,
+              "wrkveroweek8": 3634547726889687,
+              "ws_schiphol_uc_demo": 2653817012126899,
+              "wx-sb-std": 3495755593440830,
+              "wxgw-classic-i1": 3327464388460014,
+              "xieming-ag--1umxcpd": 2883786444176841,
+              "xieming-ag--2zh53j0": 310788042528122,
+              "xieming-ag--3bfbux9": 670751826981691,
+              "xieming-ag--416e5oh": 2693842924474183,
+              "yliu_demo": 853181866548642,
+              "yotaro-aws-byovpc-tf": 3382450776360091,
+              "yotaro-tf": 282685748461292,
+              "yubin-demo": 130798405254219,
+              "yuki-shiga-p-85l9f-workspace": 778402098840976,
+              "yuki-shiga-p-aaodt-workspace": 1407214553816629,
+              "yush1ga-DAIWT-TOKYO": 189487776178177,
+              "zee-test": 165726548694408,
+              "zhanf-test-app": 4384229179655639,
+              "zoox-dashboard-demo": 2260884567076943,
+              "zr-test-workspace": 33972068686051
+            }
+          },
+          "sensitive_attributes": []
+        }
+      ]
+    },
+    {
+      "mode": "data",
+      "type": "http",
+      "name": "workspace_metadata",
+      "provider": "provider[\"registry.terraform.io/hashicorp/http\"]",
+      "instances": [
+        {
+          "schema_version": 0,
+          "attributes": {
+            "body": "\u003c!doctype html\u003e\n\u003chtml\u003e\n \u003chead\u003e\n  \u003cmeta charset=\"utf-8\"\u003e\n  \u003cmeta http-equiv=\"Content-Language\" content=\"en\"\u003e\n  \u003ctitle\u003eDatabricks - Sign In\u003c/title\u003e\n  \u003cmeta name=\"viewport\" content=\"width=960\"\u003e\n  \u003clink rel=\"icon\" type=\"image/png\" href=\"https://ui-assets.cloud.databricks.com/favicon.ico\"\u003e\n  \u003cmeta http-equiv=\"content-type\" content=\"text/html; charset=UTF8\"\u003e\n  \u003cscript id=\"__databricks_react_script\"\u003e\u003c/script\u003e\n  \u003cscript type=\"application/json\" id=\"databricks-safe-flags\"\u003e{}\u003c/script\u003e\n  \u003cscript\u003ewindow.__DATABRICKS_SAFE_FLAGS__={\"databricks.sisu.recaptcha.accounts.isEnabled\":true,\"databricks.sisu.oneTrustScriptId\":\"0192d53a-9995-70c2-93f6-6f0628e93929\",\"databricks.fe.config.uiFlagsRedirectMapping\":\"{\\\"accountId\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"accountId_new\\\"}, \\\"accountsOwnerUrl\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"accountsOwnerUrl_new\\\"}, \\\"allowWhitelistedIframeDomains\\\": {\\\"defaultValue\\\": true, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.webapp.security.allowWhitelistedIframeDomains\\\"}, \\\"availableWorkspaces\\\": {\\\"compoundConfigKey\\\": \\\"availableWorkspaces\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"centralizedLoginEnabled\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.fe.centralizedLoginEnabled\\\"}, \\\"cloud\\\": {\\\"defaultValue\\\": \\\"AWS\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"cloud_new\\\"}, \\\"cloudManagementPortalUrl\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"cloudManagementPortalUrl_new\\\"}, \\\"csrfToken\\\": {\\\"compoundConfigKey\\\": \\\"csrfToken\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"currentWorkspaceId\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"currentWorkspaceId_new\\\"}, \\\"customReferences\\\": {\\\"compoundConfigKey\\\": \\\"customReferences\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"deltaStatsReportIntervalMs\\\": {\\\"defaultValue\\\": 0, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.fe.eda.deltaStatsReportIntervalMs\\\"}, \\\"disableFeedback\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.webapp.isPvc\\\"}, \\\"disableResultsDownloading\\\": {\\\"compoundConfigKey\\\": \\\"disableResultsDownloading\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"domainSuffix\\\": {\\\"compoundConfigKey\\\": \\\"domainSuffix\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"dropzoneMaxFileSize\\\": {\\\"defaultValue\\\": 2047, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.fe.eda.dropzoneMaxFileSizeMB\\\"}, \\\"enableCeAccountDeletionUI\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.webapp.enableCeAccountDeletionUI\\\"}, \\\"enableClusterSubscription\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.graphql.enableClusterSubscriptionWithKafka\\\"}, \\\"enableFeatureCatalog\\\": {\\\"defaultValue\\\": true, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.featureStore.enableFeatureCatalog\\\"}, \\\"enableFilesInWorkspace\\\": {\\\"compoundConfigKey\\\": \\\"enableFilesInWorkspace\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"enableFullTextSearch\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.webapp.search.enableFullTextSearch\\\"}, \\\"enableJobsListPaginatedView\\\": {\\\"compoundConfigKey\\\": \\\"enableJobsListPaginatedView\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"enableMiniClusters\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.manager.container.enableMiniClusters\\\"}, \\\"enableMultiLevelSchemaBrowser\\\": {\\\"compoundConfigKey\\\": \\\"enableMultiLevelSchemaBrowser\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"enableNotebookTableClipboard\\\": {\\\"compoundConfigKey\\\": \\\"enableNotebookTableClipboard\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"enablePartnerHub\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"com.databricks.partnerconnect.enablePartnerConnect\\\"}, \\\"enablePipelinesUi\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"enablePipelinesUi\\\"}, \\\"enableProjectTypeInWorkspace\\\": {\\\"compoundConfigKey\\\": \\\"isProjectTypeInWorkspaceEnabled\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"enableSQLEndpointInNotebook\\\": {\\\"compoundConfigKey\\\": \\\"enableSQLEndpointInNotebook\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"enableSearchV2\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.fe.search.enableSearchV2\\\"}, \\\"enableServerlessJobsUI\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"com.databricks.elasticspark.JobsSharedConf.enableServerlessUI\\\"}, \\\"enableSqlService\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"dbSqlEnabled_new\\\"}, \\\"enableSsoIdeasConfig\\\": {\\\"defaultValue\\\": true, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"enableSsoIdeasConfig\\\"}, \\\"enableTestConnIframe\\\": {\\\"defaultValue\\\": true, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.webapp.enableProxyEndpointsConnectivityTestHandler\\\"}, \\\"enableTrashFolder\\\": {\\\"defaultValue\\\": true, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.webapp.enableTrashFolder\\\"}, \\\"enableWorkflowsInDBSQL\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"enableWorkflowsInDBSQL_new\\\"}, \\\"enforceWorkspaceViewAcls\\\": {\\\"compoundConfigKey\\\": \\\"enforceWorkspaceViewAcls\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"homePageLogo\\\": {\\\"compoundConfigKey\\\": \\\"homePageLogo\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"homePageLogoDefault\\\": {\\\"defaultValue\\\": \\\"login/logo_2020/databricks.svg\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.webapp.homePageLogo\\\"}, \\\"homePageLogoWidth\\\": {\\\"compoundConfigKey\\\": \\\"homePageLogoWidth\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"homePageWelcomeMessage\\\": {\\\"compoundConfigKey\\\": \\\"homePageWelcomeMessage\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"identityFederationEnabled\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"identityFederationEnabled\\\"}, \\\"isAdmin\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"isAdmin_new\\\"}, \\\"isCloudlessWorkspace\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"isCloudlessWorkspace\\\"}, \\\"isComplianceMode\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"isComplianceMode\\\"}, \\\"isMetastoreInstalled\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"isMetastoreInstalled_new\\\"}, \\\"isModelRegistryEnabledInCurrentWorkspace\\\": {\\\"compoundConfigKey\\\": \\\"isModelRegistryEnabledInCurrentWorkspace\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"isShastaPrivatePreviewWorkspace\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"isShastaPrivatePreviewWorkspace_new\\\"}, \\\"jobNotebookDirectory\\\": {\\\"defaultValue\\\": \\\"__databricks_jobs_tmp\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.elasticspark.treeStoreTmpDir\\\"}, \\\"oemOrganizationName\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"oemOrganizationName_new\\\"}, \\\"orgId\\\": {\\\"defaultValue\\\": 0, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"orgId_new\\\"}, \\\"productName\\\": {\\\"compoundConfigKey\\\": \\\"productName\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"reposIpynbResultsExportPermissions\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"reposIpynbResultsExportPermissions\\\"}, \\\"serveIframeFromUserContentDomain\\\": {\\\"defaultValue\\\": true, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.fe.webapp.serveIframeFromUserContentDomain\\\"}, \\\"sessionIdleTimeout\\\": {\\\"defaultValue\\\": -1, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.webapp.sessionIdleTimeout\\\"}, \\\"shardName\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"shardName\\\"}, \\\"showWhitelabelFooter\\\": {\\\"compoundConfigKey\\\": \\\"showWhitelabelFooter\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"sidebarLogoActive\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"sidebarLogoActive\\\"}, \\\"sidebarLogoInactive\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"sidebarLogoInactive\\\"}, \\\"sidebarLogoText\\\": {\\\"compoundConfigKey\\\": \\\"sidebarLogoText\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"themeIdentifier\\\": {\\\"defaultValue\\\": \\\"databricks\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.webapp.themeIdentifier\\\"}, \\\"trialExpirationTime\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"trialExpirationTime\\\"}, \\\"unityCatalogServiceEnabled\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.unitycatalog.enableUnityCatalogService\\\"}, \\\"upgradeBannerHideTimeoutDays\\\": {\\\"defaultValue\\\": 1, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.webapp.upgradeBannerHideTimeoutDays\\\"}, \\\"upgradeURL\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.webapp.upgradeURL\\\"}, \\\"upgradeURLForBanner\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.webapp.upgradeURLForBanner\\\"}, \\\"usageLoggerPublicKey\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"uiTelemetryPublicKey\\\"}, \\\"user\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"user_new\\\"}, \\\"userCanUseDatabricksWorkspace\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"userCanUseDatabricksWorkspace_new\\\"}, \\\"userCanUseSqlService\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"userCanUseSqlService_new\\\"}, \\\"userFirstName\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"userFirstName_new\\\"}, \\\"userFullname\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"userFullname_new\\\"}, \\\"userId\\\": {\\\"defaultValue\\\": -1, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"userId_new\\\"}, \\\"userLastName\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"userLastName_new\\\"}, \\\"userType\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"userType_new\\\"}}\",\"databricks.fe.infra.sendAuthorizingRoleHeaderInAppInit\":true,\"databricks.fe.wexp.usePerWorkspaceQueryClient\":true,\"databricks.fe.infra.fixConfigPrefetch\":true,\"databricks.sisu.isGoogleTagManagerEnabled\":true,\"databricks.sisu.isOneTrustCookieConsentEnabled\":true,\"databricks.sisu.oneTrustCookieDomain\":\".login.databricks.com\",\"databricks.fe.wexp.serverSideSafeMigrationKillSwitch\":false,\"databricks.fe.infra.useNewFetchSettingsFunc\":true,\"databricks.fe.infra.enableWebpackLazyModuleLoading\":false,\"databricks.sisu.signupFlowV2Enabled\":true,\"databricks.fe.infra.useApollo3_12\":false,\"databricks.fe.infra.enableReactProfiler\":false,\"databricks.fe.wexp.isSpogSoftNavByContextEnabled\":true,\"databricks.fe.infra.enableManualRedirectHandling\":true,\"databricks.sisu.recaptcha.siteKey\":\"6LelOporAAAAAK_vloEH3R5YNKIWqbFDTJrnlWz4\",\"databricks.fe.infra.shouldNotAwaitConfigForHomepage\":true,\"databricks.sisu.workspaceCustomTermsOfUse\":\"\",\"databricks.fe.wexp.enableNewCsrfRetrievalServerSide\":true,\"databricks.accountsui.publicSafexAPI.isEnabled\":true,\"databricks.sisu.recaptcha.isEnabled\":true,\"databricks.fe.infra.useReact18NewAPI\":false,\"databricks.fe.infra.enableStartupAppInitSNRAlerting\":true,\"databricks.fe.infra.enableImplicitContext\":true,\"databricks.fe.wexp.shouldUseFeatureFlagMap\":true,\"databricks.fe.wexp.shouldUsePubConfMap\":true,\"databricks.fe.infra.enableBlockingTelemetryByUserAgent\":true,\"databricks.fe.wexp.isUnifiedAppRootEnabled\":false,\"databricks.fe.config.useWebSharedGocx\":false,\"databricks.accountsui.enableSessionApolloCache\":true,\"databricks.sisu.recaptcha.sisu.isEnabled\":true},window.__DATABRICKS_SAFE_FLAGS__??=JSON.parse(document.getElementById(\"databricks-safe-flags\").textContent),window.__DATABRICKS_CONFIG__={\"tabStartTimestampMillis\":1764370754231,\"isRegionlessRequest\":false,\"deploymentMode\":\"production\",\"isCuttingEdge\":false,\"publicPath\":{\"mlflow\":\"https://ui-assets.cloud.databricks.com/\",\"accounts-console\":\"https://ui-assets.cloud.databricks.com/\",\"feature-store\":\"https://ui-assets.cloud.databricks.com/\",\"monolith\":\"https://ui-assets.cloud.databricks.com/\",\"jaws\":\"https://ui-assets.cloud.databricks.com/\"},\"isSpogDomain\":false,\"requestId\":\"7af1f971-7fec-4d75-886b-d57377669159\",\"enablePrPreview\":\"\",\"enableGitBisect\":\"\",\"servedVersion\":\".monolith-ui_2025-11-26_09.39.39Z_master_1ad6e3db_1616695222\",\"isAccountsConsole\":false},window.__databricks_uiDeployableToCommitHash={monolith:\"1ad6e3db1a7ef1f9d47572100e1df9acdd72de8a\"};let isDevSpogDomain=!1;if(window.__databricks_isSpogDomain=window.__DATABRICKS_CONFIG__?.isSpogDomain??isDevSpogDomain,window.__databricks_isSpogDomain){const _=new URL(window.location.href).searchParams.get(\"next_url\"),o=_?`?next_url=${encodeURIComponent(_)}`:\"\";window.location.replace(`/login${o}`)}\u003c/script\u003e\n  \u003clink rel=\"icon\" href=\"https://ui-assets.cloud.databricks.com/favicon.ico\"\u003e\n  \u003cscript\u003e\n  function setNoCdnAndReload() {\n      document.cookie = `x-databricks-cdn-inaccessible=true; path=/; max-age=86400`;\n      const metric = 'cdnFallbackOccurred';\n      const browserUserAgent = navigator.userAgent;\n      const browserTabId = window.browserTabId;\n      const performanceEntry = performance.getEntriesByType('resource').filter(e =\u003e e.initiatorType === 'script').slice(-1)[0]\n      sessionStorage.setItem('databricks-cdn-fallback-telemetry-key', JSON.stringify({ tags: { browserUserAgent, browserTabId }, performanceEntry}));\n      window.location.reload();\n  }\n\u003c/script\u003e\n  \u003cscript\u003e\n  // Set a manual timeout for dropped packets to CDN\n  function loadScriptWithTimeout(src, timeout) {\n     return new Promise((resolve, reject) =\u003e {\n        const script = document.createElement('script');\n          script.defer = true;\n          script.src = src;\n          script.onload = resolve;\n          script.onerror = reject;\n          document.head.appendChild(script);\n          setTimeout(() =\u003e {\n              reject(new Error('Script load timeout'));\n          }, timeout);\n      });\n  }\n  loadScriptWithTimeout('https://ui-assets.cloud.databricks.com/static/js/login/login.5b4b6b2db0.js', 10000).catch(setNoCdnAndReload);\n\u003c/script\u003e\n \u003c/head\u003e\n \u003cbody class=\"light-mode\"\u003e\n  \u003cuses-legacy-bootstrap\u003e\n   \u003cdiv id=\"login-page\"\u003e\u003c/div\u003e\n  \u003c/uses-legacy-bootstrap\u003e\n  \u003cscript\u003econst telemetryEndpoint=\"/telemetry-unauth?t=\",uiModuleName=\"workspaceLogin\",appSourceType=\"WORKSPACE_CONSOLE_LOGIN\";function shouldIgnoreError(e){return!1}function generateUuidV4(){const e=window.crypto?.randomUUID?.();return e||\"xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx\".replace(/[xy]/g,(e=\u003e{const t=16*Math.random()|0;return(\"x\"===e?t:3\u0026t|8).toString(16)}))}function networkConnectivityTags(){const e=window.navigator.onLine,t=window.navigator.connection?.rtt??-1,n=window.navigator.connection?.downlink??-1;return{browserNavigatorOnline:e,browserConnectionEstimatedRtt:t,browserConnectionEstimatedDownlink:n,browserConnected:e\u0026\u0026t\u003e0\u0026\u0026n\u003e0}}window.__databricks_networkConnectivityTags=networkConnectivityTags;const browserUserAgent=navigator.userAgent;let shouldLogTelemetry=!0;if(window.__DATABRICKS_SAFE_FLAGS__?.[\"databricks.fe.infra.enableBlockingTelemetryByUserAgent\"]){const e=[\"bingbot\",\"RedTeamGlobal\"].some((e=\u003ebrowserUserAgent.includes(e)));shouldLogTelemetry=!e}function getWorkspaceParam(){const e=new URLSearchParams(window.location.search),t=/^\\d+/.exec(e.get(\"o\")??\"\");return null===t?void 0:t[0]}Object.defineProperty(window,\"browserTabId\",{value:generateUuidV4()}),Object.defineProperty(window,\"tabStartTimestampMillis\",{value:window.__DATABRICKS_CONFIG__?.tabStartTimestampMillis??Date.now()});const initialPageLoadId=generateUuidV4();let hasInitialLoadIdBeenUsed=!1;function inferInteractionId(){if(!hasInitialLoadIdBeenUsed)return hasInitialLoadIdBeenUsed=!0,initialPageLoadId}function peekInteractionId(){return initialPageLoadId}window.inferInteractionId=inferInteractionId,window.peekInteractionId=peekInteractionId;let isDuplicated=!1;const throttledThresholdMs=6e4,uiInitTimestampKey=`uiInitTimestamp-${appSourceType}`,uiInitTimestamp=parseInt(window.localStorage?.getItem(uiInitTimestampKey),10),currentTimestamp=Date.now();function createTelemetryRequestBody(e,t={},n=null){const i=Date.now(),o={eventId:generateUuidV4(),metric:e,tags:{...t,...networkConnectivityTags(),browserTabId:window.browserTabId,browserUserAgent:browserUserAgent,tabStartTimestampMillis:window.tabStartTimestampMillis,eventWindowTime:window.performance.now()},ts:i};n\u0026\u0026(o.blob=n);const a={context:{client_context:{user_agent:browserUserAgent,tab_start_timestamp_millis:window.tabStartTimestampMillis,tab_age_millis:window.performance.now(),tab_age_double_millis:window.performance.now(),performance_now_millis:window.performance.now(),tab_id:window.browserTabId,location_host_name:window.location.hostname}},entry:{observability_log:{client_source:\"PRE_APP_INIT\",type:\"INTERACTION_PHASE\",entity:{sub_type:\"INITIAL_LOAD\",type:\"INTERACTION\"},payload:{interaction_id:initialPageLoadId,interaction_phase_payload:{app_source_type:appSourceType,is_duplicated:isDuplicated}}}},frontend_log_event_id:generateUuidV4(),inferred_timestamp_micros:i,inferred_timestamp_millis:i};if(\"chunkLoadRetry\"===e||\"chunkLoadFailure\"===e?(a.entry.observability_log.payload.interaction_phase_payload.name=e,a.entry.observability_log.entity.entity_id=e):(a.entry.observability_log.payload.interaction_phase_payload.name=t.eventType,a.entry.observability_log.entity.entity_id=t.eventType),\"uncaughtJsException\"===e)a.entry.observability_log.payload.interaction_phase_payload.exception={message:t.jsExceptionMessage,raw_stack:n},a.entry.observability_log.payload.interaction_phase_payload.exception_metadata={source:t.jsExceptionSource,lineno:t.jsExceptionLineno,colno:t.jsExceptionColno,js_exception_before_init:!0,exception_log_source:\"PRE_APP_INIT_WINDOW_ON_ERROR\"};else if(\"pageExitBeforeAppInitComplete\"===t.eventType)switch(t.eventName){case\"beforeunload\":a.entry.observability_log.payload.interaction_phase_payload.page_exit_event_type=\"BEFORE_UNLOAD\";break;case\"unload\":a.entry.observability_log.payload.interaction_phase_payload.page_exit_event_type=\"UNLOAD\";break;case\"pagehide\":a.entry.observability_log.payload.interaction_phase_payload.page_exit_event_type=\"PAGE_HIDE\";break;default:a.entry.observability_log.payload.interaction_phase_payload.page_exit_event_type=\"TYPE_UNSPECIFIED\"}return JSON.stringify({uploadTime:i,items:[JSON.stringify(o)],protoLogs:[JSON.stringify(a)]})}function recordTelemetry(e,t={},n=\"\"){if(shouldLogTelemetry){const i=getWorkspaceParam(),o=i?{\"X-Databricks-Org-Id\":i.toString()}:{},a={method:\"POST\",credentials:\"include\",body:createTelemetryRequestBody(e,t,n),headers:o};fetch(telemetryEndpoint+Date.now(),a)}}!isNaN(uiInitTimestamp)\u0026\u0026currentTimestamp\u003cuiInitTimestamp+6e4?isDuplicated=!0:window.localStorage?.setItem(uiInitTimestampKey,currentTimestamp.toString()),window.recordTelemetry=recordTelemetry,recordTelemetry(\"uiInit\",{uiModule:uiModuleName,eventId:\"init\",eventClientSource:uiModuleName,eventType:\"init\"});let logCount=0;function error_handler(e,t,n,i,o){logCount++\u003e4||shouldIgnoreError(e)||recordTelemetry(\"uncaughtJsException\",{eventType:\"jsExceptionV3\",jsExceptionMessage:e,jsExceptionSource:t,jsExceptionLineno:n,jsExceptionColno:i,jsExceptionBeforeInit:!0},o\u0026\u0026o.stack\u0026\u0026o.stack.toString())}window.onerror=error_handler,window.onunhandledrejection=function(e){error_handler(String(e.reason),null,null,null,e.reason)};let hasLoggedPageExitBeforeAppInitComplete=!1;function sendBeaconOnPageExit(e){if(navigator.sendBeacon\u0026\u0026shouldLogTelemetry\u0026\u0026!hasLoggedPageExitBeforeAppInitComplete){const t=e\u0026\u0026e.type||\"unknown\",n=(Date.now(),createTelemetryRequestBody(\"uiInit\",{eventType:\"pageExitBeforeAppInitComplete\",eventName:t,eventClientSource:uiModuleName}));navigator.sendBeacon(telemetryEndpoint+Date.now(),n),hasLoggedPageExitBeforeAppInitComplete=!0}}function isNetworkScriptLoadIssue(e){if(!e)return!1;const{name:t,responseStatus:n}=e,i=void 0!==n\u0026\u0026[0].includes(n),o=t?.includes(\".js\")\u0026\u0026t.includes(\"\u0026retry-attempt=3\"),a=/(?:main|login)(?:\\.[a-zA-Z0-9]+)?\\.js/.test(t);return i\u0026\u0026(o||a)}function getUnsuccessfulScriptLoadResponseStatusCodes(){const e={};return performance.getEntriesByType(\"resource\").filter((e=\u003e\"script\"===e.initiatorType||\"link\"===e.initiatorType)).map((e=\u003eisNetworkScriptLoadIssue(e)?[e.name,e.responseStatus]:void 0)).filter(Boolean).forEach((([t,n])=\u003e{void 0===e[t]\u0026\u0026(e[t]=[]),e[t].push(n)})),e}window.addEventListener(\"beforeunload\",sendBeaconOnPageExit),window.addEventListener(\"unload\",sendBeaconOnPageExit),window.addEventListener(\"pagehide\",sendBeaconOnPageExit),window.cleanupAfterAppInit=()=\u003e{window.removeEventListener(\"beforeunload\",sendBeaconOnPageExit),window.removeEventListener(\"unload\",sendBeaconOnPageExit),window.removeEventListener(\"pagehide\",sendBeaconOnPageExit)},window.__DATABRICKS_SAFE_FLAGS__?.[\"databricks.fe.infra.enableStartupAppInitSNRAlerting\"]\u0026\u0026(window.startupAppInitSNR=setInterval((()=\u003e{const e=Object.entries(getUnsuccessfulScriptLoadResponseStatusCodes());if(e.length\u003e0){const t=JSON.stringify({failedNetworkScripts:e}),n={uiModule:uiModuleName,eventId:\"ClientNetworkScriptLoadFailure\",eventClientSource:uiModuleName,eventType:\"clientNetworkScriptLoadFailure\"};recordTelemetry(\"uiInit\",n),recordTelemetry(\"codeMonCounter\",n,t),clearInterval(window.startupAppInitSNR),window?.cleanupAfterAppInit(),clearTimeout(window?.startupHangTimer)}}),1e3))\u003c/script\u003e\n \u003c/body\u003e\n\u003c/html\u003e",
+            "ca_cert_pem": null,
+            "client_cert_pem": null,
+            "client_key_pem": null,
+            "id": "https://dbc-c85f293d-6012.cloud.databricks.com",
+            "insecure": null,
+            "method": null,
+            "request_body": null,
+            "request_headers": {
+              "Accept": "text/html"
+            },
+            "request_timeout_ms": null,
+            "response_body": "\u003c!doctype html\u003e\n\u003chtml\u003e\n \u003chead\u003e\n  \u003cmeta charset=\"utf-8\"\u003e\n  \u003cmeta http-equiv=\"Content-Language\" content=\"en\"\u003e\n  \u003ctitle\u003eDatabricks - Sign In\u003c/title\u003e\n  \u003cmeta name=\"viewport\" content=\"width=960\"\u003e\n  \u003clink rel=\"icon\" type=\"image/png\" href=\"https://ui-assets.cloud.databricks.com/favicon.ico\"\u003e\n  \u003cmeta http-equiv=\"content-type\" content=\"text/html; charset=UTF8\"\u003e\n  \u003cscript id=\"__databricks_react_script\"\u003e\u003c/script\u003e\n  \u003cscript type=\"application/json\" id=\"databricks-safe-flags\"\u003e{}\u003c/script\u003e\n  \u003cscript\u003ewindow.__DATABRICKS_SAFE_FLAGS__={\"databricks.sisu.recaptcha.accounts.isEnabled\":true,\"databricks.sisu.oneTrustScriptId\":\"0192d53a-9995-70c2-93f6-6f0628e93929\",\"databricks.fe.config.uiFlagsRedirectMapping\":\"{\\\"accountId\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"accountId_new\\\"}, \\\"accountsOwnerUrl\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"accountsOwnerUrl_new\\\"}, \\\"allowWhitelistedIframeDomains\\\": {\\\"defaultValue\\\": true, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.webapp.security.allowWhitelistedIframeDomains\\\"}, \\\"availableWorkspaces\\\": {\\\"compoundConfigKey\\\": \\\"availableWorkspaces\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"centralizedLoginEnabled\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.fe.centralizedLoginEnabled\\\"}, \\\"cloud\\\": {\\\"defaultValue\\\": \\\"AWS\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"cloud_new\\\"}, \\\"cloudManagementPortalUrl\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"cloudManagementPortalUrl_new\\\"}, \\\"csrfToken\\\": {\\\"compoundConfigKey\\\": \\\"csrfToken\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"currentWorkspaceId\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"currentWorkspaceId_new\\\"}, \\\"customReferences\\\": {\\\"compoundConfigKey\\\": \\\"customReferences\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"deltaStatsReportIntervalMs\\\": {\\\"defaultValue\\\": 0, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.fe.eda.deltaStatsReportIntervalMs\\\"}, \\\"disableFeedback\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.webapp.isPvc\\\"}, \\\"disableResultsDownloading\\\": {\\\"compoundConfigKey\\\": \\\"disableResultsDownloading\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"domainSuffix\\\": {\\\"compoundConfigKey\\\": \\\"domainSuffix\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"dropzoneMaxFileSize\\\": {\\\"defaultValue\\\": 2047, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.fe.eda.dropzoneMaxFileSizeMB\\\"}, \\\"enableCeAccountDeletionUI\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.webapp.enableCeAccountDeletionUI\\\"}, \\\"enableClusterSubscription\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.graphql.enableClusterSubscriptionWithKafka\\\"}, \\\"enableFeatureCatalog\\\": {\\\"defaultValue\\\": true, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.featureStore.enableFeatureCatalog\\\"}, \\\"enableFilesInWorkspace\\\": {\\\"compoundConfigKey\\\": \\\"enableFilesInWorkspace\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"enableFullTextSearch\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.webapp.search.enableFullTextSearch\\\"}, \\\"enableJobsListPaginatedView\\\": {\\\"compoundConfigKey\\\": \\\"enableJobsListPaginatedView\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"enableMiniClusters\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.manager.container.enableMiniClusters\\\"}, \\\"enableMultiLevelSchemaBrowser\\\": {\\\"compoundConfigKey\\\": \\\"enableMultiLevelSchemaBrowser\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"enableNotebookTableClipboard\\\": {\\\"compoundConfigKey\\\": \\\"enableNotebookTableClipboard\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"enablePartnerHub\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"com.databricks.partnerconnect.enablePartnerConnect\\\"}, \\\"enablePipelinesUi\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"enablePipelinesUi\\\"}, \\\"enableProjectTypeInWorkspace\\\": {\\\"compoundConfigKey\\\": \\\"isProjectTypeInWorkspaceEnabled\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"enableSQLEndpointInNotebook\\\": {\\\"compoundConfigKey\\\": \\\"enableSQLEndpointInNotebook\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"enableSearchV2\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.fe.search.enableSearchV2\\\"}, \\\"enableServerlessJobsUI\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"com.databricks.elasticspark.JobsSharedConf.enableServerlessUI\\\"}, \\\"enableSqlService\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"dbSqlEnabled_new\\\"}, \\\"enableSsoIdeasConfig\\\": {\\\"defaultValue\\\": true, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"enableSsoIdeasConfig\\\"}, \\\"enableTestConnIframe\\\": {\\\"defaultValue\\\": true, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.webapp.enableProxyEndpointsConnectivityTestHandler\\\"}, \\\"enableTrashFolder\\\": {\\\"defaultValue\\\": true, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.webapp.enableTrashFolder\\\"}, \\\"enableWorkflowsInDBSQL\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"enableWorkflowsInDBSQL_new\\\"}, \\\"enforceWorkspaceViewAcls\\\": {\\\"compoundConfigKey\\\": \\\"enforceWorkspaceViewAcls\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"homePageLogo\\\": {\\\"compoundConfigKey\\\": \\\"homePageLogo\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"homePageLogoDefault\\\": {\\\"defaultValue\\\": \\\"login/logo_2020/databricks.svg\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.webapp.homePageLogo\\\"}, \\\"homePageLogoWidth\\\": {\\\"compoundConfigKey\\\": \\\"homePageLogoWidth\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"homePageWelcomeMessage\\\": {\\\"compoundConfigKey\\\": \\\"homePageWelcomeMessage\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"identityFederationEnabled\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"identityFederationEnabled\\\"}, \\\"isAdmin\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"isAdmin_new\\\"}, \\\"isCloudlessWorkspace\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"isCloudlessWorkspace\\\"}, \\\"isComplianceMode\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"isComplianceMode\\\"}, \\\"isMetastoreInstalled\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"isMetastoreInstalled_new\\\"}, \\\"isModelRegistryEnabledInCurrentWorkspace\\\": {\\\"compoundConfigKey\\\": \\\"isModelRegistryEnabledInCurrentWorkspace\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"isShastaPrivatePreviewWorkspace\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"isShastaPrivatePreviewWorkspace_new\\\"}, \\\"jobNotebookDirectory\\\": {\\\"defaultValue\\\": \\\"__databricks_jobs_tmp\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.elasticspark.treeStoreTmpDir\\\"}, \\\"oemOrganizationName\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"oemOrganizationName_new\\\"}, \\\"orgId\\\": {\\\"defaultValue\\\": 0, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"orgId_new\\\"}, \\\"productName\\\": {\\\"compoundConfigKey\\\": \\\"productName\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"reposIpynbResultsExportPermissions\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"reposIpynbResultsExportPermissions\\\"}, \\\"serveIframeFromUserContentDomain\\\": {\\\"defaultValue\\\": true, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.fe.webapp.serveIframeFromUserContentDomain\\\"}, \\\"sessionIdleTimeout\\\": {\\\"defaultValue\\\": -1, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.webapp.sessionIdleTimeout\\\"}, \\\"shardName\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"shardName\\\"}, \\\"showWhitelabelFooter\\\": {\\\"compoundConfigKey\\\": \\\"showWhitelabelFooter\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"sidebarLogoActive\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"sidebarLogoActive\\\"}, \\\"sidebarLogoInactive\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"sidebarLogoInactive\\\"}, \\\"sidebarLogoText\\\": {\\\"compoundConfigKey\\\": \\\"sidebarLogoText\\\", \\\"type\\\": \\\"compoundConfigKey\\\"}, \\\"themeIdentifier\\\": {\\\"defaultValue\\\": \\\"databricks\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.webapp.themeIdentifier\\\"}, \\\"trialExpirationTime\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"trialExpirationTime\\\"}, \\\"unityCatalogServiceEnabled\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.unitycatalog.enableUnityCatalogService\\\"}, \\\"upgradeBannerHideTimeoutDays\\\": {\\\"defaultValue\\\": 1, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.webapp.upgradeBannerHideTimeoutDays\\\"}, \\\"upgradeURL\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.webapp.upgradeURL\\\"}, \\\"upgradeURLForBanner\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"databricks.webapp.upgradeURLForBanner\\\"}, \\\"usageLoggerPublicKey\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"uiTelemetryPublicKey\\\"}, \\\"user\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"user_new\\\"}, \\\"userCanUseDatabricksWorkspace\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"userCanUseDatabricksWorkspace_new\\\"}, \\\"userCanUseSqlService\\\": {\\\"defaultValue\\\": false, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"userCanUseSqlService_new\\\"}, \\\"userFirstName\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"userFirstName_new\\\"}, \\\"userFullname\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"userFullname_new\\\"}, \\\"userId\\\": {\\\"defaultValue\\\": -1, \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"userId_new\\\"}, \\\"userLastName\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"userLastName_new\\\"}, \\\"userType\\\": {\\\"defaultValue\\\": \\\"\\\", \\\"type\\\": \\\"uiFlagKey\\\", \\\"uiFlagKey\\\": \\\"userType_new\\\"}}\",\"databricks.fe.infra.sendAuthorizingRoleHeaderInAppInit\":true,\"databricks.fe.wexp.usePerWorkspaceQueryClient\":true,\"databricks.fe.infra.fixConfigPrefetch\":true,\"databricks.sisu.isGoogleTagManagerEnabled\":true,\"databricks.sisu.isOneTrustCookieConsentEnabled\":true,\"databricks.sisu.oneTrustCookieDomain\":\".login.databricks.com\",\"databricks.fe.wexp.serverSideSafeMigrationKillSwitch\":false,\"databricks.fe.infra.useNewFetchSettingsFunc\":true,\"databricks.fe.infra.enableWebpackLazyModuleLoading\":false,\"databricks.sisu.signupFlowV2Enabled\":true,\"databricks.fe.infra.useApollo3_12\":false,\"databricks.fe.infra.enableReactProfiler\":false,\"databricks.fe.wexp.isSpogSoftNavByContextEnabled\":true,\"databricks.fe.infra.enableManualRedirectHandling\":true,\"databricks.sisu.recaptcha.siteKey\":\"6LelOporAAAAAK_vloEH3R5YNKIWqbFDTJrnlWz4\",\"databricks.fe.infra.shouldNotAwaitConfigForHomepage\":true,\"databricks.sisu.workspaceCustomTermsOfUse\":\"\",\"databricks.fe.wexp.enableNewCsrfRetrievalServerSide\":true,\"databricks.accountsui.publicSafexAPI.isEnabled\":true,\"databricks.sisu.recaptcha.isEnabled\":true,\"databricks.fe.infra.useReact18NewAPI\":false,\"databricks.fe.infra.enableStartupAppInitSNRAlerting\":true,\"databricks.fe.infra.enableImplicitContext\":true,\"databricks.fe.wexp.shouldUseFeatureFlagMap\":true,\"databricks.fe.wexp.shouldUsePubConfMap\":true,\"databricks.fe.infra.enableBlockingTelemetryByUserAgent\":true,\"databricks.fe.wexp.isUnifiedAppRootEnabled\":false,\"databricks.fe.config.useWebSharedGocx\":false,\"databricks.accountsui.enableSessionApolloCache\":true,\"databricks.sisu.recaptcha.sisu.isEnabled\":true},window.__DATABRICKS_SAFE_FLAGS__??=JSON.parse(document.getElementById(\"databricks-safe-flags\").textContent),window.__DATABRICKS_CONFIG__={\"tabStartTimestampMillis\":1764370754231,\"isRegionlessRequest\":false,\"deploymentMode\":\"production\",\"isCuttingEdge\":false,\"publicPath\":{\"mlflow\":\"https://ui-assets.cloud.databricks.com/\",\"accounts-console\":\"https://ui-assets.cloud.databricks.com/\",\"feature-store\":\"https://ui-assets.cloud.databricks.com/\",\"monolith\":\"https://ui-assets.cloud.databricks.com/\",\"jaws\":\"https://ui-assets.cloud.databricks.com/\"},\"isSpogDomain\":false,\"requestId\":\"7af1f971-7fec-4d75-886b-d57377669159\",\"enablePrPreview\":\"\",\"enableGitBisect\":\"\",\"servedVersion\":\".monolith-ui_2025-11-26_09.39.39Z_master_1ad6e3db_1616695222\",\"isAccountsConsole\":false},window.__databricks_uiDeployableToCommitHash={monolith:\"1ad6e3db1a7ef1f9d47572100e1df9acdd72de8a\"};let isDevSpogDomain=!1;if(window.__databricks_isSpogDomain=window.__DATABRICKS_CONFIG__?.isSpogDomain??isDevSpogDomain,window.__databricks_isSpogDomain){const _=new URL(window.location.href).searchParams.get(\"next_url\"),o=_?`?next_url=${encodeURIComponent(_)}`:\"\";window.location.replace(`/login${o}`)}\u003c/script\u003e\n  \u003clink rel=\"icon\" href=\"https://ui-assets.cloud.databricks.com/favicon.ico\"\u003e\n  \u003cscript\u003e\n  function setNoCdnAndReload() {\n      document.cookie = `x-databricks-cdn-inaccessible=true; path=/; max-age=86400`;\n      const metric = 'cdnFallbackOccurred';\n      const browserUserAgent = navigator.userAgent;\n      const browserTabId = window.browserTabId;\n      const performanceEntry = performance.getEntriesByType('resource').filter(e =\u003e e.initiatorType === 'script').slice(-1)[0]\n      sessionStorage.setItem('databricks-cdn-fallback-telemetry-key', JSON.stringify({ tags: { browserUserAgent, browserTabId }, performanceEntry}));\n      window.location.reload();\n  }\n\u003c/script\u003e\n  \u003cscript\u003e\n  // Set a manual timeout for dropped packets to CDN\n  function loadScriptWithTimeout(src, timeout) {\n     return new Promise((resolve, reject) =\u003e {\n        const script = document.createElement('script');\n          script.defer = true;\n          script.src = src;\n          script.onload = resolve;\n          script.onerror = reject;\n          document.head.appendChild(script);\n          setTimeout(() =\u003e {\n              reject(new Error('Script load timeout'));\n          }, timeout);\n      });\n  }\n  loadScriptWithTimeout('https://ui-assets.cloud.databricks.com/static/js/login/login.5b4b6b2db0.js', 10000).catch(setNoCdnAndReload);\n\u003c/script\u003e\n \u003c/head\u003e\n \u003cbody class=\"light-mode\"\u003e\n  \u003cuses-legacy-bootstrap\u003e\n   \u003cdiv id=\"login-page\"\u003e\u003c/div\u003e\n  \u003c/uses-legacy-bootstrap\u003e\n  \u003cscript\u003econst telemetryEndpoint=\"/telemetry-unauth?t=\",uiModuleName=\"workspaceLogin\",appSourceType=\"WORKSPACE_CONSOLE_LOGIN\";function shouldIgnoreError(e){return!1}function generateUuidV4(){const e=window.crypto?.randomUUID?.();return e||\"xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx\".replace(/[xy]/g,(e=\u003e{const t=16*Math.random()|0;return(\"x\"===e?t:3\u0026t|8).toString(16)}))}function networkConnectivityTags(){const e=window.navigator.onLine,t=window.navigator.connection?.rtt??-1,n=window.navigator.connection?.downlink??-1;return{browserNavigatorOnline:e,browserConnectionEstimatedRtt:t,browserConnectionEstimatedDownlink:n,browserConnected:e\u0026\u0026t\u003e0\u0026\u0026n\u003e0}}window.__databricks_networkConnectivityTags=networkConnectivityTags;const browserUserAgent=navigator.userAgent;let shouldLogTelemetry=!0;if(window.__DATABRICKS_SAFE_FLAGS__?.[\"databricks.fe.infra.enableBlockingTelemetryByUserAgent\"]){const e=[\"bingbot\",\"RedTeamGlobal\"].some((e=\u003ebrowserUserAgent.includes(e)));shouldLogTelemetry=!e}function getWorkspaceParam(){const e=new URLSearchParams(window.location.search),t=/^\\d+/.exec(e.get(\"o\")??\"\");return null===t?void 0:t[0]}Object.defineProperty(window,\"browserTabId\",{value:generateUuidV4()}),Object.defineProperty(window,\"tabStartTimestampMillis\",{value:window.__DATABRICKS_CONFIG__?.tabStartTimestampMillis??Date.now()});const initialPageLoadId=generateUuidV4();let hasInitialLoadIdBeenUsed=!1;function inferInteractionId(){if(!hasInitialLoadIdBeenUsed)return hasInitialLoadIdBeenUsed=!0,initialPageLoadId}function peekInteractionId(){return initialPageLoadId}window.inferInteractionId=inferInteractionId,window.peekInteractionId=peekInteractionId;let isDuplicated=!1;const throttledThresholdMs=6e4,uiInitTimestampKey=`uiInitTimestamp-${appSourceType}`,uiInitTimestamp=parseInt(window.localStorage?.getItem(uiInitTimestampKey),10),currentTimestamp=Date.now();function createTelemetryRequestBody(e,t={},n=null){const i=Date.now(),o={eventId:generateUuidV4(),metric:e,tags:{...t,...networkConnectivityTags(),browserTabId:window.browserTabId,browserUserAgent:browserUserAgent,tabStartTimestampMillis:window.tabStartTimestampMillis,eventWindowTime:window.performance.now()},ts:i};n\u0026\u0026(o.blob=n);const a={context:{client_context:{user_agent:browserUserAgent,tab_start_timestamp_millis:window.tabStartTimestampMillis,tab_age_millis:window.performance.now(),tab_age_double_millis:window.performance.now(),performance_now_millis:window.performance.now(),tab_id:window.browserTabId,location_host_name:window.location.hostname}},entry:{observability_log:{client_source:\"PRE_APP_INIT\",type:\"INTERACTION_PHASE\",entity:{sub_type:\"INITIAL_LOAD\",type:\"INTERACTION\"},payload:{interaction_id:initialPageLoadId,interaction_phase_payload:{app_source_type:appSourceType,is_duplicated:isDuplicated}}}},frontend_log_event_id:generateUuidV4(),inferred_timestamp_micros:i,inferred_timestamp_millis:i};if(\"chunkLoadRetry\"===e||\"chunkLoadFailure\"===e?(a.entry.observability_log.payload.interaction_phase_payload.name=e,a.entry.observability_log.entity.entity_id=e):(a.entry.observability_log.payload.interaction_phase_payload.name=t.eventType,a.entry.observability_log.entity.entity_id=t.eventType),\"uncaughtJsException\"===e)a.entry.observability_log.payload.interaction_phase_payload.exception={message:t.jsExceptionMessage,raw_stack:n},a.entry.observability_log.payload.interaction_phase_payload.exception_metadata={source:t.jsExceptionSource,lineno:t.jsExceptionLineno,colno:t.jsExceptionColno,js_exception_before_init:!0,exception_log_source:\"PRE_APP_INIT_WINDOW_ON_ERROR\"};else if(\"pageExitBeforeAppInitComplete\"===t.eventType)switch(t.eventName){case\"beforeunload\":a.entry.observability_log.payload.interaction_phase_payload.page_exit_event_type=\"BEFORE_UNLOAD\";break;case\"unload\":a.entry.observability_log.payload.interaction_phase_payload.page_exit_event_type=\"UNLOAD\";break;case\"pagehide\":a.entry.observability_log.payload.interaction_phase_payload.page_exit_event_type=\"PAGE_HIDE\";break;default:a.entry.observability_log.payload.interaction_phase_payload.page_exit_event_type=\"TYPE_UNSPECIFIED\"}return JSON.stringify({uploadTime:i,items:[JSON.stringify(o)],protoLogs:[JSON.stringify(a)]})}function recordTelemetry(e,t={},n=\"\"){if(shouldLogTelemetry){const i=getWorkspaceParam(),o=i?{\"X-Databricks-Org-Id\":i.toString()}:{},a={method:\"POST\",credentials:\"include\",body:createTelemetryRequestBody(e,t,n),headers:o};fetch(telemetryEndpoint+Date.now(),a)}}!isNaN(uiInitTimestamp)\u0026\u0026currentTimestamp\u003cuiInitTimestamp+6e4?isDuplicated=!0:window.localStorage?.setItem(uiInitTimestampKey,currentTimestamp.toString()),window.recordTelemetry=recordTelemetry,recordTelemetry(\"uiInit\",{uiModule:uiModuleName,eventId:\"init\",eventClientSource:uiModuleName,eventType:\"init\"});let logCount=0;function error_handler(e,t,n,i,o){logCount++\u003e4||shouldIgnoreError(e)||recordTelemetry(\"uncaughtJsException\",{eventType:\"jsExceptionV3\",jsExceptionMessage:e,jsExceptionSource:t,jsExceptionLineno:n,jsExceptionColno:i,jsExceptionBeforeInit:!0},o\u0026\u0026o.stack\u0026\u0026o.stack.toString())}window.onerror=error_handler,window.onunhandledrejection=function(e){error_handler(String(e.reason),null,null,null,e.reason)};let hasLoggedPageExitBeforeAppInitComplete=!1;function sendBeaconOnPageExit(e){if(navigator.sendBeacon\u0026\u0026shouldLogTelemetry\u0026\u0026!hasLoggedPageExitBeforeAppInitComplete){const t=e\u0026\u0026e.type||\"unknown\",n=(Date.now(),createTelemetryRequestBody(\"uiInit\",{eventType:\"pageExitBeforeAppInitComplete\",eventName:t,eventClientSource:uiModuleName}));navigator.sendBeacon(telemetryEndpoint+Date.now(),n),hasLoggedPageExitBeforeAppInitComplete=!0}}function isNetworkScriptLoadIssue(e){if(!e)return!1;const{name:t,responseStatus:n}=e,i=void 0!==n\u0026\u0026[0].includes(n),o=t?.includes(\".js\")\u0026\u0026t.includes(\"\u0026retry-attempt=3\"),a=/(?:main|login)(?:\\.[a-zA-Z0-9]+)?\\.js/.test(t);return i\u0026\u0026(o||a)}function getUnsuccessfulScriptLoadResponseStatusCodes(){const e={};return performance.getEntriesByType(\"resource\").filter((e=\u003e\"script\"===e.initiatorType||\"link\"===e.initiatorType)).map((e=\u003eisNetworkScriptLoadIssue(e)?[e.name,e.responseStatus]:void 0)).filter(Boolean).forEach((([t,n])=\u003e{void 0===e[t]\u0026\u0026(e[t]=[]),e[t].push(n)})),e}window.addEventListener(\"beforeunload\",sendBeaconOnPageExit),window.addEventListener(\"unload\",sendBeaconOnPageExit),window.addEventListener(\"pagehide\",sendBeaconOnPageExit),window.cleanupAfterAppInit=()=\u003e{window.removeEventListener(\"beforeunload\",sendBeaconOnPageExit),window.removeEventListener(\"unload\",sendBeaconOnPageExit),window.removeEventListener(\"pagehide\",sendBeaconOnPageExit)},window.__DATABRICKS_SAFE_FLAGS__?.[\"databricks.fe.infra.enableStartupAppInitSNRAlerting\"]\u0026\u0026(window.startupAppInitSNR=setInterval((()=\u003e{const e=Object.entries(getUnsuccessfulScriptLoadResponseStatusCodes());if(e.length\u003e0){const t=JSON.stringify({failedNetworkScripts:e}),n={uiModule:uiModuleName,eventId:\"ClientNetworkScriptLoadFailure\",eventClientSource:uiModuleName,eventType:\"clientNetworkScriptLoadFailure\"};recordTelemetry(\"uiInit\",n),recordTelemetry(\"codeMonCounter\",n,t),clearInterval(window.startupAppInitSNR),window?.cleanupAfterAppInit(),clearTimeout(window?.startupHangTimer)}}),1e3))\u003c/script\u003e\n \u003c/body\u003e\n\u003c/html\u003e",
+            "response_body_base64": "PCFkb2N0eXBlIGh0bWw+CjxodG1sPgogPGhlYWQ+CiAgPG1ldGEgY2hhcnNldD0idXRmLTgiPgogIDxtZXRhIGh0dHAtZXF1aXY9IkNvbnRlbnQtTGFuZ3VhZ2UiIGNvbnRlbnQ9ImVuIj4KICA8dGl0bGU+RGF0YWJyaWNrcyAtIFNpZ24gSW48L3RpdGxlPgogIDxtZXRhIG5hbWU9InZpZXdwb3J0IiBjb250ZW50PSJ3aWR0aD05NjAiPgogIDxsaW5rIHJlbD0iaWNvbiIgdHlwZT0iaW1hZ2UvcG5nIiBocmVmPSJodHRwczovL3VpLWFzc2V0cy5jbG91ZC5kYXRhYnJpY2tzLmNvbS9mYXZpY29uLmljbyI+CiAgPG1ldGEgaHR0cC1lcXVpdj0iY29udGVudC10eXBlIiBjb250ZW50PSJ0ZXh0L2h0bWw7IGNoYXJzZXQ9VVRGOCI+CiAgPHNjcmlwdCBpZD0iX19kYXRhYnJpY2tzX3JlYWN0X3NjcmlwdCI+PC9zY3JpcHQ+CiAgPHNjcmlwdCB0eXBlPSJhcHBsaWNhdGlvbi9qc29uIiBpZD0iZGF0YWJyaWNrcy1zYWZlLWZsYWdzIj57fTwvc2NyaXB0PgogIDxzY3JpcHQ+d2luZG93Ll9fREFUQUJSSUNLU19TQUZFX0ZMQUdTX189eyJkYXRhYnJpY2tzLnNpc3UucmVjYXB0Y2hhLmFjY291bnRzLmlzRW5hYmxlZCI6dHJ1ZSwiZGF0YWJyaWNrcy5zaXN1Lm9uZVRydXN0U2NyaXB0SWQiOiIwMTkyZDUzYS05OTk1LTcwYzItOTNmNi02ZjA2MjhlOTM5MjkiLCJkYXRhYnJpY2tzLmZlLmNvbmZpZy51aUZsYWdzUmVkaXJlY3RNYXBwaW5nIjoie1wiYWNjb3VudElkXCI6IHtcImRlZmF1bHRWYWx1ZVwiOiBcIlwiLCBcInR5cGVcIjogXCJ1aUZsYWdLZXlcIiwgXCJ1aUZsYWdLZXlcIjogXCJhY2NvdW50SWRfbmV3XCJ9LCBcImFjY291bnRzT3duZXJVcmxcIjoge1wiZGVmYXVsdFZhbHVlXCI6IFwiXCIsIFwidHlwZVwiOiBcInVpRmxhZ0tleVwiLCBcInVpRmxhZ0tleVwiOiBcImFjY291bnRzT3duZXJVcmxfbmV3XCJ9LCBcImFsbG93V2hpdGVsaXN0ZWRJZnJhbWVEb21haW5zXCI6IHtcImRlZmF1bHRWYWx1ZVwiOiB0cnVlLCBcInR5cGVcIjogXCJ1aUZsYWdLZXlcIiwgXCJ1aUZsYWdLZXlcIjogXCJkYXRhYnJpY2tzLndlYmFwcC5zZWN1cml0eS5hbGxvd1doaXRlbGlzdGVkSWZyYW1lRG9tYWluc1wifSwgXCJhdmFpbGFibGVXb3Jrc3BhY2VzXCI6IHtcImNvbXBvdW5kQ29uZmlnS2V5XCI6IFwiYXZhaWxhYmxlV29ya3NwYWNlc1wiLCBcInR5cGVcIjogXCJjb21wb3VuZENvbmZpZ0tleVwifSwgXCJjZW50cmFsaXplZExvZ2luRW5hYmxlZFwiOiB7XCJkZWZhdWx0VmFsdWVcIjogZmFsc2UsIFwidHlwZVwiOiBcInVpRmxhZ0tleVwiLCBcInVpRmxhZ0tleVwiOiBcImRhdGFicmlja3MuZmUuY2VudHJhbGl6ZWRMb2dpbkVuYWJsZWRcIn0sIFwiY2xvdWRcIjoge1wiZGVmYXVsdFZhbHVlXCI6IFwiQVdTXCIsIFwidHlwZVwiOiBcInVpRmxhZ0tleVwiLCBcInVpRmxhZ0tleVwiOiBcImNsb3VkX25ld1wifSwgXCJjbG91ZE1hbmFnZW1lbnRQb3J0YWxVcmxcIjoge1wiZGVmYXVsdFZhbHVlXCI6IFwiXCIsIFwidHlwZVwiOiBcInVpRmxhZ0tleVwiLCBcInVpRmxhZ0tleVwiOiBcImNsb3VkTWFuYWdlbWVudFBvcnRhbFVybF9uZXdcIn0sIFwiY3NyZlRva2VuXCI6IHtcImNvbXBvdW5kQ29uZmlnS2V5XCI6IFwiY3NyZlRva2VuXCIsIFwidHlwZVwiOiBcImNvbXBvdW5kQ29uZmlnS2V5XCJ9LCBcImN1cnJlbnRXb3Jrc3BhY2VJZFwiOiB7XCJkZWZhdWx0VmFsdWVcIjogXCJcIiwgXCJ0eXBlXCI6IFwidWlGbGFnS2V5XCIsIFwidWlGbGFnS2V5XCI6IFwiY3VycmVudFdvcmtzcGFjZUlkX25ld1wifSwgXCJjdXN0b21SZWZlcmVuY2VzXCI6IHtcImNvbXBvdW5kQ29uZmlnS2V5XCI6IFwiY3VzdG9tUmVmZXJlbmNlc1wiLCBcInR5cGVcIjogXCJjb21wb3VuZENvbmZpZ0tleVwifSwgXCJkZWx0YVN0YXRzUmVwb3J0SW50ZXJ2YWxNc1wiOiB7XCJkZWZhdWx0VmFsdWVcIjogMCwgXCJ0eXBlXCI6IFwidWlGbGFnS2V5XCIsIFwidWlGbGFnS2V5XCI6IFwiZGF0YWJyaWNrcy5mZS5lZGEuZGVsdGFTdGF0c1JlcG9ydEludGVydmFsTXNcIn0sIFwiZGlzYWJsZUZlZWRiYWNrXCI6IHtcImRlZmF1bHRWYWx1ZVwiOiBmYWxzZSwgXCJ0eXBlXCI6IFwidWlGbGFnS2V5XCIsIFwidWlGbGFnS2V5XCI6IFwiZGF0YWJyaWNrcy53ZWJhcHAuaXNQdmNcIn0sIFwiZGlzYWJsZVJlc3VsdHNEb3dubG9hZGluZ1wiOiB7XCJjb21wb3VuZENvbmZpZ0tleVwiOiBcImRpc2FibGVSZXN1bHRzRG93bmxvYWRpbmdcIiwgXCJ0eXBlXCI6IFwiY29tcG91bmRDb25maWdLZXlcIn0sIFwiZG9tYWluU3VmZml4XCI6IHtcImNvbXBvdW5kQ29uZmlnS2V5XCI6IFwiZG9tYWluU3VmZml4XCIsIFwidHlwZVwiOiBcImNvbXBvdW5kQ29uZmlnS2V5XCJ9LCBcImRyb3B6b25lTWF4RmlsZVNpemVcIjoge1wiZGVmYXVsdFZhbHVlXCI6IDIwNDcsIFwidHlwZVwiOiBcInVpRmxhZ0tleVwiLCBcInVpRmxhZ0tleVwiOiBcImRhdGFicmlja3MuZmUuZWRhLmRyb3B6b25lTWF4RmlsZVNpemVNQlwifSwgXCJlbmFibGVDZUFjY291bnREZWxldGlvblVJXCI6IHtcImRlZmF1bHRWYWx1ZVwiOiBmYWxzZSwgXCJ0eXBlXCI6IFwidWlGbGFnS2V5XCIsIFwidWlGbGFnS2V5XCI6IFwiZGF0YWJyaWNrcy53ZWJhcHAuZW5hYmxlQ2VBY2NvdW50RGVsZXRpb25VSVwifSwgXCJlbmFibGVDbHVzdGVyU3Vic2NyaXB0aW9uXCI6IHtcImRlZmF1bHRWYWx1ZVwiOiBmYWxzZSwgXCJ0eXBlXCI6IFwidWlGbGFnS2V5XCIsIFwidWlGbGFnS2V5XCI6IFwiZGF0YWJyaWNrcy5ncmFwaHFsLmVuYWJsZUNsdXN0ZXJTdWJzY3JpcHRpb25XaXRoS2Fma2FcIn0sIFwiZW5hYmxlRmVhdHVyZUNhdGFsb2dcIjoge1wiZGVmYXVsdFZhbHVlXCI6IHRydWUsIFwidHlwZVwiOiBcInVpRmxhZ0tleVwiLCBcInVpRmxhZ0tleVwiOiBcImRhdGFicmlja3MuZmVhdHVyZVN0b3JlLmVuYWJsZUZlYXR1cmVDYXRhbG9nXCJ9LCBcImVuYWJsZUZpbGVzSW5Xb3Jrc3BhY2VcIjoge1wiY29tcG91bmRDb25maWdLZXlcIjogXCJlbmFibGVGaWxlc0luV29ya3NwYWNlXCIsIFwidHlwZVwiOiBcImNvbXBvdW5kQ29uZmlnS2V5XCJ9LCBcImVuYWJsZUZ1bGxUZXh0U2VhcmNoXCI6IHtcImRlZmF1bHRWYWx1ZVwiOiBmYWxzZSwgXCJ0eXBlXCI6IFwidWlGbGFnS2V5XCIsIFwidWlGbGFnS2V5XCI6IFwiZGF0YWJyaWNrcy53ZWJhcHAuc2VhcmNoLmVuYWJsZUZ1bGxUZXh0U2VhcmNoXCJ9LCBcImVuYWJsZUpvYnNMaXN0UGFnaW5hdGVkVmlld1wiOiB7XCJjb21wb3VuZENvbmZpZ0tleVwiOiBcImVuYWJsZUpvYnNMaXN0UGFnaW5hdGVkVmlld1wiLCBcInR5cGVcIjogXCJjb21wb3VuZENvbmZpZ0tleVwifSwgXCJlbmFibGVNaW5pQ2x1c3RlcnNcIjoge1wiZGVmYXVsdFZhbHVlXCI6IGZhbHNlLCBcInR5cGVcIjogXCJ1aUZsYWdLZXlcIiwgXCJ1aUZsYWdLZXlcIjogXCJkYXRhYnJpY2tzLm1hbmFnZXIuY29udGFpbmVyLmVuYWJsZU1pbmlDbHVzdGVyc1wifSwgXCJlbmFibGVNdWx0aUxldmVsU2NoZW1hQnJvd3NlclwiOiB7XCJjb21wb3VuZENvbmZpZ0tleVwiOiBcImVuYWJsZU11bHRpTGV2ZWxTY2hlbWFCcm93c2VyXCIsIFwidHlwZVwiOiBcImNvbXBvdW5kQ29uZmlnS2V5XCJ9LCBcImVuYWJsZU5vdGVib29rVGFibGVDbGlwYm9hcmRcIjoge1wiY29tcG91bmRDb25maWdLZXlcIjogXCJlbmFibGVOb3RlYm9va1RhYmxlQ2xpcGJvYXJkXCIsIFwidHlwZVwiOiBcImNvbXBvdW5kQ29uZmlnS2V5XCJ9LCBcImVuYWJsZVBhcnRuZXJIdWJcIjoge1wiZGVmYXVsdFZhbHVlXCI6IGZhbHNlLCBcInR5cGVcIjogXCJ1aUZsYWdLZXlcIiwgXCJ1aUZsYWdLZXlcIjogXCJjb20uZGF0YWJyaWNrcy5wYXJ0bmVyY29ubmVjdC5lbmFibGVQYXJ0bmVyQ29ubmVjdFwifSwgXCJlbmFibGVQaXBlbGluZXNVaVwiOiB7XCJkZWZhdWx0VmFsdWVcIjogZmFsc2UsIFwidHlwZVwiOiBcInVpRmxhZ0tleVwiLCBcInVpRmxhZ0tleVwiOiBcImVuYWJsZVBpcGVsaW5lc1VpXCJ9LCBcImVuYWJsZVByb2plY3RUeXBlSW5Xb3Jrc3BhY2VcIjoge1wiY29tcG91bmRDb25maWdLZXlcIjogXCJpc1Byb2plY3RUeXBlSW5Xb3Jrc3BhY2VFbmFibGVkXCIsIFwidHlwZVwiOiBcImNvbXBvdW5kQ29uZmlnS2V5XCJ9LCBcImVuYWJsZVNRTEVuZHBvaW50SW5Ob3RlYm9va1wiOiB7XCJjb21wb3VuZENvbmZpZ0tleVwiOiBcImVuYWJsZVNRTEVuZHBvaW50SW5Ob3RlYm9va1wiLCBcInR5cGVcIjogXCJjb21wb3VuZENvbmZpZ0tleVwifSwgXCJlbmFibGVTZWFyY2hWMlwiOiB7XCJkZWZhdWx0VmFsdWVcIjogZmFsc2UsIFwidHlwZVwiOiBcInVpRmxhZ0tleVwiLCBcInVpRmxhZ0tleVwiOiBcImRhdGFicmlja3MuZmUuc2VhcmNoLmVuYWJsZVNlYXJjaFYyXCJ9LCBcImVuYWJsZVNlcnZlcmxlc3NKb2JzVUlcIjoge1wiZGVmYXVsdFZhbHVlXCI6IGZhbHNlLCBcInR5cGVcIjogXCJ1aUZsYWdLZXlcIiwgXCJ1aUZsYWdLZXlcIjogXCJjb20uZGF0YWJyaWNrcy5lbGFzdGljc3BhcmsuSm9ic1NoYXJlZENvbmYuZW5hYmxlU2VydmVybGVzc1VJXCJ9LCBcImVuYWJsZVNxbFNlcnZpY2VcIjoge1wiZGVmYXVsdFZhbHVlXCI6IGZhbHNlLCBcInR5cGVcIjogXCJ1aUZsYWdLZXlcIiwgXCJ1aUZsYWdLZXlcIjogXCJkYlNxbEVuYWJsZWRfbmV3XCJ9LCBcImVuYWJsZVNzb0lkZWFzQ29uZmlnXCI6IHtcImRlZmF1bHRWYWx1ZVwiOiB0cnVlLCBcInR5cGVcIjogXCJ1aUZsYWdLZXlcIiwgXCJ1aUZsYWdLZXlcIjogXCJlbmFibGVTc29JZGVhc0NvbmZpZ1wifSwgXCJlbmFibGVUZXN0Q29ubklmcmFtZVwiOiB7XCJkZWZhdWx0VmFsdWVcIjogdHJ1ZSwgXCJ0eXBlXCI6IFwidWlGbGFnS2V5XCIsIFwidWlGbGFnS2V5XCI6IFwiZGF0YWJyaWNrcy53ZWJhcHAuZW5hYmxlUHJveHlFbmRwb2ludHNDb25uZWN0aXZpdHlUZXN0SGFuZGxlclwifSwgXCJlbmFibGVUcmFzaEZvbGRlclwiOiB7XCJkZWZhdWx0VmFsdWVcIjogdHJ1ZSwgXCJ0eXBlXCI6IFwidWlGbGFnS2V5XCIsIFwidWlGbGFnS2V5XCI6IFwiZGF0YWJyaWNrcy53ZWJhcHAuZW5hYmxlVHJhc2hGb2xkZXJcIn0sIFwiZW5hYmxlV29ya2Zsb3dzSW5EQlNRTFwiOiB7XCJkZWZhdWx0VmFsdWVcIjogZmFsc2UsIFwidHlwZVwiOiBcInVpRmxhZ0tleVwiLCBcInVpRmxhZ0tleVwiOiBcImVuYWJsZVdvcmtmbG93c0luREJTUUxfbmV3XCJ9LCBcImVuZm9yY2VXb3Jrc3BhY2VWaWV3QWNsc1wiOiB7XCJjb21wb3VuZENvbmZpZ0tleVwiOiBcImVuZm9yY2VXb3Jrc3BhY2VWaWV3QWNsc1wiLCBcInR5cGVcIjogXCJjb21wb3VuZENvbmZpZ0tleVwifSwgXCJob21lUGFnZUxvZ29cIjoge1wiY29tcG91bmRDb25maWdLZXlcIjogXCJob21lUGFnZUxvZ29cIiwgXCJ0eXBlXCI6IFwiY29tcG91bmRDb25maWdLZXlcIn0sIFwiaG9tZVBhZ2VMb2dvRGVmYXVsdFwiOiB7XCJkZWZhdWx0VmFsdWVcIjogXCJsb2dpbi9sb2dvXzIwMjAvZGF0YWJyaWNrcy5zdmdcIiwgXCJ0eXBlXCI6IFwidWlGbGFnS2V5XCIsIFwidWlGbGFnS2V5XCI6IFwiZGF0YWJyaWNrcy53ZWJhcHAuaG9tZVBhZ2VMb2dvXCJ9LCBcImhvbWVQYWdlTG9nb1dpZHRoXCI6IHtcImNvbXBvdW5kQ29uZmlnS2V5XCI6IFwiaG9tZVBhZ2VMb2dvV2lkdGhcIiwgXCJ0eXBlXCI6IFwiY29tcG91bmRDb25maWdLZXlcIn0sIFwiaG9tZVBhZ2VXZWxjb21lTWVzc2FnZVwiOiB7XCJjb21wb3VuZENvbmZpZ0tleVwiOiBcImhvbWVQYWdlV2VsY29tZU1lc3NhZ2VcIiwgXCJ0eXBlXCI6IFwiY29tcG91bmRDb25maWdLZXlcIn0sIFwiaWRlbnRpdHlGZWRlcmF0aW9uRW5hYmxlZFwiOiB7XCJkZWZhdWx0VmFsdWVcIjogZmFsc2UsIFwidHlwZVwiOiBcInVpRmxhZ0tleVwiLCBcInVpRmxhZ0tleVwiOiBcImlkZW50aXR5RmVkZXJhdGlvbkVuYWJsZWRcIn0sIFwiaXNBZG1pblwiOiB7XCJkZWZhdWx0VmFsdWVcIjogZmFsc2UsIFwidHlwZVwiOiBcInVpRmxhZ0tleVwiLCBcInVpRmxhZ0tleVwiOiBcImlzQWRtaW5fbmV3XCJ9LCBcImlzQ2xvdWRsZXNzV29ya3NwYWNlXCI6IHtcImRlZmF1bHRWYWx1ZVwiOiBmYWxzZSwgXCJ0eXBlXCI6IFwidWlGbGFnS2V5XCIsIFwidWlGbGFnS2V5XCI6IFwiaXNDbG91ZGxlc3NXb3Jrc3BhY2VcIn0sIFwiaXNDb21wbGlhbmNlTW9kZVwiOiB7XCJkZWZhdWx0VmFsdWVcIjogZmFsc2UsIFwidHlwZVwiOiBcInVpRmxhZ0tleVwiLCBcInVpRmxhZ0tleVwiOiBcImlzQ29tcGxpYW5jZU1vZGVcIn0sIFwiaXNNZXRhc3RvcmVJbnN0YWxsZWRcIjoge1wiZGVmYXVsdFZhbHVlXCI6IGZhbHNlLCBcInR5cGVcIjogXCJ1aUZsYWdLZXlcIiwgXCJ1aUZsYWdLZXlcIjogXCJpc01ldGFzdG9yZUluc3RhbGxlZF9uZXdcIn0sIFwiaXNNb2RlbFJlZ2lzdHJ5RW5hYmxlZEluQ3VycmVudFdvcmtzcGFjZVwiOiB7XCJjb21wb3VuZENvbmZpZ0tleVwiOiBcImlzTW9kZWxSZWdpc3RyeUVuYWJsZWRJbkN1cnJlbnRXb3Jrc3BhY2VcIiwgXCJ0eXBlXCI6IFwiY29tcG91bmRDb25maWdLZXlcIn0sIFwiaXNTaGFzdGFQcml2YXRlUHJldmlld1dvcmtzcGFjZVwiOiB7XCJkZWZhdWx0VmFsdWVcIjogZmFsc2UsIFwidHlwZVwiOiBcInVpRmxhZ0tleVwiLCBcInVpRmxhZ0tleVwiOiBcImlzU2hhc3RhUHJpdmF0ZVByZXZpZXdXb3Jrc3BhY2VfbmV3XCJ9LCBcImpvYk5vdGVib29rRGlyZWN0b3J5XCI6IHtcImRlZmF1bHRWYWx1ZVwiOiBcIl9fZGF0YWJyaWNrc19qb2JzX3RtcFwiLCBcInR5cGVcIjogXCJ1aUZsYWdLZXlcIiwgXCJ1aUZsYWdLZXlcIjogXCJkYXRhYnJpY2tzLmVsYXN0aWNzcGFyay50cmVlU3RvcmVUbXBEaXJcIn0sIFwib2VtT3JnYW5pemF0aW9uTmFtZVwiOiB7XCJkZWZhdWx0VmFsdWVcIjogXCJcIiwgXCJ0eXBlXCI6IFwidWlGbGFnS2V5XCIsIFwidWlGbGFnS2V5XCI6IFwib2VtT3JnYW5pemF0aW9uTmFtZV9uZXdcIn0sIFwib3JnSWRcIjoge1wiZGVmYXVsdFZhbHVlXCI6IDAsIFwidHlwZVwiOiBcInVpRmxhZ0tleVwiLCBcInVpRmxhZ0tleVwiOiBcIm9yZ0lkX25ld1wifSwgXCJwcm9kdWN0TmFtZVwiOiB7XCJjb21wb3VuZENvbmZpZ0tleVwiOiBcInByb2R1Y3ROYW1lXCIsIFwidHlwZVwiOiBcImNvbXBvdW5kQ29uZmlnS2V5XCJ9LCBcInJlcG9zSXB5bmJSZXN1bHRzRXhwb3J0UGVybWlzc2lvbnNcIjoge1wiZGVmYXVsdFZhbHVlXCI6IFwiXCIsIFwidHlwZVwiOiBcInVpRmxhZ0tleVwiLCBcInVpRmxhZ0tleVwiOiBcInJlcG9zSXB5bmJSZXN1bHRzRXhwb3J0UGVybWlzc2lvbnNcIn0sIFwic2VydmVJZnJhbWVGcm9tVXNlckNvbnRlbnREb21haW5cIjoge1wiZGVmYXVsdFZhbHVlXCI6IHRydWUsIFwidHlwZVwiOiBcInVpRmxhZ0tleVwiLCBcInVpRmxhZ0tleVwiOiBcImRhdGFicmlja3MuZmUud2ViYXBwLnNlcnZlSWZyYW1lRnJvbVVzZXJDb250ZW50RG9tYWluXCJ9LCBcInNlc3Npb25JZGxlVGltZW91dFwiOiB7XCJkZWZhdWx0VmFsdWVcIjogLTEsIFwidHlwZVwiOiBcInVpRmxhZ0tleVwiLCBcInVpRmxhZ0tleVwiOiBcImRhdGFicmlja3Mud2ViYXBwLnNlc3Npb25JZGxlVGltZW91dFwifSwgXCJzaGFyZE5hbWVcIjoge1wiZGVmYXVsdFZhbHVlXCI6IFwiXCIsIFwidHlwZVwiOiBcInVpRmxhZ0tleVwiLCBcInVpRmxhZ0tleVwiOiBcInNoYXJkTmFtZVwifSwgXCJzaG93V2hpdGVsYWJlbEZvb3RlclwiOiB7XCJjb21wb3VuZENvbmZpZ0tleVwiOiBcInNob3dXaGl0ZWxhYmVsRm9vdGVyXCIsIFwidHlwZVwiOiBcImNvbXBvdW5kQ29uZmlnS2V5XCJ9LCBcInNpZGViYXJMb2dvQWN0aXZlXCI6IHtcImRlZmF1bHRWYWx1ZVwiOiBcIlwiLCBcInR5cGVcIjogXCJ1aUZsYWdLZXlcIiwgXCJ1aUZsYWdLZXlcIjogXCJzaWRlYmFyTG9nb0FjdGl2ZVwifSwgXCJzaWRlYmFyTG9nb0luYWN0aXZlXCI6IHtcImRlZmF1bHRWYWx1ZVwiOiBcIlwiLCBcInR5cGVcIjogXCJ1aUZsYWdLZXlcIiwgXCJ1aUZsYWdLZXlcIjogXCJzaWRlYmFyTG9nb0luYWN0aXZlXCJ9LCBcInNpZGViYXJMb2dvVGV4dFwiOiB7XCJjb21wb3VuZENvbmZpZ0tleVwiOiBcInNpZGViYXJMb2dvVGV4dFwiLCBcInR5cGVcIjogXCJjb21wb3VuZENvbmZpZ0tleVwifSwgXCJ0aGVtZUlkZW50aWZpZXJcIjoge1wiZGVmYXVsdFZhbHVlXCI6IFwiZGF0YWJyaWNrc1wiLCBcInR5cGVcIjogXCJ1aUZsYWdLZXlcIiwgXCJ1aUZsYWdLZXlcIjogXCJkYXRhYnJpY2tzLndlYmFwcC50aGVtZUlkZW50aWZpZXJcIn0sIFwidHJpYWxFeHBpcmF0aW9uVGltZVwiOiB7XCJkZWZhdWx0VmFsdWVcIjogXCJcIiwgXCJ0eXBlXCI6IFwidWlGbGFnS2V5XCIsIFwidWlGbGFnS2V5XCI6IFwidHJpYWxFeHBpcmF0aW9uVGltZVwifSwgXCJ1bml0eUNhdGFsb2dTZXJ2aWNlRW5hYmxlZFwiOiB7XCJkZWZhdWx0VmFsdWVcIjogZmFsc2UsIFwidHlwZVwiOiBcInVpRmxhZ0tleVwiLCBcInVpRmxhZ0tleVwiOiBcImRhdGFicmlja3MudW5pdHljYXRhbG9nLmVuYWJsZVVuaXR5Q2F0YWxvZ1NlcnZpY2VcIn0sIFwidXBncmFkZUJhbm5lckhpZGVUaW1lb3V0RGF5c1wiOiB7XCJkZWZhdWx0VmFsdWVcIjogMSwgXCJ0eXBlXCI6IFwidWlGbGFnS2V5XCIsIFwidWlGbGFnS2V5XCI6IFwiZGF0YWJyaWNrcy53ZWJhcHAudXBncmFkZUJhbm5lckhpZGVUaW1lb3V0RGF5c1wifSwgXCJ1cGdyYWRlVVJMXCI6IHtcImRlZmF1bHRWYWx1ZVwiOiBcIlwiLCBcInR5cGVcIjogXCJ1aUZsYWdLZXlcIiwgXCJ1aUZsYWdLZXlcIjogXCJkYXRhYnJpY2tzLndlYmFwcC51cGdyYWRlVVJMXCJ9LCBcInVwZ3JhZGVVUkxGb3JCYW5uZXJcIjoge1wiZGVmYXVsdFZhbHVlXCI6IFwiXCIsIFwidHlwZVwiOiBcInVpRmxhZ0tleVwiLCBcInVpRmxhZ0tleVwiOiBcImRhdGFicmlja3Mud2ViYXBwLnVwZ3JhZGVVUkxGb3JCYW5uZXJcIn0sIFwidXNhZ2VMb2dnZXJQdWJsaWNLZXlcIjoge1wiZGVmYXVsdFZhbHVlXCI6IFwiXCIsIFwidHlwZVwiOiBcInVpRmxhZ0tleVwiLCBcInVpRmxhZ0tleVwiOiBcInVpVGVsZW1ldHJ5UHVibGljS2V5XCJ9LCBcInVzZXJcIjoge1wiZGVmYXVsdFZhbHVlXCI6IFwiXCIsIFwidHlwZVwiOiBcInVpRmxhZ0tleVwiLCBcInVpRmxhZ0tleVwiOiBcInVzZXJfbmV3XCJ9LCBcInVzZXJDYW5Vc2VEYXRhYnJpY2tzV29ya3NwYWNlXCI6IHtcImRlZmF1bHRWYWx1ZVwiOiBmYWxzZSwgXCJ0eXBlXCI6IFwidWlGbGFnS2V5XCIsIFwidWlGbGFnS2V5XCI6IFwidXNlckNhblVzZURhdGFicmlja3NXb3Jrc3BhY2VfbmV3XCJ9LCBcInVzZXJDYW5Vc2VTcWxTZXJ2aWNlXCI6IHtcImRlZmF1bHRWYWx1ZVwiOiBmYWxzZSwgXCJ0eXBlXCI6IFwidWlGbGFnS2V5XCIsIFwidWlGbGFnS2V5XCI6IFwidXNlckNhblVzZVNxbFNlcnZpY2VfbmV3XCJ9LCBcInVzZXJGaXJzdE5hbWVcIjoge1wiZGVmYXVsdFZhbHVlXCI6IFwiXCIsIFwidHlwZVwiOiBcInVpRmxhZ0tleVwiLCBcInVpRmxhZ0tleVwiOiBcInVzZXJGaXJzdE5hbWVfbmV3XCJ9LCBcInVzZXJGdWxsbmFtZVwiOiB7XCJkZWZhdWx0VmFsdWVcIjogXCJcIiwgXCJ0eXBlXCI6IFwidWlGbGFnS2V5XCIsIFwidWlGbGFnS2V5XCI6IFwidXNlckZ1bGxuYW1lX25ld1wifSwgXCJ1c2VySWRcIjoge1wiZGVmYXVsdFZhbHVlXCI6IC0xLCBcInR5cGVcIjogXCJ1aUZsYWdLZXlcIiwgXCJ1aUZsYWdLZXlcIjogXCJ1c2VySWRfbmV3XCJ9LCBcInVzZXJMYXN0TmFtZVwiOiB7XCJkZWZhdWx0VmFsdWVcIjogXCJcIiwgXCJ0eXBlXCI6IFwidWlGbGFnS2V5XCIsIFwidWlGbGFnS2V5XCI6IFwidXNlckxhc3ROYW1lX25ld1wifSwgXCJ1c2VyVHlwZVwiOiB7XCJkZWZhdWx0VmFsdWVcIjogXCJcIiwgXCJ0eXBlXCI6IFwidWlGbGFnS2V5XCIsIFwidWlGbGFnS2V5XCI6IFwidXNlclR5cGVfbmV3XCJ9fSIsImRhdGFicmlja3MuZmUuaW5mcmEuc2VuZEF1dGhvcml6aW5nUm9sZUhlYWRlckluQXBwSW5pdCI6dHJ1ZSwiZGF0YWJyaWNrcy5mZS53ZXhwLnVzZVBlcldvcmtzcGFjZVF1ZXJ5Q2xpZW50Ijp0cnVlLCJkYXRhYnJpY2tzLmZlLmluZnJhLmZpeENvbmZpZ1ByZWZldGNoIjp0cnVlLCJkYXRhYnJpY2tzLnNpc3UuaXNHb29nbGVUYWdNYW5hZ2VyRW5hYmxlZCI6dHJ1ZSwiZGF0YWJyaWNrcy5zaXN1LmlzT25lVHJ1c3RDb29raWVDb25zZW50RW5hYmxlZCI6dHJ1ZSwiZGF0YWJyaWNrcy5zaXN1Lm9uZVRydXN0Q29va2llRG9tYWluIjoiLmxvZ2luLmRhdGFicmlja3MuY29tIiwiZGF0YWJyaWNrcy5mZS53ZXhwLnNlcnZlclNpZGVTYWZlTWlncmF0aW9uS2lsbFN3aXRjaCI6ZmFsc2UsImRhdGFicmlja3MuZmUuaW5mcmEudXNlTmV3RmV0Y2hTZXR0aW5nc0Z1bmMiOnRydWUsImRhdGFicmlja3MuZmUuaW5mcmEuZW5hYmxlV2VicGFja0xhenlNb2R1bGVMb2FkaW5nIjpmYWxzZSwiZGF0YWJyaWNrcy5zaXN1LnNpZ251cEZsb3dWMkVuYWJsZWQiOnRydWUsImRhdGFicmlja3MuZmUuaW5mcmEudXNlQXBvbGxvM18xMiI6ZmFsc2UsImRhdGFicmlja3MuZmUuaW5mcmEuZW5hYmxlUmVhY3RQcm9maWxlciI6ZmFsc2UsImRhdGFicmlja3MuZmUud2V4cC5pc1Nwb2dTb2Z0TmF2QnlDb250ZXh0RW5hYmxlZCI6dHJ1ZSwiZGF0YWJyaWNrcy5mZS5pbmZyYS5lbmFibGVNYW51YWxSZWRpcmVjdEhhbmRsaW5nIjp0cnVlLCJkYXRhYnJpY2tzLnNpc3UucmVjYXB0Y2hhLnNpdGVLZXkiOiI2TGVsT3BvckFBQUFBS192bG9FSDNSNVlOS0lXcWJGRFRKcm5sV3o0IiwiZGF0YWJyaWNrcy5mZS5pbmZyYS5zaG91bGROb3RBd2FpdENvbmZpZ0ZvckhvbWVwYWdlIjp0cnVlLCJkYXRhYnJpY2tzLnNpc3Uud29ya3NwYWNlQ3VzdG9tVGVybXNPZlVzZSI6IiIsImRhdGFicmlja3MuZmUud2V4cC5lbmFibGVOZXdDc3JmUmV0cmlldmFsU2VydmVyU2lkZSI6dHJ1ZSwiZGF0YWJyaWNrcy5hY2NvdW50c3VpLnB1YmxpY1NhZmV4QVBJLmlzRW5hYmxlZCI6dHJ1ZSwiZGF0YWJyaWNrcy5zaXN1LnJlY2FwdGNoYS5pc0VuYWJsZWQiOnRydWUsImRhdGFicmlja3MuZmUuaW5mcmEudXNlUmVhY3QxOE5ld0FQSSI6ZmFsc2UsImRhdGFicmlja3MuZmUuaW5mcmEuZW5hYmxlU3RhcnR1cEFwcEluaXRTTlJBbGVydGluZyI6dHJ1ZSwiZGF0YWJyaWNrcy5mZS5pbmZyYS5lbmFibGVJbXBsaWNpdENvbnRleHQiOnRydWUsImRhdGFicmlja3MuZmUud2V4cC5zaG91bGRVc2VGZWF0dXJlRmxhZ01hcCI6dHJ1ZSwiZGF0YWJyaWNrcy5mZS53ZXhwLnNob3VsZFVzZVB1YkNvbmZNYXAiOnRydWUsImRhdGFicmlja3MuZmUuaW5mcmEuZW5hYmxlQmxvY2tpbmdUZWxlbWV0cnlCeVVzZXJBZ2VudCI6dHJ1ZSwiZGF0YWJyaWNrcy5mZS53ZXhwLmlzVW5pZmllZEFwcFJvb3RFbmFibGVkIjpmYWxzZSwiZGF0YWJyaWNrcy5mZS5jb25maWcudXNlV2ViU2hhcmVkR29jeCI6ZmFsc2UsImRhdGFicmlja3MuYWNjb3VudHN1aS5lbmFibGVTZXNzaW9uQXBvbGxvQ2FjaGUiOnRydWUsImRhdGFicmlja3Muc2lzdS5yZWNhcHRjaGEuc2lzdS5pc0VuYWJsZWQiOnRydWV9LHdpbmRvdy5fX0RBVEFCUklDS1NfU0FGRV9GTEFHU19fPz89SlNPTi5wYXJzZShkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgiZGF0YWJyaWNrcy1zYWZlLWZsYWdzIikudGV4dENvbnRlbnQpLHdpbmRvdy5fX0RBVEFCUklDS1NfQ09ORklHX189eyJ0YWJTdGFydFRpbWVzdGFtcE1pbGxpcyI6MTc2NDM3MDc1NDIzMSwiaXNSZWdpb25sZXNzUmVxdWVzdCI6ZmFsc2UsImRlcGxveW1lbnRNb2RlIjoicHJvZHVjdGlvbiIsImlzQ3V0dGluZ0VkZ2UiOmZhbHNlLCJwdWJsaWNQYXRoIjp7Im1sZmxvdyI6Imh0dHBzOi8vdWktYXNzZXRzLmNsb3VkLmRhdGFicmlja3MuY29tLyIsImFjY291bnRzLWNvbnNvbGUiOiJodHRwczovL3VpLWFzc2V0cy5jbG91ZC5kYXRhYnJpY2tzLmNvbS8iLCJmZWF0dXJlLXN0b3JlIjoiaHR0cHM6Ly91aS1hc3NldHMuY2xvdWQuZGF0YWJyaWNrcy5jb20vIiwibW9ub2xpdGgiOiJodHRwczovL3VpLWFzc2V0cy5jbG91ZC5kYXRhYnJpY2tzLmNvbS8iLCJqYXdzIjoiaHR0cHM6Ly91aS1hc3NldHMuY2xvdWQuZGF0YWJyaWNrcy5jb20vIn0sImlzU3BvZ0RvbWFpbiI6ZmFsc2UsInJlcXVlc3RJZCI6IjdhZjFmOTcxLTdmZWMtNGQ3NS04ODZiLWQ1NzM3NzY2OTE1OSIsImVuYWJsZVByUHJldmlldyI6IiIsImVuYWJsZUdpdEJpc2VjdCI6IiIsInNlcnZlZFZlcnNpb24iOiIubW9ub2xpdGgtdWlfMjAyNS0xMS0yNl8wOS4zOS4zOVpfbWFzdGVyXzFhZDZlM2RiXzE2MTY2OTUyMjIiLCJpc0FjY291bnRzQ29uc29sZSI6ZmFsc2V9LHdpbmRvdy5fX2RhdGFicmlja3NfdWlEZXBsb3lhYmxlVG9Db21taXRIYXNoPXttb25vbGl0aDoiMWFkNmUzZGIxYTdlZjFmOWQ0NzU3MjEwMGUxZGY5YWNkZDcyZGU4YSJ9O2xldCBpc0RldlNwb2dEb21haW49ITE7aWYod2luZG93Ll9fZGF0YWJyaWNrc19pc1Nwb2dEb21haW49d2luZG93Ll9fREFUQUJSSUNLU19DT05GSUdfXz8uaXNTcG9nRG9tYWluPz9pc0RldlNwb2dEb21haW4sd2luZG93Ll9fZGF0YWJyaWNrc19pc1Nwb2dEb21haW4pe2NvbnN0IF89bmV3IFVSTCh3aW5kb3cubG9jYXRpb24uaHJlZikuc2VhcmNoUGFyYW1zLmdldCgibmV4dF91cmwiKSxvPV8/YD9uZXh0X3VybD0ke2VuY29kZVVSSUNvbXBvbmVudChfKX1gOiIiO3dpbmRvdy5sb2NhdGlvbi5yZXBsYWNlKGAvbG9naW4ke299YCl9PC9zY3JpcHQ+CiAgPGxpbmsgcmVsPSJpY29uIiBocmVmPSJodHRwczovL3VpLWFzc2V0cy5jbG91ZC5kYXRhYnJpY2tzLmNvbS9mYXZpY29uLmljbyI+CiAgPHNjcmlwdD4KICBmdW5jdGlvbiBzZXROb0NkbkFuZFJlbG9hZCgpIHsKICAgICAgZG9jdW1lbnQuY29va2llID0gYHgtZGF0YWJyaWNrcy1jZG4taW5hY2Nlc3NpYmxlPXRydWU7IHBhdGg9LzsgbWF4LWFnZT04NjQwMGA7CiAgICAgIGNvbnN0IG1ldHJpYyA9ICdjZG5GYWxsYmFja09jY3VycmVkJzsKICAgICAgY29uc3QgYnJvd3NlclVzZXJBZ2VudCA9IG5hdmlnYXRvci51c2VyQWdlbnQ7CiAgICAgIGNvbnN0IGJyb3dzZXJUYWJJZCA9IHdpbmRvdy5icm93c2VyVGFiSWQ7CiAgICAgIGNvbnN0IHBlcmZvcm1hbmNlRW50cnkgPSBwZXJmb3JtYW5jZS5nZXRFbnRyaWVzQnlUeXBlKCdyZXNvdXJjZScpLmZpbHRlcihlID0+IGUuaW5pdGlhdG9yVHlwZSA9PT0gJ3NjcmlwdCcpLnNsaWNlKC0xKVswXQogICAgICBzZXNzaW9uU3RvcmFnZS5zZXRJdGVtKCdkYXRhYnJpY2tzLWNkbi1mYWxsYmFjay10ZWxlbWV0cnkta2V5JywgSlNPTi5zdHJpbmdpZnkoeyB0YWdzOiB7IGJyb3dzZXJVc2VyQWdlbnQsIGJyb3dzZXJUYWJJZCB9LCBwZXJmb3JtYW5jZUVudHJ5fSkpOwogICAgICB3aW5kb3cubG9jYXRpb24ucmVsb2FkKCk7CiAgfQo8L3NjcmlwdD4KICA8c2NyaXB0PgogIC8vIFNldCBhIG1hbnVhbCB0aW1lb3V0IGZvciBkcm9wcGVkIHBhY2tldHMgdG8gQ0ROCiAgZnVuY3Rpb24gbG9hZFNjcmlwdFdpdGhUaW1lb3V0KHNyYywgdGltZW91dCkgewogICAgIHJldHVybiBuZXcgUHJvbWlzZSgocmVzb2x2ZSwgcmVqZWN0KSA9PiB7CiAgICAgICAgY29uc3Qgc2NyaXB0ID0gZG9jdW1lbnQuY3JlYXRlRWxlbWVudCgnc2NyaXB0Jyk7CiAgICAgICAgICBzY3JpcHQuZGVmZXIgPSB0cnVlOwogICAgICAgICAgc2NyaXB0LnNyYyA9IHNyYzsKICAgICAgICAgIHNjcmlwdC5vbmxvYWQgPSByZXNvbHZlOwogICAgICAgICAgc2NyaXB0Lm9uZXJyb3IgPSByZWplY3Q7CiAgICAgICAgICBkb2N1bWVudC5oZWFkLmFwcGVuZENoaWxkKHNjcmlwdCk7CiAgICAgICAgICBzZXRUaW1lb3V0KCgpID0+IHsKICAgICAgICAgICAgICByZWplY3QobmV3IEVycm9yKCdTY3JpcHQgbG9hZCB0aW1lb3V0JykpOwogICAgICAgICAgfSwgdGltZW91dCk7CiAgICAgIH0pOwogIH0KICBsb2FkU2NyaXB0V2l0aFRpbWVvdXQoJ2h0dHBzOi8vdWktYXNzZXRzLmNsb3VkLmRhdGFicmlja3MuY29tL3N0YXRpYy9qcy9sb2dpbi9sb2dpbi41YjRiNmIyZGIwLmpzJywgMTAwMDApLmNhdGNoKHNldE5vQ2RuQW5kUmVsb2FkKTsKPC9zY3JpcHQ+CiA8L2hlYWQ+CiA8Ym9keSBjbGFzcz0ibGlnaHQtbW9kZSI+CiAgPHVzZXMtbGVnYWN5LWJvb3RzdHJhcD4KICAgPGRpdiBpZD0ibG9naW4tcGFnZSI+PC9kaXY+CiAgPC91c2VzLWxlZ2FjeS1ib290c3RyYXA+CiAgPHNjcmlwdD5jb25zdCB0ZWxlbWV0cnlFbmRwb2ludD0iL3RlbGVtZXRyeS11bmF1dGg/dD0iLHVpTW9kdWxlTmFtZT0id29ya3NwYWNlTG9naW4iLGFwcFNvdXJjZVR5cGU9IldPUktTUEFDRV9DT05TT0xFX0xPR0lOIjtmdW5jdGlvbiBzaG91bGRJZ25vcmVFcnJvcihlKXtyZXR1cm4hMX1mdW5jdGlvbiBnZW5lcmF0ZVV1aWRWNCgpe2NvbnN0IGU9d2luZG93LmNyeXB0bz8ucmFuZG9tVVVJRD8uKCk7cmV0dXJuIGV8fCJ4eHh4eHh4eC14eHh4LTR4eHgteXh4eC14eHh4eHh4eHh4eHgiLnJlcGxhY2UoL1t4eV0vZywoZT0+e2NvbnN0IHQ9MTYqTWF0aC5yYW5kb20oKXwwO3JldHVybigieCI9PT1lP3Q6MyZ0fDgpLnRvU3RyaW5nKDE2KX0pKX1mdW5jdGlvbiBuZXR3b3JrQ29ubmVjdGl2aXR5VGFncygpe2NvbnN0IGU9d2luZG93Lm5hdmlnYXRvci5vbkxpbmUsdD13aW5kb3cubmF2aWdhdG9yLmNvbm5lY3Rpb24/LnJ0dD8/LTEsbj13aW5kb3cubmF2aWdhdG9yLmNvbm5lY3Rpb24/LmRvd25saW5rPz8tMTtyZXR1cm57YnJvd3Nlck5hdmlnYXRvck9ubGluZTplLGJyb3dzZXJDb25uZWN0aW9uRXN0aW1hdGVkUnR0OnQsYnJvd3NlckNvbm5lY3Rpb25Fc3RpbWF0ZWREb3dubGluazpuLGJyb3dzZXJDb25uZWN0ZWQ6ZSYmdD4wJiZuPjB9fXdpbmRvdy5fX2RhdGFicmlja3NfbmV0d29ya0Nvbm5lY3Rpdml0eVRhZ3M9bmV0d29ya0Nvbm5lY3Rpdml0eVRhZ3M7Y29uc3QgYnJvd3NlclVzZXJBZ2VudD1uYXZpZ2F0b3IudXNlckFnZW50O2xldCBzaG91bGRMb2dUZWxlbWV0cnk9ITA7aWYod2luZG93Ll9fREFUQUJSSUNLU19TQUZFX0ZMQUdTX18/LlsiZGF0YWJyaWNrcy5mZS5pbmZyYS5lbmFibGVCbG9ja2luZ1RlbGVtZXRyeUJ5VXNlckFnZW50Il0pe2NvbnN0IGU9WyJiaW5nYm90IiwiUmVkVGVhbUdsb2JhbCJdLnNvbWUoKGU9PmJyb3dzZXJVc2VyQWdlbnQuaW5jbHVkZXMoZSkpKTtzaG91bGRMb2dUZWxlbWV0cnk9IWV9ZnVuY3Rpb24gZ2V0V29ya3NwYWNlUGFyYW0oKXtjb25zdCBlPW5ldyBVUkxTZWFyY2hQYXJhbXMod2luZG93LmxvY2F0aW9uLnNlYXJjaCksdD0vXlxkKy8uZXhlYyhlLmdldCgibyIpPz8iIik7cmV0dXJuIG51bGw9PT10P3ZvaWQgMDp0WzBdfU9iamVjdC5kZWZpbmVQcm9wZXJ0eSh3aW5kb3csImJyb3dzZXJUYWJJZCIse3ZhbHVlOmdlbmVyYXRlVXVpZFY0KCl9KSxPYmplY3QuZGVmaW5lUHJvcGVydHkod2luZG93LCJ0YWJTdGFydFRpbWVzdGFtcE1pbGxpcyIse3ZhbHVlOndpbmRvdy5fX0RBVEFCUklDS1NfQ09ORklHX18/LnRhYlN0YXJ0VGltZXN0YW1wTWlsbGlzPz9EYXRlLm5vdygpfSk7Y29uc3QgaW5pdGlhbFBhZ2VMb2FkSWQ9Z2VuZXJhdGVVdWlkVjQoKTtsZXQgaGFzSW5pdGlhbExvYWRJZEJlZW5Vc2VkPSExO2Z1bmN0aW9uIGluZmVySW50ZXJhY3Rpb25JZCgpe2lmKCFoYXNJbml0aWFsTG9hZElkQmVlblVzZWQpcmV0dXJuIGhhc0luaXRpYWxMb2FkSWRCZWVuVXNlZD0hMCxpbml0aWFsUGFnZUxvYWRJZH1mdW5jdGlvbiBwZWVrSW50ZXJhY3Rpb25JZCgpe3JldHVybiBpbml0aWFsUGFnZUxvYWRJZH13aW5kb3cuaW5mZXJJbnRlcmFjdGlvbklkPWluZmVySW50ZXJhY3Rpb25JZCx3aW5kb3cucGVla0ludGVyYWN0aW9uSWQ9cGVla0ludGVyYWN0aW9uSWQ7bGV0IGlzRHVwbGljYXRlZD0hMTtjb25zdCB0aHJvdHRsZWRUaHJlc2hvbGRNcz02ZTQsdWlJbml0VGltZXN0YW1wS2V5PWB1aUluaXRUaW1lc3RhbXAtJHthcHBTb3VyY2VUeXBlfWAsdWlJbml0VGltZXN0YW1wPXBhcnNlSW50KHdpbmRvdy5sb2NhbFN0b3JhZ2U/LmdldEl0ZW0odWlJbml0VGltZXN0YW1wS2V5KSwxMCksY3VycmVudFRpbWVzdGFtcD1EYXRlLm5vdygpO2Z1bmN0aW9uIGNyZWF0ZVRlbGVtZXRyeVJlcXVlc3RCb2R5KGUsdD17fSxuPW51bGwpe2NvbnN0IGk9RGF0ZS5ub3coKSxvPXtldmVudElkOmdlbmVyYXRlVXVpZFY0KCksbWV0cmljOmUsdGFnczp7Li4udCwuLi5uZXR3b3JrQ29ubmVjdGl2aXR5VGFncygpLGJyb3dzZXJUYWJJZDp3aW5kb3cuYnJvd3NlclRhYklkLGJyb3dzZXJVc2VyQWdlbnQ6YnJvd3NlclVzZXJBZ2VudCx0YWJTdGFydFRpbWVzdGFtcE1pbGxpczp3aW5kb3cudGFiU3RhcnRUaW1lc3RhbXBNaWxsaXMsZXZlbnRXaW5kb3dUaW1lOndpbmRvdy5wZXJmb3JtYW5jZS5ub3coKX0sdHM6aX07biYmKG8uYmxvYj1uKTtjb25zdCBhPXtjb250ZXh0OntjbGllbnRfY29udGV4dDp7dXNlcl9hZ2VudDpicm93c2VyVXNlckFnZW50LHRhYl9zdGFydF90aW1lc3RhbXBfbWlsbGlzOndpbmRvdy50YWJTdGFydFRpbWVzdGFtcE1pbGxpcyx0YWJfYWdlX21pbGxpczp3aW5kb3cucGVyZm9ybWFuY2Uubm93KCksdGFiX2FnZV9kb3VibGVfbWlsbGlzOndpbmRvdy5wZXJmb3JtYW5jZS5ub3coKSxwZXJmb3JtYW5jZV9ub3dfbWlsbGlzOndpbmRvdy5wZXJmb3JtYW5jZS5ub3coKSx0YWJfaWQ6d2luZG93LmJyb3dzZXJUYWJJZCxsb2NhdGlvbl9ob3N0X25hbWU6d2luZG93LmxvY2F0aW9uLmhvc3RuYW1lfX0sZW50cnk6e29ic2VydmFiaWxpdHlfbG9nOntjbGllbnRfc291cmNlOiJQUkVfQVBQX0lOSVQiLHR5cGU6IklOVEVSQUNUSU9OX1BIQVNFIixlbnRpdHk6e3N1Yl90eXBlOiJJTklUSUFMX0xPQUQiLHR5cGU6IklOVEVSQUNUSU9OIn0scGF5bG9hZDp7aW50ZXJhY3Rpb25faWQ6aW5pdGlhbFBhZ2VMb2FkSWQsaW50ZXJhY3Rpb25fcGhhc2VfcGF5bG9hZDp7YXBwX3NvdXJjZV90eXBlOmFwcFNvdXJjZVR5cGUsaXNfZHVwbGljYXRlZDppc0R1cGxpY2F0ZWR9fX19LGZyb250ZW5kX2xvZ19ldmVudF9pZDpnZW5lcmF0ZVV1aWRWNCgpLGluZmVycmVkX3RpbWVzdGFtcF9taWNyb3M6aSxpbmZlcnJlZF90aW1lc3RhbXBfbWlsbGlzOml9O2lmKCJjaHVua0xvYWRSZXRyeSI9PT1lfHwiY2h1bmtMb2FkRmFpbHVyZSI9PT1lPyhhLmVudHJ5Lm9ic2VydmFiaWxpdHlfbG9nLnBheWxvYWQuaW50ZXJhY3Rpb25fcGhhc2VfcGF5bG9hZC5uYW1lPWUsYS5lbnRyeS5vYnNlcnZhYmlsaXR5X2xvZy5lbnRpdHkuZW50aXR5X2lkPWUpOihhLmVudHJ5Lm9ic2VydmFiaWxpdHlfbG9nLnBheWxvYWQuaW50ZXJhY3Rpb25fcGhhc2VfcGF5bG9hZC5uYW1lPXQuZXZlbnRUeXBlLGEuZW50cnkub2JzZXJ2YWJpbGl0eV9sb2cuZW50aXR5LmVudGl0eV9pZD10LmV2ZW50VHlwZSksInVuY2F1Z2h0SnNFeGNlcHRpb24iPT09ZSlhLmVudHJ5Lm9ic2VydmFiaWxpdHlfbG9nLnBheWxvYWQuaW50ZXJhY3Rpb25fcGhhc2VfcGF5bG9hZC5leGNlcHRpb249e21lc3NhZ2U6dC5qc0V4Y2VwdGlvbk1lc3NhZ2UscmF3X3N0YWNrOm59LGEuZW50cnkub2JzZXJ2YWJpbGl0eV9sb2cucGF5bG9hZC5pbnRlcmFjdGlvbl9waGFzZV9wYXlsb2FkLmV4Y2VwdGlvbl9tZXRhZGF0YT17c291cmNlOnQuanNFeGNlcHRpb25Tb3VyY2UsbGluZW5vOnQuanNFeGNlcHRpb25MaW5lbm8sY29sbm86dC5qc0V4Y2VwdGlvbkNvbG5vLGpzX2V4Y2VwdGlvbl9iZWZvcmVfaW5pdDohMCxleGNlcHRpb25fbG9nX3NvdXJjZToiUFJFX0FQUF9JTklUX1dJTkRPV19PTl9FUlJPUiJ9O2Vsc2UgaWYoInBhZ2VFeGl0QmVmb3JlQXBwSW5pdENvbXBsZXRlIj09PXQuZXZlbnRUeXBlKXN3aXRjaCh0LmV2ZW50TmFtZSl7Y2FzZSJiZWZvcmV1bmxvYWQiOmEuZW50cnkub2JzZXJ2YWJpbGl0eV9sb2cucGF5bG9hZC5pbnRlcmFjdGlvbl9waGFzZV9wYXlsb2FkLnBhZ2VfZXhpdF9ldmVudF90eXBlPSJCRUZPUkVfVU5MT0FEIjticmVhaztjYXNlInVubG9hZCI6YS5lbnRyeS5vYnNlcnZhYmlsaXR5X2xvZy5wYXlsb2FkLmludGVyYWN0aW9uX3BoYXNlX3BheWxvYWQucGFnZV9leGl0X2V2ZW50X3R5cGU9IlVOTE9BRCI7YnJlYWs7Y2FzZSJwYWdlaGlkZSI6YS5lbnRyeS5vYnNlcnZhYmlsaXR5X2xvZy5wYXlsb2FkLmludGVyYWN0aW9uX3BoYXNlX3BheWxvYWQucGFnZV9leGl0X2V2ZW50X3R5cGU9IlBBR0VfSElERSI7YnJlYWs7ZGVmYXVsdDphLmVudHJ5Lm9ic2VydmFiaWxpdHlfbG9nLnBheWxvYWQuaW50ZXJhY3Rpb25fcGhhc2VfcGF5bG9hZC5wYWdlX2V4aXRfZXZlbnRfdHlwZT0iVFlQRV9VTlNQRUNJRklFRCJ9cmV0dXJuIEpTT04uc3RyaW5naWZ5KHt1cGxvYWRUaW1lOmksaXRlbXM6W0pTT04uc3RyaW5naWZ5KG8pXSxwcm90b0xvZ3M6W0pTT04uc3RyaW5naWZ5KGEpXX0pfWZ1bmN0aW9uIHJlY29yZFRlbGVtZXRyeShlLHQ9e30sbj0iIil7aWYoc2hvdWxkTG9nVGVsZW1ldHJ5KXtjb25zdCBpPWdldFdvcmtzcGFjZVBhcmFtKCksbz1pP3siWC1EYXRhYnJpY2tzLU9yZy1JZCI6aS50b1N0cmluZygpfTp7fSxhPXttZXRob2Q6IlBPU1QiLGNyZWRlbnRpYWxzOiJpbmNsdWRlIixib2R5OmNyZWF0ZVRlbGVtZXRyeVJlcXVlc3RCb2R5KGUsdCxuKSxoZWFkZXJzOm99O2ZldGNoKHRlbGVtZXRyeUVuZHBvaW50K0RhdGUubm93KCksYSl9fSFpc05hTih1aUluaXRUaW1lc3RhbXApJiZjdXJyZW50VGltZXN0YW1wPHVpSW5pdFRpbWVzdGFtcCs2ZTQ/aXNEdXBsaWNhdGVkPSEwOndpbmRvdy5sb2NhbFN0b3JhZ2U/LnNldEl0ZW0odWlJbml0VGltZXN0YW1wS2V5LGN1cnJlbnRUaW1lc3RhbXAudG9TdHJpbmcoKSksd2luZG93LnJlY29yZFRlbGVtZXRyeT1yZWNvcmRUZWxlbWV0cnkscmVjb3JkVGVsZW1ldHJ5KCJ1aUluaXQiLHt1aU1vZHVsZTp1aU1vZHVsZU5hbWUsZXZlbnRJZDoiaW5pdCIsZXZlbnRDbGllbnRTb3VyY2U6dWlNb2R1bGVOYW1lLGV2ZW50VHlwZToiaW5pdCJ9KTtsZXQgbG9nQ291bnQ9MDtmdW5jdGlvbiBlcnJvcl9oYW5kbGVyKGUsdCxuLGksbyl7bG9nQ291bnQrKz40fHxzaG91bGRJZ25vcmVFcnJvcihlKXx8cmVjb3JkVGVsZW1ldHJ5KCJ1bmNhdWdodEpzRXhjZXB0aW9uIix7ZXZlbnRUeXBlOiJqc0V4Y2VwdGlvblYzIixqc0V4Y2VwdGlvbk1lc3NhZ2U6ZSxqc0V4Y2VwdGlvblNvdXJjZTp0LGpzRXhjZXB0aW9uTGluZW5vOm4sanNFeGNlcHRpb25Db2xubzppLGpzRXhjZXB0aW9uQmVmb3JlSW5pdDohMH0sbyYmby5zdGFjayYmby5zdGFjay50b1N0cmluZygpKX13aW5kb3cub25lcnJvcj1lcnJvcl9oYW5kbGVyLHdpbmRvdy5vbnVuaGFuZGxlZHJlamVjdGlvbj1mdW5jdGlvbihlKXtlcnJvcl9oYW5kbGVyKFN0cmluZyhlLnJlYXNvbiksbnVsbCxudWxsLG51bGwsZS5yZWFzb24pfTtsZXQgaGFzTG9nZ2VkUGFnZUV4aXRCZWZvcmVBcHBJbml0Q29tcGxldGU9ITE7ZnVuY3Rpb24gc2VuZEJlYWNvbk9uUGFnZUV4aXQoZSl7aWYobmF2aWdhdG9yLnNlbmRCZWFjb24mJnNob3VsZExvZ1RlbGVtZXRyeSYmIWhhc0xvZ2dlZFBhZ2VFeGl0QmVmb3JlQXBwSW5pdENvbXBsZXRlKXtjb25zdCB0PWUmJmUudHlwZXx8InVua25vd24iLG49KERhdGUubm93KCksY3JlYXRlVGVsZW1ldHJ5UmVxdWVzdEJvZHkoInVpSW5pdCIse2V2ZW50VHlwZToicGFnZUV4aXRCZWZvcmVBcHBJbml0Q29tcGxldGUiLGV2ZW50TmFtZTp0LGV2ZW50Q2xpZW50U291cmNlOnVpTW9kdWxlTmFtZX0pKTtuYXZpZ2F0b3Iuc2VuZEJlYWNvbih0ZWxlbWV0cnlFbmRwb2ludCtEYXRlLm5vdygpLG4pLGhhc0xvZ2dlZFBhZ2VFeGl0QmVmb3JlQXBwSW5pdENvbXBsZXRlPSEwfX1mdW5jdGlvbiBpc05ldHdvcmtTY3JpcHRMb2FkSXNzdWUoZSl7aWYoIWUpcmV0dXJuITE7Y29uc3R7bmFtZTp0LHJlc3BvbnNlU3RhdHVzOm59PWUsaT12b2lkIDAhPT1uJiZbMF0uaW5jbHVkZXMobiksbz10Py5pbmNsdWRlcygiLmpzIikmJnQuaW5jbHVkZXMoIiZyZXRyeS1hdHRlbXB0PTMiKSxhPS8oPzptYWlufGxvZ2luKSg/OlwuW2EtekEtWjAtOV0rKT9cLmpzLy50ZXN0KHQpO3JldHVybiBpJiYob3x8YSl9ZnVuY3Rpb24gZ2V0VW5zdWNjZXNzZnVsU2NyaXB0TG9hZFJlc3BvbnNlU3RhdHVzQ29kZXMoKXtjb25zdCBlPXt9O3JldHVybiBwZXJmb3JtYW5jZS5nZXRFbnRyaWVzQnlUeXBlKCJyZXNvdXJjZSIpLmZpbHRlcigoZT0+InNjcmlwdCI9PT1lLmluaXRpYXRvclR5cGV8fCJsaW5rIj09PWUuaW5pdGlhdG9yVHlwZSkpLm1hcCgoZT0+aXNOZXR3b3JrU2NyaXB0TG9hZElzc3VlKGUpP1tlLm5hbWUsZS5yZXNwb25zZVN0YXR1c106dm9pZCAwKSkuZmlsdGVyKEJvb2xlYW4pLmZvckVhY2goKChbdCxuXSk9Pnt2b2lkIDA9PT1lW3RdJiYoZVt0XT1bXSksZVt0XS5wdXNoKG4pfSkpLGV9d2luZG93LmFkZEV2ZW50TGlzdGVuZXIoImJlZm9yZXVubG9hZCIsc2VuZEJlYWNvbk9uUGFnZUV4aXQpLHdpbmRvdy5hZGRFdmVudExpc3RlbmVyKCJ1bmxvYWQiLHNlbmRCZWFjb25PblBhZ2VFeGl0KSx3aW5kb3cuYWRkRXZlbnRMaXN0ZW5lcigicGFnZWhpZGUiLHNlbmRCZWFjb25PblBhZ2VFeGl0KSx3aW5kb3cuY2xlYW51cEFmdGVyQXBwSW5pdD0oKT0+e3dpbmRvdy5yZW1vdmVFdmVudExpc3RlbmVyKCJiZWZvcmV1bmxvYWQiLHNlbmRCZWFjb25PblBhZ2VFeGl0KSx3aW5kb3cucmVtb3ZlRXZlbnRMaXN0ZW5lcigidW5sb2FkIixzZW5kQmVhY29uT25QYWdlRXhpdCksd2luZG93LnJlbW92ZUV2ZW50TGlzdGVuZXIoInBhZ2VoaWRlIixzZW5kQmVhY29uT25QYWdlRXhpdCl9LHdpbmRvdy5fX0RBVEFCUklDS1NfU0FGRV9GTEFHU19fPy5bImRhdGFicmlja3MuZmUuaW5mcmEuZW5hYmxlU3RhcnR1cEFwcEluaXRTTlJBbGVydGluZyJdJiYod2luZG93LnN0YXJ0dXBBcHBJbml0U05SPXNldEludGVydmFsKCgoKT0+e2NvbnN0IGU9T2JqZWN0LmVudHJpZXMoZ2V0VW5zdWNjZXNzZnVsU2NyaXB0TG9hZFJlc3BvbnNlU3RhdHVzQ29kZXMoKSk7aWYoZS5sZW5ndGg+MCl7Y29uc3QgdD1KU09OLnN0cmluZ2lmeSh7ZmFpbGVkTmV0d29ya1NjcmlwdHM6ZX0pLG49e3VpTW9kdWxlOnVpTW9kdWxlTmFtZSxldmVudElkOiJDbGllbnROZXR3b3JrU2NyaXB0TG9hZEZhaWx1cmUiLGV2ZW50Q2xpZW50U291cmNlOnVpTW9kdWxlTmFtZSxldmVudFR5cGU6ImNsaWVudE5ldHdvcmtTY3JpcHRMb2FkRmFpbHVyZSJ9O3JlY29yZFRlbGVtZXRyeSgidWlJbml0IixuKSxyZWNvcmRUZWxlbWV0cnkoImNvZGVNb25Db3VudGVyIixuLHQpLGNsZWFySW50ZXJ2YWwod2luZG93LnN0YXJ0dXBBcHBJbml0U05SKSx3aW5kb3c/LmNsZWFudXBBZnRlckFwcEluaXQoKSxjbGVhclRpbWVvdXQod2luZG93Py5zdGFydHVwSGFuZ1RpbWVyKX19KSwxZTMpKTwvc2NyaXB0PgogPC9ib2R5Pgo8L2h0bWw+",
+            "response_headers": {
+              "Alt-Svc": "clear",
+              "Cache-Control": "no-cache, no-store, max-age=0, must-revalidate",
+              "Content-Security-Policy": "default-src *; font-src * data:; frame-src * blob:; img-src * blob: data:; media-src * data:; object-src 'none'; style-src * 'unsafe-inline'; worker-src * blob:; script-src 'self' 'unsafe-eval' 'unsafe-hashes' 'report-sample' https://*.databricks.com https://*.azuredatabricks.net https://databricks.github.io/debug-bookmarklet/ https://widget.intercom.io https://js.intercomcdn.com https://ajax.googleapis.com/ajax/libs/jquery/2.2.0/jquery.min.js https://databricks-ui-assets.azureedge.net https://databricks-ui-assets-v2-gsd4bmhzapcyenec.b02.azurefd.net https://ui-serving-cdn-testing.azureedge.net https://uiserviceprodwestus-cdn-endpoint.azureedge.net https://databricks-ui-infra.s3.us-west-2.amazonaws.com https://apis.google.com https://accounts.google.com/gsi/client https://appsforoffice.microsoft.com 'sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=' 'sha256-RBNvo1WzZ4oRRq0W9+hknpT7T8If536DEMBg9hyq/4o=' 'sha256-iHPtLJcmKy7Xp/4Vlp/FyW1XMhGZEmf5cJPtYXtpmKs=' 'sha256-Lh4yp7cr3YOJ3MOn6erNz3E3WI0JA20mWV+0RuuviFM=' 'sha256-niL6zokee/vUhzAF5eVuJrzeqrNknuw/uCXoyukkZm4=' 'sha256-4GBWqdZiZx3ZfAawc/5wmcvmU6S8qS4R93EB5MHnDpk='; report-uri /ui-csp-reports; frame-ancestors *",
+              "Content-Type": "text/html; charset=utf-8",
+              "Date": "Fri, 28 Nov 2025 22:59:14 GMT",
+              "Server": "databricks",
+              "Server-Timing": "request_id;dur=0;desc=\"7af1f971-7fec-4d75-886b-d57377669159\", client_protocol;dur=0;desc=\"HTTP/2\"",
+              "Set-Cookie": "use_armeria_ws=true; Path=/; Secure; HTTPOnly; SameSite=Strict",
+              "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
+              "X-Content-Type-Options": "nosniff",
+              "X-Databricks-Org-Id": "2253190873532522",
+              "X-Request-Id": "7af1f971-7fec-4d75-886b-d57377669159",
+              "X-Ui-Svc": "true",
+              "X-Xss-Protection": "1; mode=block"
+            },
+            "retry": null,
+            "status_code": 200,
+            "url": "https://dbc-c85f293d-6012.cloud.databricks.com"
+          },
+          "sensitive_attributes": []
+        }
+      ]
+    },
+    {
+      "mode": "managed",
+      "type": "databricks_group_member",
+      "name": "sp_admin",
+      "provider": "provider[\"registry.terraform.io/databricks/databricks\"].workspace",
+      "instances": [
+        {
+          "schema_version": 0,
+          "attributes": {
+            "group_id": "81672364457815",
+            "id": "81672364457815|75302254477525",
+            "member_id": "75302254477525"
+          },
+          "sensitive_attributes": [],
+          "private": "bnVsbA==",
+          "dependencies": [
+            "data.databricks_group.admins",
+            "data.databricks_mws_workspaces.all",
+            "data.http.workspace_metadata",
+            "databricks_mws_permission_assignment.workspace_admin",
+            "databricks_service_principal.workspace",
+            "random_id.service_principal_suffix"
+          ]
+        }
+      ]
+    },
+    {
+      "mode": "managed",
+      "type": "databricks_mws_permission_assignment",
+      "name": "workspace_admin",
+      "provider": "provider[\"registry.terraform.io/databricks/databricks\"].mws",
+      "instances": [
+        {
+          "schema_version": 0,
+          "attributes": {
+            "id": "2253190873532522|75302254477525",
+            "permissions": [
+              "ADMIN"
+            ],
+            "principal_id": 75302254477525,
+            "workspace_id": 2253190873532522
+          },
+          "sensitive_attributes": [],
+          "private": "bnVsbA==",
+          "dependencies": [
+            "data.databricks_mws_workspaces.all",
+            "data.http.workspace_metadata",
+            "databricks_service_principal.workspace",
+            "random_id.service_principal_suffix"
+          ]
+        }
+      ]
+    },
+    {
+      "mode": "managed",
+      "type": "databricks_service_principal",
+      "name": "workspace",
+      "provider": "provider[\"registry.terraform.io/databricks/databricks\"].mws",
+      "instances": [
+        {
+          "schema_version": 0,
+          "attributes": {
+            "acl_principal_id": "servicePrincipals/dd14b4d8-5690-4df2-94e0-762b9ba3665b",
+            "active": true,
+            "allow_cluster_create": false,
+            "allow_instance_pool_create": false,
+            "application_id": "dd14b4d8-5690-4df2-94e0-762b9ba3665b",
+            "databricks_sql_access": false,
+            "disable_as_user_deletion": null,
+            "display_name": "databricks-sp-1dae4e26",
+            "external_id": "",
+            "force": null,
+            "force_delete_home_dir": null,
+            "force_delete_repos": null,
+            "home": "/Users/dd14b4d8-5690-4df2-94e0-762b9ba3665b",
+            "id": "75302254477525",
+            "repos": "/Repos/dd14b4d8-5690-4df2-94e0-762b9ba3665b",
+            "workspace_access": false,
+            "workspace_consume": false
+          },
+          "sensitive_attributes": [],
+          "private": "bnVsbA==",
+          "dependencies": [
+            "random_id.service_principal_suffix"
+          ]
+        }
+      ]
+    },
+    {
+      "mode": "managed",
+      "type": "random_id",
+      "name": "service_principal_suffix",
+      "provider": "provider[\"registry.terraform.io/hashicorp/random\"]",
+      "instances": [
+        {
+          "schema_version": 0,
+          "attributes": {
+            "b64_std": "Ha5OJg==",
+            "b64_url": "Ha5OJg",
+            "byte_length": 4,
+            "dec": "497962534",
+            "hex": "1dae4e26",
+            "id": "Ha5OJg",
+            "keepers": null,
+            "prefix": null
+          },
+          "sensitive_attributes": []
+        }
+      ]
+    },
+    {
+      "module": "module.workspace_credentials",
+      "mode": "data",
+      "type": "databricks_storage_credential",
+      "name": "by_name",
+      "provider": "module.workspace_credentials.provider[\"registry.terraform.io/databricks/databricks\"].workspace",
+      "instances": [
+        {
+          "index_key": "main",
+          "schema_version": 0,
+          "attributes": {
+            "id": "f638e75f-9e47-4908-9c85-0b72da118bca",
+            "name": "main",
+            "provider_config": null,
+            "storage_credential_info": [
+              {
+                "aws_iam_role": [
+                  {
+                    "external_id": "0d26daa6-5e44-4c97-a497-ef015f91254a",
+                    "role_arn": "arn:aws:iam::332745928618:role/eduardo-font-tf-metastore-role",
+                    "unity_catalog_iam_arn": "arn:aws:iam::414351767826:role/unity-catalog-prod-UCMasterRole-14S5ZJVKOTYTL"
+                  }
+                ],
+                "azure_managed_identity": [],
+                "azure_service_principal": [],
+                "cloudflare_api_token": [],
+                "comment": "",
+                "created_at": 1762449882515,
+                "created_by": "eduardo.font@databricks.com",
+                "databricks_gcp_service_account": [],
+                "full_name": "main",
+                "id": "f638e75f-9e47-4908-9c85-0b72da118bca",
+                "isolation_mode": "ISOLATION_MODE_OPEN",
+                "metastore_id": "859aa360-b73c-46cc-a4fd-ba18bb13910e",
+                "name": "main",
+                "owner": "eduardo.font@databricks.com",
+                "read_only": false,
+                "updated_at": 1762449882515,
+                "updated_by": "eduardo.font@databricks.com",
+                "used_for_managed_storage": false
+              }
+            ]
+          },
+          "sensitive_attributes": []
+        }
+      ]
+    },
+    {
+      "module": "module.workspace_credentials",
+      "mode": "data",
+      "type": "databricks_storage_credentials",
+      "name": "all",
+      "provider": "module.workspace_credentials.provider[\"registry.terraform.io/databricks/databricks\"].workspace",
+      "instances": [
+        {
+          "schema_version": 0,
+          "attributes": {
+            "id": "_",
+            "names": [
+              "main"
+            ],
+            "provider_config": null
+          },
+          "sensitive_attributes": []
+        }
+      ]
+    }
+  ],
+  "check_results": [
+    {
+      "object_kind": "resource",
+      "config_addr": "databricks_mws_permission_assignment.workspace_admin",
+      "status": "pass",
+      "objects": [
+        {
+          "object_addr": "databricks_mws_permission_assignment.workspace_admin",
+          "status": "pass"
+        }
+      ]
+    }
+  ]
+}

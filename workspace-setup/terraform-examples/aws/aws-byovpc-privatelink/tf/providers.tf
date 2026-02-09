@@ -5,7 +5,6 @@
 
 provider "aws" {
   region = var.region
-  profile = "databricks-sandbox-admin-332745928618"
   default_tags {
     tags = {
       Resource = var.resource_prefix

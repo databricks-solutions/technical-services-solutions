@@ -114,13 +114,10 @@ Navigate to the workspace URL and log in with your Databricks credentials.
 ### Option 1: Create New VPC (Recommended for New Deployments)
 
 ```hcl
-vpc_id               = ""
 vpc_cidr_range       = "10.0.0.0/16"
 availability_zones   = ["us-west-2a", "us-west-2b"]
 private_subnets_cidr = ["10.0.1.0/24", "10.0.2.0/24"]
 public_subnets_cidr  = ["10.0.101.0/24", "10.0.102.0/24"]
-subnet_ids           = []
-private_route_table_ids = []
 ```
 
 ### Option 2: Use Existing VPC
@@ -177,3 +174,14 @@ tf/
 ```
 
 Terraform loads all `.tf` files in the directory; the structure is organizational only.
+
+## Documentation34:
+
+Please note that the code in this template is provided for your exploration only and is not formally supported by Databricks with Service Level Agreements (SLAs). They are provided AS-IS, and we do not make any guarantees of any kind.
+
+- [Deploy with customer-managed VPC](https://docs.databricks.com/aws/en/security/network/classic/customer-managed-vpc)
+- [Configure a Databricks workspace with Private Link](https://docs.databricks.com/aws/en/security/network/classic/privatelink)
+- [Security Reference Architecture Template](https://github.com/databricks/terraform-databricks-sra/tree/main/aws)
+    - This is a template that adheres to the best security practices we recommend.
+- [Terraform Databricks provider documentation](https://registry.terraform.io/providers/databricks/databricks/latest/docs)
+

@@ -6,6 +6,7 @@ resource "azurerm_virtual_network" "this" {
   resource_group_name = var.vnet_resource_group_name
   address_space       = [var.cidr]
   tags                = var.tags
+  depends_on = [azurerm_resource_group.vnet_resource_group[0]]
 }
 
 resource "azurerm_resource_group" "vnet_resource_group" {

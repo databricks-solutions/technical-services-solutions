@@ -11,8 +11,8 @@ vpc_name               = "<existing-vpc-name>"
 subnet_name            = "<existing-subnet-name>"
 
 # Unity Catalog Metastore configuration (optional)
-# Leave metastore_id empty for the first workspace in a region (Databricks auto-creates one)
+# Leave metastore_id empty if Databricks auto-creates/auto-assigns the metastore
 metastore_id = ""
 
-# Use existing metastore for subsequent workspaces in the same region (uncomment and specify ID)
+# Provide a metastore ID only if you need to explicitly assign a specific metastore
 # metastore_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"

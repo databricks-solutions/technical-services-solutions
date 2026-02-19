@@ -25,8 +25,9 @@ This repository provisions a Databricks workspace on Google Cloud using an **exi
 
 Unity Catalog metastores are **region-specific** - there can only be one metastore per region per Databricks account.
 
-- **First workspace in a region:** If no metastore exists for the region / no new workspace in the region yet, Databricks **automatically creates** a metastore and assigns it to the workspace. In this case, leave `metastore_id` empty (`""`).
-- **Subsequent workspaces in the same region:** If a metastore already exists for the region (created by a previous workspace), Databricks will **not** automatically assign it to new workspaces. You must provide the existing `metastore_id` so that Terraform assigns it to the new workspace.
+- **First workspace in a region:** Databricks **automatically creates** a metastore and assigns it to the workspace. Leave `metastore_id` empty (`""`).
+- **Automatic assignment enabled:** If **"Automatically assign new workspaces to this metastore"** is enabled in your Databricks Account Console, any new workspace created in a region with an existing metastore will **automatically** have that metastore attached. In this case, leave `metastore_id` empty - no manual assignment is needed.
+- **Automatic assignment disabled / specific metastore needed:** If auto-assign is not enabled, or you need to attach a specific metastore, provide the `metastore_id` so that Terraform explicitly assigns it to the workspace.
 
 
 ### Shared VPC Permissions
@@ -78,7 +79,7 @@ All variable definitions are in `variables.tf`. Refer to `terraform.tfvars.examp
 - `vpc_network_project_id` (string, required): GCP project ID where the shared/existing VPC resides (host project). Set to the same value as `google_project_name` if the VPC is in the same project.
 - `vpc_name` (string, required): Name of the existing VPC network to use
 - `subnet_name` (string, required): Name of the existing subnet within the VPC to use
-- `metastore_id` (string, optional, default `""`): Existing Unity Catalog metastore ID. If empty, no metastore assignment is made (Databricks auto-creates one for the first workspace in a region). If provided, the existing metastore is assigned to the workspace.
+- `metastore_id` (string, optional, default `""`): Existing Unity Catalog metastore ID. If empty, no metastore assignment is made by Terraform (Databricks handles it automatically when auto-assign is enabled or for the first workspace in a region). If provided, the specified metastore is explicitly assigned to the workspace.
 
 Example `terraform.tfvars.example`:
 ```
@@ -94,16 +95,16 @@ vpc_network_project_id = "<vpc-host-project>"
 vpc_name               = "<existing-vpc-name>"
 subnet_name            = "<existing-subnet-name>"
 
-# Leave metastore_id empty for the first workspace in a region (Databricks auto-creates one)
+# Leave metastore_id empty if Databricks auto-creates/auto-assigns the metastore
 metastore_id = ""
 
-# Use existing metastore for subsequent workspaces in the same region (uncomment and specify ID)
+# Provide a metastore ID only if you need to explicitly assign a specific metastore
 # metastore_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 ```
 
 ### Usage Modes
 
-#### First workspace in a region (leave metastore_id empty - Databricks auto-creates)
+#### Without metastore assignment (auto-create / auto-assign handles it)
 ```
 terraform apply \
   -var 'google_service_account_email=<sa>@<project>.iam.gserviceaccount.com' \
@@ -117,7 +118,7 @@ terraform apply \
   -var 'subnet_name=<existing-subnet-name>'
 ```
 
-#### Subsequent workspaces in the same region (provide existing metastore ID)
+#### With explicit metastore assignment (provide existing metastore ID)
 ```
 terraform apply \
   -var 'google_service_account_email=<sa>@<project>.iam.gserviceaccount.com' \
@@ -144,7 +145,7 @@ export TF_VAR_vpc_network_project_id=<vpc-host-project>
 export TF_VAR_vpc_name=<existing-vpc-name>
 export TF_VAR_subnet_name=<existing-subnet-name>
 
-# Optional: assign existing metastore (for subsequent workspaces in the same region)
+# Optional: provide metastore ID only if explicit assignment is needed
 # export TF_VAR_metastore_id=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 
 terraform apply

@@ -1,0 +1,42 @@
+{
+  "name": "migration-accelerator",
+  "version": "0.2.0",
+  "private": true,
+  "scripts": {
+    "build": "cd frontend && npm run build",
+    "start": "uvicorn migration_accelerator.app.main:app --reload --log-level info",
+    "start:frontend": "cd frontend && npm run dev",
+    "start:backend": "uvicorn migration_accelerator.app.main:app --host 0.0.0.0 --port 8080 --reload --log-level info",
+    "dev": "cd frontend && npm run dev",
+    "dev:backend": "python -m uvicorn migration_accelerator.app.main:app --host 0.0.0.0 --port 8080 --reload",
+    "lint": "cd frontend && npm run lint",
+    "type-check": "cd frontend && npm run type-check"
+  },
+  "dependencies": {
+    "axios": "^1.7.0",
+    "clsx": "^2.1.0",
+    "concurrently": "^9.1.0",
+    "cytoscape": "^3.30.0",
+    "lucide-react": "^0.460.0",
+    "next": "^16.0.7",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "recharts": "^2.13.0",
+    "tailwind-merge": "^2.5.0",
+    "@types/cytoscape": "^3.21.0",
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "autoprefixer": "^10.4.0",
+    "postcss": "^8.4.0",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.6.0"
+  },
+  "devDependencies": {
+    "eslint": "^9",
+    "eslint-config-next": "^15.0.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

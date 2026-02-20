@@ -1,0 +1,12 @@
+authorization:
+  enabled: true
+  scopes:
+    - sql
+    - files.files
+    - all-apis
+
+resources:
+  - name: uc_volume
+    permissions:
+      - level: CAN_READ
+      - level: CAN_WRITE

@@ -166,5 +166,5 @@ class TestJsonReporter:
         
         assert "version" in data
         assert "timestamp" in data
-        assert data["version"] == "1.0"
+        assert data["version"] == "1.1"
 

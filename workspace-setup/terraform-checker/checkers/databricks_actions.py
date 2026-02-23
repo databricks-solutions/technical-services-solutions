@@ -19,8 +19,11 @@ class DeploymentMode(Enum):
 
 
 class VPCType(Enum):
-    """VPC deployment types for Databricks."""
-    DATABRICKS_MANAGED = "databricks_managed"  # Databricks creates and manages VPC
+    """VPC deployment types for Databricks.
+    
+    Note: Databricks Managed VPC has been sunset for AWS. Only customer-managed
+    VPC options are available for new deployments.
+    """
     CUSTOMER_MANAGED_DEFAULT = "customer_managed_default"  # Customer VPC with default restrictions
     CUSTOMER_MANAGED_CUSTOM = "customer_managed_custom"  # Customer VPC with custom restrictions
 
@@ -29,83 +32,6 @@ class VPCType(Enum):
 # DATABRICKS CROSS-ACCOUNT ROLE POLICIES (from official documentation)
 # https://docs.databricks.com/aws/en/admin/workspace/create-uc-workspace#step-2-create-an-access-policy
 # =============================================================================
-
-# Databricks-managed VPC - Full permissions for Databricks to create/manage VPC
-DATABRICKS_MANAGED_VPC_ACTIONS = [
-    "ec2:AllocateAddress",
-    "ec2:AssignPrivateIpAddresses",
-    "ec2:AssociateDhcpOptions",
-    "ec2:AssociateIamInstanceProfile",
-    "ec2:AssociateRouteTable",
-    "ec2:AttachInternetGateway",
-    "ec2:AttachVolume",
-    "ec2:AuthorizeSecurityGroupEgress",
-    "ec2:AuthorizeSecurityGroupIngress",
-    "ec2:CancelSpotInstanceRequests",
-    "ec2:CreateDhcpOptions",
-    "ec2:CreateFleet",
-    "ec2:CreateInternetGateway",
-    "ec2:CreateLaunchTemplate",
-    "ec2:CreateLaunchTemplateVersion",
-    "ec2:CreateNatGateway",
-    "ec2:CreateRoute",
-    "ec2:CreateRouteTable",
-    "ec2:CreateSecurityGroup",
-    "ec2:CreateSubnet",
-    "ec2:CreateTags",
-    "ec2:CreateVolume",
-    "ec2:CreateVpc",
-    "ec2:CreateVpcEndpoint",
-    "ec2:DeleteDhcpOptions",
-    "ec2:DeleteFleets",
-    "ec2:DeleteInternetGateway",
-    "ec2:DeleteLaunchTemplate",
-    "ec2:DeleteLaunchTemplateVersions",
-    "ec2:DeleteNatGateway",
-    "ec2:DeleteRoute",
-    "ec2:DeleteRouteTable",
-    "ec2:DeleteSecurityGroup",
-    "ec2:DeleteSubnet",
-    "ec2:DeleteTags",
-    "ec2:DeleteVolume",
-    "ec2:DeleteVpc",
-    "ec2:DeleteVpcEndpoints",
-    "ec2:DescribeAvailabilityZones",
-    "ec2:DescribeFleetHistory",
-    "ec2:DescribeFleetInstances",
-    "ec2:DescribeFleets",
-    "ec2:DescribeIamInstanceProfileAssociations",
-    "ec2:DescribeInstanceStatus",
-    "ec2:DescribeInstances",
-    "ec2:DescribeInternetGateways",
-    "ec2:DescribeLaunchTemplates",
-    "ec2:DescribeLaunchTemplateVersions",
-    "ec2:DescribeNatGateways",
-    "ec2:DescribePrefixLists",
-    "ec2:DescribeReservedInstancesOfferings",
-    "ec2:DescribeRouteTables",
-    "ec2:DescribeSecurityGroups",
-    "ec2:DescribeSpotInstanceRequests",
-    "ec2:DescribeSpotPriceHistory",
-    "ec2:DescribeSubnets",
-    "ec2:DescribeVolumes",
-    "ec2:DescribeVpcs",
-    "ec2:DetachInternetGateway",
-    "ec2:DisassociateIamInstanceProfile",
-    "ec2:DisassociateRouteTable",
-    "ec2:GetLaunchTemplateData",
-    "ec2:GetSpotPlacementScores",
-    "ec2:ModifyFleet",
-    "ec2:ModifyLaunchTemplate",
-    "ec2:ModifyVpcAttribute",
-    "ec2:ReleaseAddress",
-    "ec2:ReplaceIamInstanceProfileAssociation",
-    "ec2:RequestSpotInstances",
-    "ec2:RevokeSecurityGroupEgress",
-    "ec2:RevokeSecurityGroupIngress",
-    "ec2:RunInstances",
-    "ec2:TerminateInstances",
-]
 
 # Customer-managed VPC with default restrictions
 CUSTOMER_MANAGED_VPC_DEFAULT_ACTIONS = [
@@ -222,16 +148,14 @@ UNITY_CATALOG_FILE_EVENTS_ACTIONS = [
 ]
 
 
-def get_cross_account_actions(vpc_type: VPCType) -> List[str]:
-    """Get the required cross-account IAM actions for a VPC type."""
-    if vpc_type == VPCType.DATABRICKS_MANAGED:
-        return DATABRICKS_MANAGED_VPC_ACTIONS + SPOT_SERVICE_LINKED_ROLE_ACTIONS
-    elif vpc_type == VPCType.CUSTOMER_MANAGED_DEFAULT:
-        return CUSTOMER_MANAGED_VPC_DEFAULT_ACTIONS + SPOT_SERVICE_LINKED_ROLE_ACTIONS
-    elif vpc_type == VPCType.CUSTOMER_MANAGED_CUSTOM:
+def get_cross_account_actions(vpc_type: VPCType = VPCType.CUSTOMER_MANAGED_DEFAULT) -> List[str]:
+    """Get the required cross-account IAM actions for a VPC type.
+    
+    Since Databricks Managed VPC is sunset, this defaults to customer-managed.
+    """
+    if vpc_type == VPCType.CUSTOMER_MANAGED_CUSTOM:
         return CUSTOMER_MANAGED_VPC_CUSTOM_ACTIONS + SPOT_SERVICE_LINKED_ROLE_ACTIONS
-    else:
-        return DATABRICKS_MANAGED_VPC_ACTIONS + SPOT_SERVICE_LINKED_ROLE_ACTIONS
+    return CUSTOMER_MANAGED_VPC_DEFAULT_ACTIONS + SPOT_SERVICE_LINKED_ROLE_ACTIONS
 
 
 @dataclass

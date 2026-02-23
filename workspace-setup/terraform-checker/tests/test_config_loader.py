@@ -46,8 +46,6 @@ class TestPreCheckConfig:
                 'enabled': True,
                 'region': 'us-west-2',
                 'profile': 'production',
-                'deployment_mode': 'full',
-                'vpc_type': 'databricks_managed',
             }
         }
         config = PreCheckConfig.from_dict(data)
@@ -55,8 +53,6 @@ class TestPreCheckConfig:
         assert config.aws.enabled is True
         assert config.aws.region == 'us-west-2'
         assert config.aws.profile == 'production'
-        assert config.aws.deployment_mode == 'full'
-        assert config.aws.vpc_type == 'databricks_managed'
     
     def test_from_dict_azure(self):
         """Test creating config with Azure settings."""
@@ -66,7 +62,6 @@ class TestPreCheckConfig:
                 'region': 'eastus',
                 'subscription_id': 'sub-123',
                 'resource_group': 'rg-test',
-                'deployment_mode': 'vnet',
             }
         }
         config = PreCheckConfig.from_dict(data)
@@ -75,7 +70,6 @@ class TestPreCheckConfig:
         assert config.azure.region == 'eastus'
         assert config.azure.subscription_id == 'sub-123'
         assert config.azure.resource_group == 'rg-test'
-        assert config.azure.deployment_mode == 'vnet'
     
     def test_from_dict_gcp(self):
         """Test creating config with GCP settings."""
@@ -140,7 +134,7 @@ class TestGenerateSampleConfig:
         assert 'aws:' in config
         assert 'azure:' in config
         assert 'gcp:' in config
-        assert 'deployment_mode' in config
+        assert 'region' in config
     
     def test_save_sample_config(self):
         """Test saving sample configuration to file."""

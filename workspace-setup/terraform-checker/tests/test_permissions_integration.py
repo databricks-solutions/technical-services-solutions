@@ -25,16 +25,6 @@ class TestPermissionRegistry:
         reg2 = get_registry()
         assert reg1 is reg2
     
-    def test_aws_vpc_type_actions_databricks_managed(self, registry):
-        """Test loading Databricks-managed VPC actions from YAML."""
-        actions = registry.get_aws_vpc_type_actions(VPCType.DATABRICKS_MANAGED)
-        
-        assert len(actions) > 0
-        # These actions should be in databricks_managed VPC type
-        assert "ec2:CreateVpc" in actions
-        assert "ec2:CreateSubnet" in actions
-        assert "ec2:CreateInternetGateway" in actions
-    
     def test_aws_vpc_type_actions_customer_managed(self, registry):
         """Test loading customer-managed VPC actions from YAML."""
         actions = registry.get_aws_vpc_type_actions(VPCType.CUSTOMER_MANAGED_DEFAULT)
@@ -126,8 +116,8 @@ class TestBackwardCompatibility:
     """Tests for backward compatibility functions."""
     
     def test_get_cross_account_actions(self):
-        """Test backward-compatible get_cross_account_actions function."""
-        actions = get_cross_account_actions(VPCType.DATABRICKS_MANAGED)
+        """Test get_cross_account_actions defaults to customer-managed."""
+        actions = get_cross_account_actions()
         
         assert len(actions) > 0
         assert isinstance(actions, list)

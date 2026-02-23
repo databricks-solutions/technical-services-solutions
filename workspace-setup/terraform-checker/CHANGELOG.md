@@ -88,6 +88,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI help text updated with verify-only mode explanation
 - README.md expanded with comprehensive mode documentation for all clouds
 
+## [1.2.0] - 2026-02-23
+
+### Changed
+
+- **Removed `--mode` CLI option** - The checker now runs all permission checks
+  automatically and produces a Deployment Compatibility matrix showing which
+  deployment types (Standard, PrivateLink, Unity Catalog, Full) are supported
+  based on the detected permissions.
+
+- **Removed `--vpc-type` CLI option** - Databricks Managed VPC has been sunset
+  for AWS. Only customer-managed VPC options are available for new deployments.
+  The checker now always validates against customer-managed VPC requirements.
+
+- **Removed `VPCType.DATABRICKS_MANAGED`** - Removed from enums, permission
+  definitions (YAML), and all code paths that handled Databricks-managed VPC
+  since this deployment model is no longer available for new setups.
+
+- **Simplified AWSChecker** - No longer requires `deployment_mode` or `vpc_type`
+  parameters. Always runs all checks (storage, network, cross-account role,
+  PrivateLink, Unity Catalog, quotas) and reports compatibility.
+
+- **Simplified AzureChecker** - No longer requires `deployment_mode` parameter.
+  Removed `AzureDeploymentMode` enum. Always runs all checks (resource providers,
+  resource group, network, storage ADLS Gen2, Access Connector, Private Link,
+  workspace permissions, quotas) unconditionally and reports compatibility.
+
+- **AWS: Temp bucket reused for Unity Catalog** - The temporary S3 bucket created
+  during Storage Configuration is now kept alive and reused for Unity Catalog
+  object-level tests (PutObject, GetObject, DeleteObject, ListBucket,
+  GetBucketLocation) before being deleted. Eliminates "Cannot test without
+  target bucket" warnings.
+
+- **New Deployment Compatibility section** - Added to both AWS and Azure TXT and
+  JSON reports. Shows at-a-glance which deployment types the user's permissions
+  support.
+
+- **Simplified configuration** - Removed `deployment_mode` and `vpc_type` from
+  `precheck.yaml` configuration file and `CloudConfig` dataclass.
+
+- **Removed STEP labels** - Category names in Azure no longer use "STEP X:"
+  prefixes for cleaner output.
+
+### Removed
+
+- `--mode` / `-m` CLI flag
+- `--vpc-type` CLI flag
+- `DATABRICKS_MANAGED_VPC_ACTIONS` permission list
+- `VPCType.DATABRICKS_MANAGED` enum value
+- `AzureDeploymentMode` enum
+- `databricks_managed` section from `config/permissions/aws.yaml`
+- `get_deployment_mode()` and `get_vpc_type()` helper functions
+- `run_full_resource_test()` dead code from Azure checker
+
 ## [Unreleased]
 
 ### Planned

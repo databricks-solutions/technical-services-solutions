@@ -28,20 +28,11 @@ _dbx_precheck_completion() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
     
-    # Main options
-    opts="--cloud --all --mode --vpc-type --region --output --profile --subscription-id --resource-group --project --credentials-file --verbose --dry-run --verify-only --cleanup-orphans --json --log-level --log-file --config --quiet --version --help"
+    opts="--cloud --all --region --output --profile --subscription-id --resource-group --project --credentials-file --verbose --dry-run --verify-only --cleanup-orphans --json --log-level --log-file --config --quiet --version --help"
     
     case "${prev}" in
         --cloud|-c)
             COMPREPLY=( $(compgen -W "aws azure gcp" -- ${cur}) )
-            return 0
-            ;;
-        --mode|-m)
-            COMPREPLY=( $(compgen -W "standard privatelink unity full" -- ${cur}) )
-            return 0
-            ;;
-        --vpc-type)
-            COMPREPLY=( $(compgen -W "databricks customer custom" -- ${cur}) )
             return 0
             ;;
         --log-level)
@@ -68,18 +59,14 @@ ZSH_COMPLETION = '''
 #compdef dbx-precheck
 
 _dbx_precheck() {
-    local -a opts clouds modes vpc_types log_levels
+    local -a opts clouds log_levels
     
     clouds=(aws azure gcp)
-    modes=(standard privatelink unity full)
-    vpc_types=(databricks customer custom)
     log_levels=(debug info warning error)
     
     _arguments \\
         '(-c --cloud)'{-c,--cloud}'[Cloud provider]:cloud:(${clouds})' \\
         '(-a --all)'{-a,--all}'[Check all clouds]' \\
-        '(-m --mode)'{-m,--mode}'[Deployment mode]:mode:(${modes})' \\
-        '--vpc-type[VPC type (AWS)]:vpc:(${vpc_types})' \\
         '(-r --region)'{-r,--region}'[Cloud region]:region:' \\
         '(-o --output)'{-o,--output}'[Output file]:file:_files' \\
         '--profile[AWS profile]:profile:' \\

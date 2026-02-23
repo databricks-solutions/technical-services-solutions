@@ -157,15 +157,40 @@ class TxtReporter:
     
     def _generate_category(self, name: str, results: List[CheckResult]) -> str:
         """Generate output for a single category."""
+        if name == "DEPLOYMENT COMPATIBILITY":
+            return self._generate_compatibility_section(results)
+        
         lines = [f"\n[{name}]"]
         
         for result in results:
             lines.append(self._format_result_line(result))
             
-            # Add details if present
             if result.details:
                 lines.append(f"    {result.details}")
         
+        return "\n".join(lines)
+    
+    def _generate_compatibility_section(self, results: List[CheckResult]) -> str:
+        """Render the deployment compatibility matrix as a prominent box."""
+        w = self.LINE_WIDTH
+        lines = [
+            "",
+            "╔" + "═" * (w - 2) + "╗",
+            "║" + " DEPLOYMENT COMPATIBILITY ".center(w - 2) + "║",
+            "╠" + "═" * (w - 2) + "╣",
+        ]
+        
+        for result in results:
+            mode_name = result.name.strip()
+            if result.status == CheckStatus.OK:
+                indicator = "SUPPORTED"
+                line = f"  {mode_name:<20} {indicator}"
+            else:
+                indicator = "MISSING PERMISSIONS"
+                line = f"  {mode_name:<20} {indicator}"
+            lines.append("║" + line.ljust(w - 2) + "║")
+        
+        lines.append("╚" + "═" * (w - 2) + "╝")
         return "\n".join(lines)
     
     def _generate_summary(self, report: CheckReport) -> str:

@@ -82,8 +82,18 @@ class JsonReporter:
         else:
             overall_status = "PASSED"
         
+        deployment_compatibility = {}
+        for category in report.categories:
+            if category.name == "DEPLOYMENT COMPATIBILITY":
+                for result in category.results:
+                    mode_name = result.name.strip()
+                    deployment_compatibility[mode_name] = {
+                        "supported": result.status == CheckStatus.OK,
+                        "message": result.message,
+                    }
+        
         output = {
-            "version": "1.0",
+            "version": "1.1",
             "timestamp": datetime.now().isoformat(),
             "cloud": report.cloud,
             "region": report.region,
@@ -101,6 +111,7 @@ class JsonReporter:
                 "failed": report.total_not_ok,
                 "skipped": report.total_skipped,
             },
+            "deployment_compatibility": deployment_compatibility,
             "failed_checks": failed_checks,
             "warning_checks": warning_checks,
             "categories": [

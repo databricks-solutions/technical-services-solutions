@@ -34,8 +34,11 @@ class DeploymentMode(Enum):
 
 
 class VPCType(Enum):
-    """VPC deployment types for Databricks (AWS)."""
-    DATABRICKS_MANAGED = "databricks_managed"
+    """VPC deployment types for Databricks (AWS).
+    
+    Note: Databricks Managed VPC has been sunset for AWS. Only customer-managed
+    VPC options are available for new deployments.
+    """
     CUSTOMER_MANAGED_DEFAULT = "customer_managed_default"
     CUSTOMER_MANAGED_CUSTOM = "customer_managed_custom"
 
@@ -73,10 +76,9 @@ class PermissionRegistry:
     # AWS Permissions
     # =========================================================================
     
-    def get_aws_vpc_type_actions(self, vpc_type: VPCType) -> List[str]:
+    def get_aws_vpc_type_actions(self, vpc_type: VPCType = VPCType.CUSTOMER_MANAGED_DEFAULT) -> List[str]:
         """Get EC2 actions required for a VPC type."""
         type_map = {
-            VPCType.DATABRICKS_MANAGED: "databricks_managed",
             VPCType.CUSTOMER_MANAGED_DEFAULT: "customer_managed_default",
             VPCType.CUSTOMER_MANAGED_CUSTOM: "customer_managed_default",  # Same as default
         }
@@ -199,7 +201,7 @@ def get_registry() -> PermissionRegistry:
     return _registry
 
 
-def get_cross_account_actions(vpc_type: VPCType) -> List[str]:
+def get_cross_account_actions(vpc_type: VPCType = VPCType.CUSTOMER_MANAGED_DEFAULT) -> List[str]:
     """Get cross-account IAM actions for a VPC type."""
     return get_registry().get_aws_cross_account_actions(vpc_type)
 
@@ -218,7 +220,6 @@ def _load_vpc_actions() -> Dict[str, List[str]]:
     """Load VPC actions from YAML."""
     registry = get_registry()
     return {
-        "databricks_managed": registry.get_aws_vpc_type_actions(VPCType.DATABRICKS_MANAGED),
         "customer_managed_default": registry.get_aws_vpc_type_actions(VPCType.CUSTOMER_MANAGED_DEFAULT),
         "customer_managed_custom": registry.get_aws_vpc_type_actions(VPCType.CUSTOMER_MANAGED_CUSTOM),
     }
@@ -235,15 +236,8 @@ def _get_vpc_actions() -> Dict[str, List[str]]:
     return _vpc_actions_cache
 
 
-# For backward compatibility, these can be imported
-# but they now load from YAML
-@property
-def DATABRICKS_MANAGED_VPC_ACTIONS() -> List[str]:
-    return _get_vpc_actions().get("databricks_managed", [])
-
-
-@property  
-def CUSTOMER_MANAGED_VPC_DEFAULT_ACTIONS() -> List[str]:
+def get_customer_managed_vpc_actions() -> List[str]:
+    """Get customer-managed VPC default actions from YAML."""
     return _get_vpc_actions().get("customer_managed_default", [])
 
 

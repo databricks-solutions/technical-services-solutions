@@ -22,8 +22,6 @@ class CloudConfig:
     resource_group: Optional[str] = None  # Azure
     project: Optional[str] = None  # GCP
     credentials_file: Optional[str] = None  # GCP
-    deployment_mode: str = "standard"
-    vpc_type: str = "customer_managed_default"  # AWS
 
 
 @dataclass
@@ -57,18 +55,14 @@ class PreCheckConfig:
         config.skip_cleanup = data.get('skip_cleanup', False)
         config.dry_run = data.get('dry_run', False)
         
-        # AWS config
         if 'aws' in data:
             aws = data['aws']
             config.aws = CloudConfig(
                 enabled=aws.get('enabled', True),
                 region=aws.get('region'),
                 profile=aws.get('profile'),
-                deployment_mode=aws.get('deployment_mode', 'standard'),
-                vpc_type=aws.get('vpc_type', 'customer_managed_default'),
             )
         
-        # Azure config
         if 'azure' in data:
             az = data['azure']
             config.azure = CloudConfig(
@@ -76,10 +70,8 @@ class PreCheckConfig:
                 region=az.get('region'),
                 subscription_id=az.get('subscription_id'),
                 resource_group=az.get('resource_group'),
-                deployment_mode=az.get('deployment_mode', 'standard'),
             )
         
-        # GCP config
         if 'gcp' in data:
             gcp = data['gcp']
             config.gcp = CloudConfig(
@@ -87,7 +79,6 @@ class PreCheckConfig:
                 region=gcp.get('region'),
                 project=gcp.get('project'),
                 credentials_file=gcp.get('credentials_file'),
-                deployment_mode=gcp.get('deployment_mode', 'standard'),
             )
         
         return config
@@ -147,8 +138,6 @@ aws:
   enabled: true
   region: us-east-1
   profile: default  # AWS CLI profile name
-  deployment_mode: standard  # standard, privatelink, unity, full
-  vpc_type: customer_managed_default  # databricks_managed, customer_managed_default, customer_managed_custom
 
 # Azure Configuration
 azure:
@@ -156,7 +145,6 @@ azure:
   region: eastus
   subscription_id: null  # Set your subscription ID or leave null for auto-detect
   resource_group: null  # Optional: specify an existing resource group
-  deployment_mode: standard  # standard, vnet, unity, privatelink, full
 
 # GCP Configuration
 gcp:
@@ -164,7 +152,6 @@ gcp:
   region: us-central1
   project: null  # Your GCP project ID
   credentials_file: null  # Path to service account JSON key
-  deployment_mode: standard  # standard, unity, full
 """
 
 

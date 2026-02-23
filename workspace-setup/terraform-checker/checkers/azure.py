@@ -3,7 +3,6 @@
 import uuid
 import time
 import logging
-from enum import Enum
 from typing import Optional, List, Dict, Any
 
 from .base import (
@@ -25,45 +24,11 @@ logger = logging.getLogger(__name__)
 TEST_RESOURCE_PREFIX = "dbxprecheck"
 
 
-class AzureDeploymentMode(Enum):
-    """Azure Databricks deployment modes."""
-    STANDARD = "standard"           # Databricks-managed VNet (no custom VNet)
-    VNET_INJECTION = "vnet"         # Customer-managed VNet (VNet injection)
-    UNITY_CATALOG = "unity"         # With Unity Catalog (needs ADLS Gen2)
-    PRIVATELINK = "privatelink"     # With Private Link + SCC + NAT Gateway
-    FULL = "full"                   # All features: VNet + Unity + Private Link
-
-
 class AzureChecker(BaseChecker):
-    """
-    Checker for Azure resources and permissions for Databricks deployment.
+    """Checker for Azure resources and permissions for Databricks deployment.
     
-    Azure Databricks Deployment Model:
-    ==================================
-    
-    STANDARD (Databricks-managed VNet):
-    - Databricks creates everything in a Managed Resource Group
-    - You only provide: managed_resource_group_name
-    - Databricks creates: VNet, Subnets, NSG, Storage Account (DBFS)
-    - YOU NEED: Contributor/Owner role on subscription
-    
-    VNET_INJECTION (Customer-managed VNet):
-    - You create: VNet, 2 subnets (public/private), NSG
-    - You delegate subnets to Microsoft.Databricks/workspaces
-    - Databricks still creates Storage Account in Managed RG
-    - YOU NEED: Network Contributor + Contributor
-    
-    UNITY_CATALOG:
-    - You create: Storage Account (ADLS Gen2) for Unity metastore
-    - You create: Container for data
-    - You create: Access Connector for Azure Databricks
-    - YOU NEED: Storage Account Contributor + Managed Identity Operator
-    
-    PRIVATELINK (Secure Cluster Connectivity):
-    - You create: Private Endpoints (frontend + backend)
-    - You create: Private DNS Zones
-    - You create: NAT Gateway with Public IP (required for SCC)
-    - YOU NEED: Network Contributor + Private DNS Zone Contributor
+    Runs all permission checks unconditionally and produces a deployment
+    compatibility matrix showing which deployment types are supported.
     """
     
     # Required resource providers for Databricks
@@ -97,7 +62,6 @@ class AzureChecker(BaseChecker):
         tenant_id: str = None,
         client_id: str = None,
         client_secret: str = None,
-        deployment_mode: AzureDeploymentMode = AzureDeploymentMode.STANDARD,
         verify_only: bool = False,
     ):
         super().__init__(region)
@@ -106,12 +70,12 @@ class AzureChecker(BaseChecker):
         self.tenant_id = tenant_id
         self.client_id = client_id
         self.client_secret = client_secret
-        self.deployment_mode = deployment_mode
-        self.verify_only = verify_only  # When True, skip resource creation tests
+        self.verify_only = verify_only
         self._credential = None
         self._subscription_info = None
         self._test_id = str(uuid.uuid4())[:8]
         self._cleanup_tasks = []
+        self._check_results_by_area: Dict[str, bool] = {}
     
     @property
     def cloud_name(self) -> str:
@@ -883,7 +847,7 @@ class AzureChecker(BaseChecker):
     
     def check_resource_providers(self) -> CheckCategory:
         """Check if required resource providers are registered."""
-        category = CheckCategory(name="STEP 1: RESOURCE PROVIDERS")
+        category = CheckCategory(name="RESOURCE PROVIDERS")
         
         try:
             resource_client = self._get_resource_client()
@@ -920,134 +884,9 @@ class AzureChecker(BaseChecker):
         
         return category
     
-    def run_full_resource_test(self) -> tuple:
-        """
-        Create a temporary Resource Group and test ALL resources inside it.
-        Returns tuple of (rg_category, network_category, storage_category)
-        """
-        resource_client = self._get_resource_client()
-        rg_name = f"{TEST_RESOURCE_PREFIX}-rg-{self._test_id}"
-        rg_created = False
-        
-        # Category for Resource Group
-        rg_category = CheckCategory(name="STEP 2: RESOURCE GROUP (REAL TEST)")
-        rg_category.add_result(CheckResult(
-            name="Test Method",
-            status=CheckStatus.OK,
-            message="Creating temporary RG, then VNet + Storage inside it..."
-        ))
-        
-        # Create Resource Group first
-        rg_category.add_result(CheckResult(
-            name="  📁 Creating test Resource Group",
-            status=CheckStatus.OK,
-            message=rg_name
-        ))
-        
-        try:
-            resource_client.resource_groups.create_or_update(
-                rg_name,
-                {"location": self.region or "eastus", "tags": {"PreCheck": "Temporary"}}
-            )
-            rg_created = True
-            rg_category.add_result(CheckResult(
-                name="  Microsoft.Resources/resourceGroups/write",
-                status=CheckStatus.OK,
-                message=f"✓ CREATED: {rg_name}"
-            ))
-        except Exception as e:
-            error = str(e)
-            if "AuthorizationFailed" in error:
-                rg_category.add_result(CheckResult(
-                    name="  Microsoft.Resources/resourceGroups/write",
-                    status=CheckStatus.NOT_OK,
-                    message=f"DENIED: {error[:80]}"
-                ))
-            else:
-                rg_category.add_result(CheckResult(
-                    name="  Microsoft.Resources/resourceGroups/write",
-                    status=CheckStatus.WARNING,
-                    message=f"Error: {error[:80]}"
-                ))
-            
-            # Can't continue without RG
-            network_category = CheckCategory(name="STEP 3: NETWORK - VNet Injection (REAL TEST)")
-            network_category.add_result(CheckResult(
-                name="All checks",
-                status=CheckStatus.SKIPPED,
-                message="Skipped - Resource Group creation failed"
-            ))
-            
-            storage_category = CheckCategory(name="STEP 4: STORAGE - ADLS Gen2 (REAL TEST)")
-            storage_category.add_result(CheckResult(
-                name="All checks",
-                status=CheckStatus.SKIPPED,
-                message="Skipped - Resource Group creation failed"
-            ))
-            
-            cleanup_category = CheckCategory(name="CLEANUP")
-            cleanup_category.add_result(CheckResult(
-                name="Cleanup",
-                status=CheckStatus.OK,
-                message="No resources created, nothing to clean up"
-            ))
-            
-            return rg_category, network_category, storage_category, cleanup_category
-        
-        # =========================================================================
-        # STEP 3: Create VNet and NSG inside the temporary RG
-        # =========================================================================
-        network_category = CheckCategory(name="STEP 3: NETWORK - VNet Injection (REAL TEST)")
-        network_category.add_result(CheckResult(
-            name="Test Method",
-            status=CheckStatus.OK,
-            message=f"Creating VNet + NSG inside {rg_name}..."
-        ))
-        
-        network_results = self._test_network_permissions(rg_name)
-        for result in network_results:
-            network_category.add_result(result)
-        
-        # =========================================================================
-        # STEP 4: Create Storage Account inside the temporary RG
-        # =========================================================================
-        storage_category = CheckCategory(name="STEP 4: STORAGE - ADLS Gen2 (REAL TEST)")
-        storage_category.add_result(CheckResult(
-            name="Test Method",
-            status=CheckStatus.OK,
-            message=f"Creating Storage Account (ADLS Gen2) inside {rg_name}..."
-        ))
-        
-        storage_results = self._test_storage_permissions(rg_name)
-        for result in storage_results:
-            storage_category.add_result(result)
-        
-        # =========================================================================
-        # FINAL CLEANUP: Delete the temporary Resource Group (deletes everything inside)
-        # This happens AFTER all tests complete
-        # =========================================================================
-        cleanup_category = CheckCategory(name="CLEANUP")
-        if rg_created:
-            try:
-                # Start async deletion of RG (this deletes all resources inside)
-                resource_client.resource_groups.begin_delete(rg_name)
-                cleanup_category.add_result(CheckResult(
-                    name="  🗑️  Deleting Resource Group (and all contents)",
-                    status=CheckStatus.OK,
-                    message=f"✓ DELETING: {rg_name} (async - includes VNet, NSG, Storage)"
-                ))
-            except Exception as e:
-                cleanup_category.add_result(CheckResult(
-                    name="  🗑️  Resource Group Cleanup",
-                    status=CheckStatus.WARNING,
-                    message=f"Manual cleanup needed: {rg_name}"
-                ))
-        
-        return rg_category, network_category, storage_category, cleanup_category
-    
     def check_databricks_permissions(self) -> CheckCategory:
         """Check Databricks-specific permissions."""
-        category = CheckCategory(name="STEP 5: DATABRICKS WORKSPACE PERMISSIONS")
+        category = CheckCategory(name="DATABRICKS WORKSPACE PERMISSIONS")
         
         try:
             auth_client = self._get_authorization_client()
@@ -1252,7 +1091,7 @@ class AzureChecker(BaseChecker):
     
     def check_privatelink_permissions(self, test_rg: str) -> CheckCategory:
         """Check Private Link permissions (NAT Gateway, Private Endpoints)."""
-        category = CheckCategory(name="STEP 5: PRIVATE LINK + SCC (REAL TEST)")
+        category = CheckCategory(name="PRIVATE LINK + SCC")
         
         network_client = self._get_network_client()
         nat_gw_name = f"{TEST_RESOURCE_PREFIX}-natgw-{self._test_id}"
@@ -1434,28 +1273,87 @@ class AzureChecker(BaseChecker):
         
         return category
     
+    def _compute_deployment_compatibility(self) -> CheckCategory:
+        """Compute which deployment types are supported based on check results."""
+        category = CheckCategory(name="DEPLOYMENT COMPATIBILITY")
+        
+        providers_ok = self._check_results_by_area.get("providers", True)
+        rg_ok = self._check_results_by_area.get("resource_group", True)
+        network_ok = self._check_results_by_area.get("network", True)
+        storage_ok = self._check_results_by_area.get("storage", True)
+        connector_ok = self._check_results_by_area.get("access_connector", True)
+        privatelink_ok = self._check_results_by_area.get("privatelink", True)
+        workspace_ok = self._check_results_by_area.get("workspace", True)
+        
+        base_ok = providers_ok and rg_ok and workspace_ok
+        
+        modes = [
+            ("Standard", base_ok,
+             "Databricks-managed VNet + DBFS storage"),
+            ("VNet Injection", base_ok and network_ok,
+             "Customer-managed VNet with subnet delegation"),
+            ("Unity Catalog", base_ok and storage_ok and connector_ok,
+             "With ADLS Gen2 + Access Connector"),
+            ("PrivateLink", base_ok and network_ok and privatelink_ok,
+             "Private Endpoints + NAT Gateway (SCC)"),
+            ("Full", base_ok and network_ok and storage_ok and connector_ok and privatelink_ok,
+             "VNet Injection + Unity Catalog + Private Link"),
+        ]
+        
+        for mode_name, supported, description in modes:
+            if supported:
+                category.add_result(CheckResult(
+                    name=f"  {mode_name}",
+                    status=CheckStatus.OK,
+                    message=f"SUPPORTED - {description}"
+                ))
+            else:
+                missing = []
+                if not providers_ok:
+                    missing.append("resource providers")
+                if not rg_ok:
+                    missing.append("resource group")
+                if not workspace_ok:
+                    missing.append("workspace permissions")
+                if mode_name in ("VNet Injection", "PrivateLink", "Full") and not network_ok:
+                    missing.append("network (VNet/NSG)")
+                if mode_name in ("Unity Catalog", "Full") and not storage_ok:
+                    missing.append("storage (ADLS Gen2)")
+                if mode_name in ("Unity Catalog", "Full") and not connector_ok:
+                    missing.append("Access Connector")
+                if mode_name in ("PrivateLink", "Full") and not privatelink_ok:
+                    missing.append("Private Link (NAT/endpoints)")
+                
+                category.add_result(CheckResult(
+                    name=f"  {mode_name}",
+                    status=CheckStatus.WARNING,
+                    message=f"MISSING PERMISSIONS - Fix: {', '.join(missing)}"
+                ))
+        
+        return category
+    
     def run_all_checks(self) -> CheckReport:
-        """Run all Azure checks for Databricks deployment."""
+        """Run all Azure checks for Databricks deployment.
+        
+        Runs every check category unconditionally and produces a deployment
+        compatibility matrix at the end.
+        """
         self._report = CheckReport(
             cloud=self.cloud_name,
             region=self.region or "default"
         )
         
-        # Run credentials check first
         cred_category = self.check_credentials()
         self._report.add_category(cred_category)
         
-        # Update region in report
         self._report.region = self.region or "eastus"
         
-        # Set account info
         if self._subscription_info:
             self._report.account_info = (
                 f"Subscription: {self._subscription_info['name']} "
                 f"({self._subscription_info['id']})"
             )
         
-        # Check if credentials failed
         credentials_ok = all(
             r.status in (CheckStatus.OK, CheckStatus.WARNING) 
             for r in cred_category.results
@@ -1463,12 +1361,10 @@ class AzureChecker(BaseChecker):
         
         if not credentials_ok:
             for check_name in [
-                "STEP 1: RESOURCE PROVIDERS",
-                "STEP 2: RESOURCE GROUP",
-                "STEP 3: NETWORK",
-                "STEP 4: STORAGE",
-                "STEP 5: DATABRICKS WORKSPACE",
-                "QUOTAS & LIMITS"
+                "RESOURCE PROVIDERS", "RESOURCE GROUP",
+                "NETWORK CONFIGURATION", "STORAGE CONFIGURATION (ADLS Gen2)",
+                "UNITY CATALOG (Access Connector)", "PRIVATE LINK + SCC",
+                "DATABRICKS WORKSPACE PERMISSIONS", "QUOTAS & LIMITS"
             ]:
                 category = CheckCategory(name=check_name)
                 category.add_result(CheckResult(
@@ -1479,475 +1375,33 @@ class AzureChecker(BaseChecker):
                 self._report.add_category(category)
             return self._report
         
-        # Step 1: Resource Providers
-        self._report.add_category(self.check_resource_providers())
+        # Resource Providers
+        providers_cat = self.check_resource_providers()
+        self._check_results_by_area["providers"] = (providers_cat.not_ok_count == 0)
+        self._report.add_category(providers_cat)
         
-        # Determine what to test based on deployment mode
-        mode = self.deployment_mode
-        needs_vnet_test = mode in (
-            AzureDeploymentMode.VNET_INJECTION,
-            AzureDeploymentMode.PRIVATELINK,
-            AzureDeploymentMode.FULL
-        )
-        needs_storage_test = mode in (
-            AzureDeploymentMode.UNITY_CATALOG,
-            AzureDeploymentMode.FULL
-        )
-        needs_privatelink_test = mode in (
-            AzureDeploymentMode.PRIVATELINK,
-            AzureDeploymentMode.FULL
-        )
-        
-        # Show deployment mode explanation
-        mode_cat = CheckCategory(name="DEPLOYMENT MODE ANALYSIS")
-        mode_cat.add_result(CheckResult(
-            name="Mode",
-            status=CheckStatus.OK,
-            message=f"{mode.value.upper()}"
-        ))
-        
-        if mode == AzureDeploymentMode.STANDARD:
-            mode_cat.add_result(CheckResult(
-                name="  VNet",
-                status=CheckStatus.OK,
-                message="Databricks-managed (no VNet creation needed)"
-            ))
-            mode_cat.add_result(CheckResult(
-                name="  Storage (DBFS)",
-                status=CheckStatus.OK,
-                message="Databricks-managed (created in Managed RG)"
-            ))
-            mode_cat.add_result(CheckResult(
-                name="  You provide",
-                status=CheckStatus.OK,
-                message="Only managed_resource_group_name"
-            ))
-        elif mode == AzureDeploymentMode.VNET_INJECTION:
-            mode_cat.add_result(CheckResult(
-                name="  VNet",
-                status=CheckStatus.OK,
-                message="Customer-managed (you create VNet + Subnets)"
-            ))
-            mode_cat.add_result(CheckResult(
-                name="  Storage (DBFS)",
-                status=CheckStatus.OK,
-                message="Databricks-managed (created in Managed RG)"
-            ))
-        elif mode == AzureDeploymentMode.UNITY_CATALOG:
-            mode_cat.add_result(CheckResult(
-                name="  VNet",
-                status=CheckStatus.OK,
-                message="Databricks-managed"
-            ))
-            mode_cat.add_result(CheckResult(
-                name="  Unity Catalog Storage",
-                status=CheckStatus.OK,
-                message="You create ADLS Gen2 + Container + Access Connector"
-            ))
-        elif mode == AzureDeploymentMode.PRIVATELINK:
-            mode_cat.add_result(CheckResult(
-                name="  VNet",
-                status=CheckStatus.OK,
-                message="Customer-managed (required for Private Link)"
-            ))
-            mode_cat.add_result(CheckResult(
-                name="  NAT Gateway",
-                status=CheckStatus.OK,
-                message="REQUIRED for Secure Cluster Connectivity (SCC)"
-            ))
-            mode_cat.add_result(CheckResult(
-                name="  Private Endpoints",
-                status=CheckStatus.OK,
-                message="Frontend + Backend connections"
-            ))
-        elif mode == AzureDeploymentMode.FULL:
-            mode_cat.add_result(CheckResult(
-                name="  All Features",
-                status=CheckStatus.OK,
-                message="VNet Injection + Unity Catalog + Private Link"
-            ))
-        
-        self._report.add_category(mode_cat)
-        
-        # Create temporary RG for testing (needed for any mode except standard)
+        # Resource Group + all resource tests
         resource_client = self._get_resource_client()
         test_rg = f"{TEST_RESOURCE_PREFIX}-rg-{self._test_id}"
         rg_created = False
         
-        # Step 2: Resource Group
         if self.verify_only:
-            # Verify-only mode: read-only checks
-            rg_category = CheckCategory(name="STEP 2: RESOURCE GROUP (Read-Only)")
-            rg_category.add_result(CheckResult(
-                name="Test Method",
-                status=CheckStatus.OK,
-                message="VERIFY-ONLY: Read-only permission checks (no resource creation)"
-            ))
-            
-            # Test listing resource groups
-            try:
-                rgs = list(resource_client.resource_groups.list())
-                rg_category.add_result(CheckResult(
-                    name="  Microsoft.Resources/resourceGroups/read",
-                    status=CheckStatus.OK,
-                    message=f"VERIFIED - Found {len(rgs)} resource group(s)"
-                ))
-            except Exception as e:
-                error = str(e)
-                if "AuthorizationFailed" in error:
-                    rg_category.add_result(CheckResult(
-                        name="  Microsoft.Resources/resourceGroups/read",
-                        status=CheckStatus.NOT_OK,
-                        message=f"DENIED: {error[:80]}"
-                    ))
-                else:
-                    rg_category.add_result(CheckResult(
-                        name="  Microsoft.Resources/resourceGroups/read",
-                        status=CheckStatus.WARNING,
-                        message=f"Error: {error[:80]}"
-                    ))
-            
-            rg_category.add_result(CheckResult(
-                name="  Microsoft.Resources/resourceGroups/write",
-                status=CheckStatus.WARNING,
-                message="Cannot verify write permission without resource creation"
-            ))
-            
-            self._report.add_category(rg_category)
+            self._run_verify_only_checks(resource_client)
         else:
-            # Full mode with resource creation
-            rg_category = CheckCategory(name="STEP 2: RESOURCE GROUP (REAL TEST)")
-            rg_category.add_result(CheckResult(
-                name="Test Method",
-                status=CheckStatus.OK,
-                message="Creating temporary RG for permission tests..."
-            ))
-            rg_category.add_result(CheckResult(
-                name="  📁 Creating test Resource Group",
-                status=CheckStatus.OK,
-                message=test_rg
-            ))
-            
-            try:
-                resource_client.resource_groups.create_or_update(
-                    test_rg,
-                    {"location": self.region or "eastus", "tags": {"PreCheck": "Temporary"}}
-                )
-                rg_created = True
-                rg_category.add_result(CheckResult(
-                    name="  Microsoft.Resources/resourceGroups/write",
-                    status=CheckStatus.OK,
-                    message=f"✓ CREATED: {test_rg}"
-                ))
-            except Exception as e:
-                error = str(e)
-                if "AuthorizationFailed" in error:
-                    rg_category.add_result(CheckResult(
-                        name="  Microsoft.Resources/resourceGroups/write",
-                        status=CheckStatus.NOT_OK,
-                        message=f"DENIED: {error[:80]}"
-                    ))
-                else:
-                    rg_category.add_result(CheckResult(
-                        name="  Microsoft.Resources/resourceGroups/write",
-                        status=CheckStatus.WARNING,
-                        message=f"Error: {error[:80]}"
-                    ))
-            
-            self._report.add_category(rg_category)
-        
-        if self.verify_only:
-            # Verify-only mode: read-only checks without resource creation
-            # Step 3: Network (read-only)
-            if needs_vnet_test:
-                network_category = CheckCategory(name="STEP 3: NETWORK - VNet Injection (Read-Only)")
-                network_category.add_result(CheckResult(
-                    name="Test Method",
-                    status=CheckStatus.OK,
-                    message="VERIFY-ONLY: Checking existing network resources..."
-                ))
-                
-                network_client = self._get_network_client()
-                
-                # Check existing VNets
-                try:
-                    vnets = list(network_client.virtual_networks.list_all())
-                    network_category.add_result(CheckResult(
-                        name="  Microsoft.Network/virtualNetworks/read",
-                        status=CheckStatus.OK,
-                        message=f"VERIFIED - Found {len(vnets)} VNet(s)"
-                    ))
-                except Exception as e:
-                    network_category.add_result(CheckResult(
-                        name="  Microsoft.Network/virtualNetworks/read",
-                        status=CheckStatus.NOT_OK,
-                        message=f"DENIED: {str(e)[:80]}"
-                    ))
-                
-                # Check existing NSGs
-                try:
-                    nsgs = list(network_client.network_security_groups.list_all())
-                    network_category.add_result(CheckResult(
-                        name="  Microsoft.Network/networkSecurityGroups/read",
-                        status=CheckStatus.OK,
-                        message=f"VERIFIED - Found {len(nsgs)} NSG(s)"
-                    ))
-                except Exception as e:
-                    network_category.add_result(CheckResult(
-                        name="  Microsoft.Network/networkSecurityGroups/read",
-                        status=CheckStatus.NOT_OK,
-                        message=f"DENIED: {str(e)[:80]}"
-                    ))
-                
-                network_category.add_result(CheckResult(
-                    name="  Network Write Permissions",
-                    status=CheckStatus.WARNING,
-                    message="Cannot verify write permissions without resource creation"
-                ))
-                
-                self._report.add_category(network_category)
-            else:
-                skip_cat = CheckCategory(name="STEP 3: NETWORK")
-                skip_cat.add_result(CheckResult(
-                    name="VNet Creation",
-                    status=CheckStatus.OK,
-                    message="Skipped (Databricks-managed VNet in this mode)"
-                ))
-                self._report.add_category(skip_cat)
-            
-            # Step 4: Storage (read-only)
-            if needs_storage_test:
-                storage_category = CheckCategory(name="STEP 4: STORAGE - Unity Catalog ADLS Gen2 (Read-Only)")
-                storage_category.add_result(CheckResult(
-                    name="Test Method",
-                    status=CheckStatus.OK,
-                    message="VERIFY-ONLY: Checking existing storage resources..."
-                ))
-                
-                storage_client = self._get_storage_client()
-                
-                # Check existing storage accounts
-                try:
-                    accounts = list(storage_client.storage_accounts.list())
-                    adls_count = sum(1 for a in accounts if getattr(a, 'is_hns_enabled', False))
-                    storage_category.add_result(CheckResult(
-                        name="  Microsoft.Storage/storageAccounts/read",
-                        status=CheckStatus.OK,
-                        message=f"VERIFIED - Found {len(accounts)} account(s), {adls_count} with ADLS Gen2"
-                    ))
-                except Exception as e:
-                    storage_category.add_result(CheckResult(
-                        name="  Microsoft.Storage/storageAccounts/read",
-                        status=CheckStatus.NOT_OK,
-                        message=f"DENIED: {str(e)[:80]}"
-                    ))
-                
-                storage_category.add_result(CheckResult(
-                    name="  Storage Write Permissions",
-                    status=CheckStatus.WARNING,
-                    message="Cannot verify write permissions without resource creation"
-                ))
-                
-                self._report.add_category(storage_category)
-                
-                # Access Connector (read-only)
-                connector_category = CheckCategory(name="STEP 4b: ACCESS CONNECTOR FOR DATABRICKS (Read-Only)")
-                connector_category.add_result(CheckResult(
-                    name="Test Method",
-                    status=CheckStatus.OK,
-                    message="VERIFY-ONLY: Checking existing Access Connectors..."
-                ))
-                
-                try:
-                    # Check if Databricks provider is registered
-                    providers = {p.namespace: p for p in resource_client.providers.list()}
-                    if "Microsoft.Databricks" in providers:
-                        connector_category.add_result(CheckResult(
-                            name="  Microsoft.Databricks provider",
-                            status=CheckStatus.OK,
-                            message="Registered"
-                        ))
-                    else:
-                        connector_category.add_result(CheckResult(
-                            name="  Microsoft.Databricks provider",
-                            status=CheckStatus.NOT_OK,
-                            message="Not registered"
-                        ))
-                except Exception as e:
-                    connector_category.add_result(CheckResult(
-                        name="  Databricks Provider Check",
-                        status=CheckStatus.WARNING,
-                        message=f"Could not verify: {str(e)[:50]}"
-                    ))
-                
-                connector_category.add_result(CheckResult(
-                    name="  Access Connector Write Permissions",
-                    status=CheckStatus.WARNING,
-                    message="Cannot verify without resource creation"
-                ))
-                
-                self._report.add_category(connector_category)
-            else:
-                skip_cat = CheckCategory(name="STEP 4: STORAGE")
-                skip_cat.add_result(CheckResult(
-                    name="Storage Creation",
-                    status=CheckStatus.OK,
-                    message="Skipped (DBFS storage is Databricks-managed in this mode)"
-                ))
-                self._report.add_category(skip_cat)
-            
-            # Step 5: Private Link (read-only)
-            if needs_privatelink_test:
-                pl_category = CheckCategory(name="STEP 5: PRIVATE LINK + SCC (Read-Only)")
-                pl_category.add_result(CheckResult(
-                    name="Test Method",
-                    status=CheckStatus.OK,
-                    message="VERIFY-ONLY: Checking existing Private Link resources..."
-                ))
-                
-                network_client = self._get_network_client()
-                
-                # Check existing NAT Gateways
-                try:
-                    nats = list(network_client.nat_gateways.list_all())
-                    pl_category.add_result(CheckResult(
-                        name="  Microsoft.Network/natGateways/read",
-                        status=CheckStatus.OK,
-                        message=f"VERIFIED - Found {len(nats)} NAT Gateway(s)"
-                    ))
-                except Exception as e:
-                    pl_category.add_result(CheckResult(
-                        name="  Microsoft.Network/natGateways/read",
-                        status=CheckStatus.NOT_OK,
-                        message=f"DENIED: {str(e)[:80]}"
-                    ))
-                
-                # Check existing Public IPs
-                try:
-                    pips = list(network_client.public_ip_addresses.list_all())
-                    pl_category.add_result(CheckResult(
-                        name="  Microsoft.Network/publicIPAddresses/read",
-                        status=CheckStatus.OK,
-                        message=f"VERIFIED - Found {len(pips)} Public IP(s)"
-                    ))
-                except Exception as e:
-                    pl_category.add_result(CheckResult(
-                        name="  Microsoft.Network/publicIPAddresses/read",
-                        status=CheckStatus.NOT_OK,
-                        message=f"DENIED: {str(e)[:80]}"
-                    ))
-                
-                pl_category.add_result(CheckResult(
-                    name="  Private Link Write Permissions",
-                    status=CheckStatus.WARNING,
-                    message="Cannot verify write permissions without resource creation"
-                ))
-                
-                self._report.add_category(pl_category)
-            else:
-                skip_cat = CheckCategory(name="STEP 5: PRIVATE LINK")
-                skip_cat.add_result(CheckResult(
-                    name="Private Link",
-                    status=CheckStatus.OK,
-                    message="Skipped (not required in this mode)"
-                ))
-                self._report.add_category(skip_cat)
-        elif rg_created:
-            # Full mode with resource creation
-            # Step 3: Network (VNet Injection)
-            if needs_vnet_test:
-                network_category = CheckCategory(name="STEP 3: NETWORK - VNet Injection (REAL TEST)")
-                network_category.add_result(CheckResult(
-                    name="Test Method",
-                    status=CheckStatus.OK,
-                    message=f"Creating VNet + Subnets + NSG in {test_rg}..."
-                ))
-                
-                network_results = self._test_network_permissions(test_rg)
-                for result in network_results:
-                    network_category.add_result(result)
-                
-                self._report.add_category(network_category)
-            else:
-                skip_cat = CheckCategory(name="STEP 3: NETWORK")
-                skip_cat.add_result(CheckResult(
-                    name="VNet Creation",
-                    status=CheckStatus.OK,
-                    message="Skipped (Databricks-managed VNet in this mode)"
-                ))
-                self._report.add_category(skip_cat)
-            
-            # Step 4: Storage (Unity Catalog)
-            if needs_storage_test:
-                storage_category = CheckCategory(name="STEP 4: STORAGE - Unity Catalog ADLS Gen2 (REAL TEST)")
-                storage_category.add_result(CheckResult(
-                    name="Test Method",
-                    status=CheckStatus.OK,
-                    message=f"Creating Storage Account (ADLS Gen2) in {test_rg}..."
-                ))
-                
-                storage_results = self._test_storage_permissions(test_rg)
-                for result in storage_results:
-                    storage_category.add_result(result)
-                
-                self._report.add_category(storage_category)
-                
-                # Step 4b: Access Connector for Unity Catalog
-                connector_category = CheckCategory(name="STEP 4b: ACCESS CONNECTOR FOR DATABRICKS (REAL TEST)")
-                connector_category.add_result(CheckResult(
-                    name="Test Method",
-                    status=CheckStatus.OK,
-                    message=f"Creating Access Connector for Unity Catalog in {test_rg}..."
-                ))
-                connector_category.add_result(CheckResult(
-                    name="Reference",
-                    status=CheckStatus.OK,
-                    message="Per: learn.microsoft.com/azure/databricks/.../azure-managed-identities"
-                ))
-                
-                connector_results = self._test_access_connector_permissions(test_rg)
-                for result in connector_results:
-                    connector_category.add_result(result)
-                
-                self._report.add_category(connector_category)
-            else:
-                skip_cat = CheckCategory(name="STEP 4: STORAGE")
-                skip_cat.add_result(CheckResult(
-                    name="Storage Creation",
-                    status=CheckStatus.OK,
-                    message="Skipped (DBFS storage is Databricks-managed in this mode)"
-                ))
-                self._report.add_category(skip_cat)
-            
-            # Step 5: Private Link + SCC
-            if needs_privatelink_test:
-                self._report.add_category(self.check_privatelink_permissions(test_rg))
-            else:
-                skip_cat = CheckCategory(name="STEP 5: PRIVATE LINK")
-                skip_cat.add_result(CheckResult(
-                    name="Private Link",
-                    status=CheckStatus.OK,
-                    message="Skipped (not required in this mode)"
-                ))
-                self._report.add_category(skip_cat)
-        else:
-            # Can't continue without RG
-            for check_name in ["STEP 3: NETWORK", "STEP 4: STORAGE", "STEP 5: PRIVATE LINK"]:
-                category = CheckCategory(name=check_name)
-                category.add_result(CheckResult(
-                    name="All checks",
-                    status=CheckStatus.SKIPPED,
-                    message="Skipped - Resource Group creation failed"
-                ))
-                self._report.add_category(category)
+            rg_created = self._run_full_checks(resource_client, test_rg)
         
         # Databricks workspace permissions
-        self._report.add_category(self.check_databricks_permissions())
+        workspace_cat = self.check_databricks_permissions()
+        self._check_results_by_area["workspace"] = (workspace_cat.not_ok_count == 0)
+        self._report.add_category(workspace_cat)
         
         # Quotas
         self._report.add_category(self.check_quotas())
         
-        # Final cleanup (only needed if resources were created)
+        # Deployment compatibility matrix
+        self._report.add_category(self._compute_deployment_compatibility())
+        
+        # Cleanup
         if rg_created and not self.verify_only:
             cleanup_category = CheckCategory(name="CLEANUP")
             try:
@@ -1976,3 +1430,325 @@ class AzureChecker(BaseChecker):
         self._cleanup_test_resources()
         
         return self._report
+    
+    def _run_verify_only_checks(self, resource_client):
+        """Run all checks in verify-only (read-only) mode."""
+        
+        # Resource Group (read-only)
+        rg_category = CheckCategory(name="RESOURCE GROUP")
+        rg_category.add_result(CheckResult(
+            name="Test Method",
+            status=CheckStatus.OK,
+            message="VERIFY-ONLY: Read-only permission checks (no resource creation)"
+        ))
+        
+        try:
+            rgs = list(resource_client.resource_groups.list())
+            rg_category.add_result(CheckResult(
+                name="  Microsoft.Resources/resourceGroups/read",
+                status=CheckStatus.OK,
+                message=f"VERIFIED - Found {len(rgs)} resource group(s)"
+            ))
+        except Exception as e:
+            error = str(e)
+            if "AuthorizationFailed" in error:
+                rg_category.add_result(CheckResult(
+                    name="  Microsoft.Resources/resourceGroups/read",
+                    status=CheckStatus.NOT_OK,
+                    message=f"DENIED: {error[:80]}"
+                ))
+            else:
+                rg_category.add_result(CheckResult(
+                    name="  Microsoft.Resources/resourceGroups/read",
+                    status=CheckStatus.WARNING,
+                    message=f"Error: {error[:80]}"
+                ))
+        
+        rg_category.add_result(CheckResult(
+            name="  Microsoft.Resources/resourceGroups/write",
+            status=CheckStatus.WARNING,
+            message="Cannot verify write permission without resource creation"
+        ))
+        
+        self._check_results_by_area["resource_group"] = (rg_category.not_ok_count == 0)
+        self._report.add_category(rg_category)
+        
+        # Network (read-only)
+        network_category = CheckCategory(name="NETWORK CONFIGURATION")
+        network_category.add_result(CheckResult(
+            name="Test Method",
+            status=CheckStatus.OK,
+            message="VERIFY-ONLY: Checking existing network resources..."
+        ))
+        
+        network_client = self._get_network_client()
+        
+        try:
+            vnets = list(network_client.virtual_networks.list_all())
+            network_category.add_result(CheckResult(
+                name="  Microsoft.Network/virtualNetworks/read",
+                status=CheckStatus.OK,
+                message=f"VERIFIED - Found {len(vnets)} VNet(s)"
+            ))
+        except Exception as e:
+            network_category.add_result(CheckResult(
+                name="  Microsoft.Network/virtualNetworks/read",
+                status=CheckStatus.NOT_OK,
+                message=f"DENIED: {str(e)[:80]}"
+            ))
+        
+        try:
+            nsgs = list(network_client.network_security_groups.list_all())
+            network_category.add_result(CheckResult(
+                name="  Microsoft.Network/networkSecurityGroups/read",
+                status=CheckStatus.OK,
+                message=f"VERIFIED - Found {len(nsgs)} NSG(s)"
+            ))
+        except Exception as e:
+            network_category.add_result(CheckResult(
+                name="  Microsoft.Network/networkSecurityGroups/read",
+                status=CheckStatus.NOT_OK,
+                message=f"DENIED: {str(e)[:80]}"
+            ))
+        
+        network_category.add_result(CheckResult(
+            name="  Network Write Permissions",
+            status=CheckStatus.WARNING,
+            message="Cannot verify write permissions without resource creation"
+        ))
+        
+        self._check_results_by_area["network"] = (network_category.not_ok_count == 0)
+        self._report.add_category(network_category)
+        
+        # Storage (read-only)
+        storage_category = CheckCategory(name="STORAGE CONFIGURATION (ADLS Gen2)")
+        storage_category.add_result(CheckResult(
+            name="Test Method",
+            status=CheckStatus.OK,
+            message="VERIFY-ONLY: Checking existing storage resources..."
+        ))
+        
+        storage_client = self._get_storage_client()
+        
+        try:
+            accounts = list(storage_client.storage_accounts.list())
+            adls_count = sum(1 for a in accounts if getattr(a, 'is_hns_enabled', False))
+            storage_category.add_result(CheckResult(
+                name="  Microsoft.Storage/storageAccounts/read",
+                status=CheckStatus.OK,
+                message=f"VERIFIED - Found {len(accounts)} account(s), {adls_count} with ADLS Gen2"
+            ))
+        except Exception as e:
+            storage_category.add_result(CheckResult(
+                name="  Microsoft.Storage/storageAccounts/read",
+                status=CheckStatus.NOT_OK,
+                message=f"DENIED: {str(e)[:80]}"
+            ))
+        
+        storage_category.add_result(CheckResult(
+            name="  Storage Write Permissions",
+            status=CheckStatus.WARNING,
+            message="Cannot verify write permissions without resource creation"
+        ))
+        
+        self._check_results_by_area["storage"] = (storage_category.not_ok_count == 0)
+        self._report.add_category(storage_category)
+        
+        # Access Connector (read-only)
+        connector_category = CheckCategory(name="UNITY CATALOG (Access Connector)")
+        connector_category.add_result(CheckResult(
+            name="Test Method",
+            status=CheckStatus.OK,
+            message="VERIFY-ONLY: Checking existing Access Connectors..."
+        ))
+        
+        try:
+            providers = {p.namespace: p for p in resource_client.providers.list()}
+            if "Microsoft.Databricks" in providers:
+                connector_category.add_result(CheckResult(
+                    name="  Microsoft.Databricks provider",
+                    status=CheckStatus.OK,
+                    message="Registered"
+                ))
+            else:
+                connector_category.add_result(CheckResult(
+                    name="  Microsoft.Databricks provider",
+                    status=CheckStatus.NOT_OK,
+                    message="Not registered"
+                ))
+        except Exception as e:
+            connector_category.add_result(CheckResult(
+                name="  Databricks Provider Check",
+                status=CheckStatus.WARNING,
+                message=f"Could not verify: {str(e)[:50]}"
+            ))
+        
+        connector_category.add_result(CheckResult(
+            name="  Access Connector Write Permissions",
+            status=CheckStatus.WARNING,
+            message="Cannot verify without resource creation"
+        ))
+        
+        self._check_results_by_area["access_connector"] = (connector_category.not_ok_count == 0)
+        self._report.add_category(connector_category)
+        
+        # Private Link (read-only)
+        pl_category = CheckCategory(name="PRIVATE LINK + SCC")
+        pl_category.add_result(CheckResult(
+            name="Test Method",
+            status=CheckStatus.OK,
+            message="VERIFY-ONLY: Checking existing Private Link resources..."
+        ))
+        
+        try:
+            nats = list(network_client.nat_gateways.list_all())
+            pl_category.add_result(CheckResult(
+                name="  Microsoft.Network/natGateways/read",
+                status=CheckStatus.OK,
+                message=f"VERIFIED - Found {len(nats)} NAT Gateway(s)"
+            ))
+        except Exception as e:
+            pl_category.add_result(CheckResult(
+                name="  Microsoft.Network/natGateways/read",
+                status=CheckStatus.NOT_OK,
+                message=f"DENIED: {str(e)[:80]}"
+            ))
+        
+        try:
+            pips = list(network_client.public_ip_addresses.list_all())
+            pl_category.add_result(CheckResult(
+                name="  Microsoft.Network/publicIPAddresses/read",
+                status=CheckStatus.OK,
+                message=f"VERIFIED - Found {len(pips)} Public IP(s)"
+            ))
+        except Exception as e:
+            pl_category.add_result(CheckResult(
+                name="  Microsoft.Network/publicIPAddresses/read",
+                status=CheckStatus.NOT_OK,
+                message=f"DENIED: {str(e)[:80]}"
+            ))
+        
+        pl_category.add_result(CheckResult(
+            name="  Private Link Write Permissions",
+            status=CheckStatus.WARNING,
+            message="Cannot verify write permissions without resource creation"
+        ))
+        
+        self._check_results_by_area["privatelink"] = (pl_category.not_ok_count == 0)
+        self._report.add_category(pl_category)
+    
+    def _run_full_checks(self, resource_client, test_rg: str) -> bool:
+        """Run all checks with real resource creation. Returns True if RG was created."""
+        rg_created = False
+        
+        # Resource Group
+        rg_category = CheckCategory(name="RESOURCE GROUP")
+        rg_category.add_result(CheckResult(
+            name="Test Method",
+            status=CheckStatus.OK,
+            message="Creating temporary RG for permission tests..."
+        ))
+        rg_category.add_result(CheckResult(
+            name="  📁 Creating test Resource Group",
+            status=CheckStatus.OK,
+            message=test_rg
+        ))
+        
+        try:
+            resource_client.resource_groups.create_or_update(
+                test_rg,
+                {"location": self.region or "eastus", "tags": {"PreCheck": "Temporary"}}
+            )
+            rg_created = True
+            rg_category.add_result(CheckResult(
+                name="  Microsoft.Resources/resourceGroups/write",
+                status=CheckStatus.OK,
+                message=f"✓ CREATED: {test_rg}"
+            ))
+        except Exception as e:
+            error = str(e)
+            if "AuthorizationFailed" in error:
+                rg_category.add_result(CheckResult(
+                    name="  Microsoft.Resources/resourceGroups/write",
+                    status=CheckStatus.NOT_OK,
+                    message=f"DENIED: {error[:80]}"
+                ))
+            else:
+                rg_category.add_result(CheckResult(
+                    name="  Microsoft.Resources/resourceGroups/write",
+                    status=CheckStatus.WARNING,
+                    message=f"Error: {error[:80]}"
+                ))
+        
+        self._check_results_by_area["resource_group"] = (rg_category.not_ok_count == 0)
+        self._report.add_category(rg_category)
+        
+        if not rg_created:
+            for check_name in ["NETWORK CONFIGURATION", "STORAGE CONFIGURATION (ADLS Gen2)",
+                              "UNITY CATALOG (Access Connector)", "PRIVATE LINK + SCC"]:
+                category = CheckCategory(name=check_name)
+                category.add_result(CheckResult(
+                    name="All checks",
+                    status=CheckStatus.SKIPPED,
+                    message="Skipped - Resource Group creation failed"
+                ))
+                self._check_results_by_area[check_name] = False
+                self._report.add_category(category)
+            return False
+        
+        # Network Configuration (VNet + NSG)
+        network_category = CheckCategory(name="NETWORK CONFIGURATION")
+        network_category.add_result(CheckResult(
+            name="Test Method",
+            status=CheckStatus.OK,
+            message=f"Creating VNet + Subnets + NSG in {test_rg}..."
+        ))
+        
+        network_results = self._test_network_permissions(test_rg)
+        for result in network_results:
+            network_category.add_result(result)
+        
+        self._check_results_by_area["network"] = (network_category.not_ok_count == 0)
+        self._report.add_category(network_category)
+        
+        # Storage Configuration (ADLS Gen2)
+        storage_category = CheckCategory(name="STORAGE CONFIGURATION (ADLS Gen2)")
+        storage_category.add_result(CheckResult(
+            name="Test Method",
+            status=CheckStatus.OK,
+            message=f"Creating Storage Account (ADLS Gen2) in {test_rg}..."
+        ))
+        
+        storage_results = self._test_storage_permissions(test_rg)
+        for result in storage_results:
+            storage_category.add_result(result)
+        
+        self._check_results_by_area["storage"] = (storage_category.not_ok_count == 0)
+        self._report.add_category(storage_category)
+        
+        # Unity Catalog (Access Connector)
+        connector_category = CheckCategory(name="UNITY CATALOG (Access Connector)")
+        connector_category.add_result(CheckResult(
+            name="Test Method",
+            status=CheckStatus.OK,
+            message=f"Creating Access Connector for Unity Catalog in {test_rg}..."
+        ))
+        connector_category.add_result(CheckResult(
+            name="Reference",
+            status=CheckStatus.OK,
+            message="Per: learn.microsoft.com/azure/databricks/.../azure-managed-identities"
+        ))
+        
+        connector_results = self._test_access_connector_permissions(test_rg)
+        for result in connector_results:
+            connector_category.add_result(result)
+        
+        self._check_results_by_area["access_connector"] = (connector_category.not_ok_count == 0)
+        self._report.add_category(connector_category)
+        
+        # Private Link + SCC
+        pl_category = self.check_privatelink_permissions(test_rg)
+        self._check_results_by_area["privatelink"] = (pl_category.not_ok_count == 0)
+        self._report.add_category(pl_category)
+        
+        return True

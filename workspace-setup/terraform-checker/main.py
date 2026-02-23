@@ -18,7 +18,6 @@ import click
 
 from checkers import AWSChecker, AzureChecker, GCPChecker
 from checkers.base import CheckReport
-from checkers.databricks_actions import DeploymentMode, VPCType
 from reporters import TxtReporter, JsonReporter
 from utils import CredentialLoader, ExitCode, load_config, setup_logging
 
@@ -157,7 +156,7 @@ def cleanup_orphaned_resources(cloud: Optional[str], region: Optional[str], prof
             click.echo(click.style(f"Error: {e}", fg="red"))
 
 
-def show_dry_run_plan(mode: str, vpc_type: str):
+def show_dry_run_plan():
     """Show what would be tested without creating anything."""
     click.echo("""
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -210,50 +209,16 @@ To cleanup orphans:      python main.py --cleanup-orphans --cloud aws
 """)
 
 
-def get_deployment_mode(mode_str: str) -> DeploymentMode:
-    """Convert string to DeploymentMode enum."""
-    mode_map = {
-        "standard": DeploymentMode.STANDARD,
-        "privatelink": DeploymentMode.PRIVATE_LINK,
-        "unity": DeploymentMode.UNITY_CATALOG,
-        "unity_catalog": DeploymentMode.UNITY_CATALOG,
-        "full": DeploymentMode.UNITY_CATALOG,  # Full includes everything
-    }
-    return mode_map.get(mode_str.lower(), DeploymentMode.STANDARD)
-
-
-def get_vpc_type(vpc_str: str) -> VPCType:
-    """Convert string to VPCType enum."""
-    vpc_map = {
-        "databricks": VPCType.DATABRICKS_MANAGED,
-        "databricks_managed": VPCType.DATABRICKS_MANAGED,
-        "managed": VPCType.DATABRICKS_MANAGED,
-        "customer": VPCType.CUSTOMER_MANAGED_DEFAULT,
-        "customer_managed": VPCType.CUSTOMER_MANAGED_DEFAULT,
-        "customer_default": VPCType.CUSTOMER_MANAGED_DEFAULT,
-        "default": VPCType.CUSTOMER_MANAGED_DEFAULT,
-        "custom": VPCType.CUSTOMER_MANAGED_CUSTOM,
-        "customer_custom": VPCType.CUSTOMER_MANAGED_CUSTOM,
-    }
-    return vpc_map.get(vpc_str.lower(), VPCType.CUSTOMER_MANAGED_DEFAULT)
-
-
 def run_aws_checks(
     region: Optional[str], 
     profile: Optional[str],
-    deployment_mode: DeploymentMode,
-    vpc_type: VPCType,
     verify_only: bool = False,
 ) -> tuple:
-    """Run AWS checks and return the report and checker instance."""
-    vpc_type_name = {
-        VPCType.DATABRICKS_MANAGED: "Databricks-managed",
-        VPCType.CUSTOMER_MANAGED_DEFAULT: "Customer-managed (default)",
-        VPCType.CUSTOMER_MANAGED_CUSTOM: "Customer-managed (custom)",
-    }.get(vpc_type, "Unknown")
+    """Run AWS checks and return the report and checker instance.
     
-    click.echo(click.style(f"\n▶ Running AWS checks...", fg="yellow"))
-    click.echo(f"   Mode: {deployment_mode.value} | VPC: {vpc_type_name}")
+    Runs all permission checks and reports which deployment types are supported.
+    """
+    click.echo(click.style(f"\n▶ Running AWS checks (all deployment types)...", fg="yellow"))
     if verify_only:
         click.echo(click.style("   VERIFY-ONLY mode: Read-only checks (no resource creation)", fg="cyan"))
     else:
@@ -263,8 +228,6 @@ def run_aws_checks(
         checker = AWSChecker(
             region=region, 
             profile=profile,
-            deployment_mode=deployment_mode,
-            vpc_type=vpc_type,
             verify_only=verify_only,
         )
         report = checker.run_all_checks()
@@ -286,43 +249,14 @@ def run_aws_checks(
         return None, None
 
 
-def get_azure_deployment_mode(mode_str: str):
-    """Convert string to Azure deployment mode."""
-    from checkers.azure import AzureDeploymentMode
-    
-    mode_map = {
-        "standard": AzureDeploymentMode.STANDARD,
-        "vnet": AzureDeploymentMode.VNET_INJECTION,
-        "unity": AzureDeploymentMode.UNITY_CATALOG,
-        "unity_catalog": AzureDeploymentMode.UNITY_CATALOG,
-        "privatelink": AzureDeploymentMode.PRIVATELINK,
-        "full": AzureDeploymentMode.FULL,
-    }
-    return mode_map.get(mode_str.lower(), AzureDeploymentMode.STANDARD)
-
-
 def run_azure_checks(
     region: Optional[str],
     subscription_id: Optional[str],
     resource_group: Optional[str],
-    deployment_mode: str = "standard",
     verify_only: bool = False,
 ) -> Optional[CheckReport]:
     """Run Azure checks and return the report."""
-    from checkers.azure import AzureDeploymentMode
-    
-    azure_mode = get_azure_deployment_mode(deployment_mode)
-    
-    mode_display = {
-        AzureDeploymentMode.STANDARD: "Standard (Databricks-managed VNet + Storage)",
-        AzureDeploymentMode.VNET_INJECTION: "VNet Injection (Customer-managed VNet)",
-        AzureDeploymentMode.UNITY_CATALOG: "Unity Catalog (Customer-managed Storage)",
-        AzureDeploymentMode.PRIVATELINK: "Private Link + SCC + NAT Gateway",
-        AzureDeploymentMode.FULL: "Full (VNet + Unity + Private Link)",
-    }.get(azure_mode, deployment_mode)
-    
-    click.echo(click.style("\n▶ Running Azure checks...", fg="yellow"))
-    click.echo(f"   Mode: {mode_display}")
+    click.echo(click.style("\n▶ Running Azure checks (all deployment types)...", fg="yellow"))
     if verify_only:
         click.echo(click.style("   VERIFY-ONLY mode: Read-only checks (no resource creation)", fg="cyan"))
     else:
@@ -333,7 +267,6 @@ def run_azure_checks(
             region=region,
             subscription_id=subscription_id,
             resource_group=resource_group,
-            deployment_mode=azure_mode,
             verify_only=verify_only,
         )
         report = checker.run_all_checks()
@@ -402,18 +335,6 @@ def run_gcp_checks(
     "--all", "-a", "check_all",
     is_flag=True,
     help="Check all cloud providers with detected credentials"
-)
-@click.option(
-    "--mode", "-m",
-    type=click.Choice(["standard", "privatelink", "unity", "full"], case_sensitive=False),
-    default="standard",
-    help="Deployment mode: standard, privatelink, unity (Unity Catalog), full"
-)
-@click.option(
-    "--vpc-type",
-    type=click.Choice(["databricks", "customer", "custom"], case_sensitive=False),
-    default="customer",
-    help="VPC type: databricks (Databricks-managed), customer (Customer-managed default), custom (Customer-managed custom)"
 )
 @click.option(
     "--region", "-r",
@@ -496,14 +417,12 @@ def run_gcp_checks(
     help="Suppress banner and progress output (only show results)"
 )
 @click.version_option(
-    version="1.0.0",
+    version="1.2.0",
     prog_name="Databricks Terraform Pre-Check"
 )
 def main(
     cloud: Optional[str],
     check_all: bool,
-    mode: str,
-    vpc_type: str,
     region: Optional[str],
     output: Optional[str],
     profile: Optional[str],
@@ -525,34 +444,22 @@ def main(
     Databricks Terraform Pre-Check Tool
     
     Validates credentials, permissions, and resources BEFORE running Terraform.
-    This tool SIMULATES permissions without creating any resources.
+    Checks ALL permissions and reports which deployment types are supported.
     
     \b
-    DEPLOYMENT MODES:
-      standard    - Basic workspace (VPC, S3/Storage, IAM)
-      privatelink - With PrivateLink/VPC Endpoints
-      unity       - With Unity Catalog storage
-      full        - All features (PrivateLink + Unity Catalog + CMK)
-    
-    \b
-    VPC TYPES (AWS):
-      databricks  - Databricks creates and manages VPC
-      customer    - Customer-managed VPC with default restrictions
-      custom      - Customer-managed VPC with custom restrictions
+    The tool automatically checks permissions for all deployment types:
+      Standard    - Basic workspace (VPC, S3/Storage, IAM)
+      PrivateLink - With VPC Endpoints for private connectivity
+      Unity       - With Unity Catalog storage credentials
+      Full        - All features (PrivateLink + Unity Catalog + CMK)
     
     \b
     EXAMPLES:
-      # Standard deployment with customer-managed VPC
+      # Check AWS permissions (all deployment types)
       python main.py --cloud aws --region us-east-1
     
-      # Databricks-managed VPC
-      python main.py --cloud aws --vpc-type databricks
-    
-      # Full deployment with Unity Catalog
-      python main.py --cloud aws --mode full --vpc-type customer
-    
-      # Azure with subscription
-      python main.py --cloud azure --subscription-id xxx --mode full
+      # Check Azure permissions
+      python main.py --cloud azure --subscription-id xxx
     
       # Save report to file
       python main.py --cloud aws --output pre-check-report.txt
@@ -560,12 +467,15 @@ def main(
       # JSON output for CI/CD
       python main.py --cloud aws --json --quiet
     
+      # Read-only checks (no resource creation)
+      python main.py --cloud aws --verify-only
+    
       # Debug mode with log file
       python main.py --cloud aws --log-level debug --log-file debug.log
     """
     # Setup logging
     log_config = setup_logging(level=log_level, log_file=log_file)
-    logger.debug("Starting Databricks Terraform Pre-Check v1.0.0")
+    logger.debug("Starting Databricks Terraform Pre-Check v1.2.0")
     
     # Load config file if specified
     file_config = None
@@ -587,7 +497,7 @@ def main(
     # Handle dry-run mode
     if dry_run:
         click.echo(click.style("\n🔍 DRY-RUN MODE - No resources will be created", fg="cyan", bold=True))
-        show_dry_run_plan(mode, vpc_type)
+        show_dry_run_plan()
         sys.exit(0)
     
     # Handle verify-only mode
@@ -597,17 +507,7 @@ def main(
         click.echo("   Some permission checks may be limited. Use full mode for comprehensive validation.")
         click.echo()
     
-    deployment_mode = get_deployment_mode(mode)
-    vpc_type_enum = get_vpc_type(vpc_type)
-    
-    vpc_type_display = {
-        VPCType.DATABRICKS_MANAGED: "Databricks-managed",
-        VPCType.CUSTOMER_MANAGED_DEFAULT: "Customer-managed (default)",
-        VPCType.CUSTOMER_MANAGED_CUSTOM: "Customer-managed (custom)",
-    }.get(vpc_type_enum, vpc_type)
-    
-    click.echo(f"Deployment mode: {click.style(deployment_mode.value, fg='cyan', bold=True)}")
-    click.echo(f"VPC type: {click.style(vpc_type_display, fg='cyan', bold=True)}")
+    click.echo(click.style("Checking all deployment types (Standard, PrivateLink, Unity Catalog, Full)", fg="cyan"))
     
     if not cloud and not check_all:
         click.echo("\nNo cloud specified. Detecting available credentials...")
@@ -639,13 +539,13 @@ def main(
         available = CredentialLoader.detect_available_clouds()
         
         if available.get("aws"):
-            report, checker = run_aws_checks(region, profile, deployment_mode, vpc_type_enum, verify_only)
+            report, checker = run_aws_checks(region, profile, verify_only)
             if report:
                 reports.append(report)
                 aws_checker = checker
         
         if available.get("azure"):
-            report = run_azure_checks(region, subscription_id, resource_group, mode, verify_only)
+            report = run_azure_checks(region, subscription_id, resource_group, verify_only)
             if report:
                 reports.append(report)
         
@@ -655,12 +555,12 @@ def main(
                 reports.append(report)
     else:
         if cloud == "aws":
-            report, checker = run_aws_checks(region, profile, deployment_mode, vpc_type_enum, verify_only)
+            report, checker = run_aws_checks(region, profile, verify_only)
             if report:
                 reports.append(report)
                 aws_checker = checker
         elif cloud == "azure":
-            report = run_azure_checks(region, subscription_id, resource_group, mode, verify_only)
+            report = run_azure_checks(region, subscription_id, resource_group, verify_only)
             if report:
                 reports.append(report)
         elif cloud == "gcp":

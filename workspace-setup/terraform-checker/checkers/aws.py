@@ -1,4 +1,8 @@
-"""AWS checker for Databricks Terraform Pre-Check."""
+"""AWS checker for Databricks Terraform Pre-Check.
+
+Runs all permission checks and reports which deployment types are supported
+based on the detected permissions. No deployment mode selection required.
+"""
 
 import uuid
 import time
@@ -13,23 +17,18 @@ from .base import (
     CheckStatus,
     CheckReport,
 )
-# Import enums from databricks_actions (these stay as code, not config)
 from .databricks_actions import DeploymentMode, VPCType, TerraformResource
 
-# Import permission data from YAML-backed module
 from .permissions import (
     get_registry,
     get_cross_account_actions,
     get_aws_deployment_profile_actions,
 )
 
-# For backward compatibility, also import from databricks_actions
-# TODO: Migrate all callers to use get_registry() instead
 from .databricks_actions import (
     get_aws_deployment_profile,
     AWS_FULL_DEPLOYMENT,
     get_all_actions_for_profile,
-    DATABRICKS_MANAGED_VPC_ACTIONS,
     CUSTOMER_MANAGED_VPC_DEFAULT_ACTIONS,
     UNITY_CATALOG_STORAGE_ACTIONS,
     UNITY_CATALOG_FILE_EVENTS_ACTIONS,
@@ -45,29 +44,31 @@ TEST_RESOURCE_PREFIX = "dbx-precheck-temp"
 
 
 class AWSChecker(BaseChecker):
-    """Checker for AWS resources and permissions for Databricks deployment."""
+    """Checker for AWS resources and permissions for Databricks deployment.
+    
+    Runs all permission checks unconditionally and produces a deployment
+    compatibility matrix showing which deployment types are supported.
+    """
     
     def __init__(
         self, 
         region: str = None, 
         profile: str = None,
-        deployment_mode: DeploymentMode = DeploymentMode.STANDARD,
-        vpc_type: VPCType = VPCType.CUSTOMER_MANAGED_DEFAULT,
         verify_only: bool = False,
     ):
         super().__init__(region)
         self.profile = profile
-        self.deployment_mode = deployment_mode
-        self.vpc_type = vpc_type
-        self.verify_only = verify_only  # When True, skip resource creation tests
+        self.verify_only = verify_only
         self._session = None
         self._account_id = None
         self._arn = None
         self._user_arn = None
         self._can_simulate = False
-        self._verbose = True  # Always show detailed output
-        self._test_id = str(uuid.uuid4())[:8]  # Unique ID for this test run
-        self._cleanup_tasks = []  # Resources to cleanup
+        self._verbose = True
+        self._test_id = str(uuid.uuid4())[:8]
+        self._cleanup_tasks = []
+        self._check_results_by_area: Dict[str, bool] = {}
+        self._temp_bucket_name: Optional[str] = None
     
     @property
     def cloud_name(self) -> str:
@@ -332,13 +333,165 @@ class AWSChecker(BaseChecker):
                     message=f"DENIED: {error}"
                 ))
         
-        # CLEANUP: Delete the test bucket
+        self._temp_bucket_name = bucket_name
+        results.append(CheckResult(
+            name="  📦 Bucket kept for Unity Catalog tests",
+            status=CheckStatus.OK,
+            message=bucket_name
+        ))
+        
+        return results
+    
+    def _test_unity_catalog_s3_permissions(self) -> List[CheckResult]:
+        """Test Unity Catalog S3 object-level permissions using the temp bucket."""
+        results = []
+        if not self._temp_bucket_name:
+            return results
+        
+        s3 = self._get_client("s3")
+        bucket = self._temp_bucket_name
+        test_key = "dbx-precheck-uc-test/test-object.txt"
+        
+        # s3:PutObject
         try:
-            s3.delete_bucket(Bucket=bucket_name)
+            s3.put_object(Bucket=bucket, Key=test_key, Body=b"precheck-test")
+            results.append(CheckResult(
+                name="  s3:PutObject",
+                status=CheckStatus.OK,
+                message="VERIFIED - Wrote test object"
+            ))
+        except Exception as e:
+            error = str(e)
+            if "AccessDenied" in error or "is not authorized" in error:
+                results.append(CheckResult(
+                    name="  s3:PutObject",
+                    status=CheckStatus.NOT_OK,
+                    message=f"DENIED: {error}"
+                ))
+            else:
+                results.append(CheckResult(
+                    name="  s3:PutObject",
+                    status=CheckStatus.WARNING,
+                    message=f"Error: {error}"
+                ))
+        
+        # s3:GetObject
+        try:
+            s3.get_object(Bucket=bucket, Key=test_key)
+            results.append(CheckResult(
+                name="  s3:GetObject",
+                status=CheckStatus.OK,
+                message="VERIFIED - Read test object"
+            ))
+        except Exception as e:
+            error = str(e)
+            if "AccessDenied" in error or "is not authorized" in error:
+                results.append(CheckResult(
+                    name="  s3:GetObject",
+                    status=CheckStatus.NOT_OK,
+                    message=f"DENIED: {error}"
+                ))
+            else:
+                results.append(CheckResult(
+                    name="  s3:GetObject",
+                    status=CheckStatus.WARNING,
+                    message=f"Error: {error}"
+                ))
+        
+        # s3:DeleteObject
+        try:
+            s3.delete_object(Bucket=bucket, Key=test_key)
+            results.append(CheckResult(
+                name="  s3:DeleteObject",
+                status=CheckStatus.OK,
+                message="VERIFIED - Deleted test object"
+            ))
+        except Exception as e:
+            error = str(e)
+            if "AccessDenied" in error or "is not authorized" in error:
+                results.append(CheckResult(
+                    name="  s3:DeleteObject",
+                    status=CheckStatus.NOT_OK,
+                    message=f"DENIED: {error}"
+                ))
+            else:
+                results.append(CheckResult(
+                    name="  s3:DeleteObject",
+                    status=CheckStatus.WARNING,
+                    message=f"Error: {error}"
+                ))
+        
+        # s3:ListBucket
+        try:
+            s3.list_objects_v2(Bucket=bucket, MaxKeys=1)
+            results.append(CheckResult(
+                name="  s3:ListBucket",
+                status=CheckStatus.OK,
+                message="VERIFIED - Listed bucket contents"
+            ))
+        except Exception as e:
+            error = str(e)
+            if "AccessDenied" in error or "is not authorized" in error:
+                results.append(CheckResult(
+                    name="  s3:ListBucket",
+                    status=CheckStatus.NOT_OK,
+                    message=f"DENIED: {error}"
+                ))
+            else:
+                results.append(CheckResult(
+                    name="  s3:ListBucket",
+                    status=CheckStatus.WARNING,
+                    message=f"Error: {error}"
+                ))
+        
+        # s3:GetBucketLocation
+        try:
+            s3.get_bucket_location(Bucket=bucket)
+            results.append(CheckResult(
+                name="  s3:GetBucketLocation",
+                status=CheckStatus.OK,
+                message="VERIFIED - Got bucket region"
+            ))
+        except Exception as e:
+            error = str(e)
+            if "AccessDenied" in error or "is not authorized" in error:
+                results.append(CheckResult(
+                    name="  s3:GetBucketLocation",
+                    status=CheckStatus.NOT_OK,
+                    message=f"DENIED: {error}"
+                ))
+            else:
+                results.append(CheckResult(
+                    name="  s3:GetBucketLocation",
+                    status=CheckStatus.WARNING,
+                    message=f"Error: {error}"
+                ))
+        
+        return results
+    
+    def _delete_temp_bucket(self) -> List[CheckResult]:
+        """Delete the temp bucket and return results for DeleteBucket permission."""
+        results = []
+        if not self._temp_bucket_name:
+            return results
+        
+        s3 = self._get_client("s3")
+        bucket = self._temp_bucket_name
+        
+        # Clean up any leftover objects before deleting the bucket
+        try:
+            resp = s3.list_objects_v2(Bucket=bucket)
+            for obj in resp.get("Contents", []):
+                s3.delete_object(Bucket=bucket, Key=obj["Key"])
+        except Exception:
+            pass
+        
+        try:
+            s3.delete_bucket(Bucket=bucket)
             results.append(CheckResult(
                 name="  🗑️  s3:DeleteBucket",
                 status=CheckStatus.OK,
-                message=f"✓ DELETED: {bucket_name}"
+                message=f"✓ DELETED: {bucket}"
             ))
         except Exception as e:
             error = str(e)
@@ -352,9 +505,10 @@ class AWSChecker(BaseChecker):
                 results.append(CheckResult(
                     name="  s3:DeleteBucket",
                     status=CheckStatus.WARNING,
-                    message=f"Manual cleanup needed: {bucket_name}"
+                    message=f"Manual cleanup needed: {bucket}"
                 ))
         
+        self._temp_bucket_name = None
         return results
     
     def _test_iam_role_permissions(self) -> List[CheckResult]:
@@ -1028,9 +1182,12 @@ class AWSChecker(BaseChecker):
             
             # Check for resource-not-found errors (means permission exists but resource doesn't)
             not_found_patterns = [
-                "InvalidVpcID", "InvalidSubnet", "InvalidGroup", 
+                "InvalidVpcID", "InvalidSubnet", "InvalidGroup",
                 "InvalidAMIID", "NoSuchEntity", "InvalidParameterValue",
-                "InvalidVpcId", "MalformedAMIID", "InvalidGroupId"
+                "InvalidVpcId", "MalformedAMIID", "InvalidGroupId",
+                "InvalidInstanceID", "InvalidID", "InvalidVolume",
+                "InvalidAddress", "InvalidRoute", "InvalidEndpoint",
+                "Malformed",
             ]
             for pattern in not_found_patterns:
                 if pattern in error_str or pattern == error_code:
@@ -1161,7 +1318,7 @@ class AWSChecker(BaseChecker):
         Tests permissions by creating REAL temporary resources and cleaning up.
         In verify_only mode, uses read-only checks and DryRun API calls.
         """
-        category = CheckCategory(name="STEP 1: STORAGE CONFIGURATION (Root Bucket)")
+        category = CheckCategory(name="STORAGE CONFIGURATION (Root Bucket)")
         
         if self.verify_only:
             category.add_result(CheckResult(
@@ -1172,7 +1329,7 @@ class AWSChecker(BaseChecker):
             
             # Verify-only S3 checks
             category.add_result(CheckResult(
-                name="── Step 1.1: S3 Bucket Operations (Read-Only) ──",
+                name="── S3 Bucket Operations (Read-Only) ──",
                 status=CheckStatus.OK,
                 message=""
             ))
@@ -1216,7 +1373,7 @@ class AWSChecker(BaseChecker):
             
             # Verify-only IAM checks
             category.add_result(CheckResult(
-                name="── Step 1.2: IAM Role Operations (Read-Only) ──",
+                name="── IAM Role Operations (Read-Only) ──",
                 status=CheckStatus.OK,
                 message=""
             ))
@@ -1269,7 +1426,7 @@ class AWSChecker(BaseChecker):
         # Step 1.1: Create S3 Bucket - REAL TEST
         # =====================================================================
         category.add_result(CheckResult(
-            name="── Step 1.1: S3 Bucket Operations ──",
+                name="── S3 Bucket Operations ──",
             status=CheckStatus.OK,
             message=""
         ))
@@ -1282,7 +1439,7 @@ class AWSChecker(BaseChecker):
         # Step 1.2: Create IAM Role - REAL TEST
         # =====================================================================
         category.add_result(CheckResult(
-            name="── Step 1.2: IAM Role Operations ──",
+                name="── IAM Role Operations ──",
             status=CheckStatus.OK,
             message=""
         ))
@@ -1295,7 +1452,7 @@ class AWSChecker(BaseChecker):
         # Step 1.3: Create IAM Policy - REAL TEST
         # =====================================================================
         category.add_result(CheckResult(
-            name="── Step 1.3: IAM Policy Operations ──",
+                name="── IAM Policy Operations ──",
             status=CheckStatus.OK,
             message=""
         ))
@@ -1312,83 +1469,42 @@ class AWSChecker(BaseChecker):
     
     def check_network_configuration(self) -> CheckCategory:
         """
-        Check permissions for Network Configuration.
+        Check permissions for Network Configuration (Customer-managed VPC).
         Tests EACH EC2/VPC permission individually.
         """
-        vpc_type_name = {
-            VPCType.DATABRICKS_MANAGED: "Databricks-managed",
-            VPCType.CUSTOMER_MANAGED_DEFAULT: "Customer-managed",
-            VPCType.CUSTOMER_MANAGED_CUSTOM: "Customer-managed (custom)",
-        }.get(self.vpc_type, "Unknown")
-        
-        category = CheckCategory(name=f"STEP 2: NETWORK CONFIGURATION ({vpc_type_name} VPC)")
+        category = CheckCategory(name="NETWORK CONFIGURATION (Customer-managed VPC)")
         
         ec2 = self._get_client("ec2")
         
-        # =====================================================================
-        # Step 2.1: VPC Configuration
-        # =====================================================================
-        if self.vpc_type == VPCType.DATABRICKS_MANAGED:
-            category.add_result(CheckResult(
-                name="VPC Management",
-                status=CheckStatus.OK,
-                message="Databricks will create and manage VPC"
-            ))
-            
-            category.add_result(CheckResult(
-                name="── Step 2.1: VPC Creation (Databricks-managed) ──",
-                status=CheckStatus.OK,
-                message=""
-            ))
-            
-            vpc_create_actions = [
-                ("ec2:CreateVpc", "Create VPC for Databricks workspace"),
-                ("ec2:DeleteVpc", "Delete VPC"),
-                ("ec2:ModifyVpcAttribute", "Enable DNS hostnames"),
-                ("ec2:CreateSubnet", "Create subnets"),
-                ("ec2:DeleteSubnet", "Delete subnets"),
-                ("ec2:CreateInternetGateway", "Create internet gateway"),
-                ("ec2:DeleteInternetGateway", "Delete internet gateway"),
-                ("ec2:AttachInternetGateway", "Attach IGW to VPC"),
-                ("ec2:DetachInternetGateway", "Detach IGW from VPC"),
-                ("ec2:CreateNatGateway", "Create NAT gateway"),
-                ("ec2:DeleteNatGateway", "Delete NAT gateway"),
-                ("ec2:AllocateAddress", "Allocate Elastic IP for NAT"),
-                ("ec2:ReleaseAddress", "Release Elastic IP"),
-                ("ec2:CreateRouteTable", "Create route table"),
-                ("ec2:DeleteRouteTable", "Delete route table"),
-                ("ec2:CreateRoute", "Add routes"),
-                ("ec2:DeleteRoute", "Remove routes"),
-                ("ec2:AssociateRouteTable", "Associate route table with subnet"),
-            ]
-        else:
-            category.add_result(CheckResult(
-                name="── Step 2.1: VPC Configuration ──",
-                status=CheckStatus.OK,
-                message=""
-            ))
-            
-            vpc_create_actions = [
-                ("ec2:DescribeVpcs", "List/describe VPCs"),
-                ("ec2:DescribeVpcAttribute", "Check VPC DNS settings"),
-                ("ec2:DescribeSubnets", "List/describe subnets"),
-                ("ec2:DescribeRouteTables", "List/describe route tables"),
-                ("ec2:DescribeInternetGateways", "List/describe internet gateways"),
-                ("ec2:DescribeNatGateways", "List/describe NAT gateways"),
-            ]
+        category.add_result(CheckResult(
+            name="── VPC Configuration ──",
+            status=CheckStatus.OK,
+            message=""
+        ))
         
-        # Test VPC actions
+        vpc_actions = [
+            ("ec2:DescribeVpcs", "List/describe VPCs"),
+            ("ec2:DescribeVpcAttribute", "Check VPC DNS settings"),
+            ("ec2:DescribeSubnets", "List/describe subnets"),
+            ("ec2:DescribeRouteTables", "List/describe route tables"),
+            ("ec2:DescribeInternetGateways", "List/describe internet gateways"),
+            ("ec2:DescribeNatGateways", "List/describe NAT gateways"),
+        ]
+        
+        network_ok = True
+        
         if self._can_simulate:
-            actions = [a[0] for a in vpc_create_actions]
+            actions = [a[0] for a in vpc_actions]
             results = self._simulate_actions(actions)
             
-            for action, description in vpc_create_actions:
+            for action, description in vpc_actions:
                 status_str, message = results.get(action, ("error", "Unknown"))
                 
                 if status_str == "allowed":
                     status = CheckStatus.OK
                 elif status_str == "denied":
                     status = CheckStatus.NOT_OK
+                    network_ok = False
                 else:
                     status = CheckStatus.WARNING
                 
@@ -1398,149 +1514,49 @@ class AWSChecker(BaseChecker):
                     message=message
                 ))
         else:
-            # DryRun tests for EC2 operations
-            if self.vpc_type == VPCType.DATABRICKS_MANAGED:
-                # Test CreateVpc
-                status, msg = self._test_dryrun(
-                    "ec2:CreateVpc",
-                    lambda: ec2.create_vpc(CidrBlock="10.255.255.0/28", DryRun=True),
-                )
-                category.add_result(CheckResult(name="  ec2:CreateVpc", status=status, message=msg))
-                
-                # Test CreateSubnet
-                status, msg = self._test_dryrun(
-                    "ec2:CreateSubnet",
-                    lambda: ec2.create_subnet(VpcId="vpc-test", CidrBlock="10.0.0.0/24", DryRun=True),
-                )
-                category.add_result(CheckResult(name="  ec2:CreateSubnet", status=status, message=msg))
-                
-                # Test CreateInternetGateway
-                status, msg = self._test_dryrun(
-                    "ec2:CreateInternetGateway",
-                    lambda: ec2.create_internet_gateway(DryRun=True),
-                )
-                category.add_result(CheckResult(name="  ec2:CreateInternetGateway", status=status, message=msg))
-                
-                # Test AllocateAddress
-                status, msg = self._test_dryrun(
-                    "ec2:AllocateAddress",
-                    lambda: ec2.allocate_address(Domain='vpc', DryRun=True),
-                )
-                category.add_result(CheckResult(name="  ec2:AllocateAddress", status=status, message=msg))
-                
-                # Test CreateNatGateway
-                status, msg = self._test_dryrun(
-                    "ec2:CreateNatGateway",
-                    lambda: ec2.create_nat_gateway(SubnetId="subnet-test", AllocationId="eipalloc-test", DryRun=True),
-                )
-                category.add_result(CheckResult(name="  ec2:CreateNatGateway", status=status, message=msg))
-                
-                # Test CreateRouteTable
-                status, msg = self._test_dryrun(
-                    "ec2:CreateRouteTable",
-                    lambda: ec2.create_route_table(VpcId="vpc-test", DryRun=True),
-                )
-                category.add_result(CheckResult(name="  ec2:CreateRouteTable", status=status, message=msg))
-            else:
-                # Customer-managed - test describe operations
-                try:
-                    ec2.describe_vpcs(MaxResults=5)
-                    category.add_result(CheckResult(
-                        name="  ec2:DescribeVpcs",
-                        status=CheckStatus.OK,
-                        message="Allowed - Can list VPCs"
-                    ))
-                except Exception as e:
-                    category.add_result(CheckResult(
-                        name="  ec2:DescribeVpcs",
-                        status=CheckStatus.NOT_OK,
-                        message=f"DENIED: {str(e)}"
-                    ))
-                
-                try:
-                    vpcs = ec2.describe_vpcs(MaxResults=1)
-                    if vpcs.get("Vpcs"):
-                        vpc_id = vpcs["Vpcs"][0]["VpcId"]
-                        ec2.describe_vpc_attribute(VpcId=vpc_id, Attribute='enableDnsHostnames')
-                        category.add_result(CheckResult(
-                            name="  ec2:DescribeVpcAttribute",
-                            status=CheckStatus.OK,
-                            message="Allowed - Can check VPC DNS settings"
-                        ))
-                except Exception as e:
-                    if "AccessDenied" in str(e):
-                        category.add_result(CheckResult(
-                            name="  ec2:DescribeVpcAttribute",
-                            status=CheckStatus.NOT_OK,
-                            message=f"DENIED: {str(e)}"
-                        ))
-                
-                try:
-                    ec2.describe_subnets(MaxResults=5)
-                    category.add_result(CheckResult(
-                        name="  ec2:DescribeSubnets",
-                        status=CheckStatus.OK,
-                        message="Allowed - Can list subnets"
-                    ))
-                except Exception as e:
-                    category.add_result(CheckResult(
-                        name="  ec2:DescribeSubnets",
-                        status=CheckStatus.NOT_OK,
-                        message=f"DENIED: {str(e)}"
-                    ))
-        
-        # =====================================================================
-        # Step 2.2: Subnet Configuration
-        # =====================================================================
-        if self.vpc_type != VPCType.DATABRICKS_MANAGED:
-            category.add_result(CheckResult(
-                name="── Step 2.2: Subnet Configuration ──",
-                status=CheckStatus.OK,
-                message=""
-            ))
+            try:
+                ec2.describe_vpcs(MaxResults=5)
+                category.add_result(CheckResult(
+                    name="  ec2:DescribeVpcs",
+                    status=CheckStatus.OK,
+                    message="Allowed - Can list VPCs"
+                ))
+            except Exception as e:
+                network_ok = False
+                category.add_result(CheckResult(
+                    name="  ec2:DescribeVpcs",
+                    status=CheckStatus.NOT_OK,
+                    message=f"DENIED: {str(e)}"
+                ))
             
             try:
-                subnets = ec2.describe_subnets()
-                subnet_list = subnets.get("Subnets", [])
-                
-                private = sum(1 for s in subnet_list if not s.get("MapPublicIpOnLaunch", False))
-                public = len(subnet_list) - private
-                
-                if private >= 2:
+                vpcs = ec2.describe_vpcs(MaxResults=1)
+                if vpcs.get("Vpcs"):
+                    vpc_id = vpcs["Vpcs"][0]["VpcId"]
+                    ec2.describe_vpc_attribute(VpcId=vpc_id, Attribute='enableDnsHostnames')
                     category.add_result(CheckResult(
-                        name="  Private Subnets",
+                        name="  ec2:DescribeVpcAttribute",
                         status=CheckStatus.OK,
-                        message=f"{private} available (Databricks needs 2+ in different AZs)"
+                        message="Allowed - Can check VPC DNS settings"
                     ))
-                else:
-                    category.add_result(CheckResult(
-                        name="  Private Subnets",
-                        status=CheckStatus.WARNING,
-                        message=f"Only {private} found - need 2+ for Databricks"
-                    ))
-                
-                category.add_result(CheckResult(
-                    name="  Public Subnets",
-                    status=CheckStatus.OK,
-                    message=f"{public} available"
-                ))
-                
-                # Check AZ distribution
-                azs = set(s["AvailabilityZone"] for s in subnet_list if not s.get("MapPublicIpOnLaunch", False))
-                if len(azs) >= 2:
-                    category.add_result(CheckResult(
-                        name="  AZ Distribution",
-                        status=CheckStatus.OK,
-                        message=f"Private subnets in {len(azs)} AZs: {', '.join(sorted(azs)[:3])}"
-                    ))
-                elif len(azs) == 1:
-                    category.add_result(CheckResult(
-                        name="  AZ Distribution",
-                        status=CheckStatus.WARNING,
-                        message=f"Private subnets only in 1 AZ - recommend 2+ for HA"
-                    ))
-                    
             except Exception as e:
+                if "AccessDenied" in str(e):
+                    network_ok = False
+                    category.add_result(CheckResult(
+                        name="  ec2:DescribeVpcAttribute",
+                        status=CheckStatus.NOT_OK,
+                        message=f"DENIED: {str(e)}"
+                    ))
+            
+            try:
+                ec2.describe_subnets(MaxResults=5)
+                category.add_result(CheckResult(
+                    name="  ec2:DescribeSubnets",
+                    status=CheckStatus.OK,
+                    message="Allowed - Can list subnets"
+                ))
+            except Exception as e:
+                network_ok = False
                 category.add_result(CheckResult(
                     name="  ec2:DescribeSubnets",
                     status=CheckStatus.NOT_OK,
@@ -1548,11 +1564,68 @@ class AWSChecker(BaseChecker):
                 ))
         
         # =====================================================================
+        # Subnet Configuration
+        # =====================================================================
+        category.add_result(CheckResult(
+            name="── Subnet Configuration ──",
+            status=CheckStatus.OK,
+            message=""
+        ))
+        
+        try:
+            subnets = ec2.describe_subnets()
+            subnet_list = subnets.get("Subnets", [])
+            
+            private = sum(1 for s in subnet_list if not s.get("MapPublicIpOnLaunch", False))
+            public = len(subnet_list) - private
+            
+            if private >= 2:
+                category.add_result(CheckResult(
+                    name="  Private Subnets",
+                    status=CheckStatus.OK,
+                    message=f"{private} available (Databricks needs 2+ in different AZs)"
+                ))
+            else:
+                category.add_result(CheckResult(
+                    name="  Private Subnets",
+                    status=CheckStatus.WARNING,
+                    message=f"Only {private} found - need 2+ for Databricks"
+                ))
+            
+            category.add_result(CheckResult(
+                name="  Public Subnets",
+                status=CheckStatus.OK,
+                message=f"{public} available"
+            ))
+            
+            azs = set(s["AvailabilityZone"] for s in subnet_list if not s.get("MapPublicIpOnLaunch", False))
+            if len(azs) >= 2:
+                category.add_result(CheckResult(
+                    name="  AZ Distribution",
+                    status=CheckStatus.OK,
+                    message=f"Private subnets in {len(azs)} AZs: {', '.join(sorted(azs)[:3])}"
+                ))
+            elif len(azs) == 1:
+                category.add_result(CheckResult(
+                    name="  AZ Distribution",
+                    status=CheckStatus.WARNING,
+                    message=f"Private subnets only in 1 AZ - recommend 2+ for HA"
+                ))
+                
+        except Exception as e:
+            network_ok = False
+            category.add_result(CheckResult(
+                name="  ec2:DescribeSubnets",
+                status=CheckStatus.NOT_OK,
+                message=f"DENIED: {str(e)}"
+            ))
+        
+        # =====================================================================
         # Step 2.3: Security Group Configuration - REAL TEST or VERIFY-ONLY
         # =====================================================================
         if self.verify_only:
             category.add_result(CheckResult(
-                name="── Step 2.3: Security Group & Rules (Read-Only) ──",
+                name="── Security Group & Rules (Read-Only) ──",
                 status=CheckStatus.OK,
                 message=""
             ))
@@ -1599,7 +1672,7 @@ class AWSChecker(BaseChecker):
                     ))
         else:
             category.add_result(CheckResult(
-                name="── Step 2.3: Security Group & Rules (REAL TEST) ──",
+                name="── Security Group & Rules (REAL TEST) ──",
                 status=CheckStatus.OK,
                 message=""
             ))
@@ -1609,121 +1682,123 @@ class AWSChecker(BaseChecker):
             for result in sg_results:
                 category.add_result(result)
         
-        # =====================================================================
-        # Step 2.4: VPC Endpoints (if PrivateLink)
-        # =====================================================================
-        if self.deployment_mode == DeploymentMode.PRIVATE_LINK:
+        self._check_results_by_area["network"] = network_ok
+        
+        return category
+    
+    def check_privatelink(self) -> CheckCategory:
+        """Check permissions for VPC Endpoints / PrivateLink connectivity."""
+        category = CheckCategory(name="VPC ENDPOINTS (PrivateLink)")
+        
+        ec2 = self._get_client("ec2")
+        privatelink_ok = True
+        
+        endpoint_actions = [
+            ("ec2:CreateVpcEndpoint", "Create VPC endpoint"),
+            ("ec2:DeleteVpcEndpoints", "Delete VPC endpoint"),
+            ("ec2:ModifyVpcEndpoint", "Modify VPC endpoint"),
+            ("ec2:DescribeVpcEndpoints", "List/describe VPC endpoints"),
+            ("ec2:DescribeVpcEndpointServices", "List available endpoint services"),
+        ]
+        
+        if self._can_simulate:
+            actions = [a[0] for a in endpoint_actions]
+            results = self._simulate_actions(actions)
+            
+            for action, description in endpoint_actions:
+                status_str, message = results.get(action, ("error", "Unknown"))
+                
+                if status_str == "allowed":
+                    status = CheckStatus.OK
+                elif status_str == "denied":
+                    status = CheckStatus.NOT_OK
+                    privatelink_ok = False
+                else:
+                    status = CheckStatus.WARNING
+                
+                category.add_result(CheckResult(
+                    name=f"  {action}",
+                    status=status,
+                    message=message
+                ))
+        else:
+            try:
+                ec2.describe_vpc_endpoints(MaxResults=5)
+                category.add_result(CheckResult(
+                    name="  ec2:DescribeVpcEndpoints",
+                    status=CheckStatus.OK,
+                    message="Allowed"
+                ))
+            except Exception as e:
+                privatelink_ok = False
+                category.add_result(CheckResult(
+                    name="  ec2:DescribeVpcEndpoints",
+                    status=CheckStatus.NOT_OK,
+                    message=f"DENIED: {str(e)}"
+                ))
+            
+            status, msg = self._test_dryrun(
+                "ec2:CreateVpcEndpoint",
+                lambda: ec2.create_vpc_endpoint(
+                    VpcId="vpc-test",
+                    ServiceName=f"com.amazonaws.{self.region}.s3",
+                    VpcEndpointType='Gateway',
+                    DryRun=True
+                ),
+            )
+            if status == CheckStatus.NOT_OK:
+                privatelink_ok = False
+            category.add_result(CheckResult(name="  ec2:CreateVpcEndpoint", status=status, message=msg))
+        
+        try:
+            endpoints = ec2.describe_vpc_endpoints()
+            endpoint_list = endpoints.get("VpcEndpoints", [])
+            
+            gateway = sum(1 for e in endpoint_list if e["VpcEndpointType"] == "Gateway")
+            interface = sum(1 for e in endpoint_list if e["VpcEndpointType"] == "Interface")
+            
             category.add_result(CheckResult(
-                name="── Step 2.4: VPC Endpoints (PrivateLink) ──",
+                name="  Existing VPC Endpoints",
                 status=CheckStatus.OK,
-                message=""
+                message=f"{gateway} Gateway, {interface} Interface endpoints"
             ))
             
-            endpoint_actions = [
-                ("ec2:CreateVpcEndpoint", "Create VPC endpoint"),
-                ("ec2:DeleteVpcEndpoints", "Delete VPC endpoint"),
-                ("ec2:ModifyVpcEndpoint", "Modify VPC endpoint"),
-                ("ec2:DescribeVpcEndpoints", "List/describe VPC endpoints"),
-                ("ec2:DescribeVpcEndpointServices", "List available endpoint services"),
-            ]
-            
-            if self._can_simulate:
-                actions = [a[0] for a in endpoint_actions]
-                results = self._simulate_actions(actions)
-                
-                for action, description in endpoint_actions:
-                    status_str, message = results.get(action, ("error", "Unknown"))
-                    
-                    if status_str == "allowed":
-                        status = CheckStatus.OK
-                    elif status_str == "denied":
-                        status = CheckStatus.NOT_OK
-                    else:
-                        status = CheckStatus.WARNING
-                    
-                    category.add_result(CheckResult(
-                        name=f"  {action}",
-                        status=status,
-                        message=message
-                    ))
-            else:
-                # Test DescribeVpcEndpoints
-                try:
-                    ec2.describe_vpc_endpoints(MaxResults=5)
-                    category.add_result(CheckResult(
-                        name="  ec2:DescribeVpcEndpoints",
-                        status=CheckStatus.OK,
-                        message="Allowed"
-                    ))
-                except Exception as e:
-                    category.add_result(CheckResult(
-                        name="  ec2:DescribeVpcEndpoints",
-                        status=CheckStatus.NOT_OK,
-                        message=f"DENIED: {str(e)}"
-                    ))
-                
-                # Test CreateVpcEndpoint with DryRun
-                status, msg = self._test_dryrun(
-                    "ec2:CreateVpcEndpoint",
-                    lambda: ec2.create_vpc_endpoint(
-                        VpcId="vpc-test",
-                        ServiceName=f"com.amazonaws.{self.region}.s3",
-                        VpcEndpointType='Gateway',
-                        DryRun=True
-                    ),
-                )
-                category.add_result(CheckResult(name="  ec2:CreateVpcEndpoint", status=status, message=msg))
-            
-            # Check existing endpoints
-            try:
-                endpoints = ec2.describe_vpc_endpoints()
-                endpoint_list = endpoints.get("VpcEndpoints", [])
-                
-                gateway = sum(1 for e in endpoint_list if e["VpcEndpointType"] == "Gateway")
-                interface = sum(1 for e in endpoint_list if e["VpcEndpointType"] == "Interface")
-                
+            s3_gw = [e for e in endpoint_list if "s3" in e.get("ServiceName", "").lower() and e["VpcEndpointType"] == "Gateway"]
+            if s3_gw:
                 category.add_result(CheckResult(
-                    name="  Existing VPC Endpoints",
+                    name="  S3 Gateway Endpoint",
                     status=CheckStatus.OK,
-                    message=f"{gateway} Gateway, {interface} Interface endpoints"
+                    message=f"Found: {s3_gw[0]['VpcEndpointId']}"
                 ))
-                
-                # Check for S3 gateway endpoint
-                s3_gw = [e for e in endpoint_list if "s3" in e.get("ServiceName", "").lower() and e["VpcEndpointType"] == "Gateway"]
-                if s3_gw:
-                    category.add_result(CheckResult(
-                        name="  S3 Gateway Endpoint",
-                        status=CheckStatus.OK,
-                        message=f"Found: {s3_gw[0]['VpcEndpointId']}"
-                    ))
-                else:
-                    category.add_result(CheckResult(
-                        name="  S3 Gateway Endpoint",
-                        status=CheckStatus.WARNING,
-                        message="Not found - recommended for cost savings"
-                    ))
-                
-                # Check for STS endpoint (required for PrivateLink)
-                sts_ep = [e for e in endpoint_list if "sts" in e.get("ServiceName", "").lower()]
-                if sts_ep:
-                    category.add_result(CheckResult(
-                        name="  STS Interface Endpoint",
-                        status=CheckStatus.OK,
-                        message=f"Found: {sts_ep[0]['VpcEndpointId']}"
-                    ))
-                else:
-                    category.add_result(CheckResult(
-                        name="  STS Interface Endpoint",
-                        status=CheckStatus.WARNING,
-                        message="Not found - required for PrivateLink"
-                    ))
-                    
-            except Exception as e:
+            else:
                 category.add_result(CheckResult(
-                    name="  VPC Endpoints",
+                    name="  S3 Gateway Endpoint",
                     status=CheckStatus.WARNING,
-                    message=f"Cannot list: {str(e)[:40]}"
+                    message="Not found - recommended for cost savings"
                 ))
+            
+            sts_ep = [e for e in endpoint_list if "sts" in e.get("ServiceName", "").lower()]
+            if sts_ep:
+                category.add_result(CheckResult(
+                    name="  STS Interface Endpoint",
+                    status=CheckStatus.OK,
+                    message=f"Found: {sts_ep[0]['VpcEndpointId']}"
+                ))
+            else:
+                category.add_result(CheckResult(
+                    name="  STS Interface Endpoint",
+                    status=CheckStatus.WARNING,
+                    message="Not found - required for PrivateLink deployments"
+                ))
+                
+        except Exception as e:
+            category.add_result(CheckResult(
+                name="  VPC Endpoints",
+                status=CheckStatus.WARNING,
+                message=f"Cannot list: {str(e)[:40]}"
+            ))
+        
+        self._check_results_by_area["privatelink"] = privatelink_ok
         
         return category
     
@@ -1734,33 +1809,24 @@ class AWSChecker(BaseChecker):
     def check_cross_account_role(self) -> CheckCategory:
         """
         Check permissions for Cross-Account IAM Role.
-        Tests EACH required permission for the selected VPC type.
+        Tests EACH required permission for Customer-managed VPC.
         """
-        vpc_type_name = {
-            VPCType.DATABRICKS_MANAGED: "Databricks-managed VPC",
-            VPCType.CUSTOMER_MANAGED_DEFAULT: "Customer-managed VPC (default)",
-            VPCType.CUSTOMER_MANAGED_CUSTOM: "Customer-managed VPC (custom)",
-        }.get(self.vpc_type, "Unknown")
-        
-        category = CheckCategory(name=f"STEP 3: CROSS-ACCOUNT ROLE ({vpc_type_name})")
+        category = CheckCategory(name="CROSS-ACCOUNT ROLE (Customer-managed VPC)")
         
         ec2 = self._get_client("ec2")
         iam = self._get_client("iam")
+        cross_account_ok = True
         
-        # Get required actions for this VPC type
-        required_actions = get_cross_account_actions(self.vpc_type)
+        required_actions = get_cross_account_actions()
         
         category.add_result(CheckResult(
             name="Policy Type",
             status=CheckStatus.OK,
-            message=f"{vpc_type_name} - {len(required_actions)} actions required"
+            message=f"Customer-managed VPC - {len(required_actions)} actions required"
         ))
         
-        # =====================================================================
-        # Step 3.1: Create Cross-Account IAM Role
-        # =====================================================================
         category.add_result(CheckResult(
-            name="── Step 3.1: Create Cross-Account Role ──",
+            name="── Create Cross-Account Role ──",
             status=CheckStatus.OK,
             message=""
         ))
@@ -1810,12 +1876,8 @@ class AWSChecker(BaseChecker):
                     message=f"DENIED: {str(e)}"
                 ))
         
-        # =====================================================================
-        # Step 3.2: Cross-Account Policy Permissions
-        # Test each EC2 action that Databricks needs
-        # =====================================================================
         category.add_result(CheckResult(
-            name="── Step 3.2: Cross-Account Policy Permissions ──",
+            name="── Cross-Account Policy Permissions ──",
             status=CheckStatus.OK,
             message=""
         ))
@@ -1987,11 +2049,8 @@ class AWSChecker(BaseChecker):
                     message=f"DENIED: {str(e)}"
                 ))
         
-        # =====================================================================
-        # Step 3.3: Spot Instance Service-Linked Role
-        # =====================================================================
         category.add_result(CheckResult(
-            name="── Step 3.3: Spot Instance Permissions ──",
+            name="── Spot Instance Permissions ──",
             status=CheckStatus.OK,
             message=""
         ))
@@ -2062,32 +2121,24 @@ class AWSChecker(BaseChecker):
                 message=f"{msg} (optional)"
             ))
         
+        self._check_results_by_area["cross_account"] = (category.not_ok_count == 0)
+        
         return category
     
     # =========================================================================
-    # STEP 4: UNITY CATALOG
+    # UNITY CATALOG
     # =========================================================================
     
     def check_unity_catalog(self) -> CheckCategory:
         """Check permissions for Unity Catalog storage."""
-        category = CheckCategory(name="STEP 4: UNITY CATALOG (Optional)")
-        
-        if self.deployment_mode != DeploymentMode.UNITY_CATALOG:
-            category.add_result(CheckResult(
-                name="Unity Catalog",
-                status=CheckStatus.SKIPPED,
-                message="Not selected in deployment mode"
-            ))
-            return category
+        category = CheckCategory(name="UNITY CATALOG")
         
         s3 = self._get_client("s3")
         iam = self._get_client("iam")
+        unity_ok = True
         
-        # =====================================================================
-        # Step 4.1: Storage Credential
-        # =====================================================================
         category.add_result(CheckResult(
-            name="── Step 4.1: Storage Credential IAM ──",
+            name="── Storage Credential IAM ──",
             status=CheckStatus.OK,
             message=""
         ))
@@ -2120,8 +2171,21 @@ class AWSChecker(BaseChecker):
                     status=status,
                     message=message
                 ))
+        elif self._temp_bucket_name:
+            category.add_result(CheckResult(
+                name="  📦 Using temp bucket for UC tests",
+                status=CheckStatus.OK,
+                message=self._temp_bucket_name
+            ))
+            uc_results = self._test_unity_catalog_s3_permissions()
+            for r in uc_results:
+                category.add_result(r)
+            category.add_result(CheckResult(
+                name="  sts:AssumeRole",
+                status=CheckStatus.WARNING,
+                message="Requires target role ARN - tested via cross-account checks"
+            ))
         else:
-            # Test S3 read
             try:
                 s3.list_buckets()
                 category.add_result(CheckResult(
@@ -2136,7 +2200,6 @@ class AWSChecker(BaseChecker):
                     message=f"DENIED: {str(e)}"
                 ))
             
-            # Add warnings for untestable actions
             for action, desc in uc_storage_actions[1:]:
                 if "s3:" in action:
                     category.add_result(CheckResult(
@@ -2145,11 +2208,8 @@ class AWSChecker(BaseChecker):
                         message="Cannot test without target bucket"
                     ))
         
-        # =====================================================================
-        # Step 4.2: File Events (Optional)
-        # =====================================================================
         category.add_result(CheckResult(
-            name="── Step 4.2: File Events (Optional) ──",
+            name="── File Events (Optional) ──",
             status=CheckStatus.OK,
             message=""
         ))
@@ -2185,6 +2245,8 @@ class AWSChecker(BaseChecker):
                 status=CheckStatus.WARNING,
                 message="Cannot test SNS/SQS permissions without simulation"
             ))
+        
+        self._check_results_by_area["unity_catalog"] = (category.not_ok_count == 0)
         
         return category
     
@@ -2392,14 +2454,68 @@ class AWSChecker(BaseChecker):
     # MAIN CHECK RUNNER
     # =========================================================================
     
+    def _compute_deployment_compatibility(self) -> CheckCategory:
+        """Compute which deployment types are supported based on check results."""
+        category = CheckCategory(name="DEPLOYMENT COMPATIBILITY")
+        
+        storage_ok = self._check_results_by_area.get("storage", True)
+        network_ok = self._check_results_by_area.get("network", True)
+        cross_account_ok = self._check_results_by_area.get("cross_account", True)
+        privatelink_ok = self._check_results_by_area.get("privatelink", True)
+        unity_ok = self._check_results_by_area.get("unity_catalog", True)
+        
+        base_ok = storage_ok and network_ok and cross_account_ok
+        
+        modes = [
+            ("Standard", base_ok,
+             "Basic workspace (VPC, S3, IAM)"),
+            ("PrivateLink", base_ok and privatelink_ok,
+             "With VPC Endpoints for private connectivity"),
+            ("Unity Catalog", base_ok and unity_ok,
+             "With Unity Catalog storage credentials"),
+            ("Full", base_ok and privatelink_ok and unity_ok,
+             "All features (PrivateLink + Unity Catalog + CMK)"),
+        ]
+        
+        for mode_name, supported, description in modes:
+            if supported:
+                category.add_result(CheckResult(
+                    name=f"  {mode_name}",
+                    status=CheckStatus.OK,
+                    message=f"SUPPORTED - {description}"
+                ))
+            else:
+                missing = []
+                if not storage_ok:
+                    missing.append("storage")
+                if not network_ok:
+                    missing.append("network")
+                if not cross_account_ok:
+                    missing.append("cross-account role")
+                if mode_name in ("PrivateLink", "Full") and not privatelink_ok:
+                    missing.append("VPC endpoints")
+                if mode_name in ("Unity Catalog", "Full") and not unity_ok:
+                    missing.append("Unity Catalog")
+                
+                category.add_result(CheckResult(
+                    name=f"  {mode_name}",
+                    status=CheckStatus.WARNING,
+                    message=f"MISSING PERMISSIONS - Fix: {', '.join(missing)}"
+                ))
+        
+        return category
+    
     def run_all_checks(self) -> CheckReport:
-        """Run all AWS checks for Databricks deployment."""
+        """Run all AWS checks for Databricks deployment.
+        
+        Runs every check category unconditionally and produces a deployment
+        compatibility matrix at the end.
+        """
         self._report = CheckReport(
             cloud=self.cloud_name,
             region=self.region or "default"
         )
         
-        # Credentials first
         cred_category = self.check_credentials()
         self._report.add_category(cred_category)
         
@@ -2411,21 +2527,30 @@ class AWSChecker(BaseChecker):
         )
         
         if credentials_ok:
-            # Follow Databricks deployment steps
-            self._report.add_category(self.check_storage_configuration())
+            storage_cat = self.check_storage_configuration()
+            self._check_results_by_area["storage"] = (storage_cat.not_ok_count == 0)
+            self._report.add_category(storage_cat)
+            
             self._report.add_category(self.check_network_configuration())
             self._report.add_category(self.check_cross_account_role())
+            self._report.add_category(self.check_privatelink())
+            self._report.add_category(self.check_unity_catalog())
             
-            if self.deployment_mode == DeploymentMode.UNITY_CATALOG:
-                self._report.add_category(self.check_unity_catalog())
+            # Delete temp bucket after Unity Catalog used it
+            delete_results = self._delete_temp_bucket()
+            if delete_results:
+                for r in delete_results:
+                    storage_cat.add_result(r)
             
             self._report.add_category(self.check_quotas())
             
-            # Cleanup any test resources
+            self._report.add_category(self._compute_deployment_compatibility())
+            
             self._cleanup_test_resources()
         else:
-            for name in ["STEP 1: STORAGE CONFIGURATION", "STEP 2: NETWORK CONFIGURATION", 
-                        "STEP 3: CROSS-ACCOUNT ROLE", "QUOTAS & LIMITS"]:
+            for name in ["STORAGE CONFIGURATION", "NETWORK CONFIGURATION",
+                        "CROSS-ACCOUNT ROLE", "VPC ENDPOINTS (PrivateLink)",
+                        "UNITY CATALOG", "QUOTAS & LIMITS"]:
                 cat = CheckCategory(name=name)
                 cat.add_result(CheckResult(
                     name="All checks",

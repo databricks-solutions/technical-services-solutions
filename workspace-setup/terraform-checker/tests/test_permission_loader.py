@@ -73,12 +73,12 @@ class TestPermissionLoader:
         assert 'ec2:CreateVpc' in actions
     
     def test_get_vpc_type_actions(self, loader):
-        """Test getting VPC type actions for AWS."""
-        actions = loader.get_vpc_type_actions('aws', 'databricks_managed')
+        """Test getting VPC type actions for AWS customer-managed VPC."""
+        actions = loader.get_vpc_type_actions('aws', 'customer_managed_default')
         
         assert len(actions) > 0
-        assert 'ec2:CreateVpc' in actions
-        assert 'ec2:CreateSubnet' in actions
+        assert 'ec2:CreateSecurityGroup' in actions
+        assert 'ec2:RunInstances' in actions
     
     def test_get_required_providers_azure(self, loader):
         """Test getting required providers for Azure."""
@@ -133,15 +133,15 @@ class TestGetActionsForDeployment:
         assert 's3:CreateBucket' in actions
     
     def test_aws_with_vpc_type(self):
-        """Test getting actions for AWS with specific VPC type."""
+        """Test getting actions for AWS with customer-managed VPC type."""
         actions = get_actions_for_deployment(
             'aws', 
             'standard', 
-            vpc_type='databricks_managed'
+            vpc_type='customer_managed_default'
         )
         
         assert len(actions) > 0
-        assert 'ec2:CreateVpc' in actions
+        assert 'ec2:CreateSecurityGroup' in actions
     
     def test_azure_full(self):
         """Test getting actions for Azure full deployment."""

@@ -1,0 +1,18 @@
+google_service_account_email = "<sa>@<project>.iam.gserviceaccount.com"
+google_project_name          = "<databricks-service-project>"
+google_region                = "<google-region>"
+
+databricks_account_id          = "<account-id>"
+databricks_workspace_name      = "<workspace-name>"
+databricks_admin_user          = "<admin-user-email>"
+
+vpc_network_project_id = "<vpc-host-project>"
+vpc_name               = "<existing-vpc-name>"
+subnet_name            = "<existing-subnet-name>"
+
+# Unity Catalog Metastore configuration (optional)
+# Leave metastore_id empty if Databricks auto-creates/auto-assigns the metastore
+metastore_id = ""
+
+# Provide a metastore ID only if you need to explicitly assign a specific metastore
+# metastore_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"

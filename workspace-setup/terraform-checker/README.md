@@ -46,50 +46,84 @@ source venv/bin/activate  # Linux/Mac
 pip install -r requirements.txt
 ```
 
+## Quick Start Testing
+
+**1. Set up the environment** (first time only):
+
+```bash
+git clone <repo-url> && cd workspace-setup/terraform-checker
+python3 -m venv venv
+source venv/bin/activate   # Linux/Mac (Windows: venv\Scripts\activate)
+pip install -r requirements.txt
+```
+
+**2. Authenticate with your cloud provider:**
+
+```bash
+# AWS — pick one
+aws configure                          # interactive setup
+# or: export AWS_ACCESS_KEY_ID=xxx && export AWS_SECRET_ACCESS_KEY=xxx
+
+# Azure — pick one
+az login                               # browser-based login
+# or: export AZURE_CLIENT_ID=xxx && export AZURE_CLIENT_SECRET=xxx && export AZURE_TENANT_ID=xxx
+
+# GCP — pick one
+gcloud auth application-default login  # browser-based login
+# or: export GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json
+```
+
+**3. Run the checker** (one command per cloud):
+
+```bash
+# AWS
+python main.py --cloud aws --region us-east-1
+
+# Azure
+python main.py --cloud azure --subscription-id <your-sub-id> --region eastus
+
+# GCP
+python main.py --cloud gcp --project <your-project-id> --region us-central1
+```
+
+> **No `--mode` or `--vpc-type` needed.** Since v1.2.0 the checker runs all checks automatically and produces a **Deployment Compatibility** matrix showing which deployment types (Standard, PrivateLink, Unity Catalog, Full) your permissions support.
+
 ## Usage
 
 ### AWS Checks
 
 ```bash
-# Basic check
+# All checks (creates temporary resources, then deletes them)
 python main.py --cloud aws --region us-east-1
 
-# With specific profile
+# With specific AWS profile
 python main.py --cloud aws --region us-east-1 --profile my-profile
 
-# Full deployment mode (Unity Catalog + Private Link)
-python main.py --cloud aws --region us-east-1 --mode full
-
-# Databricks-managed VPC
-python main.py --cloud aws --region us-east-1 --vpc-type databricks
+# Read-only checks (no resource creation)
+python main.py --cloud aws --region us-east-1 --verify-only
 ```
 
 ### Azure Checks
 
 ```bash
-# Standard deployment (Databricks-managed VNet + Storage)
-python main.py --cloud azure --region eastus --mode standard
+# All checks with subscription ID
+python main.py --cloud azure --subscription-id <sub-id> --region eastus
 
-# VNet Injection (Customer-managed VNet)
-python main.py --cloud azure --region eastus --mode vnet
+# Targeting a specific resource group
+python main.py --cloud azure --subscription-id <sub-id> --resource-group my-rg --region eastus
 
-# Unity Catalog (with ADLS Gen2 + Access Connector)
-python main.py --cloud azure --region eastus --mode unity
-
-# Private Link + Secure Cluster Connectivity
-python main.py --cloud azure --region eastus --mode privatelink
-
-# Full deployment (VNet + Unity + Private Link)
-python main.py --cloud azure --subscription-id xxx --region eastus --mode full
+# Read-only checks
+python main.py --cloud azure --subscription-id <sub-id> --region eastus --verify-only
 ```
 
 ### GCP Checks
 
 ```bash
+# All checks
 python main.py --cloud gcp --project <project-id> --region us-central1
 
 # With credentials file
-python main.py --cloud gcp --project my-project --credentials-file /path/to/key.json
+python main.py --cloud gcp --project my-project --credentials-file /path/to/key.json --region us-central1
 ```
 
 ### Additional Options
@@ -99,17 +133,22 @@ python main.py --cloud gcp --project my-project --credentials-file /path/to/key.
 python main.py --all
 
 # Save report to file
-python main.py --cloud aws --output report.txt
+python main.py --cloud aws --region us-east-1 --output report.txt
+
+# JSON output for CI/CD
+python main.py --cloud aws --region us-east-1 --json --quiet
 
 # Dry-run (show what would be tested without creating resources)
-python main.py --cloud aws --dry-run
+python main.py --cloud aws --region us-east-1 --dry-run
 
 # Verify-only mode (read-only checks, no resource creation)
-# Useful when resource creation requires approval
-python main.py --cloud aws --verify-only
+python main.py --cloud aws --region us-east-1 --verify-only
+
+# Debug logging
+python main.py --cloud aws --region us-east-1 --log-level debug --log-file debug.log
 
 # Clean up any orphaned test resources
-python main.py --cleanup-orphans --cloud aws
+python main.py --cleanup-orphans --cloud aws --region us-east-1
 ```
 
 ### Verify-Only Mode
@@ -127,22 +166,44 @@ The `--verify-only` flag runs read-only permission checks without creating any t
 
 For comprehensive permission validation, run without `--verify-only` to test with actual resource creation.
 
-## AWS Deployment Modes
+## Deployment Compatibility Matrix
 
-| Mode | VPC | Storage (Root Bucket) | Unity Catalog Storage | VPC Endpoints | Cross-Account Role |
+Since v1.2.0, the tool runs **all checks automatically** and produces a compatibility matrix at the end of every report. No `--mode` flag is needed — the report tells you which deployment types your current permissions support.
+
+Example output:
+
+```
+╔══════════════════════════════════════════════════════════════════════╗
+║                    DEPLOYMENT COMPATIBILITY                          ║
+╠══════════════════════════════════════════════════════════════════════╣
+║  Standard               SUPPORTED                                    ║
+║  PrivateLink            SUPPORTED                                    ║
+║  Unity Catalog          SUPPORTED                                    ║
+║  Full                   SUPPORTED                                    ║
+╚══════════════════════════════════════════════════════════════════════╝
+```
+
+If some permissions are missing, the matrix highlights exactly which deployment types are affected:
+
+```
+║  Standard               SUPPORTED                                    ║
+║  PrivateLink            MISSING PERMISSIONS                          ║
+║  Unity Catalog          SUPPORTED                                    ║
+║  Full                   MISSING PERMISSIONS                          ║
+```
+
+## AWS Deployment Types
+
+The checker validates permissions for all of these deployment types in a single run:
+
+| Type | VPC | Storage (Root Bucket) | Unity Catalog Storage | VPC Endpoints | Cross-Account Role |
 |------|-----|----------------------|----------------------|---------------|-------------------|
-| `standard` | Databricks or Customer | **You create** S3 bucket | N/A | N/A | **You create** |
-| `privatelink` | **You create** | **You create** S3 bucket | N/A | **You create** | **You create** |
-| `unity` | Databricks or Customer | **You create** S3 bucket | **You create** S3 bucket | N/A | **You create** |
-| `full` | **You create** | **You create** S3 bucket | **You create** S3 bucket | **You create** | **You create** |
+| **Standard** | Customer-managed | **You create** S3 bucket | N/A | N/A | **You create** |
+| **PrivateLink** | Customer-managed | **You create** S3 bucket | N/A | **You create** | **You create** |
+| **Unity Catalog** | Customer-managed | **You create** S3 bucket | **You create** S3 bucket | N/A | **You create** |
+| **Full** | Customer-managed | **You create** S3 bucket | **You create** S3 bucket | **You create** | **You create** |
 
-### AWS VPC Types
-
-| VPC Type | Description | Permissions Required |
-|----------|-------------|---------------------|
-| `databricks` | Databricks creates and manages the VPC | EC2 create/delete permissions for VPC, Subnets, NAT, IGW |
-| `customer` | You provide an existing VPC (default restrictions) | EC2 describe permissions, Security Group management |
-| `custom` | You provide an existing VPC (custom restrictions) | Same as `customer`, with custom CIDR/routing |
+> **Note:** Databricks-managed VPC has been sunset for new AWS deployments. All configurations now use customer-managed VPCs.
 
 ### Unity Catalog Requirements (AWS)
 
@@ -157,15 +218,15 @@ Per [Databricks documentation](https://docs.databricks.com/aws/en/connect/unity-
 4. **KMS Permissions (if using CMK):**
    - `kms:Encrypt`, `kms:Decrypt` - For encryption operations
 
-## Azure Deployment Modes
+## Azure Deployment Types
 
-| Mode | VNet | Storage (DBFS) | Unity Catalog Storage | NAT Gateway | Private Link |
+| Type | VNet | Storage (DBFS) | Unity Catalog Storage | NAT Gateway | Private Link |
 |------|------|----------------|----------------------|-------------|--------------|
-| `standard` | Databricks-managed | Databricks-managed | N/A | N/A | N/A |
-| `vnet` | **You create** | Databricks-managed | N/A | N/A | N/A |
-| `unity` | Databricks-managed | Databricks-managed | **You create ADLS Gen2** | N/A | N/A |
-| `privatelink` | **You create** | Databricks-managed | N/A | **Required** | **You create** |
-| `full` | **You create** | Databricks-managed | **You create ADLS Gen2** | **Required** | **You create** |
+| **Standard** | Databricks-managed | Databricks-managed | N/A | N/A | N/A |
+| **VNet Injection** | **You create** | Databricks-managed | N/A | N/A | N/A |
+| **Unity Catalog** | Databricks-managed | Databricks-managed | **You create ADLS Gen2** | N/A | N/A |
+| **PrivateLink** | **You create** | Databricks-managed | N/A | **Required** | **You create** |
+| **Full** | **You create** | Databricks-managed | **You create ADLS Gen2** | **Required** | **You create** |
 
 ### Unity Catalog Requirements (Azure)
 
@@ -179,9 +240,9 @@ Per [Microsoft documentation](https://learn.microsoft.com/en-us/azure/databricks
 4. **RBAC Roles on Resource Group:**
    - `EventGrid EventSubscription Contributor` - For auto file events (optional)
 
-## GCP Deployment Modes
+## GCP Deployment Types
 
-GCP Databricks deployments use a simpler model compared to AWS and Azure. The main configurations are:
+GCP Databricks deployments use a simpler model compared to AWS and Azure. The checker validates permissions for all of these configurations in a single run:
 
 | Configuration | VPC | Storage (GCS) | Unity Catalog Storage | Private Google Access | Cloud NAT |
 |--------------|-----|---------------|----------------------|----------------------|-----------|
@@ -269,33 +330,39 @@ Per [Databricks documentation](https://docs.gcp.databricks.com/data-governance/u
   Subscription                                 OK - my-subscription
   Region                                       OK - eastus
 
-[DEPLOYMENT MODE ANALYSIS]
-  Mode                                         OK - FULL
-    All Features                               OK - VNet Injection + Unity Catalog + Private Link
-
-[STEP 2: RESOURCE GROUP (REAL TEST)]
+[RESOURCE GROUP (REAL TEST)]
   Test Method                                  OK - Creating temporary RG for permission tests...
     📁 Creating test Resource Group             OK - dbxprecheck-rg-f086fad4
     Microsoft.Resources/resourceGroups/write   OK - ✓ CREATED: dbxprecheck-rg-f086fad4
 
-[STEP 3: NETWORK - VNet Injection (REAL TEST)]
+[NETWORK - VNet Injection (REAL TEST)]
     🌐 Creating test VNet                       OK - dbxprecheck-vnet-f086fad4
     Microsoft.Network/networkSecurityGroups/wr OK - ✓ CREATED: dbxprecheck-nsg-f086fad4
     Microsoft.Network/virtualNetworks/write    OK - ✓ CREATED: dbxprecheck-vnet-f086fad4
     Subnet Delegation (Databricks)             OK - ✓ Delegated to Microsoft.Databricks/workspaces
 
-[STEP 4b: ACCESS CONNECTOR FOR DATABRICKS (REAL TEST)]
+[ACCESS CONNECTOR FOR DATABRICKS (REAL TEST)]
     🔗 Creating Access Connector for Databricks OK - dbxprecheck-connector-f086fad4
     Microsoft.Databricks/accessConnectors/write OK - ✓ CREATED
     System-Assigned Managed Identity           OK - ✓ Created
 
-[STEP 5: PRIVATE LINK + SCC (REAL TEST)]
+[PRIVATE LINK + SCC (REAL TEST)]
     🌐 Creating NAT Gateway (required for SCC)  OK - dbxprecheck-natgw-f086fad4
     Microsoft.Network/natGateways/write        OK - ✓ CREATED
     SCC (Secure Cluster Connectivity)          OK - NAT Gateway enables clusters without public IPs
 
 [CLEANUP]
     🗑️  Deleting Resource Group (and all conte OK - ✓ DELETING: dbxprecheck-rg-f086fad4
+
+╔══════════════════════════════════════════════════════════════════════╗
+║                    DEPLOYMENT COMPATIBILITY                          ║
+╠══════════════════════════════════════════════════════════════════════╣
+║  Standard               SUPPORTED                                    ║
+║  VNet Injection          SUPPORTED                                    ║
+║  Unity Catalog          SUPPORTED                                    ║
+║  PrivateLink            SUPPORTED                                    ║
+║  Full                   SUPPORTED                                    ║
+╚══════════════════════════════════════════════════════════════════════╝
 
 ======================================================================
   SUMMARY: 49 OK | 0 WARNING | 0 NOT OK

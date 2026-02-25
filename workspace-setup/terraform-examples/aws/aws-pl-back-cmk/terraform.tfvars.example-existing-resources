@@ -1,0 +1,74 @@
+# ====================================================================
+# EXAMPLE: Using EXISTING VPC, Subnets, and CMK
+# ====================================================================
+# Use this configuration when you have existing infrastructure
+
+project = "my-databricks-project"
+region  = "us-east-1"
+
+# ==================== NETWORKING - USE EXISTING ====================
+create_new_vpc = false
+
+# Leave these empty when using existing VPC
+vpc_cidr             = ""
+private_subnet_cidrs = []
+
+# Provide your existing VPC and subnet IDs
+existing_vpc_id     = "vpc-0123456789abcdef0"
+existing_subnet_ids = ["subnet-0123456789abcdef0", "subnet-0123456789abcdef1"]
+
+# Optional: provide existing security group ID
+# If not provided, a new security group will be created in your existing VPC
+existing_security_group_id = ""  # or "sg-0123456789abcdef0"
+
+# ==================== CMK - USE EXISTING ====================
+create_new_cmk   = false
+existing_cmk_arn = "arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012"
+
+# ==================== DATABRICKS ACCOUNT ====================
+databricks_account_id    = "your-account-id"
+databricks_account_host  = "https://accounts.cloud.databricks.com"
+databricks_client_id     = "your-client-id"
+databricks_client_secret = "your-client-secret"
+
+root_bucket_name = "my-databricks-root-bucket"
+
+# Get this from Databricks Account Console -> Cloud resources -> Credentials
+databricks_crossaccount_role_external_id = "your-external-id"
+
+# ==================== PRIVATELINK ====================
+# From Databricks docs: PrivateLink VPC endpoint services table
+# https://docs.databricks.com/administration-guide/cloud-configurations/aws/privatelink.html
+pl_service_names = {
+  workspace = "com.amazonaws.vpce.us-east-1.vpce-svc-09143d1e626de2f04"
+  scc       = "com.amazonaws.vpce.us-east-1.vpce-svc-00018a8c3ff62ffdf"
+}
+
+enable_extra_endpoints = false
+
+# ====================================================================
+# IMPORTANT NOTES FOR EXISTING RESOURCES:
+# ====================================================================
+# 
+# 1. EXISTING VPC REQUIREMENTS:
+#    - VPC must have DNS support and DNS hostnames enabled
+#    - Subnets must be in different Availability Zones
+#    - Subnets should have appropriate route tables configured
+#
+# 2. EXISTING CMK REQUIREMENTS:
+#    - CMK must have a key policy that allows:
+#      a) Your AWS account root to manage the key
+#      b) Databricks control plane (414351767826) to use the key
+#      c) Your cross-account IAM role to create grants
+#    - See modules/aws-cmk/main.tf for the required policy
+#    - The CMK must be in the same region as your workspace
+#
+# 3. SECURITY GROUP (if provided):
+#    - Must allow egress to 0.0.0.0/0 (all traffic)
+#    - Will be used for Databricks workspace compute
+#
+# 4. VPC ENDPOINTS:
+#    - VPC endpoints for Databricks workspace and SCC will still be created
+#    - These are required for PrivateLink connectivity
+#    - Security groups for VPC endpoints will be created automatically
+

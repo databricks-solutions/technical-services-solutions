@@ -113,6 +113,12 @@ variable "create_workspace_sg_for_existing_vpc" {
   default     = false
 }
 
+variable "use_dedicated_security_group" {
+  description = "When creating new VPC: true = create a dedicated workspace SG (default VPC SG unchanged). Only used when vpc_id is empty."
+  type        = bool
+  default     = false
+}
+
 variable "sg_egress_ports" {
   description = "List of egress ports to allow in security group rules"
   type        = list(number)

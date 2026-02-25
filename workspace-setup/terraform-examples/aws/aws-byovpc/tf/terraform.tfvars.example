@@ -47,8 +47,11 @@ public_subnets_cidr  = ["10.0.101.0/24", "10.0.102.0/24"]
 # Security Group Configuration
 # =============================================================================
 
-# Optional: Use existing security groups (leave empty to use VPC default)
+# Optional: Use existing security groups (leave empty to use VPC default or create one for existing VPC)
 security_group_ids = []
+
+# When using existing VPC with security_group_ids empty: true = create new workspace SG (default SG unchanged), false = use VPC default SG
+# create_workspace_sg_for_existing_vpc = false
 
 # Egress ports for Databricks connectivity
 sg_egress_ports = [443, 3306, 2443, 8443, 8444, 8445, 8446, 8447, 8448, 8449, 8450, 8451]

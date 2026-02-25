@@ -48,7 +48,7 @@ output "nat_gateway_ids" {
 
 output "security_group_id" {
   description = "ID of the security group used for the workspace"
-  value       = length(var.security_group_ids) > 0 ? var.security_group_ids[0] : (var.vpc_id == "" ? module.vpc[0].default_security_group_id : "")
+  value       = length(var.security_group_ids) > 0 ? var.security_group_ids[0] : (var.vpc_id == "" ? module.vpc[0].default_security_group_id : aws_security_group.existing_vpc_workspace_sg[0].id)
 }
 
 # =============================================================================

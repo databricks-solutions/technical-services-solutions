@@ -35,7 +35,7 @@ resource "databricks_mws_networks" "this" {
   provider           = databricks.mws
   account_id         = var.databricks_account_id
   network_name       = "${var.prefix}-network"
-  security_group_ids = length(var.security_group_ids) > 0 ? var.security_group_ids : [module.vpc[0].default_security_group_id]
+  security_group_ids = length(var.security_group_ids) > 0 ? var.security_group_ids : (var.vpc_id != "" && var.create_workspace_sg_for_existing_vpc ? [aws_security_group.existing_vpc_workspace_sg[0].id] : [module.vpc[0].default_security_group_id])
   subnet_ids         = length(var.subnet_ids) > 0 ? var.subnet_ids : module.vpc[0].private_subnets
   vpc_id             = var.vpc_id == "" ? module.vpc[0].vpc_id : var.vpc_id
 }

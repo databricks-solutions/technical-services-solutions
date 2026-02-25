@@ -102,9 +102,15 @@ variable "public_subnets_cidr" {
 # =============================================================================
 
 variable "security_group_ids" {
-  description = "Existing security group IDs to use. If empty, default VPC security group will be used"
+  description = "Existing security group IDs to use. If empty, default VPC SG is used (new VPC) or set create_workspace_sg_for_existing_vpc = true (existing VPC)"
   type        = list(string)
   default     = []
+}
+
+variable "create_workspace_sg_for_existing_vpc" {
+  description = "When using existing VPC with security_group_ids empty: true = create a new workspace SG (default SG unchanged). Otherwise pass security_group_ids."
+  type        = bool
+  default     = false
 }
 
 variable "sg_egress_ports" {

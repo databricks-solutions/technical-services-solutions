@@ -59,3 +59,9 @@ resource "databricks_user" "admin" {
   provider   = databricks.workspace
   user_name  = var.databricks_admin_user
 }
+
+resource "databricks_group_member" "admin_member" {
+  provider  = databricks.workspace
+  group_id  = data.databricks_group.admins.id
+  member_id = databricks_user.admin.id
+}

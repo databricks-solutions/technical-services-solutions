@@ -1,0 +1,35 @@
+# Local .terraform directories
+**/.terraform/*
+llm-genai-caller-sa.json
+.terraform.lock.hcl
+
+# Terraform state files
+*.tfstate
+*.tfstate.*
+
+# Crash logs
+crash.log
+crash.*.log
+
+# # Exclude all .tfvars files (sensitive data like creds)
+# *.tfvars
+# *.tfvars.json
+
+# Ignore override files
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Terraform plan output
+*.plan
+
+# Local environment files
+.terraformrc
+terraform.rc
+
+# IDE/editor junk
+.vscode/
+.idea/
+.DS_Store
+*.swp

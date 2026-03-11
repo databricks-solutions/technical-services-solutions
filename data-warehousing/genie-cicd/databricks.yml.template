@@ -1,0 +1,247 @@
+# Databricks Asset Bundle Configuration
+# =====================================
+# This bundle exports Genie spaces from Dev and deploys them to Prod with catalog/schema replacement.
+#
+# Workflow:
+#   Task 1: Export Genie space definition from Dev
+#   Task 2: Deploy (create/update) Genie space to Prod
+#
+# Usage:
+#   databricks bundle deploy --target prod
+#   databricks bundle run promote_genie_to_prod --target prod
+
+bundle:
+  name: genie-space-cicd
+
+# ============================================================
+# VARIABLES - Customize these for your environment
+# ============================================================
+variables:
+  # ------------------------------
+  # TODO: Set your Dev Space ID (source to export)
+  # ------------------------------
+  dev_space_id:
+    description: "<YOUR_DEV_GENIE_SPACE_ID>"
+    default: "<YOUR_DEV_GENIE_SPACE_ID>"  # <-- TODO: Add your Dev Genie Space ID
+
+  # ------------------------------
+  # TODO: Set your Prod Space ID (target to update)
+  # ------------------------------
+  # Leave empty ("") for first deployment - the job will create a new space
+  # After first run, copy the space_id from the output and paste here
+  prod_space_id:
+    description: ""
+    default: ""  # <-- TODO: After first deployment, add your Prod space_id here
+
+  # ------------------------------
+  # TODO: Set your Prod Warehouse ID
+  # ------------------------------
+  prod_warehouse_id:
+    description: "<YOUR_WAREHOUSE_ID>"
+    default: "<YOUR_WAREHOUSE_ID>"  # <-- TODO: Add your Prod SQL Warehouse ID
+
+  # ------------------------------
+  # TODO: Set your Genie Space Title
+  # ------------------------------
+  genie_space_title:
+    description: "<YOUR_GENIE_SPACE_TITLE>"
+    default: "<YOUR_GENIE_SPACE_TITLE>"  # <-- TODO: Change to your desired title
+
+  # ------------------------------
+  # TODO: Set your Dev catalog/schema names (source)
+  # ------------------------------
+  source_catalog:
+    description: "<YOUR_SOURCE_CATALOG>"
+    default: "<YOUR_SOURCE_CATALOG>"  # <-- TODO: Change to your Dev catalog name
+
+  source_schema:
+    description: "<YOUR_SOURCE_SCHEMA>"
+    default: "<YOUR_SOURCE_SCHEMA>"  # <-- TODO: Change to your Dev schema name
+
+  # ------------------------------
+  # TODO: Set your Prod catalog/schema names (target)
+  # ------------------------------
+  target_catalog:
+    description: "<YOUR_TARGET_CATALOG>"
+    default: "<YOUR_TARGET_CATALOG>"  # <-- TODO: Change to your Prod catalog name
+
+  target_schema:
+    description: "<YOUR_TARGET_SCHEMA>"
+    default: "<YOUR_TARGET_SCHEMA>"  # <-- TODO: Change to your Prod schema name
+
+# ============================================================
+# RESOURCES - Job definitions
+# ============================================================
+resources:
+  jobs:
+    # ----------------------------------------------------------
+    # Main CI/CD Job: Export from Dev → Deploy to Prod
+    # ----------------------------------------------------------
+    promote_genie_to_prod:
+      name: "Promote Genie Space: Dev → Prod"
+      description: "Exports Genie space from Dev and deploys to Prod with catalog/schema replacement"
+      
+      # ------------------------------
+      # TODO: Set job schedule (optional)
+      # ------------------------------
+      # Uncomment below to run on a schedule
+      # schedule:
+      #   quartz_cron_expression: "0 0 9 * * ?"  # Daily at 9 AM
+      #   timezone_id: "America/Los_Angeles"
+
+      tasks:
+        # ----------------------------------------
+        # Task 1: Export Genie Space from Dev
+        # ----------------------------------------
+        - task_key: export_from_dev
+          description: "Export Genie space definition from Dev workspace"
+          
+          notebook_task:
+            notebook_path: ./src/export_genie_definition.ipynb
+            base_parameters:
+              space_id: ${var.dev_space_id}
+              output_file: "../genie_definition/genie_space_dev.json"
+          
+          # ------------------------------
+          # Compute Configuration
+          # ------------------------------
+          # Default: Serverless (no cluster config needed)
+          # The task runs on serverless compute when no cluster is specified.
+          # This is the recommended option for most use cases.
+          
+          # ------------------------------
+          # Alternative: Use an existing cluster
+          # ------------------------------
+          # Uncomment below to run on an existing all-purpose cluster
+          # existing_cluster_id: "<YOUR_CLUSTER_ID>"  # <-- TODO: Set your cluster ID
+          
+          # ------------------------------
+          # Alternative: Create a new job cluster
+          # ------------------------------
+          # Uncomment below to create a dedicated job cluster for this task
+          # new_cluster:
+          #   spark_version: "14.3.x-scala2.12"
+          #   num_workers: 0
+          #   node_type_id: "i3.xlarge"  # <-- TODO: Adjust for your cloud (AWS: i3.xlarge, Azure: Standard_DS3_v2, GCP: n1-standard-4)
+          #   spark_conf:
+          #     "spark.databricks.cluster.profile": "singleNode"
+          #     "spark.master": "local[*]"
+          #   custom_tags:
+          #     "ResourceClass": "SingleNode"
+
+        # ----------------------------------------
+        # Task 2: Deploy Genie Space to Prod
+        # ----------------------------------------
+        - task_key: deploy_to_prod
+          description: "Deploy Genie space to Prod (create or update)"
+          depends_on:
+            - task_key: export_from_dev
+          
+          notebook_task:
+            notebook_path: ./src/deploy_genie_space.ipynb
+            base_parameters:
+              space_id: ${var.prod_space_id}
+              input_file: "../genie_definition/genie_space_dev.json"
+              output_file: "../genie_definition/genie_space_prod.json"
+              warehouse_id: ${var.prod_warehouse_id}
+              title: ${var.genie_space_title}
+              source_catalog: ${var.source_catalog}
+              target_catalog: ${var.target_catalog}
+              source_schema: ${var.source_schema}
+              target_schema: ${var.target_schema}
+          
+          # ------------------------------
+          # Compute Configuration
+          # ------------------------------
+          # Default: Serverless (no cluster config needed)
+          # The task runs on serverless compute when no cluster is specified.
+          # This is the recommended option for most use cases.
+          
+          # ------------------------------
+          # Alternative: Use an existing cluster
+          # ------------------------------
+          # Uncomment below to run on an existing all-purpose cluster
+          # existing_cluster_id: "<YOUR_CLUSTER_ID>"  # <-- TODO: Set your cluster ID
+          
+          # ------------------------------
+          # Alternative: Create a new job cluster
+          # ------------------------------
+          # Uncomment below to create a dedicated job cluster for this task
+          # new_cluster:
+          #   spark_version: "14.3.x-scala2.12"
+          #   num_workers: 0
+          #   node_type_id: "i3.xlarge"  # <-- TODO: Adjust for your cloud (AWS: i3.xlarge, Azure: Standard_DS3_v2, GCP: n1-standard-4)
+          #   spark_conf:
+          #     "spark.databricks.cluster.profile": "singleNode"
+          #     "spark.master": "local[*]"
+          #   custom_tags:
+          #     "ResourceClass": "SingleNode"
+
+    # # ----------------------------------------------------------
+    # # Standalone Job: Deploy Only (without export)
+    # # ----------------------------------------------------------
+    # deploy_genie_only:
+    #   name: "Deploy Genie Space to Prod (Deploy Only)"
+    #   description: "Deploys existing genie_space.json to Prod without re-exporting from Dev"
+      
+    #   tasks:
+    #     - task_key: deploy_to_prod
+    #       description: "Deploy Genie space to Prod (create or update)"
+          
+    #       notebook_task:
+    #         notebook_path: ./src/deploy_genie_space
+    #         base_parameters:
+    #           space_id: ${var.prod_space_id}
+    #           input_file: "./genie_definition/genie_space.json"
+    #           output_file: "./genie_definition/genie_space_prod.json"
+    #           warehouse_id: ${var.prod_warehouse_id}
+    #           title: ${var.genie_space_title}
+    #           source_catalog: ${var.source_catalog}
+    #           target_catalog: ${var.target_catalog}
+    #           source_schema: ${var.source_schema}
+    #           target_schema: ${var.target_schema}
+    #       
+    #       # Default: Serverless (no cluster config needed)
+    #       # Uncomment one of the alternatives below if needed:
+    #       
+    #       # Alternative: Use an existing cluster
+    #       # existing_cluster_id: "<YOUR_CLUSTER_ID>"
+    #       
+    #       # Alternative: Create a new job cluster
+    #       # new_cluster:
+    #       #   spark_version: "14.3.x-scala2.12"
+    #       #   num_workers: 0
+    #       #   node_type_id: "i3.xlarge"
+    #       #   spark_conf:
+    #       #     "spark.databricks.cluster.profile": "singleNode"
+    #       #     "spark.master": "local[*]"
+    #       #   custom_tags:
+    #       #     "ResourceClass": "SingleNode"
+
+# ============================================================
+# TARGETS - Environment configurations
+# ============================================================
+targets:
+  # Development target (for testing the bundle)
+  dev:
+    mode: development
+    default: true
+    workspace:
+      # ------------------------------
+      # TODO: Set your Dev workspace URL
+      # ------------------------------
+      host: https://<YOUR_WORKSPACE>.cloud.databricks.com  # <-- TODO: Change this
+
+  # Production target (for actual deployment)
+  prod:
+    mode: production
+    workspace:
+      # ------------------------------
+      # TODO: Set your Prod workspace URL
+      # ------------------------------
+      host: https://<YOUR_WORKSPACE>.cloud.databricks.com  # <-- TODO: Change this
+    
+    # Override variables for Prod (optional)
+    # variables:
+    #   prod_space_id: "<YOUR_PROD_SPACE_ID>"
+    #   prod_warehouse_id: "<YOUR_PROD_WAREHOUSE_ID>"

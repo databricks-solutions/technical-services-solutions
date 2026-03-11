@@ -1,0 +1,379 @@
+{
+  "version": 1,
+  "data_sources": {
+    "metric_views": [
+      {
+        "identifier": "CATALOG_NAME.SCHEMA_NAME.sales_relationships",
+        "column_configs": [
+          {
+            "column_name": "YearMonth",
+            "get_example_values": true
+          },
+          {
+            "column_name": "campaign_budget",
+            "get_example_values": true
+          },
+          {
+            "column_name": "campaign_name",
+            "get_example_values": true,
+            "build_value_dictionary": true
+          },
+          {
+            "column_name": "current_day_sales"
+          },
+          {
+            "column_name": "customer_email",
+            "get_example_values": true,
+            "build_value_dictionary": true
+          },
+          {
+            "column_name": "customer_name",
+            "get_example_values": true,
+            "build_value_dictionary": true
+          },
+          {
+            "column_name": "customer_residential_location",
+            "get_example_values": true,
+            "build_value_dictionary": true
+          },
+          {
+            "column_name": "customer_segment",
+            "get_example_values": true,
+            "build_value_dictionary": true
+          },
+          {
+            "column_name": "day",
+            "get_example_values": true
+          },
+          {
+            "column_name": "dayOfWeek",
+            "get_example_values": true
+          },
+          {
+            "column_name": "day_over_day_growth"
+          },
+          {
+            "column_name": "first_name",
+            "get_example_values": true,
+            "build_value_dictionary": true
+          },
+          {
+            "column_name": "full_date",
+            "get_example_values": true
+          },
+          {
+            "column_name": "last_name",
+            "get_example_values": true,
+            "build_value_dictionary": true
+          },
+          {
+            "column_name": "month",
+            "get_example_values": true
+          },
+          {
+            "column_name": "previous_day_sales"
+          },
+          {
+            "column_name": "product_brand",
+            "get_example_values": true,
+            "build_value_dictionary": true
+          },
+          {
+            "column_name": "product_category",
+            "get_example_values": true,
+            "build_value_dictionary": true
+          },
+          {
+            "column_name": "product_name",
+            "get_example_values": true,
+            "build_value_dictionary": true
+          },
+          {
+            "column_name": "product_origin_location",
+            "get_example_values": true,
+            "build_value_dictionary": true
+          },
+          {
+            "column_name": "quarter",
+            "get_example_values": true
+          },
+          {
+            "column_name": "running_total_sales"
+          },
+          {
+            "column_name": "sales_avg"
+          },
+          {
+            "column_name": "sales_date",
+            "get_example_values": true
+          },
+          {
+            "column_name": "sales_largest"
+          },
+          {
+            "column_name": "sales_median"
+          },
+          {
+            "column_name": "sales_mode"
+          },
+          {
+            "column_name": "sales_quartile1"
+          },
+          {
+            "column_name": "sales_quartile2"
+          },
+          {
+            "column_name": "sales_quartile3"
+          },
+          {
+            "column_name": "sales_quartile4"
+          },
+          {
+            "column_name": "sales_smallest"
+          },
+          {
+            "column_name": "sales_stddev"
+          },
+          {
+            "column_name": "sales_sum"
+          },
+          {
+            "column_name": "salesperson_name",
+            "get_example_values": true,
+            "build_value_dictionary": true
+          },
+          {
+            "column_name": "salesperson_role",
+            "get_example_values": true,
+            "build_value_dictionary": true
+          },
+          {
+            "column_name": "store_location",
+            "get_example_values": true,
+            "build_value_dictionary": true
+          },
+          {
+            "column_name": "store_name",
+            "get_example_values": true,
+            "build_value_dictionary": true
+          },
+          {
+            "column_name": "store_type",
+            "get_example_values": true,
+            "build_value_dictionary": true
+          },
+          {
+            "column_name": "t30d_customers"
+          },
+          {
+            "column_name": "t7d_customers"
+          },
+          {
+            "column_name": "total_amount",
+            "get_example_values": true
+          },
+          {
+            "column_name": "week",
+            "get_example_values": true
+          },
+          {
+            "column_name": "weekday",
+            "get_example_values": true
+          },
+          {
+            "column_name": "year",
+            "get_example_values": true
+          },
+          {
+            "column_name": "ytd_sales"
+          }
+        ]
+      }
+    ]
+  },
+  "instructions": {
+    "text_instructions": [
+      {
+        "id": "01f0e27a754a1a85aa25fdb8f17c51a6",
+        "content": [
+          "* Only display currencies in US Dollars."
+        ]
+      }
+    ],
+    "example_question_sqls": [
+      {
+        "id": "01f0e034f31e1e5f95d6589791837873",
+        "question": [
+          "What are the sales statistics by day of the week?"
+        ],
+        "sql": [
+          "-- This is just a simple query example, demonstrating that you can query Metric Views just like any other view!\n",
+          "SELECT\n",
+          "  dayOfWeek,\n",
+          "  MEASURE(`sales_sum`),\n",
+          "  MEASURE(`sales_avg`),\n",
+          "  MEASURE(`sales_stddev`),\n",
+          "  MEASURE(`sales_quartile1`),\n",
+          "  MEASURE(`sales_quartile2`),\n",
+          "  MEASURE(`sales_quartile3`),\n",
+          "  MEASURE(`sales_quartile4`),\n",
+          "  MEASURE(`sales_largest`),\n",
+          "  MEASURE(`sales_smallest`)\n",
+          "FROM CATALOG_NAME.SCHEMA_NAME.sales_relationships\n",
+          "GROUP BY ALL\n",
+          "ORDER BY dayOfWeek"
+        ]
+      },
+      {
+        "id": "01f0e034f32015eda08110633923590b",
+        "question": [
+          "What are the sales statistics by year and month?"
+        ],
+        "sql": [
+          "SELECT\n",
+          "  YearMonth,\n",
+          "  MEASURE(`sales_sum`),\n",
+          "  MEASURE(`sales_avg`) AS `sales_avg`,\n",
+          "  MEASURE(`sales_stddev`) AS `sales_stddev`,\n",
+          "  MEASURE(`sales_median`) AS `sales_median`,\n",
+          "  MEASURE(`sales_quartile1`) AS `sales_quartile1`,\n",
+          "  MEASURE(`sales_quartile2`) AS `sales_quartile2`,\n",
+          "  MEASURE(`sales_quartile3`) AS `sales_quartile3`,\n",
+          "  MEASURE(`sales_quartile4`) AS `sales_quartile4`,\n",
+          "  MEASURE(`sales_largest`) AS `sales_largest`,\n",
+          "  MEASURE(`sales_smallest`) AS `sales_smallest`\n",
+          "FROM CATALOG_NAME.SCHEMA_NAME.sales_relationships\n",
+          "GROUP BY ALL"
+        ]
+      },
+      {
+        "id": "01f0e034f3211da6b78032d63bbb8411",
+        "question": [
+          "What are the total sales and percentage of relevance of sales by year and month?"
+        ],
+        "sql": [
+          "SELECT\n",
+          "  YearMonth,\n",
+          "  MEASURE(`total_sales`) AS `total_sales`, \n",
+          "  MEASURE(`pct_of_relevance_of_sales`) AS `pct_of_relevance_of_sales`\n",
+          "FROM CATALOG_NAME.SCHEMA_NAME.sales_relationships GROUP BY ALL"
+        ]
+      },
+      {
+        "id": "01f0e034f32313bc89ccc7adcb6b3c66",
+        "question": [
+          "What are the sales statistics by day of the week?"
+        ],
+        "sql": [
+          "SELECT\n",
+          "  dayOfWeek,\n",
+          "  MEASURE(`sales_sum`),\n",
+          "  MEASURE(`sales_avg`) AS `sales_avg`,\n",
+          "  MEASURE(`sales_stddev`) AS `sales_stddev`,\n",
+          "  MEASURE(`sales_median`) AS `sales_median`,\n",
+          "  MEASURE(`sales_quartile1`) AS `sales_quartile1`,\n",
+          "  MEASURE(`sales_quartile2`) AS `sales_quartile2`,\n",
+          "  MEASURE(`sales_quartile3`) AS `sales_quartile3`,\n",
+          "  MEASURE(`sales_quartile4`) AS `sales_quartile4`,\n",
+          "  MEASURE(`sales_largest`) AS `sales_largest`,\n",
+          "  MEASURE(`sales_smallest`) AS `sales_smallest`\n",
+          "FROM CATALOG_NAME.SCHEMA_NAME.sales_relationships\n",
+          "GROUP BY ALL"
+        ]
+      },
+      {
+        "id": "01f0e034f3241beea1b46f27a8cb57da",
+        "question": [
+          "What are the total sales and percentage of relevance of sales overall?"
+        ],
+        "sql": [
+          "SELECT MEASURE(`total_sales`) AS `total_sales`, MEASURE(`pct_of_relevance_of_sales`) AS `pct_of_relevance_of_sales`\n",
+          "FROM CATALOG_NAME.SCHEMA_NAME.sales_relationships"
+        ]
+      },
+      {
+        "id": "01f0e034f3261044846c08976a7ce277",
+        "question": [
+          "What are the sales sum, average, stddev, and median by year and month?"
+        ],
+        "sql": [
+          "SELECT\n",
+          "  YearMonth,\n",
+          "  MEASURE(`sales_sum`) AS `total_sales`, \n",
+          "  MEASURE(`sales_avg`) AS `avg_sales`, \n",
+          "  MEASURE(`sales_stddev`) AS `stddev_sales`, \n",
+          "  MEASURE(`sales_median`) AS `pct_of_relevance_of_sales`\n",
+          "FROM CATALOG_NAME.SCHEMA_NAME.sales_relationships GROUP BY ALL"
+        ]
+      },
+      {
+        "id": "01f0e034f327148d9cedb3741dc1a8bb",
+        "question": [
+          "What are the sales statistics by year and month?"
+        ],
+        "sql": [
+          "SELECT\n",
+          "  YearMonth,\n",
+          "  MEASURE(`sales_sum`) AS `sales_sum`,\n",
+          "  MEASURE(`sales_avg`) AS `sales_avg`,\n",
+          "  MEASURE(`sales_stddev`) AS `sales_stddev`,\n",
+          "  MEASURE(`sales_median`) AS `sales_median`,\n",
+          "  MEASURE(`sales_quartile1`) AS `sales_quartile1`,\n",
+          "  MEASURE(`sales_quartile2`) AS `sales_quartile2`,\n",
+          "  MEASURE(`sales_quartile3`) AS `sales_quartile3`,\n",
+          "  MEASURE(`sales_quartile4`) AS `sales_quartile4`,\n",
+          "  MEASURE(`sales_largest`) AS `sales_largest`,\n",
+          "  MEASURE(`sales_smallest`) AS `sales_smallest`\n",
+          "FROM CATALOG_NAME.SCHEMA_NAME.sales_relationships\n",
+          "GROUP BY ALL"
+        ]
+      },
+      {
+        "id": "01f0e034f32819f0996e63738565d3cb",
+        "question": [
+          "What are the sales statistics by day of the week?"
+        ],
+        "sql": [
+          "SELECT\n",
+          "  dayOfWeek,\n",
+          "  MEASURE(`sales_sum`),\n",
+          "  MEASURE(`sales_avg`) AS `sales_avg`,\n",
+          "  MEASURE(`sales_stddev`) AS `sales_stddev`,\n",
+          "  MEASURE(`sales_median`) AS `sales_median`,\n",
+          "  MEASURE(`sales_quartile1`) AS `sales_quartile1`,\n",
+          "  MEASURE(`sales_quartile2`) AS `sales_quartile2`,\n",
+          "  MEASURE(`sales_quartile3`) AS `sales_quartile3`,\n",
+          "  MEASURE(`sales_quartile4`) AS `sales_quartile4`,\n",
+          "  MEASURE(`sales_largest`) AS `sales_largest`,\n",
+          "  MEASURE(`sales_smallest`) AS `sales_smallest`\n",
+          "FROM CATALOG_NAME.SCHEMA_NAME.sales_relationships\n",
+          "GROUP BY ALL\n",
+          "ORDER BY dayOfWeek"
+        ]
+      },
+      {
+        "id": "01f0e034f3291e7d975ad11ee97a866b",
+        "question": [
+          "What are the sales statistics by day of the week?"
+        ],
+        "sql": [
+          "SELECT\n",
+          "  dayOfWeek,\n",
+          "  MEASURE(`sales_sum`),\n",
+          "  MEASURE(`sales_avg`),\n",
+          "  MEASURE(`sales_stddev`),\n",
+          "  MEASURE(`sales_median`),\n",
+          "  MEASURE(`sales_quartile1`),\n",
+          "  MEASURE(`sales_quartile2`),\n",
+          "  MEASURE(`sales_quartile3`),\n",
+          "  MEASURE(`sales_quartile4`),\n",
+          "  MEASURE(`sales_largest`),\n",
+          "  MEASURE(`sales_smallest`)\n",
+          "FROM CATALOG_NAME.SCHEMA_NAME.sales_relationships\n",
+          "GROUP BY ALL\n",
+          "ORDER BY dayOfWeek"
+        ]
+      }
+    ]
+  }
+}

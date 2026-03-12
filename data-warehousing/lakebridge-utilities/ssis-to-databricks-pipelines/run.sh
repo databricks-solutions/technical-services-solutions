@@ -1,0 +1,600 @@
+#!/bin/bash
+# End-to-end automation for SSIS-to-Databricks migration using Lakebridge.
+#
+# Prerequisite: Lakebridge must be installed (`databricks labs install lakebridge`)
+#
+# This script handles everything else:
+#   1. Installs BladeBridge transpiler and Switch LLM transpiler
+#   2. Runs BladeBridge to produce initial PySpark conversion from SSIS packages
+#   3. Separates job JSONs (orchestration reference) and moves .py files to switch_input/
+#   4. Uploads custom prompt and updates switch_config.yml on workspace
+#   5. Runs Switch LLM transpiler to convert .py files to notebooks
+#   6. Creates a Lakeflow Declarative Pipeline
+#
+# Default override JSON and prompt YAML are located alongside this script.
+# Pass -r or -x to use files from other locations.
+#
+# Usage:
+#   ./run.sh [options]
+#
+# Options:
+#   -i, --input-source       Local path to SSIS packages (.dtsx files or project folder)
+#   -o, --output-folder      Local path for BladeBridge output
+#   -w, --output-ws-folder   Workspace folder for notebooks (must start with /Workspace/)
+#   -e, --user-email         User email override (default: auto-detected from Databricks profile)
+#   -p, --profile            Databricks CLI profile (default: DEFAULT)
+#   -c, --catalog            Catalog for Switch artifacts (default: lakebridge)
+#   -s, --schema             Schema for Switch artifacts (default: switch)
+#   -v, --volume             UC Volume name (default: switch_volume)
+#   -m, --foundation-model   Foundation model endpoint (default: databricks-claude-sonnet-4-5)
+#   -r, --overrides-file     Override JSON for BladeBridge (default: sample_override.json in script dir)
+#   -x, --custom-prompt      Custom Switch prompt YAML (default: ssis_to_databricks_prompt.yml in script dir)
+#       --bronze-catalog     Bronze layer catalog (default: value of -c/--catalog)
+#       --bronze-schema      Bronze layer schema (default: value of -s/--schema)
+#       --silver-catalog     Silver layer catalog (default: prompted)
+#       --silver-schema      Silver layer schema (default: prompted)
+#       --gold-catalog       Gold layer catalog (default: prompted)
+#       --gold-schema        Gold layer schema (default: prompted)
+#       --pipeline-name      Pipeline name (default: derived from output folder basename)
+#       --cluster-policy     Cluster policy ID for pipeline compute (omit for serverless)
+#       --skip-det-install   Skip deterministic transpiler (BladeBridge) installation
+#       --skip-llm-install   Skip LLM transpiler (Switch) installation
+#       --skip-bladebridge   Skip BladeBridge step (if output already exists)
+#       --skip-switch        Skip Switch LLM entirely (install + conversion)
+#   -h, --help               Show this help message
+#
+# All flags are prompted interactively if not provided.
+
+set -euo pipefail
+
+CLEANUP_FILES=()
+cleanup() {
+    for f in "${CLEANUP_FILES[@]:-}"; do
+        [[ -n "$f" ]] && rm -rf "$f" 2>/dev/null
+    done
+}
+trap cleanup EXIT
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+INPUT_SOURCE=""
+OUTPUT_FOLDER=""
+OUTPUT_WS_FOLDER=""
+USER_EMAIL=""
+PROFILE=""
+CATALOG=""
+SCHEMA=""
+VOLUME=""
+FOUNDATION_MODEL=""
+OVERRIDES_FILE=""
+CUSTOM_PROMPT=""
+BRONZE_CATALOG=""
+BRONZE_SCHEMA=""
+SILVER_CATALOG=""
+SILVER_SCHEMA=""
+GOLD_CATALOG=""
+GOLD_SCHEMA=""
+PIPELINE_NAME=""
+CLUSTER_POLICY=""
+USE_SERVERLESS=true
+SKIP_DET_INSTALL=false
+SKIP_LLM_INSTALL=false
+SKIP_BLADEBRIDGE=false
+SKIP_SWITCH=false
+
+usage() {
+    sed -n '/^# Usage:/,/^[^#]/{ /^#/s/^# \?//p }' "$0"
+    exit 0
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -i|--input-source)       INPUT_SOURCE="$2"; shift 2 ;;
+        -o|--output-folder)      OUTPUT_FOLDER="$2"; shift 2 ;;
+        -w|--output-ws-folder)   OUTPUT_WS_FOLDER="$2"; shift 2 ;;
+        -e|--user-email)         USER_EMAIL="$2"; shift 2 ;;
+        -p|--profile)            PROFILE="$2"; shift 2 ;;
+        -c|--catalog)            CATALOG="$2"; shift 2 ;;
+        -s|--schema)             SCHEMA="$2"; shift 2 ;;
+        -v|--volume)             VOLUME="$2"; shift 2 ;;
+        -m|--foundation-model)   FOUNDATION_MODEL="$2"; shift 2 ;;
+        -r|--overrides-file)     OVERRIDES_FILE="$2"; shift 2 ;;
+        -x|--custom-prompt)      CUSTOM_PROMPT="$2"; shift 2 ;;
+        --bronze-catalog)        BRONZE_CATALOG="$2"; shift 2 ;;
+        --bronze-schema)         BRONZE_SCHEMA="$2"; shift 2 ;;
+        --silver-catalog)        SILVER_CATALOG="$2"; shift 2 ;;
+        --silver-schema)         SILVER_SCHEMA="$2"; shift 2 ;;
+        --gold-catalog)          GOLD_CATALOG="$2"; shift 2 ;;
+        --gold-schema)           GOLD_SCHEMA="$2"; shift 2 ;;
+        --pipeline-name)         PIPELINE_NAME="$2"; shift 2 ;;
+        --cluster-policy)       CLUSTER_POLICY="$2"; USE_SERVERLESS=false; shift 2 ;;
+        --skip-det-install)      SKIP_DET_INSTALL=true; shift ;;
+        --skip-llm-install)      SKIP_LLM_INSTALL=true; shift ;;
+        --skip-bladebridge)      SKIP_BLADEBRIDGE=true; SKIP_DET_INSTALL=true; shift ;;
+        --skip-switch)           SKIP_SWITCH=true; SKIP_LLM_INSTALL=true; shift ;;
+        -h|--help)               usage ;;
+        *) echo "Unknown option: $1"; usage ;;
+    esac
+done
+
+# --- Defaults for override and prompt (sibling files) ---
+
+if [ -z "$OVERRIDES_FILE" ]; then
+    OVERRIDES_FILE="${SCRIPT_DIR}/sample_override.json"
+fi
+if [ ! -f "$OVERRIDES_FILE" ]; then
+    echo "Error: override file '${OVERRIDES_FILE}' not found."
+    exit 1
+fi
+
+if [ -z "$CUSTOM_PROMPT" ]; then
+    CUSTOM_PROMPT="${SCRIPT_DIR}/ssis_to_databricks_prompt.yml"
+fi
+if [ ! -f "$CUSTOM_PROMPT" ]; then
+    echo "Error: custom prompt file '${CUSTOM_PROMPT}' not found."
+    exit 1
+fi
+
+# --- Prompt for missing values ---
+
+if [ -z "$PROFILE" ]; then
+    read -rp "Databricks CLI profile [default: DEFAULT]: " PROFILE
+    PROFILE="${PROFILE:-DEFAULT}"
+fi
+
+PROFILE_FLAG="-p $PROFILE"
+
+if [ -z "$USER_EMAIL" ]; then
+    echo "Detecting user email from Databricks profile '${PROFILE}'..."
+    USER_EMAIL=$(databricks current-user me $PROFILE_FLAG -o json 2>/dev/null \
+        | python3 -c "import sys,json; print(json.load(sys.stdin)['userName'])" 2>/dev/null) || true
+    if [ -z "$USER_EMAIL" ]; then
+        echo "Error: could not detect user email from profile. Pass -e/--user-email explicitly."
+        exit 1
+    fi
+    echo "  Detected: ${USER_EMAIL}"
+fi
+
+if [ "$SKIP_SWITCH" = false ]; then
+    read -rp "Run Switch LLM cleanup? (Y/n): " run_switch_answer
+    if [[ "$run_switch_answer" =~ ^[Nn]$ ]]; then
+        SKIP_SWITCH=true
+        SKIP_LLM_INSTALL=true
+    elif [ "$SKIP_LLM_INSTALL" = false ]; then
+        read -rp "Install Switch LLM transpiler first? (y/N): " install_switch_answer
+        if [[ "$install_switch_answer" =~ ^[Yy]$ ]]; then
+            SKIP_LLM_INSTALL=false
+        else
+            SKIP_LLM_INSTALL=true
+        fi
+    fi
+fi
+
+if [ "$SKIP_BLADEBRIDGE" = false ]; then
+    read -rp "Run BladeBridge deterministic conversion? (Y/n): " run_bb_answer
+    if [[ "$run_bb_answer" =~ ^[Nn]$ ]]; then
+        SKIP_BLADEBRIDGE=true; SKIP_DET_INSTALL=true
+    elif [ "$SKIP_DET_INSTALL" = false ]; then
+        read -rp "  Install BladeBridge transpiler first? (y/N): " install_bb_answer
+        if [[ ! "$install_bb_answer" =~ ^[Yy]$ ]]; then
+            SKIP_DET_INSTALL=true
+        fi
+    fi
+fi
+
+if [ "$SKIP_BLADEBRIDGE" = false ]; then
+    if [ -z "$INPUT_SOURCE" ]; then
+        read -rp "Local path to SSIS packages (.dtsx files or project folder): " INPUT_SOURCE
+    fi
+    if [ ! -e "$INPUT_SOURCE" ]; then
+        echo "Error: input source '${INPUT_SOURCE}' does not exist."
+        exit 1
+    fi
+fi
+
+if [ -z "$OUTPUT_FOLDER" ]; then
+    read -rp "Local output folder for BladeBridge results: " OUTPUT_FOLDER
+fi
+if [ -z "$OUTPUT_FOLDER" ]; then
+    echo "Error: output folder is required."
+    exit 1
+fi
+
+if [ -z "$OUTPUT_WS_FOLDER" ]; then
+    read -rp "Workspace output folder (must start with /Workspace/): " OUTPUT_WS_FOLDER
+fi
+if [[ ! "$OUTPUT_WS_FOLDER" == /Workspace/* ]]; then
+    echo "Error: workspace output folder must start with /Workspace/"
+    exit 1
+fi
+
+if [ -z "$CATALOG" ]; then
+    read -rp "Catalog name for Switch artifacts [default: lakebridge]: " CATALOG
+    CATALOG="${CATALOG:-lakebridge}"
+fi
+
+if [ -z "$SCHEMA" ]; then
+    read -rp "Schema name for Switch artifacts [default: switch]: " SCHEMA
+    SCHEMA="${SCHEMA:-switch}"
+fi
+
+if [ -z "$VOLUME" ]; then
+    read -rp "UC Volume name [default: switch_volume]: " VOLUME
+    VOLUME="${VOLUME:-switch_volume}"
+fi
+
+if [ -z "$FOUNDATION_MODEL" ]; then
+    read -rp "Foundation model endpoint [default: databricks-claude-sonnet-4-5]: " FOUNDATION_MODEL
+    FOUNDATION_MODEL="${FOUNDATION_MODEL:-databricks-claude-sonnet-4-5}"
+fi
+
+# --- Medallion catalog/schema prompts ---
+
+if [ -z "$BRONZE_CATALOG" ]; then
+    read -rp "Bronze layer catalog [default: lakebridge]: " BRONZE_CATALOG
+    BRONZE_CATALOG="${BRONZE_CATALOG:-lakebridge}"
+fi
+if [ -z "$BRONZE_SCHEMA" ]; then
+    read -rp "Bronze layer schema [default: bronze]: " BRONZE_SCHEMA
+    BRONZE_SCHEMA="${BRONZE_SCHEMA:-bronze}"
+fi
+
+if [ -z "$SILVER_CATALOG" ]; then
+    read -rp "Silver layer catalog [default: ${BRONZE_CATALOG}]: " SILVER_CATALOG
+    SILVER_CATALOG="${SILVER_CATALOG:-$BRONZE_CATALOG}"
+fi
+if [ -z "$SILVER_SCHEMA" ]; then
+    read -rp "Silver layer schema [default: silver]: " SILVER_SCHEMA
+    SILVER_SCHEMA="${SILVER_SCHEMA:-silver}"
+fi
+
+if [ -z "$GOLD_CATALOG" ]; then
+    read -rp "Gold layer catalog [default: ${BRONZE_CATALOG}]: " GOLD_CATALOG
+    GOLD_CATALOG="${GOLD_CATALOG:-$BRONZE_CATALOG}"
+fi
+if [ -z "$GOLD_SCHEMA" ]; then
+    read -rp "Gold layer schema [default: gold]: " GOLD_SCHEMA
+    GOLD_SCHEMA="${GOLD_SCHEMA:-gold}"
+fi
+
+if [ -z "$CLUSTER_POLICY" ]; then
+    read -rp "Pipeline compute — Serverless (S) or Cluster Policy (C)? [default: S]: " compute_choice
+    if [[ "$compute_choice" =~ ^[Cc]$ ]]; then
+        USE_SERVERLESS=false
+        read -rp "  Cluster policy ID: " CLUSTER_POLICY
+        if [ -z "$CLUSTER_POLICY" ]; then
+            echo "Error: cluster policy ID is required when using cluster compute."
+            exit 1
+        fi
+    fi
+fi
+
+echo ""
+echo "============================================"
+echo "  SSIS-to-Databricks Migration"
+echo "============================================"
+echo "  Profile:            ${PROFILE}"
+echo "  User email:         ${USER_EMAIL}"
+[ "$SKIP_BLADEBRIDGE" = false ] && echo "  Input source:       ${INPUT_SOURCE}"
+echo "  Output folder:      ${OUTPUT_FOLDER}"
+echo "  Workspace folder:   ${OUTPUT_WS_FOLDER}"
+echo "  Override file:      ${OVERRIDES_FILE}"
+echo "  Custom prompt:      ${CUSTOM_PROMPT}"
+echo "  Catalog:            ${CATALOG}"
+echo "  Schema:             ${SCHEMA}"
+echo "  Volume:             ${VOLUME}"
+echo "  Foundation model:   ${FOUNDATION_MODEL}"
+echo "  Bronze:             ${BRONZE_CATALOG}.${BRONZE_SCHEMA}"
+echo "  Silver:             ${SILVER_CATALOG}.${SILVER_SCHEMA}"
+echo "  Gold:               ${GOLD_CATALOG}.${GOLD_SCHEMA}"
+echo "  Pipeline name:      ${PIPELINE_NAME}"
+echo "  Pipeline compute:   $([ "$USE_SERVERLESS" = true ] && echo 'Serverless' || echo "Cluster Policy: ${CLUSTER_POLICY}")"
+echo "  BladeBridge:        $([ "$SKIP_BLADEBRIDGE" = true ] && echo 'skip' || ([ "$SKIP_DET_INSTALL" = true ] && echo 'run (no install)' || echo 'install + run'))"
+echo "  Switch LLM:        $([ "$SKIP_SWITCH" = true ] && echo 'skip' || ([ "$SKIP_LLM_INSTALL" = true ] && echo 'run (no install)' || echo 'install + run'))"
+echo "============================================"
+echo ""
+read -rp "Proceed? (y/N): " confirm
+if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+    echo "Aborted."
+    exit 0
+fi
+echo ""
+
+# --- Update override file config_variables ---
+
+SED_ARGS=(
+    -e "s|\"USER_NAME\": \".*\"|\"USER_NAME\": \"${USER_EMAIL}\"|"
+    -e "s|\"EMAIL_ADDRESS\": \".*\"|\"EMAIL_ADDRESS\": \"${USER_EMAIL}\"|"
+)
+sed -i.bak "${SED_ARGS[@]}" "$OVERRIDES_FILE"
+rm -f "${OVERRIDES_FILE}.bak"
+
+# =========================================================================
+# Step 1: Install transpilers
+# =========================================================================
+
+if [ "$SKIP_DET_INSTALL" = false ]; then
+    echo "Step 1a: Installing deterministic transpiler (BladeBridge)..."
+    databricks labs lakebridge install-transpile --interactive false $PROFILE_FLAG
+    echo ""
+else
+    echo "Step 1a: Skipping deterministic transpiler install (--skip-det-install)."
+fi
+
+if [ "$SKIP_LLM_INSTALL" = false ]; then
+    echo "Step 1b: Installing LLM transpiler (Switch)..."
+    databricks labs lakebridge install-transpile --include-llm-transpiler true --interactive false $PROFILE_FLAG
+    echo ""
+else
+    echo "Step 1b: Skipping LLM transpiler install (--skip-llm-install)."
+fi
+echo ""
+
+# =========================================================================
+# Step 2: Run BladeBridge transpilation
+# =========================================================================
+
+if [ "$SKIP_BLADEBRIDGE" = false ]; then
+    echo "Step 2: Running BladeBridge transpilation..."
+    echo ""
+
+    mkdir -p "${OUTPUT_FOLDER}"
+    databricks labs lakebridge transpile \
+        --source-dialect "ssis" \
+        --target-technology "SPARKSQL" \
+        --input-source "${INPUT_SOURCE}" \
+        --output-folder "${OUTPUT_FOLDER}" \
+        --overrides-file "${OVERRIDES_FILE}" \
+        --skip-validation true \
+        $PROFILE_FLAG
+
+    echo ""
+    echo "  BladeBridge output: ${OUTPUT_FOLDER}"
+    echo ""
+else
+    echo "Step 2: Skipping BladeBridge (--skip-bladebridge)."
+    if [ ! -d "$OUTPUT_FOLDER" ]; then
+        echo "Error: output folder '${OUTPUT_FOLDER}' does not exist. Cannot skip BladeBridge."
+        exit 1
+    fi
+    echo ""
+fi
+
+
+# =========================================================================
+# Step 3: Preserve raw BladeBridge output, then move .py files to switch_input/
+# =========================================================================
+
+FIRST_PASS_DIR="${OUTPUT_FOLDER}/first_pass"
+mkdir -p "${FIRST_PASS_DIR}"
+find "${OUTPUT_FOLDER}" -maxdepth 1 -type f -exec cp {} "${FIRST_PASS_DIR}/" \;
+file_count=$(find "${FIRST_PASS_DIR}" -type f | wc -l | tr -d ' ')
+echo "  Preserved ${file_count} raw BladeBridge file(s) in: first_pass/"
+echo ""
+
+echo "Step 3: Separating job JSONs and moving .py files to switch_input/..."
+
+# Move JSON files (orchestration definitions) to databricks_jobs/ for reference
+JOBS_DIR="${OUTPUT_FOLDER}/databricks_jobs"
+shopt -s nullglob
+json_files=("${OUTPUT_FOLDER}"/*.json)
+shopt -u nullglob
+
+if [ ${#json_files[@]} -gt 0 ]; then
+    mkdir -p "${JOBS_DIR}"
+    for f in "${json_files[@]}"; do
+        mv "$f" "${JOBS_DIR}/"
+        echo "  Moved: $(basename "$f") -> databricks_jobs/"
+    done
+    echo "  ${#json_files[@]} job JSON(s) preserved for orchestration reference."
+fi
+
+SWITCH_INPUT_DIR="${OUTPUT_FOLDER}/switch_input"
+mkdir -p "${SWITCH_INPUT_DIR}"
+
+shopt -s nullglob
+py_files=("${OUTPUT_FOLDER}"/*.py)
+shopt -u nullglob
+
+if [ ${#py_files[@]} -eq 0 ]; then
+    echo "Error: no .py files found in ${OUTPUT_FOLDER} for LLM conversion."
+    exit 1
+fi
+
+for f in "${py_files[@]}"; do
+    mv "$f" "${SWITCH_INPUT_DIR}/"
+    echo "  Moved: $(basename "$f") -> switch_input/"
+done
+
+echo "  ${#py_files[@]} Python file(s) ready for LLM conversion."
+
+# Derive pipeline name from first .py file now that switch_input/ is populated
+if [ -z "$PIPELINE_NAME" ]; then
+    shopt -s nullglob
+    _first_py=("${SWITCH_INPUT_DIR}"/*.py)
+    shopt -u nullglob
+    if [ ${#_first_py[@]} -gt 0 ]; then
+        PIPELINE_NAME="$(basename "${_first_py[0]}" .py)"
+    else
+        PIPELINE_NAME="$(basename "$OUTPUT_FOLDER")"
+    fi
+fi
+echo ""
+
+# =========================================================================
+# Step 4: Upload custom prompt and update switch_config.yml
+# =========================================================================
+
+if [ "$SKIP_SWITCH" = true ]; then
+    echo "Step 4: Skipping Switch prompt upload (Switch not running)."
+    echo ""
+    echo "Step 5: Skipping Switch LLM conversion."
+    echo ""
+else
+echo "Step 4: Uploading custom prompt and updating Switch configuration..."
+
+PROMPT_FILENAME="$(basename "$CUSTOM_PROMPT")"
+WS_PROMPT_DIR="/Workspace/Users/${USER_EMAIL}/Prompts"
+WS_PROMPT_PATH="${WS_PROMPT_DIR}/${PROMPT_FILENAME}"
+
+if ! databricks workspace mkdirs "${WS_PROMPT_DIR}" $PROFILE_FLAG 2>&1; then
+    echo "  WARNING: Failed to create workspace directory ${WS_PROMPT_DIR}. Continuing..."
+fi
+databricks workspace import "${WS_PROMPT_PATH}" \
+    --file "$CUSTOM_PROMPT" \
+    --format AUTO \
+    --overwrite \
+    $PROFILE_FLAG
+echo "  Uploaded prompt to: ${WS_PROMPT_PATH}"
+
+# Update switch_config.yml on workspace
+SWITCH_CONFIG_WS_PATH="/Users/${USER_EMAIL}/.lakebridge/switch/resources/switch_config.yml"
+SWITCH_CONFIG_LOCAL="${OUTPUT_FOLDER}/switch_config.yml"
+cat > "$SWITCH_CONFIG_LOCAL" <<SWITCHEOF
+# Switch configuration file
+# Auto-generated by ssis_switch_pipeline run.sh
+
+target_type: "sdp"
+source_format: "generic"
+comment_lang: "English"
+log_level: "INFO"
+token_count_threshold: 20000
+concurrency: 4
+max_fix_attempts: 0
+
+conversion_prompt_yaml: ${WS_PROMPT_PATH}
+
+sql_output_dir:
+request_params:
+sdp_language: "python"
+SWITCHEOF
+
+databricks workspace import "${SWITCH_CONFIG_WS_PATH}" \
+    --file "$SWITCH_CONFIG_LOCAL" \
+    --format AUTO \
+    --overwrite \
+    $PROFILE_FLAG
+echo "  Updated switch_config.yml at: ${SWITCH_CONFIG_WS_PATH}"
+echo ""
+
+# =========================================================================
+# Step 5: Run Switch LLM conversion
+# =========================================================================
+
+echo "Step 5: Running Switch LLM transpiler..."
+echo ""
+
+databricks labs lakebridge llm-transpile \
+    --accept-terms true \
+    --input-source "${SWITCH_INPUT_DIR}" \
+    --output-ws-folder "${OUTPUT_WS_FOLDER}" \
+    --source-dialect unknown_etl \
+    --catalog-name "${CATALOG}" \
+    --schema-name "${SCHEMA}" \
+    --volume "${VOLUME}" \
+    --foundation-model "${FOUNDATION_MODEL}" \
+    $PROFILE_FLAG
+
+echo ""
+echo "  LLM conversion is in progress. Notebooks at: ${OUTPUT_WS_FOLDER} when completed"
+echo ""
+
+fi  # end SKIP_SWITCH guard (Steps 4, 5)
+
+# =========================================================================
+# Step 6: Create Lakeflow Declarative Pipeline
+# =========================================================================
+
+echo "Step 6: Creating Lakeflow Declarative Pipeline..."
+
+# Detect workspace host URL for pipeline links
+WS_HOST=""
+WS_HOST=$(python3 -c "
+import configparser, os, sys
+profile = sys.argv[1]
+cfg = configparser.ConfigParser()
+cfg.read(os.path.expanduser('~/.databrickscfg'))
+host = ''
+if cfg.has_section(profile):
+    host = cfg.get(profile, 'host', fallback='')
+if not host and profile.upper() == 'DEFAULT':
+    host = cfg.get('DEFAULT', 'host', fallback='')
+print(host.rstrip('/'))
+" "$PROFILE" 2>/dev/null) || WS_HOST=""
+
+# Build notebook paths from switch_input/ filenames (these are the files Switch will create)
+nb_list=""
+shopt -s nullglob
+switch_py_files=("${SWITCH_INPUT_DIR}"/*.py)
+shopt -u nullglob
+for f in "${switch_py_files[@]}"; do
+    nb_name=$(basename "$f" .py)
+    nb_list="${nb_list}${OUTPUT_WS_FOLDER}/${nb_name}
+"
+done
+
+# Generate pipeline spec
+PIPELINE_SPEC="${OUTPUT_FOLDER}/pipeline_spec.json"
+python3 << PYEOF > "$PIPELINE_SPEC"
+import json, sys
+notebooks = """${nb_list}""".strip().split('\n')
+use_serverless = "${USE_SERVERLESS}" == "true"
+cluster_policy = "${CLUSTER_POLICY}"
+
+spec = {
+    "name": "${PIPELINE_NAME}",
+    "catalog": "${BRONZE_CATALOG}",
+    "target": "${BRONZE_SCHEMA}",
+    "libraries": [{"notebook": {"path": nb}} for nb in notebooks if nb],
+    "configuration": {
+        "bronze_catalog": "${BRONZE_CATALOG}",
+        "bronze_schema": "${BRONZE_SCHEMA}",
+        "silver_catalog": "${SILVER_CATALOG}",
+        "silver_schema": "${SILVER_SCHEMA}",
+        "gold_catalog": "${GOLD_CATALOG}",
+        "gold_schema": "${GOLD_SCHEMA}"
+    }
+}
+
+if use_serverless:
+    spec["serverless"] = True
+    spec["photon"] = True
+else:
+    spec["serverless"] = False
+    spec["clusters"] = [
+        {
+            "label": "default",
+            "policy_id": cluster_policy
+        }
+    ]
+
+print(json.dumps(spec, indent=2))
+PYEOF
+
+echo "  Pipeline spec: ${PIPELINE_SPEC}"
+
+# Create pipeline
+PIPELINE_ID=""
+if output=$(databricks pipelines create --json @"$PIPELINE_SPEC" $PROFILE_FLAG -o json 2>&1); then
+    PIPELINE_ID=$(echo "$output" | python3 -c "import sys,json; print(json.load(sys.stdin)['pipeline_id'])")
+    echo "  Created pipeline: ${PIPELINE_NAME} (ID: ${PIPELINE_ID})"
+else
+    echo "  WARNING: Pipeline creation failed: ${output}"
+    echo "  You can create it manually using: databricks pipelines create --json @${PIPELINE_SPEC} $PROFILE_FLAG"
+fi
+
+echo ""
+echo "============================================"
+echo "  Pipeline Complete"
+echo "============================================"
+echo "  Notebooks:          ${OUTPUT_WS_FOLDER}"
+echo "  BladeBridge:        ${OUTPUT_FOLDER}"
+echo "  First pass:         ${FIRST_PASS_DIR}"
+[ -d "${JOBS_DIR:-}" ] && echo "  Job JSONs:          ${JOBS_DIR}"
+if [ -n "$PIPELINE_ID" ]; then
+echo "  Lakeflow Pipeline:  ${PIPELINE_NAME} (ID: ${PIPELINE_ID})"
+[ -n "$WS_HOST" ] && echo "  Pipeline URL:       ${WS_HOST}/pipelines/${PIPELINE_ID}"
+else
+echo "  Lakeflow Pipeline:  (not created — see pipeline_spec.json)"
+fi
+echo "============================================"

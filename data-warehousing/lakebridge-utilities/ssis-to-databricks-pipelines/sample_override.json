@@ -1,0 +1,449 @@
+{
+  "inherit_from": ["final_ssis2sparksql.json"],
+  "config_variables": {
+    "ROOT_DELTA_DIR": "/root/delta",
+    "SPARK_VERSION": "13.3.x-scala2.12",
+    "USER_NAME": "eri.adepoju@databricks.com",
+    "EMAIL_ADDRESS": "eri.adepoju@databricks.com",
+    "NODE_TYPE": "i3.xlarge",
+    "TASK_PATH": "TASK_PATH",
+    "WORKFLOW_NAME_CLUSTER": "auto_scaling_cluster"
+  },
+  "workflow_specs": {
+    "skip_component_types": ["SEND_MAIL", "CONTAINER_END"],
+    "workflow_component_mapping": {
+
+      "_comment_orchestration": "=== Orchestration-Level Tasks (Control Flow) ===",
+
+      "EXECUTE_SQL_TASK": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "min_retry_interval_millis": 2000,
+        "retry_on_timeout": false,
+        "max_retries": 3,
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%MAPPING_NAME%",
+          "source": "WORKSPACE"
+        }
+      },
+      "EXECUTE_SQL": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "min_retry_interval_millis": 2000,
+        "retry_on_timeout": false,
+        "max_retries": 3,
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%MAPPING_NAME%",
+          "source": "WORKSPACE"
+        }
+      },
+      "EXECUTE_PACKAGE": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "min_retry_interval_millis": 2000,
+        "retry_on_timeout": false,
+        "max_retries": 3,
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%MAPPING_NAME%",
+          "source": "WORKSPACE"
+        }
+      },
+      "PIPELINE": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "min_retry_interval_millis": 2000,
+        "retry_on_timeout": false,
+        "max_retries": 3,
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%MAPPING_NAME%",
+          "source": "WORKSPACE"
+        }
+      },
+      "SCRIPT_TASK": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "min_retry_interval_millis": 2000,
+        "retry_on_timeout": false,
+        "max_retries": 3,
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%JOB_NAME%_%COMPONENT_NAME%",
+          "source": "WORKSPACE"
+        }
+      },
+      "FILE_SYSTEM_TASK": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "min_retry_interval_millis": 2000,
+        "retry_on_timeout": false,
+        "max_retries": 3,
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%JOB_NAME%_%COMPONENT_NAME%",
+          "source": "WORKSPACE"
+        }
+      },
+      "FILE_TASK": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "min_retry_interval_millis": 2000,
+        "retry_on_timeout": false,
+        "max_retries": 3,
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%JOB_NAME%_%COMPONENT_NAME%",
+          "source": "WORKSPACE"
+        }
+      },
+      "EXECUTE_PROCESS": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "min_retry_interval_millis": 2000,
+        "retry_on_timeout": false,
+        "max_retries": 3,
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%JOB_NAME%_%COMPONENT_NAME%",
+          "source": "WORKSPACE"
+        }
+      },
+      "EXPRESION_TASK": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "min_retry_interval_millis": 2000,
+        "retry_on_timeout": false,
+        "max_retries": 3,
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%JOB_NAME%_%COMPONENT_NAME%",
+          "source": "WORKSPACE"
+        }
+      },
+      "MANAGEDCOMPONENTHOST": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "min_retry_interval_millis": 2000,
+        "retry_on_timeout": false,
+        "max_retries": 3,
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%JOB_NAME%_%COMPONENT_NAME%",
+          "source": "WORKSPACE"
+        }
+      },
+
+      "_comment_containers": "=== Container Tasks (Control Flow Grouping) ===",
+
+      "STOCK_FOREACHLOOP": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "min_retry_interval_millis": 2000,
+        "retry_on_timeout": false,
+        "max_retries": 3,
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%JOB_NAME%_%COMPONENT_NAME%",
+          "source": "WORKSPACE"
+        }
+      },
+      "STOCK_FORLOOP": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "min_retry_interval_millis": 2000,
+        "retry_on_timeout": false,
+        "max_retries": 3,
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%JOB_NAME%_%COMPONENT_NAME%",
+          "source": "WORKSPACE"
+        }
+      },
+      "STOCK_SEQUENCE": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "min_retry_interval_millis": 2000,
+        "retry_on_timeout": false,
+        "max_retries": 3,
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%JOB_NAME%_%COMPONENT_NAME%",
+          "source": "WORKSPACE"
+        }
+      },
+
+      "_comment_params": "=== Parameter Loading ===",
+
+      "LOAD_PARAMETERS": {
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%JOB_NAME%_params"
+        }
+      },
+
+      "_comment_conditions": "=== Precedence Constraint Conditions ===",
+
+      "NESTED_CONDITION": {
+        "task_key": "%COMPONENT_NAME%",
+        "condition_task": {
+          "op": "%OP%",
+          "left": "%LEFT_OP%",
+          "right": "%RIGHT_OP%"
+        }
+      },
+
+      "_comment_dataflow": "=== Data Flow Components (emitted as tasks in some configurations) ===",
+
+      "SOURCE": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "min_retry_interval_millis": 2000,
+        "retry_on_timeout": false,
+        "max_retries": 3,
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%MAPPING_NAME%",
+          "source": "WORKSPACE"
+        }
+      },
+      "EXCEL_SOURCE": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "min_retry_interval_millis": 2000,
+        "retry_on_timeout": false,
+        "max_retries": 3,
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%MAPPING_NAME%",
+          "source": "WORKSPACE"
+        }
+      },
+      "TARGET": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "min_retry_interval_millis": 2000,
+        "retry_on_timeout": false,
+        "max_retries": 3,
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%MAPPING_NAME%",
+          "source": "WORKSPACE"
+        }
+      },
+      "EXPRESSION": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "min_retry_interval_millis": 2000,
+        "retry_on_timeout": false,
+        "max_retries": 3,
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%MAPPING_NAME%",
+          "source": "WORKSPACE"
+        }
+      },
+      "AGGREGATOR": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "min_retry_interval_millis": 2000,
+        "retry_on_timeout": false,
+        "max_retries": 3,
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%MAPPING_NAME%",
+          "source": "WORKSPACE"
+        }
+      },
+      "CONDITIONALSPLIT": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "min_retry_interval_millis": 2000,
+        "retry_on_timeout": false,
+        "max_retries": 3,
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%MAPPING_NAME%",
+          "source": "WORKSPACE"
+        }
+      },
+      "LOOKUP": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "min_retry_interval_millis": 2000,
+        "retry_on_timeout": false,
+        "max_retries": 3,
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%MAPPING_NAME%",
+          "source": "WORKSPACE"
+        }
+      },
+      "UNION": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "min_retry_interval_millis": 2000,
+        "retry_on_timeout": false,
+        "max_retries": 3,
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%MAPPING_NAME%",
+          "source": "WORKSPACE"
+        }
+      },
+      "MERGEJOIN": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "min_retry_interval_millis": 2000,
+        "retry_on_timeout": false,
+        "max_retries": 3,
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%MAPPING_NAME%",
+          "source": "WORKSPACE"
+        }
+      },
+      "SORTER": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "min_retry_interval_millis": 2000,
+        "retry_on_timeout": false,
+        "max_retries": 3,
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%MAPPING_NAME%",
+          "source": "WORKSPACE"
+        }
+      },
+      "REPLICATE": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "min_retry_interval_millis": 2000,
+        "retry_on_timeout": false,
+        "max_retries": 3,
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%MAPPING_NAME%",
+          "source": "WORKSPACE"
+        }
+      },
+      "PIVOT": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "min_retry_interval_millis": 2000,
+        "retry_on_timeout": false,
+        "max_retries": 3,
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%MAPPING_NAME%",
+          "source": "WORKSPACE"
+        }
+      },
+      "UNPIVOT": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "min_retry_interval_millis": 2000,
+        "retry_on_timeout": false,
+        "max_retries": 3,
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%MAPPING_NAME%",
+          "source": "WORKSPACE"
+        }
+      },
+      "CACHE": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "min_retry_interval_millis": 2000,
+        "retry_on_timeout": false,
+        "max_retries": 3,
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%MAPPING_NAME%",
+          "source": "WORKSPACE"
+        }
+      },
+      "ROW_COUNT": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "min_retry_interval_millis": 2000,
+        "retry_on_timeout": false,
+        "max_retries": 3,
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%MAPPING_NAME%",
+          "source": "WORKSPACE"
+        }
+      },
+      "SCD": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "min_retry_interval_millis": 2000,
+        "retry_on_timeout": false,
+        "max_retries": 3,
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%MAPPING_NAME%",
+          "source": "WORKSPACE"
+        }
+      },
+      "OS_COMMAND": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "min_retry_interval_millis": 2000,
+        "retry_on_timeout": false,
+        "max_retries": 3,
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%JOB_NAME%_%COMPONENT_NAME%",
+          "source": "WORKSPACE"
+        }
+      },
+      "DUMMY": {
+        "task_key": "%COMPONENT_NAME%",
+        "description": "%DESCRIPTION%",
+        "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+        "notebook_task": {
+          "notebook_path": "/%TASK_PATH%/%JOB_NAME%_%COMPONENT_NAME%",
+          "source": "WORKSPACE"
+        }
+      }
+    },
+    "default_workflow_attr": {
+      "tags": {
+        "project": "ssis_migration"
+      },
+      "job_clusters": [
+        {
+          "job_cluster_key": "%WORKFLOW_NAME_CLUSTER%",
+          "new_cluster": {
+            "spark_version": "%SPARK_VERSION%",
+            "node_type_id": "%NODE_TYPE%",
+            "enable_elastic_disk": "false",
+            "data_security_mode": "SINGLE_USER",
+            "runtime_engine": "STANDARD",
+            "num_workers": 8
+          }
+        }
+      ],
+      "email_notifications": {
+        "on_start": ["%EMAIL_ADDRESS%"],
+        "on_success": ["%EMAIL_ADDRESS%"],
+        "on_failure": ["%EMAIL_ADDRESS%"],
+        "no_alert_for_skipped_runs": false
+      },
+      "timeout_seconds": 86400,
+      "schedule": {
+        "quartz_cron_expression": "20 30 * * * ?",
+        "timezone_id": "Europe/London",
+        "pause_status": "PAUSED"
+      },
+      "max_concurrent_runs": 10,
+      "format": "MULTI_TASK"
+    }
+  }
+}

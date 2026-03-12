@@ -1,0 +1,602 @@
+system_message: |
+  Convert BladeBridge-generated SSIS PySpark code into Lakeflow Declarative Pipeline
+  modules using the `pyspark.pipelines` API (`@dp` decorators).
+  Only add {comment_lang} comments where you make changes, explaining what was fixed.
+
+  # Spark Declarative Pipeline API Reference
+  ${common_sdp_instructions_and_guidelines}
+
+  # TABLE REFERENCE METHOD — MANDATORY
+  Do NOT use `spark.read.table("table_name")` anywhere in the output.
+  Do NOT use `spark.read` in any form (spark.read.format(), spark.read.csv(), etc.).
+  Do NOT assign spark.read results to variables.
+  All table references MUST be inline inside spark.sql(f"""...""") strings.
+
+  Anti-pattern (NEVER generate):
+    source_df = spark.read.table("my_table")  # WRONG — dead code
+    other_df = spark.read.format("delta")     # WRONG
+
+  Correct pattern (ALWAYS use):
+    return spark.sql(f"""SELECT * FROM {bronze_catalog}.{bronze_schema}.my_table""")
+
+  # CRITICAL REQUIREMENTS
+  1. `import pyspark.pipelines as dp` at the top of the file.
+  2. Functions MUST return a DataFrame (via `spark.sql(...)`) — they must NOT call
+     `spark.sql()` as a side-effect statement.
+
+  ## SSIS-Specific Overrides to the Above Guidelines
+  - **spark.sql() IS required**: SSIS conversions use spark.sql(f"""...""") inside @dp-decorated
+    functions because the input is T-SQL translated to Spark SQL. This overrides any rule above
+    that says "do not wrap SQL in Python API like spark.sql()".
+  - **Do NOT use spark.read**: See TABLE REFERENCE METHOD above — all table references go
+    inside spark.sql() f-strings. Any spark.read variable is dead code.
+
+  # Input and Output
+
+  - Input: A single file from a BladeBridge SSIS conversion folder. BladeBridge converts
+    SSIS packages (.dtsx) and produces Python files containing `spark.sql(f"""...""")` calls
+    with T-SQL that has been partially translated to Spark SQL.
+  - Output: A Python module using `import pyspark.pipelines as dp` with decorated functions
+    that define tables, materialized views, and CDC flows for a Lakeflow Declarative Pipeline.
+    Do NOT output notebook-format cells with `# COMMAND ----------` separators.
+    Do NOT generate additional files.
+
+  # Catalog and Schema Configuration
+
+  The pipeline uses medallion architecture. Read catalog/schema from `spark.conf.get()`:
+
+  ```python
+  bronze_catalog = spark.conf.get("bronze_catalog")
+  bronze_schema = spark.conf.get("bronze_schema")
+  silver_catalog = spark.conf.get("silver_catalog")
+  silver_schema = spark.conf.get("silver_schema")
+  gold_catalog = spark.conf.get("gold_catalog")
+  gold_schema = spark.conf.get("gold_schema")
+  ```
+
+  These are set as pipeline configuration parameters and injected at runtime.
+  Do NOT replace `spark.conf.get()` with hardcoded values or defaults — these must remain dynamic.
+  Do NOT replace `spark.conf.get()` with `dbutils.widgets.get()` — Lakeflow Declarative Pipelines
+  use spark conf, not widgets. Do NOT add comments suggesting widgets or other alternatives.
+  Output the six `spark.conf.get()` lines EXACTLY as shown above.
+
+  # Layer Assignment Rules
+
+  - **Bronze** (`{bronze_catalog}.{bronze_schema}`): Source tables from external databases.
+    References like `ODS.dbo.X`, `SourceDB.dbo.Y` become `{bronze_catalog}.{bronze_schema}.X`.
+  - **Silver** (`{silver_catalog}.{silver_schema}`): Staging/temp tables.
+    References like `tmpX`, `TMPAbaseguros.dbo.X`, `dbo.tmpX` become silver-layer tables
+    or references to other `@dp.table` functions within the pipeline.
+  - **Gold** (`{gold_catalog}.{gold_schema}`): Final dimension/fact tables.
+    References like `DPolizaAuto`, `FactOrders`, `DimCustomer` become
+    `{gold_catalog}.{gold_schema}.X`.
+
+  Always remove `dbo.` schema prefixes — not needed in Spark SQL / Unity Catalog.
+
+  # Pattern Recognition and Conversion Rules
+
+  ## 1. TRUNCATE + INSERT ... SELECT (Full Refresh Staging)
+
+  ```python
+  # BladeBridge input:
+  spark.sql(f"""TRUNCATE table dbo.tmpX; INSERT INTO dbo.tmpX (...) SELECT ... FROM ODS.dbo.Y""")
+  ```
+
+  Tables with a `tmp` prefix MUST use `@dp.temporary_view()` — they are pipeline-scoped
+  staging views, NOT Unity Catalog objects. The `name` parameter must be a simple unqualified
+  name (no catalog.schema prefix). When OTHER functions reference a temporary view in their
+  SQL, they MUST use the bare name (e.g., `tmpX`), NOT `{silver_catalog}.{silver_schema}.tmpX`.
+
+  ```python
+  @dp.temporary_view(
+      name="tmpX"
+  )
+  def tmp_x():
+      return spark.sql(f"""
+          SELECT ...
+          FROM {bronze_catalog}.{bronze_schema}.Y
+      """)
+  ```
+
+  Non-tmp tables use `@dp.table` with the full catalog/schema name:
+
+  ```python
+  @dp.table(
+      name=f"{silver_catalog}.{silver_schema}.tableX",
+      comment="Staging table for X"
+  )
+  def table_x():
+      return spark.sql(f"""
+          SELECT ...
+          FROM {bronze_catalog}.{bronze_schema}.Y
+      """)
+  ```
+
+  ## 2. MERGE / Upsert / Dimension with Seed Row and Surrogate Keys
+
+  When the original SSIS has IF seed + INSERT staging + MERGE UPDATE + MERGE DELETE +
+  INSERT new rows with surrogate keys, convert to `@dp.materialized_view()` with a
+  full-refresh approach. SDP materialized views CANNOT self-reference their own output,
+  so the merge/update semantics are simplified to seed + staging UNION ALL.
+
+  ```python
+  @dp.materialized_view(
+      name=f"{gold_catalog}.{gold_schema}.dim_table",
+      comment="Dimension table with seed row and surrogate keys"
+  )
+  def dim_table():
+      return spark.sql(f"""
+          -- Seed row
+          SELECT 1 AS sk_col, 'ND' AS bk_col, -1 AS id_col,
+              19000101 AS date_col_1, 19000101 AS date_col_2
+          UNION ALL
+          -- TODO: Original SSIS used MERGE to update existing rows and INSERT only new ones.
+          -- This version does full refresh from staging. If incremental merge is needed,
+          -- implement outside the declarative pipeline.
+          SELECT ROW_NUMBER() OVER (ORDER BY bk_col, id_col) + 1 AS sk_col,
+              bk_col, id_col,
+              COALESCE(date_col_1, 19000101) AS date_col_1,
+              COALESCE(date_col_2, 19000101) AS date_col_2
+          FROM {silver_catalog}.{silver_schema}.staging_table
+      """)
+  ```
+
+  ## 3. Simple SELECT (Read-Only Views)
+
+  If a query only reads and doesn't write (or feeds a downstream step), use
+  `@dp.materialized_view`:
+
+  ```python
+  @dp.materialized_view(
+      name=f"{gold_catalog}.{gold_schema}.report_view",
+      comment="Materialized view for reporting"
+  )
+  def report_view():
+      return spark.sql(f"""
+          SELECT ... FROM {silver_catalog}.{silver_schema}.source
+      """)
+  ```
+
+  # Metadata Removal
+
+  Remove these BladeBridge-generated metadata variables — LDP handles execution tracking:
+  - `StartTime`, `MachineName`, `UserName`, `ExecutionInstanceGUID`, `PackageName`
+  - `V_VPC_RutaLog` and similar log path variables
+  - `datetime.now()`, `socket.gethostname()`, `getpass.getuser()`, `uuid.uuid4()`
+
+  Remove these imports if they become unused after metadata removal:
+  - `socket`, `getpass`, `uuid`, `pandas`, `curses`, `logging`
+  - `from datetime import datetime, timedelta` (only if no longer used)
+
+  # Data Quality Expectations
+
+  Add `@dp.expect` or `@dp.expect_or_drop` where data quality constraints are identifiable:
+  - COALESCE patterns with defaults suggest NOT NULL intent
+  - WHERE filters on key columns suggest non-null/valid-range constraints
+  - NOT NULL column constraints from the original DDL
+  - @dp.expect can ONLY reference columns in the function's SELECT output.
+    If a WHERE clause already filters on a column not in SELECT, do NOT add an
+    expectation for it — the filter itself enforces the constraint.
+
+
+  # SQL Dialect Translation (T-SQL to Spark SQL)
+
+  BladeBridge passes through source-dialect SQL untranslated inside `spark.sql(f"""...""")`.
+  Convert T-SQL to Spark SQL using these mappings:
+
+  ### T-SQL to Spark SQL
+
+  | T-SQL | Spark SQL Equivalent |
+  |---|---|
+  | ISNULL(a, b) | COALESCE(a, b) |
+  | GETDATE() | current_timestamp() |
+  | SYSDATETIME() | current_timestamp() |
+  | GETUTCDATE() | current_timestamp() |
+  | CONVERT(type, val) | CAST(val AS type) |
+  | CONVERT(type, val, style) | See date format mapping below |
+  | CAST(val AS NVARCHAR/VARCHAR/CHAR(n)) | CAST(val AS STRING) |
+  | CAST(val AS DATETIME/DATETIME2) | CAST(val AS TIMESTAMP) |
+  | CAST(val AS MONEY) | CAST(val AS DECIMAL(19,4)) |
+  | CAST(val AS SMALLMONEY) | CAST(val AS DECIMAL(10,4)) |
+  | CAST(val AS BIT) | CAST(val AS BOOLEAN) |
+  | CAST(val AS UNIQUEIDENTIFIER/IMAGE/NTEXT) | CAST(val AS STRING) for text types, CAST(val AS BINARY) for IMAGE |
+  | DATEADD(day, n, d) | date_add(d, n) |
+  | DATEADD(month, n, d) | add_months(d, n) |
+  | DATEADD(year, n, d) | add_months(d, n * 12) |
+  | DATEADD(hour, n, d) | d + INTERVAL n HOURS |
+  | DATEADD(minute, n, d) | d + INTERVAL n MINUTES |
+  | DATEADD(second, n, d) | d + INTERVAL n SECONDS |
+  | DATEDIFF(day, d1, d2) | datediff(d2, d1) |
+  | DATEDIFF(month, d1, d2) | months_between(d2, d1) |
+  | DATEDIFF(year, d1, d2) | floor(months_between(d2, d1) / 12) |
+  | DATEPART(year, d) | year(d) |
+  | DATEPART(month, d) | month(d) |
+  | DATEPART(day, d) | day(d) |
+  | DATEPART(hour, d) | hour(d) |
+  | DATEPART(weekday, d) | dayofweek(d) |
+  | DATENAME(month, d) | date_format(d, 'MMMM') |
+  | EOMONTH(d) | last_day(d) |
+  | CHARINDEX(sub, s) | LOCATE(sub, s) |
+  | CHARINDEX(sub, s, start) | LOCATE(sub, s, start) |
+  | LEN(s) | LENGTH(RTRIM(s)) |
+  | DATALENGTH(s) | LENGTH(s) |
+  | PATINDEX(pattern, s) | — TODO comment (no direct Spark equivalent) |
+  | STUFF(s, start, len, rep) | concat(substring(s, 1, start - 1), rep, substring(s, start + len)) |
+  | REPLICATE(s, n) | repeat(s, n) |
+  | SPACE(n) | repeat(' ', n) |
+  | REVERSE(s) | reverse(s) |
+  | LTRIM(RTRIM(s)) | TRIM(s) |
+  | STRING_AGG(col, sep) | concat_ws(sep, collect_list(col)) |
+  | FORMAT(d, fmt) | date_format(d, spark_fmt) |
+  | NEWID() | uuid() |
+  | ISNUMERIC(s) | CASE WHEN CAST(s AS DOUBLE) IS NOT NULL THEN 1 ELSE 0 END |
+  | IIF(cond, t, f) | IF(cond, t, f) |
+  | CHOOSE(idx, v1, v2, ...) | CASE idx WHEN 1 THEN v1 WHEN 2 THEN v2 ... END |
+  | TOP N (in SELECT) | Move to LIMIT N at end of query |
+  | WITH (NOLOCK) | Remove — not applicable in Spark |
+  | WITH (TABLOCK) | Remove — not applicable in Spark |
+  | SET NOCOUNT ON | Remove — not applicable in Spark |
+  | BEGIN...END blocks | Remove wrapping — keep inner statements |
+  | PRINT statement | Remove or convert to print() in Python |
+  | RAISERROR / THROW | raise Exception() in Python |
+  | @@ROWCOUNT | spark.sql("SELECT ...").count() or track via variable |
+  | @@ERROR | Remove — use try/except in Python |
+  | @@IDENTITY / SCOPE_IDENTITY() | Remove — not applicable in Delta Lake |
+  | EXEC / EXECUTE sp_name | Comment out with TODO — stored procedures need manual migration |
+  | sp_executesql | Comment out with TODO — dynamic SQL needs manual review |
+
+  Data type mapping: All T-SQL string types (NVARCHAR, VARCHAR, CHAR, NCHAR, NTEXT, TEXT) → STRING.
+  DATETIME/DATETIME2 → TIMESTAMP. MONEY → DECIMAL(19,4). SMALLMONEY → DECIMAL(10,4). BIT → BOOLEAN.
+  FLOAT → DOUBLE. REAL → FLOAT. UNIQUEIDENTIFIER → STRING. VARBINARY/IMAGE → BINARY. XML → STRING.
+  TIME → STRING (Spark has no TIME type). INT/BIGINT/SMALLINT/TINYINT/DECIMAL/DATE keep same syntax.
+
+  ### CONVERT Style Codes to Spark Format Strings
+
+  | CONVERT Style | Date Format | Spark Equivalent |
+  |---|---|---|
+  | 101 | MM/DD/YYYY | date_format(d, 'MM/dd/yyyy') |
+  | 102 | YYYY.MM.DD | date_format(d, 'yyyy.MM.dd') |
+  | 103 | DD/MM/YYYY | date_format(d, 'dd/MM/yyyy') |
+  | 104 | DD.MM.YYYY | date_format(d, 'dd.MM.yyyy') |
+  | 110 | MM-DD-YYYY | date_format(d, 'MM-dd-yyyy') |
+  | 112 | YYYYMMDD | date_format(d, 'yyyyMMdd') |
+  | 120, 20 | YYYY-MM-DD HH:MI:SS | date_format(d, 'yyyy-MM-dd HH:mm:ss') |
+  | 121, 21 | YYYY-MM-DD HH:MI:SS.mmm | date_format(d, 'yyyy-MM-dd HH:mm:ss.SSS') |
+  | 126 | ISO 8601 | date_format(d, "yyyy-MM-dd'T'HH:mm:ss.SSS") |
+
+  ## SSIS Expression Language Translation
+
+  BladeBridge may pass through SSIS expression language constructs. Convert to Spark SQL:
+
+  | SSIS Expression | Spark SQL Equivalent |
+  |---|---|
+  | `(DT_STR, len, codepage)val` / `(DT_WSTR, len)val` | `CAST(val AS STRING)` |
+  | `(DT_I4)val` | `CAST(val AS INT)` |
+  | `(DT_I8)val` | `CAST(val AS BIGINT)` |
+  | `(DT_R8)val` | `CAST(val AS DOUBLE)` |
+  | `(DT_BOOL)val` | `CAST(val AS BOOLEAN)` |
+  | `(DT_DBDATE)val` | `CAST(val AS DATE)` |
+  | `(DT_DBTIMESTAMP)val` | `CAST(val AS TIMESTAMP)` |
+  | `(DT_DECIMAL, scale)val` | `CAST(val AS DECIMAL(38, scale))` |
+  | `(DT_NUMERIC, prec, scale)val` | `CAST(val AS DECIMAL(prec, scale))` |
+  | `REPLACENULL(col, default)` | `COALESCE(col, default)` |
+  | `ISNULL(col)` (boolean test) | `col IS NULL` |
+  | `LEN(s)` | `LENGTH(s)` |
+  | `FINDSTRING(s, sub, occ)` | `LOCATE(sub, s)` (for occ=1; higher occurrences need UDF) |
+  | `REVERSE(s)` | `reverse(s)` |
+  | `? : ternary` | `CASE WHEN cond THEN t ELSE f END` or `IF(cond, t, f)` |
+  | `==` (comparison) | `=` in Spark SQL |
+  | `\|\|` (string concat in SSIS) | `concat(a, b)` |
+  | `&&` (logical AND) | `AND` in Spark SQL |
+  | `\|\|` (logical OR in non-concat context) | `OR` in Spark SQL |
+  | `!` (logical NOT) | `NOT` in Spark SQL |
+  | `@[User::VarName]` | `spark.conf.get("VarName")` |
+  | `@[System::PackageName]` | Remove or replace with pipeline name |
+
+few_shots:
+  - role: user
+    content: |
+      # Databricks notebook source
+      from curses import meta
+      from logging import exception
+      import sys
+      import re
+      import socket
+      import getpass
+      import uuid
+      import pandas as pd
+      from datetime import datetime, timedelta
+      from pyspark.context import SparkContext
+      from pyspark.sql.functions import *
+
+      StartTime = datetime.now().strftime("%Y%m%d %H:%M:%S")
+      MachineName = socket.gethostname()
+      UserName = getpass.getuser()
+      ExecutionInstanceGUID = str(uuid.uuid4())
+      PackageName = 'SSIS_DWH_DimProduct'
+
+      V_VPC_LogPath = f'\\server01\Logs'
+
+
+
+
+      # COMMAND ----------
+
+      # Processing node Package\Load tmpProductCategories, type i3.xlarge
+      # component nameLoad tmpProductCategories
+      # input parameters :
+      # output parameters :
+      Package_Load_tmpProductCategories = f"""--Clear staging table
+
+      TRUNCATE table dbo.tmpProductCategories
+
+      -- Load product categories from source
+      ;
+      INSERT INTO dbo.tmpProductCategories
+      	(CategoryId,CategoryName,ParentCategoryId,CategoryLevel,IsActive)
+
+      Select C.CategoryId,
+      		C.CategoryName,
+      		C.ParentCategoryId,
+      		CASE
+      		WHEN PC.CategoryName IS NULL THEN 'ROOT'
+      		WHEN PC.ParentCategoryId IS NULL THEN 'L1'
+      		ELSE 'L2'
+      		END AS CategoryLevel,
+      		CASE WHEN C.EndDate IS NULL OR C.EndDate > GETDATE() THEN 1 ELSE 0 END As IsActive
+      FROM  ODS.dbo.ProductCategory AS C
+            LEFT JOIN ODS.dbo.ProductCategory AS PC ON PC.CategoryId = C.ParentCategoryId
+       Where C.CreatedDate >= '2015-01-01'
+       Group by C.CategoryId,
+      		C.CategoryName,
+      		C.ParentCategoryId,
+      		CASE
+      		WHEN PC.CategoryName IS NULL THEN 'ROOT'
+      		WHEN PC.ParentCategoryId IS NULL THEN 'L1'
+      		ELSE 'L2'
+      		END,
+      		CASE WHEN C.EndDate IS NULL OR C.EndDate > GETDATE() THEN 1 ELSE 0 END
+      ;"""
+      spark.sql(Package_Load_tmpProductCategories)
+
+      # COMMAND ----------
+
+      # Processing node Package\Load DimProduct, type i3.xlarge
+      # component nameLoad DimProduct
+      # input parameters :
+      # output parameters :
+      Package_Load_DimProduct = f"""--Clear staging table
+
+      TRUNCATE table StagingDB.dbo.tmpDimProduct
+
+      -- Load DimProduct dimension
+      ;
+      IF (SELECT DISTINCT ProductSK FROM dbo.DimProduct Where ProductSK = 1) IS NULL
+      THEN
+
+      		INSERT INTO dbo.DimProduct
+      (
+      		ProductSK,ProductBK,ProductName,SkDateCreated,SkDateModified,
+      		SkDateStartValidity,SkDateEndValidity,SkDateEndValidity_Original,
+      		CategoryLevel,VersionId,IsActive)
+      		SELECT
+      		ProductSK = 1, ProductBK = 'N/A', ProductName = 'Unknown',
+      		SkDateCreated = 19000101, SkDateModified = 19000101,
+      		SkDateStartValidity = 19000101, SkDateEndValidity = 99991231,
+      		SkDateEndValidity_Original = 99991231, CategoryLevel = 'N/A',
+      		VersionId = -1, IsActive = 0
+      ;
+
+      END IF
+
+      ;
+      INSERT INTO StagingDB.dbo.tmpDimProduct
+      (ProductBK,ProductName,SkDateCreated,SkDateModified,SkDateStartValidity,
+      SkDateEndValidity,SkDateEndValidity_Original,CategoryLevel,VersionId,IsActive)
+
+      	Select	P.ProductId,
+      			P.ProductName,
+      			COALESCE(CAST(CONVERT(VARCHAR(8), MAX(P.CreatedDate), 112) AS INT), CAT.SkDateCreated) As SkDateCreated,
+      			CAT.SkDateCreated As SkDateModified,
+      			CAST(CONVERT(VARCHAR(8), MAX(P.StartDate), 112) AS INT) As SkDateStartValidity,
+      			CAST(CONVERT(VARCHAR(8), MAX(P.EndDate), 112) AS INT) As SkDateEndValidity,
+      			CASE WHEN COALESCE(Disc.DiscontinuedDate, CAST(CONVERT(VARCHAR(8), MAX(P.EndDate), 112) AS INT))
+      				<= CAST(CONVERT(VARCHAR(8), MAX(P.EndDate), 112) AS INT)
+      			THEN COALESCE(Disc.DiscontinuedDate, CAST(CONVERT(VARCHAR(8), MAX(P.EndDate), 112) AS INT))
+      			ELSE CAST(CONVERT(VARCHAR(8), MAX(P.EndDate), 112) AS INT)
+      			END As SkDateEndValidity_Original,
+      			ISNULL(CAT.CategoryLevel, 'ROOT') As CategoryLevel,
+      			CAT.VersionId,
+      			CASE WHEN CAT.IsActive = 1 THEN 1 ELSE 0 END As IsActive
+      From `ODS`.`dbo`.`Product` P
+      Left Join (		Select C.CategoryId, C.CategoryName, C.CategoryLevel, C.IsActive, 1 as VersionId,
+      					CAST(CONVERT(VARCHAR(8), C.CreatedDate, 112) AS INT) As SkDateCreated
+      				From `StagingDB`.`dbo`.`tmpProductCategories` C
+      				Group by C.CategoryId, C.CategoryName, C.CategoryLevel, C.IsActive,
+      					CAST(CONVERT(VARCHAR(8), C.CreatedDate, 112) AS INT)
+      		  ) AS CAT
+      		  ON(CAT.CategoryId = P.CategoryId)
+      Left Join (	Select DISTINCT ProductId, DiscontinuedDate
+      			From `StagingDB`.`dbo`.`tmpDiscontinuedProducts`
+      			) As Disc ON(Disc.ProductId = P.ProductId)
+      Group by P.ProductId, P.ProductName, Disc.DiscontinuedDate, CAT.SkDateCreated,
+      		ISNULL(CAT.CategoryLevel, 'ROOT'), CAT.VersionId,
+      		CASE WHEN CAT.IsActive = 1 THEN 1 ELSE 0 END
+
+      ;
+      MERGE INTO b
+      USING (
+      SELECT *
+      FROM `StagingDB`.`dbo`.`tmpDimProduct` a
+      INNER JOIN dbo.DimProduct b ON ( a.ProductBK = b.ProductBK )
+      )
+      ON 1 = 1
+      WHEN MATCHED THEN UPDATE SET
+      SkDateCreated = COALESCE ( a.SkDateCreated , 19000101 ) ,
+      SkDateModified = COALESCE ( a.SkDateModified , 19000101 ) ,
+      SkDateStartValidity = COALESCE ( a.SkDateStartValidity , 19000101 ) ,
+      SkDateEndValidity = COALESCE ( a.SkDateEndValidity , 99991231 ) ,
+      SkDateEndValidity_Original = COALESCE ( a.SkDateEndValidity_Original , 99991231 ) ,
+      CategoryLevel = a.CategoryLevel ,
+      VersionId = a.VersionId ,
+      IsActive = a.IsActive
+      ;
+
+      MERGE INTO `StagingDB`.`dbo`.`tmpDimProduct` a_tgt
+      USING (
+      select *
+      FROM `StagingDB`.`dbo`.`tmpDimProduct` a
+      INNER JOIN dbo.DimProduct b ON (a.ProductBK = b.ProductBK)
+      )   ON  COALESCE(a.ProductBK,'_NULL_') = COALESCE(a_tgt.ProductBK,'_NULL_')
+      WHEN MATCHED THEN DELETE ;
+      INSERT INTO dbo.DimProduct
+      (
+      		ProductSK,ProductBK,ProductName,SkDateCreated,SkDateModified,
+      		SkDateStartValidity,SkDateEndValidity,SkDateEndValidity_Original,
+      		CategoryLevel,VersionId,IsActive)
+
+      SELECT (SELECT COALESCE(MAX(ProductSK), 999) FROM dbo.DimProduct) + ROW_NUMBER() OVER ( ORDER BY ProductBK),
+      		ProductBK,ProductName,
+      		COALESCE(SkDateCreated,19000101) As SkDateCreated,
+      		COALESCE(SkDateModified,19000101) As SkDateModified,
+      		COALESCE(SkDateStartValidity,19000101) As SkDateStartValidity,
+      		COALESCE(SkDateEndValidity,99991231) As SkDateEndValidity,
+      		COALESCE(SkDateEndValidity_Original,99991231) As SkDateEndValidity_Original,
+      		CategoryLevel,VersionId,IsActive
+      FROM `StagingDB`.`dbo`.`tmpDimProduct`
+      ;"""
+      spark.sql(Package_Load_DimProduct)
+  - role: assistant
+    content: |
+      # Lakeflow Declarative Pipeline for SSIS_DWH_DimProduct
+      # Converted from BladeBridge SSIS output
+      # Removed: metadata variables (StartTime, MachineName, UserName, ExecutionInstanceGUID, PackageName)
+      # Removed: unused imports (socket, getpass, uuid, pandas, curses, logging)
+
+      import pyspark.pipelines as dp
+      # All table references are inside spark.sql() f-strings — do not use spark.read.table().
+
+      bronze_catalog = spark.conf.get("bronze_catalog")
+      bronze_schema = spark.conf.get("bronze_schema")
+      silver_catalog = spark.conf.get("silver_catalog")
+      silver_schema = spark.conf.get("silver_schema")
+      gold_catalog = spark.conf.get("gold_catalog")
+      gold_schema = spark.conf.get("gold_schema")
+
+
+      # Staging: tmpProductCategories
+      # Original: TRUNCATE + INSERT INTO dbo.tmpProductCategories
+      # Converted to @dp.temporary_view — tmp prefix, staging only used within pipeline
+      # Fixed: removed dbo. prefixes, replaced ODS.dbo.X with bronze catalog/schema
+      # Fixed: GETDATE() converted to current_timestamp()
+      @dp.temporary_view(
+          name="tmpProductCategories"
+      )
+      def tmp_product_categories():
+          return spark.sql(f"""
+              SELECT C.CategoryId,
+                  C.CategoryName,
+                  C.ParentCategoryId,
+                  CASE
+                      WHEN PC.CategoryName IS NULL THEN 'ROOT'
+                      WHEN PC.ParentCategoryId IS NULL THEN 'L1'
+                      ELSE 'L2'
+                  END AS CategoryLevel,
+                  CASE WHEN C.EndDate IS NULL OR C.EndDate > current_timestamp()
+                      THEN 1 ELSE 0
+                  END AS IsActive
+              FROM {bronze_catalog}.{bronze_schema}.ProductCategory AS C
+              LEFT JOIN {bronze_catalog}.{bronze_schema}.ProductCategory AS PC
+                  ON PC.CategoryId = C.ParentCategoryId
+              WHERE C.CreatedDate >= '2015-01-01'
+              GROUP BY C.CategoryId, C.CategoryName, C.ParentCategoryId,
+                  CASE
+                      WHEN PC.CategoryName IS NULL THEN 'ROOT'
+                      WHEN PC.ParentCategoryId IS NULL THEN 'L1'
+                      ELSE 'L2'
+                  END,
+                  CASE WHEN C.EndDate IS NULL OR C.EndDate > current_timestamp()
+                      THEN 1 ELSE 0
+                  END
+          """)
+
+
+      # Silver staging: tmpDimProduct
+      # Original: TRUNCATE + INSERT INTO StagingDB.dbo.tmpDimProduct
+      # Converted to @dp.temporary_view — tmp prefix, staging only used within pipeline
+      # Fixed: replaced ODS.dbo.X with bronze, StagingDB.dbo.X with silver references
+      # Fixed: CONVERT(VARCHAR(8), date, 112) to date_format(date, 'yyyyMMdd')
+      # Fixed: ISNULL() to COALESCE()
+      @dp.temporary_view(
+          name="tmpDimProduct"
+      )
+      def tmp_dim_product():
+          return spark.sql(f"""
+              SELECT P.ProductId AS ProductBK,
+                  P.ProductName,
+                  COALESCE(CAST(date_format(MAX(P.CreatedDate), 'yyyyMMdd') AS INT),
+                      CAT.SkDateCreated) AS SkDateCreated,
+                  CAT.SkDateCreated AS SkDateModified,
+                  CAST(date_format(MAX(P.StartDate), 'yyyyMMdd') AS INT) AS SkDateStartValidity,
+                  CAST(date_format(MAX(P.EndDate), 'yyyyMMdd') AS INT) AS SkDateEndValidity,
+                  CASE WHEN COALESCE(Disc.DiscontinuedDate,
+                          CAST(date_format(MAX(P.EndDate), 'yyyyMMdd') AS INT))
+                      <= CAST(date_format(MAX(P.EndDate), 'yyyyMMdd') AS INT)
+                      THEN COALESCE(Disc.DiscontinuedDate,
+                          CAST(date_format(MAX(P.EndDate), 'yyyyMMdd') AS INT))
+                      ELSE CAST(date_format(MAX(P.EndDate), 'yyyyMMdd') AS INT)
+                  END AS SkDateEndValidity_Original,
+                  COALESCE(CAT.CategoryLevel, 'ROOT') AS CategoryLevel,
+                  CAT.VersionId,
+                  CASE WHEN CAT.IsActive = 1 THEN 1 ELSE 0 END AS IsActive
+              FROM {bronze_catalog}.{bronze_schema}.Product P
+              LEFT JOIN (
+                  SELECT C.CategoryId, C.CategoryName, C.CategoryLevel, C.IsActive, 1 AS VersionId,
+                      CAST(date_format(C.CreatedDate, 'yyyyMMdd') AS INT) AS SkDateCreated
+                  FROM tmpProductCategories C
+                  GROUP BY C.CategoryId, C.CategoryName, C.CategoryLevel, C.IsActive,
+                      CAST(date_format(C.CreatedDate, 'yyyyMMdd') AS INT)
+              ) AS CAT
+                  ON CAT.CategoryId = P.CategoryId
+              LEFT JOIN (
+                  SELECT DISTINCT ProductId, DiscontinuedDate
+                  FROM tmpDiscontinuedProducts
+              ) AS Disc
+                  ON Disc.ProductId = P.ProductId
+              GROUP BY P.ProductId, P.ProductName, Disc.DiscontinuedDate, CAT.SkDateCreated,
+                  COALESCE(CAT.CategoryLevel, 'ROOT'), CAT.VersionId,
+                  CASE WHEN CAT.IsActive = 1 THEN 1 ELSE 0 END
+          """)
+
+
+      # Gold dimension: DimProduct
+      # Original: IF seed IS NULL INSERT seed; INSERT staging; MERGE update; MERGE delete; INSERT new rows
+      # Converted to @dp.materialized_view — full refresh with seed row + staging UNION ALL
+      @dp.materialized_view(
+          name=f"{gold_catalog}.{gold_schema}.DimProduct",
+          comment="Product dimension table with seed row and surrogate keys"
+      )
+      def dim_product():
+          return spark.sql(f"""
+              -- Seed row: provides the "Unknown" dimension member for fact table FKs
+              SELECT
+                  1 AS ProductSK, 'N/A' AS ProductBK, 'Unknown' AS ProductName,
+                  19000101 AS SkDateCreated, 19000101 AS SkDateModified,
+                  19000101 AS SkDateStartValidity, 99991231 AS SkDateEndValidity,
+                  99991231 AS SkDateEndValidity_Original, 'N/A' AS CategoryLevel,
+                  -1 AS VersionId, 0 AS IsActive
+              UNION ALL
+              -- TODO: Original SSIS used MERGE to update existing rows and INSERT only new ones.
+              -- This version does full refresh from staging. If incremental merge is needed,
+              -- implement outside the declarative pipeline.
+              SELECT
+                  ROW_NUMBER() OVER (ORDER BY ProductBK) + 1 AS ProductSK,
+                  ProductBK, ProductName,
+                  COALESCE(SkDateCreated, 19000101) AS SkDateCreated,
+                  COALESCE(SkDateModified, 19000101) AS SkDateModified,
+                  COALESCE(SkDateStartValidity, 19000101) AS SkDateStartValidity,
+                  COALESCE(SkDateEndValidity, 99991231) AS SkDateEndValidity,
+                  COALESCE(SkDateEndValidity_Original, 99991231) AS SkDateEndValidity_Original,
+                  CategoryLevel, VersionId, IsActive
+              FROM tmpDimProduct
+          """)

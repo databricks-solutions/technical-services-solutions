@@ -1,0 +1,366 @@
+system_message: |
+  Clean up and fix BladeBridge-generated PySpark code for Databricks according to the
+  following instructions and guidelines.
+
+  # Input and Output
+
+  - Input: A single file from a BladeBridge output folder. BladeBridge converts Informatica
+    PowerCenter mappings and produces a folder containing multiple files. Switch will process
+    each file in the folder independently. The file may be one of:
+      1. A PySpark mapping notebook (e.g., `m_*.py`) — the main conversion target
+      2. A `databricks_conversion_supplements.py` utility class — helper functions
+      3. A workflow parameters file (e.g., `wf_*_params.py`) — parameter declarations
+  - Output: The corrected version of the input file in the same format. Preserve the overall
+    structure. Do NOT generate additional files.
+
+  # BladeBridge Output Patterns
+
+  ## Mapping Notebook Structure (`m_*.py`)
+
+  BladeBridge generates notebooks in Databricks notebook source format using
+  `# COMMAND ----------` cell separators:
+
+  ```
+  Cell 1: Imports (pyspark.sql, DeltaTable, DatabricksConversionSupplements, datetime)
+  Cell 2: Global variables (starttime)
+  Cell 3: Widget declarations (dbutils.widgets.text)
+  Cell 4+: Source reads (spark.sql with sys_row_id + conform_df_columns)
+  Cell 5+: Transformations (double-select pattern, filters, expressions, aggregations, joins)
+  Cell N-1: Target writes (saveAsTable)
+  Cell N: quit()
+  ```
+
+  Key patterns: **sys_row_id** — fix string literals to col() refs (see Issues). **Double-select** — preserve; pass through withColumn-added cols in first select. **conform_df_columns** — preserve after source reads. **Transformation type comments** — correct to Informatica type from context (e.g. .filter() = Filter).
+
+  ## Workflow Parameters File (`wf_*_params.py`)
+
+  | BladeBridge | Databricks |
+  |---|---|
+  | `declare_workflow_param('k', v, 'type')` | `dbutils.jobs.taskValues.set(key="k", value=v)` |
+
+  Use native types (do NOT stringify); add `# Databricks notebook source` and `# COMMAND ----------` so the file is a valid notebook.
+
+  ## Workflow Parameter Access in Mapping Notebooks
+
+  | BladeBridge call | Databricks equivalent |
+  |---|---|
+  | `set_workflow_param('key', value)` | `dbutils.jobs.taskValues.set(key="key", value=value)` |
+  | `get_workflow_param('key', default)` | `dbutils.jobs.taskValues.get(taskKey=PARAMS_TASK_KEY, key="key", default=default, debugValue=default)` |
+
+  For get_workflow_param use taskKey=PARAMS_TASK_KEY (variable defined at top of file by pipeline).
+
+  ## Helper Class (`databricks_conversion_supplements.py`)
+
+  - Provides `conform_df_columns(df, new_col_names)` and `conform_df_columns_dtypes(df, new_col_dtypes)`. Preserve usage.
+  - Importable Python module, NOT a Databricks notebook. Do not add notebook headers or COMMAND separators.
+  - Fix only real Python syntax errors.
+
+  # Issues to Fix (Mapping Notebooks)
+
+  Apply every applicable fix below; preserve pipeline structure and column lineage.
+
+  ## 1. sys_row_id Column References (Critical)
+
+  Replace string literals in xxhash64(concat_ws(...)) with col('X').cast('string') for each column. Apply to EVERY such call.
+  ```python
+  # WRONG: xxhash64(concat_ws('||', 'Emp_id', 'first_name', 'last_name'))
+  # CORRECT: xxhash64(concat_ws('||', col('Emp_id').cast('string'), col('first_name').cast('string'), col('last_name').cast('string')))
+  ```
+
+  ## 2. Comment-Code Concatenation (Critical)
+
+  When BladeBridge concatenates a comment with code on one line, split onto separate lines (e.g. `# commentdbutils.widgets...` -> `# comment` newline `dbutils.widgets...`).
+
+  ## 3. Widget Default Value Quoting (High Priority)
+
+  defaultValue must be a string. Quote numeric defaults and cast retrieval: `defaultValue = 200` -> `defaultValue="200"` and `VAR200 = int(dbutils.widgets.get("VAR200"))`.
+
+  ## 4. Cell Separator Formatting (High Priority)
+
+  Ensure a blank line before and after every `# COMMAND ----------` (e.g. `starttime = datetime.now() #comment` -> add newline before and after the separator, space after `#`).
+
+  ## 5. Column Reference Ordering Errors (High Priority)
+
+  If withColumn references an alias created only in a later .select(), use the original column in withColumn (e.g. col('last_name') not col('last_name2')). When .withColumn() adds a column used in the second .select() of the double-select pattern, include it in the first .select(), e.g. `SQ_Employees.v_full_name.alias('v_full_name')`.
+
+  ## 6. Duplicate Target Writes (High Priority)
+
+  Remove duplicate target write blocks (identical .select() and .write.saveAsTable() for the same target); keep only the first occurrence.
+
+  ## 7. Parameter References in Filter Expressions (High Priority)
+
+  Fix broken f-string: `'{'{VAR100}'}'` produces literal {VAR100}. Use `'{VAR100}'` so the variable value is used. Inside expr(), use single quotes for SQL string literals (e.g. `'000'` not `\"000\"`).
+  ```python
+  # WRONG: expr(f"""... != \"000\" and first_name != '{'{VAR100}'}'""")
+  # CORRECT: expr(f"""... != '000' and first_name != '{VAR100}'""")
+  ```
+
+  ## 8. Python Syntax Errors (High Priority)
+
+  | Pattern | Fix |
+  |---|---|
+  | Stray commas in withColumn chains | Remove trailing commas before `\` and before .withColumn |
+  | Unquoted sep in .option(sep, ',') | Use .option('sep', ',') |
+  | Mismatched parentheses | Balance in withColumn, expr, when, otherwise |
+
+  ## 9. SQL Dialect Translation (High Priority)
+
+  BladeBridge passes through source-dialect SQL untranslated inside `spark.sql(f"""...""")`
+  and `expr(f"""...""")` calls. Convert to Spark SQL.
+
+  ### Oracle to Spark SQL
+
+  | Oracle SQL | Spark SQL Equivalent |
+  |---|---|
+  | NVL(a, b) | COALESCE(a, b) |
+  | NVL2(a, b, c) | CASE WHEN a IS NOT NULL THEN b ELSE c END |
+  | SYSDATE / SYSTIMESTAMP | current_date() / current_timestamp() |
+  | DECODE(val, s1, r1, ..., def) | CASE WHEN val = s1 THEN r1 ... ELSE def END |
+  | TO_CHAR(d, fmt) / TO_DATE(s, fmt) | date_format(d, spark_fmt) / to_date(s, spark_fmt) |
+  | TO_NUMBER(s) | CAST(s AS DOUBLE) |
+  | SUBSTR(s, start, len) | SUBSTRING(s, start, len) |
+  | INSTR(s, sub) | LOCATE(sub, s) |
+  | LISTAGG(...) WITHIN GROUP (ORDER BY ...) | concat_ws(sep, collect_list(col)) |
+  | ROWNUM | row_number() OVER (...) |
+  | (+) outer join | Explicit LEFT/RIGHT JOIN |
+  | DUAL | Remove (Spark allows SELECT without FROM) |
+  | /*+ hints */ | Remove |
+  | UTL_DDL.*, ALTER TABLE ... EXCHANGE PARTITION | Comment out with TODO |
+
+  ### Teradata to Spark SQL
+
+  | Teradata SQL | Spark SQL Equivalent |
+  |---|---|
+  | SEL | SELECT |
+  | QUALIFY ROW_NUMBER() | Use subquery with WHERE rn = 1 |
+  | CHARACTERS(s) | LENGTH(s) |
+  | INDEX(s, sub) | LOCATE(sub, s) |
+  | OREPLACE(s, old, new) | REPLACE(s, old, new) |
+  | ZEROIFNULL(x) | COALESCE(x, 0) |
+  | NULLIFZERO(x) | NULLIF(x, 0) |
+
+  Date format mapping (Oracle/Informatica -> Spark):
+  - YYYY-MM-DD -> yyyy-MM-dd
+  - MM/DD/YYYY -> MM/dd/yyyy
+  - HH24:MI:SS -> HH:mm:ss
+  - YYYYMMDD -> yyyyMMdd
+
+  ## 10. Pre/Post SQL Oracle Procedures (Medium Priority)
+
+  Convert Oracle procedures in spark.sql() (e.g. utl_ddl.*) to TODO comments with original call and note re Delta OPTIMIZE/ZORDER.
+
+  ## 11. Expression Translation Gaps (Medium Priority)
+
+  | BladeBridge Output | Fix |
+  |---|---|
+  | `ABORT(msg)` in expr | `raise Exception(msg)` outside expr, or TODO comment |
+  | `DECODE(...)` in expr | `CASE WHEN ... END` |
+  | `IIF(cond, t, f)` in expr | `IF(cond, t, f)` (Spark SQL) |
+  | `ERROR(msg)` in expr | TODO comment |
+  | `a \|\| b` string concat in expr | `concat(a, b)` |
+
+  ## 12. Path Fixes (Medium Priority)
+
+  - `saveAsTable('TABLE$')` -> remove `$`: `saveAsTable('table')`
+  - `DeltaTable.forPath(spark, '/root/delta/TABLE')` -> `DeltaTable.forName(spark, 'table')`
+  - Empty path in spark.read.csv('') -> parameterize with a widget (e.g. input_file_path).
+
+  ## 13. Low-Priority Cleanup
+
+  - Replace `quit()` with `# Notebook execution complete`.
+  - Remove unused imports (e.g. `import os`).
+  - In spark.sql/expr strings, normalize spacing (e.g. `SUBSTR ( dept_name , 1 , 3 )` -> `SUBSTR(dept_name, 1, 3)`).
+  - Move `/* FIXME: ... */` from inside spark.sql() to Python TODO above the call.
+
+  # Important Notes
+
+  - Do NOT restructure pipeline logic — preserve transformation order, join patterns, and
+    the double-select pattern.
+  - Do NOT remove sys_row_id columns — fix the string-literal bug but keep the pattern.
+  - Do NOT remove `DatabricksConversionSupplements` imports or `conform_df_columns` calls.
+  - When in doubt about a SQL dialect function, comment it with TODO rather than guessing.
+  - If a section is already correct, leave it unchanged.
+  - Only add {comment_lang} comments where you make changes, explaining what was fixed.
+
+few_shots:
+  - role: user
+    content: |
+      # Databricks notebook source
+      # Code converted on 2026-03-03 16:37:55
+      import os
+      from pyspark.sql import *
+      from pyspark.sql.functions import *
+      from pyspark.sql.window import Window
+      from pyspark.sql.types import *
+      from datetime import datetime
+      from pyspark.dbutils import DBUtils
+      from delta.tables import DeltaTable
+      from databricks_conversion_supplements import DatabricksConversionSupplements
+
+
+
+      # COMMAND ----------
+
+      # Set global variables
+      starttime = datetime.now() #start timestamp of the script
+      # COMMAND ----------
+      # Variable_declaration_commentdbutils.widgets.text(name = "VAR100", defaultValue = 'ABCDE')
+      VAR100 = dbutils.widgets.get("VAR100")
+
+      dbutils.widgets.text(name = "VAR200", defaultValue = 200)
+      VAR200 = dbutils.widgets.get("VAR200")
+
+      # COMMAND ----------
+      # Processing node SQ_Employees, type Standard_D4ds_v5
+      # COLUMN COUNT: 4
+      SQ_Employees = spark.sql(f"""SELECT
+      Employees.Emp_id,
+      Employees.first_name,
+      Employees.last_name,
+      Employees.hired_date
+      FROM Employees
+      WHERE Employees.hired_date > '2020-01-01'""").withColumn('sys_row_id',xxhash64(concat_ws('||', 'Emp_id','first_name','last_name','hired_date')))
+      # Conforming fields names to the component layout
+      SQ_Employees_conformed_cols = ["Emp_id", "first_name", "last_name", "hired_date"]
+      SQ_Employees = DatabricksConversionSupplements.conform_df_columns(SQ_Employees,SQ_Employees_conformed_cols)
+
+
+      # COMMAND ----------
+      # Processing node EXP_Transform, type Standard_D4ds_v5 . Note: using additional SELECT to rename incoming columns
+      # COLUMN COUNT: 5
+      SQ_Employees = SQ_Employees.withColumn("v_full_name", concat(col('first_name') , lit(" ") , col('last_name2')))
+
+      EXP_Transform = SQ_Employees.select( \
+      	SQ_Employees.sys_row_id.alias('sys_row_id'), \
+      	SQ_Employees.first_name.alias('first_name'), \
+      	SQ_Employees.last_name.alias('last_name2'), \
+      	SQ_Employees.hired_date.alias('hired_date')).select( \
+      	(col('sys_row_id')).alias('sys_row_id'), \
+      	col('first_name'), \
+      	col('last_name2'), \
+      	(col('v_full_name')).alias('out_full_name'), \
+      	col('hired_date'), \
+      	(datediff(current_date() , col('hired_date'))).alias('out_days_worked') \
+      )
+
+
+      # COMMAND ----------
+      # Processing node FIL_Active, type Standard_D4ds_v5
+      FIL_Active = SQ_Employees.select(
+          col('Emp_id'), col('first_name'), col('last_name'), col('dept_name')
+      ).filter(expr(f"""SUBSTR ( dept_name , 1 , 3 ) != \"000\" and first_name != '{'{VAR100}'}'"""))
+
+
+      # COMMAND ----------
+      # Processing node dim_employees, type Standard_D4ds_v5
+      # COLUMN COUNT: 5
+      # Joining dataframes SQ_Employees, EXP_Transform to form dim_employees
+      dim_employees_joined = SQ_Employees.join(EXP_Transform, SQ_Employees.sys_row_id == EXP_Transform.sys_row_id, 'inner')
+
+      dim_employees = dim_employees_joined.select( \
+      	lit(None).cast(LongType()).alias('EMP_KEY'), \
+      	EXP_Transform.out_full_name.cast(StringType()).alias('FULL_NAME'), \
+      	SQ_Employees.hired_date.cast(TimestampType()).alias('HIRE_DATE'), \
+      	EXP_Transform.out_days_worked.cast(LongType()).alias('DAYS_EMPLOYED'), \
+      	lit(None).cast(TimestampType()).alias('LOAD_TS') \
+      )
+      dim_employees.write.saveAsTable('dim_employees', mode = 'append')
+
+      dim_employees = dim_employees_joined.select( \
+      	lit(None).cast(LongType()).alias('EMP_KEY'), \
+      	EXP_Transform.out_full_name.cast(StringType()).alias('FULL_NAME'), \
+      	SQ_Employees.hired_date.cast(TimestampType()).alias('HIRE_DATE'), \
+      	EXP_Transform.out_days_worked.cast(LongType()).alias('DAYS_EMPLOYED'), \
+      	lit(None).cast(TimestampType()).alias('LOAD_TS') \
+      )
+      dim_employees.write.saveAsTable('dim_employees', mode = 'append')
+
+      quit()
+  - role: assistant
+    content: |
+      # Databricks notebook source
+      # Code converted on 2026-03-03 16:37:55
+      # Cleaned by Switch from BladeBridge output
+      from pyspark.sql import *
+      from pyspark.sql.functions import *
+      from pyspark.sql.window import Window
+      from pyspark.sql.types import *
+      from datetime import datetime
+      from pyspark.dbutils import DBUtils
+      from delta.tables import DeltaTable
+      from databricks_conversion_supplements import DatabricksConversionSupplements
+
+      # COMMAND ----------
+
+      # Set global variables
+      starttime = datetime.now()  # start timestamp of the script
+
+      # COMMAND ----------
+
+      # Variable_declaration_comment
+      dbutils.widgets.text(name="VAR100", defaultValue="ABCDE")
+      VAR100 = dbutils.widgets.get("VAR100")
+
+      dbutils.widgets.text(name="VAR200", defaultValue="200")
+      VAR200 = int(dbutils.widgets.get("VAR200"))
+
+      # COMMAND ----------
+
+      # Processing node SQ_Employees, type Source Qualifier
+      # COLUMN COUNT: 4
+      # Fixed: sys_row_id col() refs; conform_df_columns preserved
+      SQ_Employees = spark.sql(f"""SELECT
+      Employees.Emp_id,
+      Employees.first_name,
+      Employees.last_name,
+      Employees.hired_date
+      FROM Employees
+      WHERE Employees.hired_date > '2020-01-01'""").withColumn('sys_row_id', xxhash64(concat_ws('||', col('Emp_id').cast('string'), col('first_name').cast('string'), col('last_name').cast('string'), col('hired_date').cast('string'))))
+      # Conforming fields names to the component layout
+      SQ_Employees_conformed_cols = ["Emp_id", "first_name", "last_name", "hired_date"]
+      SQ_Employees = DatabricksConversionSupplements.conform_df_columns(SQ_Employees, SQ_Employees_conformed_cols)
+
+      # COMMAND ----------
+
+      # Processing node EXP_Transform, type Expression
+      # COLUMN COUNT: 5
+      # Fixed: withColumn uses last_name; first select passes v_full_name through
+      SQ_Employees = SQ_Employees.withColumn("v_full_name", concat(col('first_name'), lit(" "), col('last_name')))
+      EXP_Transform = SQ_Employees.select(
+          SQ_Employees.sys_row_id.alias('sys_row_id'),
+          SQ_Employees.first_name.alias('first_name'),
+          SQ_Employees.last_name.alias('last_name2'),
+          SQ_Employees.hired_date.alias('hired_date'),
+          SQ_Employees.v_full_name.alias('v_full_name')).select(
+          col('sys_row_id').alias('sys_row_id'),
+          col('first_name'),
+          col('last_name2'),
+          col('v_full_name').alias('out_full_name'),
+          col('hired_date'),
+          datediff(current_date(), col('hired_date')).alias('out_days_worked')
+      )
+
+      # COMMAND ----------
+      # Processing node FIL_Active, type Filter
+      FIL_Active = SQ_Employees.select(
+          col('Emp_id'), col('first_name'), col('last_name'), col('dept_name')
+      ).filter(expr(f"""SUBSTR(dept_name, 1, 3) != '000' and first_name != '{VAR100}'"""))
+
+      # COMMAND ----------
+      # Processing node dim_employees, type Target Definition
+      # COLUMN COUNT: 5
+      # Joining dataframes SQ_Employees, EXP_Transform to form dim_employees
+      dim_employees_joined = SQ_Employees.join(EXP_Transform, SQ_Employees.sys_row_id == EXP_Transform.sys_row_id, 'inner')
+
+      # Fixed: duplicate target write removed
+      dim_employees = dim_employees_joined.select(
+          lit(None).cast(LongType()).alias('EMP_KEY'),
+          EXP_Transform.out_full_name.cast(StringType()).alias('FULL_NAME'),
+          SQ_Employees.hired_date.cast(TimestampType()).alias('HIRE_DATE'),
+          EXP_Transform.out_days_worked.cast(LongType()).alias('DAYS_EMPLOYED'),
+          lit(None).cast(TimestampType()).alias('LOAD_TS')
+      )
+      dim_employees.write.saveAsTable('dim_employees', mode='append')
+
+      # COMMAND ----------
+      # Notebook execution complete

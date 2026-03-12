@@ -23,7 +23,7 @@ sync:
 resources:
   apps:
     migration-accelerator:
-      name: migration-accelerator-v2
+      name: migration-accelerator
       description: "Assess and visualize ETL migration complexity and data lineage"
       source_code_path: ${workspace.root_path}/files
       config:

@@ -1,6 +1,6 @@
 # Lakebridge utilities
 
-Utilities for migrating legacy ETL (SSIS and Informatica) to Databricks using [Lakebridge](https://docs.databricks.com/lakebridge/) (BladeBridge transpiler + Switch LLM transpiler).
+Utilities for migrating legacy ETL (SSIS and Informatica) to Databricks using [Lakebridge](https://databrickslabs.github.io/lakebridge) (BladeBridge transpiler + Switch LLM transpiler).
 
 **Prerequisite:** Lakebridge must be installed (`databricks labs install lakebridge`).
 

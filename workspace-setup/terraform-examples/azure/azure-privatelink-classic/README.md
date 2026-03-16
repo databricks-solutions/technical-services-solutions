@@ -164,17 +164,6 @@ To verify the deployment succeeded:
 3. **Workspace access** – Open `terraform output -raw workspace_url` in a browser and sign in (public access is always enabled).
 4. **Classic cluster** – Create and start a **classic cluster** (Compute → Create cluster; use the default "Standard” cluster type, not high-concurrency/shared). Once the cluster is in "Running" state, the setup is proven: the cluster has obtained IPs from the VNet subnets and can reach the control plane and DBFS over the private endpoints.
 
-### Gathering test evidence
-
-A script is provided to capture automated checks and produce a verification report (useful for audits or proof of a working setup):
-
-```bash
-# From the scenario root (azure-privatelink-classic/) or with path to tf/
-./scripts/verify-deployment.sh
-```
-
-Requires Azure CLI to be logged in (`az login`). The report is written to `VERIFICATION_REPORT.md` in the scenario root and includes: Terraform outputs, resource group and VNet checks, private endpoint and private DNS zone listing, and workspace URL reachability (HTTP). For full evidence, open the workspace URL in a browser, sign in, **create and start a classic cluster** until it reaches "Running", and optionally capture a screenshot of the cluster or a simple job run.
-
 ## Clean-up
 
 To destroy all resources created by this scenario:

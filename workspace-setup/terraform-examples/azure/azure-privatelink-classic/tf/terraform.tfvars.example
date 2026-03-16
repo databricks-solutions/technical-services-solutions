@@ -36,8 +36,14 @@ existing_data_plane_resource_group_name = ""
 # Network Configuration
 # =============================================================================
 
-# CIDR for the data plane VNet (e.g. 10.139.0.0/16)
+# CIDR for the data plane VNet address space (must encompass all subnets)
 cidr_dp = "10.0.0.0/16"
+
+# Workspace subnets: [public, private]. Must be within cidr_dp (e.g. /24).
+subnet_workspace_cidrs = ["10.0.0.0/24", "10.0.1.0/24"]
+
+# Private Link subnet for control plane and DBFS private endpoints (e.g. /26)
+subnet_private_endpoint_cidr = "10.0.2.0/26"
 
 # Optional: Service endpoints for the public and private subnets (e.g. ["Microsoft.Storage"])
 subnets_service_endpoints = []

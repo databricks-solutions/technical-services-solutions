@@ -5,8 +5,7 @@
 # compute (SQL warehouses, serverless jobs, etc.) can reach DBFS over Private
 # Link. Adds private endpoint rules for the workspace root storage (blob + dfs).
 # Databricks creates private endpoint requests in Azure; this file auto-approves
-# them via the azapi provider (see also medium.com auto-approving private
-# endpoints with Terraform). Requires databricks_account_id.
+# them via the azapi provider. Requires databricks_account_id.
 # =============================================================================
 
 locals {
@@ -44,9 +43,6 @@ resource "databricks_mws_ncc_binding" "ncc_binding" {
 # -----------------------------------------------------------------------------
 # Private endpoint rule: DBFS Blob
 # -----------------------------------------------------------------------------
-# Creating a rule can take 1–2 minutes (account API provisions Azure PE request).
-# Run blob first, then wait, then dfs so the account API is not hit with two
-# long-running requests at once (avoids "request timed out after 1m5s" on the second).
 resource "databricks_mws_ncc_private_endpoint_rule" "dbfs_blob" {
   provider                      = databricks.account
   network_connectivity_config_id = databricks_mws_network_connectivity_config.ncc.network_connectivity_config_id
@@ -74,12 +70,6 @@ resource "databricks_mws_ncc_private_endpoint_rule" "dbfs_dfs" {
 # -----------------------------------------------------------------------------
 # Auto-approve NCC private endpoint connections on the DBFS storage account
 # -----------------------------------------------------------------------------
-# Pattern from terraform-databricks-sra self-approving-pe module:
-# https://github.com/databricks/terraform-databricks-sra/tree/main/azure/tf/modules/self-approving-pe
-# Storage account GET with API 2024-01-01 returns properties.privateEndpointConnections;
-# we find the connection matching each rule's endpoint_name and approve it.
-# -----------------------------------------------------------------------------
-
 data "azapi_resource" "dbfs_storage" {
   type                   = "Microsoft.Storage/storageAccounts@2024-01-01"
   resource_id             = local.dbfs_storage_resource_id

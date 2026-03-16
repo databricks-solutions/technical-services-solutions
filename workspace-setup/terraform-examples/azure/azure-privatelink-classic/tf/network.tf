@@ -90,13 +90,13 @@ resource "azurerm_network_security_rule" "dp_azfrontdoor" {
 # -----------------------------------------------------------------------------
 # Public subnet - Databricks public cluster nodes
 # -----------------------------------------------------------------------------
-# First /26 from var.cidr_dp (e.g. 10.139.0.0/16 -> 10.139.0.0/22). Delegation required for VNet injection.
+# CIDR from var.subnet_workspace_cidrs[0]. Delegation required for VNet injection.
 # Service endpoints (e.g. Microsoft.Storage) via var.subnets_service_endpoints.
 resource "azurerm_subnet" "dp_public" {
   name                 = "snet-${local.prefix}-dp-public"
   resource_group_name  = local.dp_rg_name
   virtual_network_name = azurerm_virtual_network.dp_vnet.name
-  address_prefixes     = [cidrsubnet(var.cidr_dp, 6, 0)]
+  address_prefixes     = [var.subnet_workspace_cidrs[0]]
 
   delegation {
     name = "databricks"
@@ -125,12 +125,12 @@ resource "azurerm_subnet_nat_gateway_association" "dp_public" {
 # -----------------------------------------------------------------------------
 # Private subnet - Databricks private cluster nodes
 # -----------------------------------------------------------------------------
-# Second /26 from var.cidr_dp. Service endpoints (e.g. Microsoft.Storage) via var.subnets_service_endpoints.
+# CIDR from var.subnet_workspace_cidrs[1]. Service endpoints (e.g. Microsoft.Storage) via var.subnets_service_endpoints.
 resource "azurerm_subnet" "dp_private" {
   name                 = "snet-${local.prefix}-dp-private"
   resource_group_name  = local.dp_rg_name
   virtual_network_name = azurerm_virtual_network.dp_vnet.name
-  address_prefixes     = [cidrsubnet(var.cidr_dp, 6, 1)]
+  address_prefixes     = [var.subnet_workspace_cidrs[1]]
 
   private_endpoint_network_policies = "Enabled"
 
@@ -161,11 +161,11 @@ resource "azurerm_subnet_nat_gateway_association" "dp_private" {
 # -----------------------------------------------------------------------------
 # Private Link subnet - control plane and DBFS private endpoints only
 # -----------------------------------------------------------------------------
-# Third /26 from var.cidr_dp. No delegation; used only for private endpoints (pe_backend.tf, pe_dbfs.tf).
+# CIDR from var.subnet_private_endpoint_cidr. No delegation; used only for private endpoints (pe_backend.tf, pe_dbfs.tf).
 resource "azurerm_subnet" "dp_plsubnet" {
   name                              = "snet-${local.prefix}-dp-privatelink"
   resource_group_name               = local.dp_rg_name
   virtual_network_name              = azurerm_virtual_network.dp_vnet.name
-  address_prefixes                  = [cidrsubnet(var.cidr_dp, 6, 2)]
+  address_prefixes                  = [var.subnet_private_endpoint_cidr]
   private_endpoint_network_policies = "Enabled"
 }

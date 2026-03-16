@@ -1,0 +1,64 @@
+# =============================================================================
+# terraform.tfvars.example - Example variable values
+# =============================================================================
+# Copy this file to terraform.tfvars and set your values. Do not commit
+# terraform.tfvars if it contains sensitive data (e.g. subscription ID).
+# =============================================================================
+
+# =============================================================================
+# Naming
+# =============================================================================
+
+# Prefix for Databricks workspace name (display)
+prefix = "my-databricks-workspace"
+
+# Prefix for Azure resources (VNet, NSG, subnets, resource group). Also used to derive DBFS storage account name.
+resource_prefix = "my-databricks-workspace"
+
+# =============================================================================
+# Azure Configuration
+# =============================================================================
+
+# Azure subscription ID where resources will be deployed
+az_subscription = "your-azure-subscription-id"
+
+# Azure region (e.g. eastus2, westeurope). See supported regions:
+# https://learn.microsoft.com/en-us/azure/databricks/resources/supported-regions
+location = "eastus2"
+
+# Set to true to create a new resource group; false to use an existing one
+create_data_plane_resource_group = true
+
+# Name of existing resource group when create_data_plane_resource_group is false
+existing_data_plane_resource_group_name = ""
+
+# =============================================================================
+# Network Configuration
+# =============================================================================
+
+# CIDR for the data plane VNet (e.g. 10.139.0.0/16)
+cidr_dp = "10.0.0.0/16"
+
+# Optional: Service endpoints for the public and private subnets (e.g. ["Microsoft.Storage"])
+subnets_service_endpoints = []
+
+# =============================================================================
+# Serverless NCC (required)
+# =============================================================================
+# NCC and private endpoint rules for DBFS are always created so serverless compute
+# (SQL warehouses, serverless jobs) can reach workspace storage over Private Link.
+# Private endpoint connections are auto-approved by Terraform. Requires account admin.
+
+# Databricks account ID (from account console URL: .../accounts/<account_id>)
+databricks_account_id = "your-databricks-account-id"
+
+# =============================================================================
+# Tags
+# =============================================================================
+
+# Optional: tags applied to all Azure resources (Project and Owner are set automatically; these override or add)
+# tags = {
+#   Environment = "Testing"
+#   CostCenter  = "engineering"
+# }
+

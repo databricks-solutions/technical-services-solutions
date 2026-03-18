@@ -19,8 +19,8 @@ resource "databricks_mws_storage_configurations" "this" {
 resource "databricks_mws_vpc_endpoint" "backend_rest" {
   provider            = databricks.mws
   account_id          = var.databricks_account_id
-  aws_vpc_endpoint_id = aws_vpc_endpoint.backend_rest.id
-  vpc_endpoint_name   = "${var.resource_prefix}-vpce-backend-${var.vpc_id == "" ? module.vpc[0].vpc_id : var.vpc_id}"
+  aws_vpc_endpoint_id = local.backend_rest_aws_vpce_id
+  vpc_endpoint_name   = "${var.resource_prefix}-vpce-backend-${var.region}"
   region              = var.region
 }
 
@@ -28,8 +28,8 @@ resource "databricks_mws_vpc_endpoint" "backend_rest" {
 resource "databricks_mws_vpc_endpoint" "backend_relay" {
   provider            = databricks.mws
   account_id          = var.databricks_account_id
-  aws_vpc_endpoint_id = aws_vpc_endpoint.backend_relay.id
-  vpc_endpoint_name   = "${var.resource_prefix}-vpce-relay-${var.vpc_id == "" ? module.vpc[0].vpc_id : var.vpc_id}"
+  aws_vpc_endpoint_id = local.backend_relay_aws_vpce_id
+  vpc_endpoint_name   = "${var.resource_prefix}-vpce-relay-${var.region}"
   region              = var.region
 }
 
@@ -38,9 +38,9 @@ resource "databricks_mws_networks" "this" {
   provider           = databricks.mws
   account_id         = var.databricks_account_id
   network_name       = "${var.prefix}-network"
-  security_group_ids = [aws_security_group.sg.id]
-  subnet_ids         = length(var.subnet_ids) > 0 ? var.subnet_ids : module.vpc[0].private_subnets
-  vpc_id             = var.vpc_id == "" ? module.vpc[0].vpc_id : var.vpc_id
+  security_group_ids = var.network_configuration != "custom" ? [aws_security_group.sg[0].id] : var.security_group_ids
+  subnet_ids         = var.network_configuration != "custom" ? module.vpc[0].private_subnets : var.subnet_ids
+  vpc_id             = var.network_configuration != "custom" ? module.vpc[0].vpc_id : var.vpc_id
   vpc_endpoints {
     dataplane_relay = [databricks_mws_vpc_endpoint.backend_relay.vpc_endpoint_id]
     rest_api        = [databricks_mws_vpc_endpoint.backend_rest.vpc_endpoint_id]

@@ -69,13 +69,12 @@ prefix                = "my-workspace"
 resource_prefix       = "my-workspace"
 region                = "us-west-2"
 
-# Network configuration (Option 1: new VPC)
-vpc_id               = ""
-vpc_cidr_range       = "10.0.0.0/16"
-availability_zones   = ["us-west-2a", "us-west-2b"]
-private_subnets_cidr = ["10.0.1.0/24", "10.0.2.0/24"]
-public_subnets_cidr  = ["10.0.101.0/24", "10.0.102.0/24"]
-subnet_ids           = []
+# Network: "standard" or "fully_private" (template creates VPC) or "custom" (you supply IDs)
+network_configuration = "standard"
+vpc_cidr_range        = "10.0.0.0/16"
+availability_zones    = ["us-west-2a", "us-west-2b"]
+private_subnets_cidr  = ["10.0.1.0/24", "10.0.2.0/24"]
+public_subnets_cidr   = ["10.0.101.0/24", "10.0.102.0/24"]
 
 # Unity Catalog
 metastore_name = "my-metastore"
@@ -111,28 +110,52 @@ Navigate to the workspace URL and log in with your Databricks credentials.
 
 ## Configuration Options
 
-### Option 1: Create New VPC (Recommended for New Deployments)
+### Network configuration
+
+Set `network_configuration` to choose how networking is managed:
+
+- **Pathway 1 – Template-owned:** `"standard"` or `"fully_private"`. The template creates the VPC and all networking (security groups, VPC endpoints). Leave `vpc_id` empty.
+- **Pathway 2 – Custom:** `"custom"`. You supply `vpc_id`, `subnet_ids`, `security_group_ids`, and the two AWS VPC endpoint IDs (backend REST and SCC relay). The template creates no AWS networking; it only registers your endpoints with Databricks and creates the workspace.
+
+See [Step 5: Add VPC endpoints for other AWS services](https://docs.databricks.com/aws/en/security/network/classic/privatelink#step-5-add-vpc-endpoints-for-other-aws-services) (Option 1 = standard, Option 2 = fully private) and the [SRA AWS template](https://github.com/databricks/terraform-databricks-sra/tree/main/aws) for reference.
+
+### Pathway 1 – Template-owned (standard or fully_private)
+
+Set `network_configuration = "standard"` or `"fully_private"` and configure:
 
 ```hcl
-vpc_cidr_range       = "10.0.0.0/16"
-availability_zones   = ["us-west-2a", "us-west-2b"]
-private_subnets_cidr = ["10.0.1.0/24", "10.0.2.0/24"]
-public_subnets_cidr  = ["10.0.101.0/24", "10.0.102.0/24"]
+network_configuration = "standard"   # or "fully_private"
+vpc_cidr_range        = "10.0.0.0/16"
+availability_zones    = ["us-west-2a", "us-west-2b"]
+private_subnets_cidr  = ["10.0.1.0/24", "10.0.2.0/24"]
+public_subnets_cidr   = ["10.0.101.0/24", "10.0.102.0/24"]
 ```
 
-### Option 2: Use Existing VPC
+- **standard:** VPC with NAT Gateway and Internet Gateway; S3 gateway, STS, and Kinesis VPC endpoints in workspace subnets. Use when compute can use the internet for optional traffic.
+- **fully_private:** VPC with no NAT/IGW; dedicated subnet for AWS service endpoints (min /27) and S3/STS/Kinesis endpoints. Use for strict no-internet (air-gap) deployments. Ensure `endpoint_subnet_cidr` (default `10.0.3.0/27`) does not overlap `private_subnets_cidr`.
+
+### Pathway 2 – Custom
+
+Set `network_configuration = "custom"` and supply IDs for existing resources. The template creates no VPC, subnets, security groups, or VPC endpoints.
 
 ```hcl
-vpc_id                 = "vpc-xxxxxxxxx"
-vpc_cidr_range         = "10.0.0.0/16"
-subnet_ids             = ["subnet-xxxxxxxxx", "subnet-yyyyyyyyy"]
-private_route_table_ids = ["rtb-xxxxxxxxx"]
+network_configuration     = "custom"
+vpc_id                    = "vpc-xxxxxxxxx"
+subnet_ids                = ["subnet-xxxxxxxxx", "subnet-yyyyyyyyy"]
+security_group_ids        = ["sg-xxxxxxxxx"]
+backend_rest_aws_vpce_id   = "vpce-xxxxxxxxx"
+backend_relay_aws_vpce_id  = "vpce-yyyyyyyyy"
 ```
 
-**Requirements for existing VPC:**
-- At least 2 private subnets in different AZs
-- Subnets must have outbound internet connectivity (NAT Gateway or similar) if needed for other services
-- Security group egress must allow required Databricks ports; use `sg_egress_ports` and optionally `additional_egress_ips`
+**Creating network resources first (Pathway 2):** Create the VPC, subnets, workspace and Private Link security groups, and the two Databricks Private Link VPC endpoints (workspace REST + SCC relay) in AWS before applying. Use these docs:
+
+- [Configure a customer-managed VPC](https://docs.databricks.com/aws/en/security/network/classic/customer-managed-vpc) – VPC settings, CIDR, subnets
+- [Configure classic private connectivity – Step 1 – Create security groups](https://docs.databricks.com/aws/en/security/network/classic/privatelink#step-1-configure-aws-network-objects) – Workspace SG and Private Link endpoint SG
+- [Step 2: Create VPC endpoints](https://docs.databricks.com/aws/en/security/network/classic/privatelink#step-2-create-vpc-endpoints) – Workspace and SCC relay interface endpoints; the resulting AWS VPC endpoint IDs are what you pass as `backend_rest_aws_vpce_id` and `backend_relay_aws_vpce_id`
+- [Step 5: Add VPC endpoints for other AWS services](https://docs.databricks.com/aws/en/security/network/classic/privatelink#step-5-add-vpc-endpoints-for-other-aws-services) – Optional S3/STS/Kinesis if clusters need them
+- [AWS VPC endpoints](https://docs.aws.amazon.com/vpc/latest/privatelink/vpc-endpoints.html) – General reference
+
+Requirements: at least 2 private subnets in different AZs; security group egress allowing required Databricks ports.
 
 ### Workspace Security Group Egress: Restrictive vs Permissive
 
@@ -162,12 +185,13 @@ tf/
 ├── versions.tf              # Terraform and provider version constraints
 ├── providers.tf             # Provider configurations (AWS, Databricks)
 ├── variables.tf             # All input variable definitions
+├── locals.tf                # Endpoint ID locals (template-created vs user-provided)
 ├── outputs.tf               # All output values
-├── terraform.tfvars.example # Configuration template
+├── terraform.tfvars.example  # Configuration template
 ├── credential.tf            # IAM cross-account role and policies
-├── network.tf               # VPC (optional), workspace security group
-├── privatelink.tf           # Private Link security group and VPC endpoints (REST, SCC)
-├── endpoints.tf             # Additional VPC endpoints (STS, Kinesis)
+├── network.tf               # VPC (template-owned), workspace SG, endpoint subnet (fully_private)
+├── privatelink.tf            # Private Link SG, AWS endpoints SG (fully_private), backend VPC endpoints
+├── endpoints.tf             # S3/STS/Kinesis VPC endpoints (template-owned only)
 ├── root_bucket.tf           # S3 bucket for workspace root storage
 ├── workspace.tf             # Databricks workspace, MWS networks, PAS, VPC endpoint configs
 └── metastore.tf             # Unity Catalog metastore
@@ -175,7 +199,7 @@ tf/
 
 Terraform loads all `.tf` files in the directory; the structure is organizational only.
 
-## Documentation34:
+## Documentation
 
 Please note that the code in this template is provided for your exploration only and is not formally supported by Databricks with Service Level Agreements (SLAs). They are provided AS-IS, and we do not make any guarantees of any kind.
 

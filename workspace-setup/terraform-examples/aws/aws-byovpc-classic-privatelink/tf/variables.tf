@@ -47,10 +47,48 @@ variable "tags" {
 # Network Configuration
 # =============================================================================
 
+variable "network_configuration" {
+  description = "Network mode: 'standard' (template creates VPC with NAT+IGW and S3/STS/Kinesis endpoints), 'fully_private' (no NAT/IGW, dedicated endpoint subnet), or 'custom' (you supply vpc_id, subnet_ids, security_group_ids, and backend VPC endpoint IDs; no AWS networking created). When custom, create resources per README 'Creating network resources first' links."
+  type        = string
+  default     = "standard"
+  validation {
+    condition     = contains(["standard", "fully_private", "custom"], var.network_configuration)
+    error_message = "network_configuration must be 'standard', 'fully_private', or 'custom'."
+  }
+  validation {
+    condition     = var.network_configuration != "custom" || (var.vpc_id != "" && length(var.subnet_ids) > 0 && length(var.security_group_ids) > 0 && var.backend_rest_aws_vpce_id != "" && var.backend_relay_aws_vpce_id != "")
+    error_message = "When network_configuration is 'custom', vpc_id, subnet_ids, security_group_ids, backend_rest_aws_vpce_id, and backend_relay_aws_vpce_id must all be set."
+  }
+}
+
 variable "vpc_id" {
-  description = "Existing VPC ID to use. If empty, a new VPC will be created"
+  description = "Existing VPC ID. Required when network_configuration is 'custom'. Must be empty when 'standard' or 'fully_private' (template creates VPC)."
   type        = string
   default     = ""
+}
+
+variable "security_group_ids" {
+  description = "Workspace security group ID(s) for Databricks compute. Required when network_configuration is 'custom'. Databricks API accepts a list; one ID is typical. See README 'Creating network resources first' for SG requirements."
+  type        = list(string)
+  default     = []
+}
+
+variable "backend_rest_aws_vpce_id" {
+  description = "AWS VPC endpoint ID for Databricks REST API. Required when network_configuration is 'custom'. Create the endpoint per Step 2 in Databricks classic Private Link docs."
+  type        = string
+  default     = ""
+}
+
+variable "backend_relay_aws_vpce_id" {
+  description = "AWS VPC endpoint ID for SCC relay. Required when network_configuration is 'custom'. Create the endpoint per Step 2 in Databricks classic Private Link docs."
+  type        = string
+  default     = ""
+}
+
+variable "endpoint_subnet_cidr" {
+  description = "CIDR for the dedicated AWS service endpoints subnet (fully_private only). Minimum /27. Must not overlap private_subnets_cidr."
+  type        = string
+  default     = "10.0.3.0/27"
 }
 
 variable "vpc_cidr_range" {

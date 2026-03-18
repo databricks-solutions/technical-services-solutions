@@ -5,7 +5,7 @@ data "aws_prefix_list" "s3" {
 
 
 module "vpc" {
-  count   = var.vpc_id == "" ? 1 : 0
+  count   = var.network_configuration != "custom" ? 1 : 0
   source  = "terraform-aws-modules/vpc/aws"
   version = "5.1.1"
 
@@ -14,10 +14,10 @@ module "vpc" {
   azs  = var.availability_zones
 
   enable_dns_hostnames   = true
-  enable_nat_gateway     = true
+  enable_nat_gateway     = var.network_configuration == "standard"
   single_nat_gateway     = true
   one_nat_gateway_per_az = false
-  create_igw             = true
+  create_igw             = var.network_configuration == "standard"
 
   private_subnet_names = [for az in var.availability_zones : format("%s-private-%s", var.resource_prefix, az)]
   private_subnets      = var.private_subnets_cidr
@@ -39,9 +39,42 @@ module "vpc" {
   )
 }
 
+# Dedicated subnet for AWS service endpoints (STS, Kinesis) in fully_private mode only
+resource "aws_subnet" "endpoint" {
+  count             = var.network_configuration == "fully_private" ? 1 : 0
+  vpc_id            = module.vpc[0].vpc_id
+  cidr_block        = var.endpoint_subnet_cidr
+  availability_zone = var.availability_zones[0]
+  tags = merge(
+    var.tags,
+    {
+      Name = "${var.resource_prefix}-endpoints-subnet"
+    }
+  )
+}
+
+# Route table for endpoint subnet: local VPC only (no NAT/IGW)
+resource "aws_route_table" "endpoint" {
+  count  = var.network_configuration == "fully_private" ? 1 : 0
+  vpc_id = module.vpc[0].vpc_id
+  tags = merge(
+    var.tags,
+    {
+      Name = "${var.resource_prefix}-endpoints-rt"
+    }
+  )
+}
+
+resource "aws_route_table_association" "endpoint" {
+  count          = var.network_configuration == "fully_private" ? 1 : 0
+  subnet_id      = aws_subnet.endpoint[0].id
+  route_table_id = aws_route_table.endpoint[0].id
+}
+
 resource "aws_security_group" "sg" {
-  name   = "${var.resource_prefix}-workspace-sg"
-  vpc_id = var.vpc_id == "" ? module.vpc[0].vpc_id : var.vpc_id
+  count    = var.network_configuration != "custom" ? 1 : 0
+  name     = "${var.resource_prefix}-workspace-sg"
+  vpc_id   = module.vpc[0].vpc_id
 
   dynamic "ingress" {
     for_each = ["tcp", "udp"]
@@ -88,12 +121,15 @@ resource "aws_security_group" "sg" {
     }
   }
 
-  egress {
-    description     = "S3 Gateway Endpoint - SG"
-    from_port       = 443
-    to_port         = 443
-    protocol        = "tcp"
-    prefix_list_ids = [data.aws_prefix_list.s3.id]
+  dynamic "egress" {
+    for_each = var.network_configuration != "custom" ? [1] : []
+    content {
+      description     = "S3 Gateway Endpoint - SG"
+      from_port       = 443
+      to_port         = 443
+      protocol        = "tcp"
+      prefix_list_ids = [data.aws_prefix_list.s3.id]
+    }
   }
 
 ###Example of permissive egress

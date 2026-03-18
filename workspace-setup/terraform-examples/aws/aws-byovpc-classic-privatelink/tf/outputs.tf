@@ -28,27 +28,27 @@ output "workspace_status" {
 
 output "vpc_id" {
   description = "ID of the VPC used for the workspace"
-  value       = var.vpc_id == "" ? module.vpc[0].vpc_id : var.vpc_id
+  value       = var.network_configuration != "custom" ? module.vpc[0].vpc_id : var.vpc_id
 }
 
 output "private_subnet_ids" {
   description = "IDs of the private subnets"
-  value       = var.vpc_id == "" ? module.vpc[0].private_subnets : var.subnet_ids
+  value       = var.network_configuration != "custom" ? module.vpc[0].private_subnets : var.subnet_ids
 }
 
 output "public_subnet_ids" {
-  description = "IDs of the public subnets (if new VPC was created)"
-  value       = var.vpc_id == "" ? module.vpc[0].public_subnets : []
+  description = "IDs of the public subnets (template-owned mode only)"
+  value       = var.network_configuration != "custom" ? module.vpc[0].public_subnets : []
 }
 
 output "nat_gateway_ids" {
-  description = "IDs of the NAT Gateways (if new VPC was created)"
-  value       = var.vpc_id == "" ? module.vpc[0].natgw_ids : []
+  description = "IDs of the NAT Gateways (standard mode only)"
+  value       = var.network_configuration == "standard" ? module.vpc[0].natgw_ids : []
 }
 
 output "security_group_id" {
-  description = "ID of the security group used for the workspace"
-  value       = aws_security_group.sg.id
+  description = "ID of the security group used for the workspace (first of the list when custom)"
+  value       = var.network_configuration != "custom" ? aws_security_group.sg[0].id : var.security_group_ids[0]
 }
 
 # =============================================================================

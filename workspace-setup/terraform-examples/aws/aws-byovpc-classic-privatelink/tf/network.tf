@@ -1,3 +1,9 @@
+# Data source for S3 Prefix List
+data "aws_prefix_list" "s3" {
+  name = "com.amazonaws.${var.region}.s3"
+}
+
+
 module "vpc" {
   count   = var.vpc_id == "" ? 1 : 0
   source  = "terraform-aws-modules/vpc/aws"
@@ -73,14 +79,22 @@ resource "aws_security_group" "sg" {
 
   dynamic "egress" {
    for_each = var.additional_egress_ips  # This should be a list of IP CIDR strings, e.g., ["198.51.100.5/32", "203.0.113.0/24"]
-  content {
-    description = "Databricks - Egress to specific external IP"
-    from_port   = 0         # Or the specific port required
-    to_port     = 65535     # Or the specific port required
-    protocol    = "tcp"     # Or "udp" or other, as needed
-    cidr_blocks = [egress.value]
+    content {
+      description = "Databricks - Egress to specific external IP"
+      from_port   = 0         # Or the specific port required
+      to_port     = 65535     # Or the specific port required
+      protocol    = "tcp"     # Or "udp" or other, as needed
+      cidr_blocks = [egress.value]
+    }
   }
-}
+
+  egress {
+    description     = "S3 Gateway Endpoint - SG"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    prefix_list_ids = [data.aws_prefix_list.s3.id]
+  }
 
 ###Example of permissive egress
 

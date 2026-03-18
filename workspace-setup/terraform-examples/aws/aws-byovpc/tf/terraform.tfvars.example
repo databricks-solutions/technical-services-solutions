@@ -48,8 +48,11 @@ intra_subnet_cidr    = ["10.0.201.0/24"]
 # Security Group Configuration
 # =============================================================================
 
-# Optional: Use existing security groups (leave empty to use VPC default)
+# Use existing security groups (leave empty for dedicated security group to be created automatically)
 security_group_ids = []
+
+# Optional: Set custom security group name (defaults to '<resource_prefix>-databricks-sg' if left empty)
+# new_security_group_name = "my-databricks-sg"
 
 # Egress ports for Databricks connectivity
 sg_egress_ports = [443, 3306, 2443, 8443, 8444, 8445, 8446, 8447, 8448, 8449, 8450, 8451]

@@ -133,6 +133,15 @@ security_group_ids = ["sg-xxxxxxxxx"]
 - Subnets must have outbound internet connectivity (NAT Gateway or similar)
 - Security group must allow required Databricks ports
 
+### Security Group Configuration
+
+Leave `security_group_ids` empty to automatically create a dedicated security group. Optionally, customize the name via `new_security_group_name` (defaults to `<resource_prefix>-databricks-sg`).
+
+```hcl
+security_group_ids      = []
+new_security_group_name = "my-databricks-sg"  # optional
+```
+
 ### Unity Catalog Options
 
 #### Create New Metastore

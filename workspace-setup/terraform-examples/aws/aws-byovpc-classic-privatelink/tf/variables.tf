@@ -134,7 +134,7 @@ variable "private_route_table_ids" {
 variable "sg_egress_ports" {
   description = "List of TCP egress ports for workspace security group (e.g., [443, 2443, 5432, 6666, 8443, 8444, 8445])."
   type        = list(number)
-  default     = [443, 3306, 2443, 8443, 8444, 8445, 8446, 8447, 8448, 8449, 8450, 8451]
+  default     = [443, 2443, 5432, 6666, 8443, 8444, 8445, 8446, 8447, 8448, 8449, 8450, 8451]
 }
 
 variable "additional_egress_ips" {

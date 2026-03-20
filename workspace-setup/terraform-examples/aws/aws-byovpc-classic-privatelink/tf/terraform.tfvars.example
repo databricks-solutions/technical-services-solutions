@@ -55,7 +55,7 @@ public_subnets_cidr   = ["10.0.101.0/24", "10.0.102.0/24"]
 # =============================================================================
 
 # Egress ports for Databricks connectivity
-sg_egress_ports = [443, 3306, 2443, 6666, 8443, 8444, 8445, 8446, 8447, 8448, 8449, 8450, 8451]
+sg_egress_ports = [443, 2443, 5432, 6666, 8443, 8444, 8445, 8446, 8447, 8448, 8449, 8450, 8451]
 
 # Additional egress IPs (optional)
 additional_egress_ips = []

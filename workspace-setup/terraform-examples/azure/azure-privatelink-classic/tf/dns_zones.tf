@@ -12,6 +12,7 @@
 resource "azurerm_private_dns_zone" "control_plane" {
   name                = "privatelink.azuredatabricks.net"
   resource_group_name = local.dp_rg_name
+  tags                = local.tags
 }
 
 resource "azurerm_private_dns_zone_virtual_network_link" "control_plane" {
@@ -27,11 +28,13 @@ resource "azurerm_private_dns_zone_virtual_network_link" "control_plane" {
 resource "azurerm_private_dns_zone" "dbfs_dfs" {
   name                = "privatelink.dfs.core.windows.net"
   resource_group_name = local.dp_rg_name
+  tags                = local.tags
 }
 
 resource "azurerm_private_dns_zone" "dbfs_blob" {
   name                = "privatelink.blob.core.windows.net"
   resource_group_name = local.dp_rg_name
+  tags                = local.tags
 }
 
 resource "azurerm_private_dns_zone_virtual_network_link" "dbfs_dfs" {

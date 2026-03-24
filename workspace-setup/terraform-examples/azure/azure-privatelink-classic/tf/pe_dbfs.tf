@@ -12,6 +12,7 @@ resource "azurerm_private_endpoint" "dp_dbfspe_dfs" {
   location            = local.dp_rg_location
   resource_group_name = local.dp_rg_name
   subnet_id           = azurerm_subnet.dp_plsubnet.id
+  tags                = local.tags
 
   private_service_connection {
     name                           = "ple-${local.prefix}-dp-dbfs-dfs"
@@ -32,6 +33,7 @@ resource "azurerm_private_endpoint" "dp_dbfspe_blob" {
   location            = local.dp_rg_location
   resource_group_name = local.dp_rg_name
   subnet_id           = azurerm_subnet.dp_plsubnet.id
+  tags                = local.tags
 
   private_service_connection {
     name                           = "ple-${local.prefix}-dp-dbfs-blob"

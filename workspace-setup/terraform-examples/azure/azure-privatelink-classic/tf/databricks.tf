@@ -5,6 +5,9 @@
 # (public and private subnets). Root storage (DBFS) uses the derived storage
 # account name. Public network access is always enabled (no front-end Private Link).
 # Managed resource group named mrg-<workspace_name>.
+#
+# Optional: when var.metastore_id is set, assigns an existing Unity Catalog
+# metastore to the workspace (account API). Empty = skip (attach in console).
 # =============================================================================
 
 resource "azurerm_databricks_workspace" "dp_workspace" {
@@ -37,3 +40,12 @@ resource "azurerm_databricks_workspace" "dp_workspace" {
   ]
 }
 
+resource "databricks_metastore_assignment" "dp_workspace" {
+  count = length(trimspace(var.metastore_id)) > 0 ? 1 : 0
+
+  provider     = databricks.account
+  workspace_id = azurerm_databricks_workspace.dp_workspace.workspace_id
+  metastore_id = var.metastore_id
+
+  depends_on = [azurerm_databricks_workspace.dp_workspace]
+}

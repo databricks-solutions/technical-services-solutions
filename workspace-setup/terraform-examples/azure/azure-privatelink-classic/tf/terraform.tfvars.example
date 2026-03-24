@@ -22,14 +22,15 @@ resource_prefix = "my-databricks-workspace"
 # Azure subscription ID where resources will be deployed
 az_subscription = "your-azure-subscription-id"
 
-# Azure region (e.g. eastus2, westeurope). See supported regions:
+# Azure region when creating a new data plane resource group (e.g. eastus2). Required in that case.
+# When create_data_plane_resource_group is false, omit or set to "" — region is read from the existing RG.
 # https://learn.microsoft.com/en-us/azure/databricks/resources/supported-regions
 location = "eastus2"
 
 # Set to true to create a new resource group; false to use an existing one
 create_data_plane_resource_group = true
 
-# Name of existing resource group when create_data_plane_resource_group is false
+# Name of existing resource group when create_data_plane_resource_group is false (required then)
 existing_data_plane_resource_group_name = ""
 
 # =============================================================================
@@ -58,13 +59,17 @@ subnets_service_endpoints = []
 # Databricks account ID (from account console URL: .../accounts/<account_id>)
 databricks_account_id = "your-databricks-account-id"
 
+# Optional: Unity Catalog metastore UUID to assign to the workspace (account-level).
+# Leave "" to skip—it is common to use auto-assignment.
+# metastore_id = "00000000-0000-0000-0000-000000000000"
+
 # =============================================================================
 # Tags
 # =============================================================================
 
-# Optional: tags applied to all Azure resources (Project and Owner are set automatically; these override or add)
+# Optional: tags on Azure resources (omit or {} for no tags)
 # tags = {
 #   Environment = "Testing"
-#   CostCenter  = "engineering"
+#   owner         = "you@example.com"
 # }
 

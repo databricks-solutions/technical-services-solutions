@@ -2,7 +2,7 @@
 # versions.tf - Terraform and provider version constraints
 # =============================================================================
 # Pins minimum Terraform version and required providers. No provider
-# configuration here; see providers.tf for Azure and external (az CLI) setup.
+# configuration here; see providers.tf for Azure and Databricks setup.
 # =============================================================================
 
 terraform {
@@ -23,11 +23,6 @@ terraform {
     databricks = {
       source  = "databricks/databricks"
       version = ">= 1.28.0, < 2.0"
-    }
-    # External data source for current Azure CLI user (Owner tag).
-    external = {
-      source  = "hashicorp/external"
-      version = "~> 2.0"
     }
     # Delay between NCC rule creations so the account API is not overloaded (avoids timeout on second rule).
     time = {

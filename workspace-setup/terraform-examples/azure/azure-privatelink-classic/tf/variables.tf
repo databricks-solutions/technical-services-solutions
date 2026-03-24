@@ -35,8 +35,13 @@ variable "az_subscription" {
 }
 
 variable "location" {
-  description = "Azure region for the resource group and all resources (e.g. eastus2)"
+  description = "Azure region when create_data_plane_resource_group is true (new RG and all resources). When using an existing resource group, leave empty—the template uses the existing group's region for every resource."
   type        = string
+  default     = ""
+  validation {
+    condition     = !var.create_data_plane_resource_group || length(trimspace(var.location)) > 0
+    error_message = "location must be set (e.g. eastus2) when create_data_plane_resource_group is true."
+  }
 }
 
 variable "create_data_plane_resource_group" {
@@ -99,12 +104,18 @@ variable "databricks_account_id" {
   type        = string
 }
 
+variable "metastore_id" {
+  description = "Unity Catalog metastore ID (UUID) to assign to this workspace via the account API. Leave empty to skip—attach manually after deploy or use account/regional defaults if your org configures them."
+  type        = string
+  default     = ""
+}
+
 # =============================================================================
 # Tags
 # =============================================================================
 
 variable "tags" {
-  description = "Tags to apply to all Azure resources. Merged with Project = prefix (user tags take precedence)."
+  description = "Tags applied to Azure resources that support tags. Leave default {} for none."
   type        = map(string)
   default     = {}
 }

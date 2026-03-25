@@ -20,8 +20,12 @@ genie-cicd/
 │   ├── export_genie_definition.ipynb           # Exports a Genie space to JSON via API
 │   └── deploy_genie_space.ipynb                # Deploys JSON to a workspace (create or update)
 └── genie_definition/
-    └── genie_space_dev.json                    # Sample exported definition (for reference)
+    └── examples/
+        ├── genie_space_dev.json                # Example: what an exported Dev definition looks like
+        └── genie_space_prod.json               # Example: same definition after catalog/schema replacement
 ```
+
+> **Note:** The JSON files under `genie_definition/examples/` are reference samples showing the Genie space JSON structure before and after catalog/schema replacement. They are **not meant to be run** -- they point to tables that don't exist in your workspace. When you run the pipeline, it will export your own Genie space and write the files to `genie_definition/`.
 
 ## Prerequisites
 

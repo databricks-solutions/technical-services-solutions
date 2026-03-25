@@ -179,15 +179,8 @@ tf/
 ├── terraform.tfvars.example    # Configuration template
 ├── variables.tf                # All input variable definitions
 ├── versions.tf                 # Version of the providers
-├── catalog.tf                  # Creates default catalog and external location
+├── unity_catalog.tf            # Creates default catalog and external location
 
-modules/uc-catalog/
-├── catalog.tf                  # Catalog creation
-├── external_location.tf        # External location creation 
-├── outputs.tf                  # All output values
-├── storage_account.tf          #Storage account in Azure
-├── variables.tf                # All input variable definitions
-├── versions.tf                 # Version of the providers
 ```
 
 **Note:** There is no `main.tf` file in this project. Instead, resources are organized into descriptive, purpose-specific files. 

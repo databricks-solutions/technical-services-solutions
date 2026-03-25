@@ -62,11 +62,11 @@ output "managed_resource_group_id" {
 
 output "external_location_name" {
   description = "Name of the Unity Catalog external location"
-  value       = module.uc_catalog.external_location_name
+  value       = databricks_external_location.db_ext_loc.name
 }
 
 output "catalog_name" {
   description = "Name of the default Unity Catalog catalog"
-  value       = module.uc_catalog.catalog_name
+  value       = databricks_catalog.uc_quickstart_sandbox.name
 }
 

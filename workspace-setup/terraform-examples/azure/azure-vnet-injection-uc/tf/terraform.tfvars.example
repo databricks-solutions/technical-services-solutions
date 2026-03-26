@@ -26,7 +26,6 @@ uc_storage_name = "ucrootstorage"
 # Network Configuration
 # =============================================================================
 
-create_new_vnet = true
 vnet_name = "vnet-name"
 vnet_resource_group_name = "vnet-resource-group-name"
 cidr = "10.0.0.0/16"

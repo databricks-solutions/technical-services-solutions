@@ -110,12 +110,6 @@ variable "new_metastore_name" {
 # Network Configuration
 # =============================================================================
 
-variable "create_new_vnet" {
-    description = "Whether to create a new VNet"
-    type        = bool
-    default     = true
-}
-
 variable "vnet_name" {
     description = "The name of the virtual network"
     type        = string

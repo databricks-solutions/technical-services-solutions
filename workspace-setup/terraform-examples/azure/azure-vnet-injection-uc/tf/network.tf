@@ -1,37 +1,22 @@
-# new VNet resources
 resource "azurerm_virtual_network" "this" {
-  count               = var.create_new_vnet ? 1 : 0
   name                = "${local.network_prefix}-vnet"
   location            = azurerm_resource_group.this.location
   resource_group_name = var.vnet_resource_group_name
   address_space       = [var.cidr]
   tags                = var.tags
-  depends_on = [azurerm_resource_group.vnet_resource_group[0]]
+  depends_on = [azurerm_resource_group.vnet_resource_group]
 }
 
 resource "azurerm_resource_group" "vnet_resource_group" {
-  count = var.create_new_vnet ? 1 : 0
   name  = var.vnet_resource_group_name
   location = azurerm_resource_group.this.location
   tags     = var.tags
 }
 
-#existing VNet resources
-data "azurerm_virtual_network" "existing" {
-  count               = var.create_new_vnet ? 0 : 1
-  name                = var.vnet_name
-  resource_group_name = var.vnet_resource_group_name
-}
-
-data "azurerm_resource_group" "existing_vnet_resource_group" {
-  count = var.create_new_vnet ? 0 : 1
-  name  = var.vnet_resource_group_name
-}
-
 locals {
     network_prefix      = var.workspace_name
-    vnet                = var.create_new_vnet ? azurerm_virtual_network.this[0] : data.azurerm_virtual_network.existing[0]
-    vnet_resource_group = var.create_new_vnet ? azurerm_resource_group.vnet_resource_group[0] : data.azurerm_resource_group.existing_vnet_resource_group[0]
+    vnet                = azurerm_virtual_network.this
+    vnet_resource_group = azurerm_resource_group.vnet_resource_group
 }
 
 # other network resources

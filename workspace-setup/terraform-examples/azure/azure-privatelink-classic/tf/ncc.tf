@@ -99,9 +99,13 @@ resource "azapi_update_resource" "ncc_pe_approve_blob" {
 }
 
 resource "azapi_update_resource" "ncc_pe_approve_dfs" {
-  type       = "Microsoft.Storage/storageAccounts/privateEndpointConnections@2024-01-01"
-  name       = local.dfs_pe_name
-  parent_id  = local.dbfs_storage_resource_id
-  body       = local.pe_approval_body
-  depends_on = [data.azapi_resource.dbfs_storage]
+  type      = "Microsoft.Storage/storageAccounts/privateEndpointConnections@2024-01-01"
+  name      = local.dfs_pe_name
+  parent_id = local.dbfs_storage_resource_id
+  body      = local.pe_approval_body
+  # Storage returns 409 StorageAccountOperationInProgress if two PE connection updates run concurrently.
+  depends_on = [
+    data.azapi_resource.dbfs_storage,
+    azapi_update_resource.ncc_pe_approve_blob,
+  ]
 }

@@ -6,9 +6,24 @@
 # account name. Public network access is always enabled (no front-end Private Link).
 # Managed resource group named mrg-<workspace_name>.
 #
+# default_storage_firewall_enabled + access_connector_id restrict the workspace
+# root storage account to private access (use with private endpoints in pe_dbfs.tf).
+#
 # Optional: when var.metastore_id is set, assigns an existing Unity Catalog
 # metastore to the workspace (account API). Empty = skip (attach in console).
 # =============================================================================
+
+# Access connector used with default_storage_firewall_enabled so DBFS storage can use private connectivity.
+resource "azurerm_databricks_access_connector" "dbfs" {
+  name                = "dbac-${local.prefix}-dbfs"
+  resource_group_name = local.dp_rg_name
+  location            = local.dp_rg_location
+  tags                = local.tags
+
+  identity {
+    type = "SystemAssigned"
+  }
+}
 
 resource "azurerm_databricks_workspace" "dp_workspace" {
   name                           = "dbw-${local.prefix}-dp"
@@ -21,6 +36,8 @@ resource "azurerm_databricks_workspace" "dp_workspace" {
   customer_managed_key_enabled   = true
   # Named MRG (e.g. mrg-dbw-ts-privatelink-test-dp). Changing this forces workspace replacement.
   managed_resource_group_name    = "mrg-dbw-${local.prefix}-dp"
+  default_storage_firewall_enabled = true
+  access_connector_id              = azurerm_databricks_access_connector.dbfs.id
 
   # VNet injection: use dp_public and dp_private subnets and their NSG associations.
   # storage_account_name is the workspace root (DBFS) storage; must be unique and alphanumeric.

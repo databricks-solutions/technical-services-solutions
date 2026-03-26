@@ -205,7 +205,7 @@ azure-privatelink-classic/
     ├── variables.tf                 # Input variable definitions
     ├── terraform.tfvars.example     # Example variable values (copy to terraform.tfvars)
     ├── network.tf                   # Data plane VNet, NSG, subnets (CIDRs from variables)
-    ├── databricks.tf                # Databricks workspace (VNet injection, named MRG, root storage)
+    ├── databricks.tf                # Access connector, workspace (VNet injection, DBFS storage firewall), optional UC assignment
     ├── dns_zones.tf                 # Private DNS zones (control plane + DBFS) and VNet links
     ├── pe_backend.tf                # Private endpoint for control plane (databricks_ui_api)
     ├── pe_dbfs.tf                   # Private endpoints for DBFS storage (dfs and blob)
@@ -222,7 +222,7 @@ azure-privatelink-classic/
 | **variables.tf** | Input variables (naming, Azure, network including subnet CIDRs, NCC, optional `metastore_id`, tags) with validation. |
 | **terraform.tfvars.example** | Example variable values; copy to `terraform.tfvars` and set subscription, VNet CIDR, subnet CIDRs, location, etc. |
 | **network.tf** | Data plane VNet (address_space from cidr_dp); NSG; public, private, and Private Link subnets (CIDRs from subnet_workspace_cidrs and subnet_private_endpoint_cidr). |
-| **databricks.tf** | `azurerm_databricks_workspace` (Premium, VNet injection, named managed resource group, public access always enabled); optional `databricks_metastore_assignment` when `metastore_id` is set. |
+| **databricks.tf** | `azurerm_databricks_access_connector` for DBFS; `azurerm_databricks_workspace` with `default_storage_firewall_enabled` and `access_connector_id` (Premium, VNet injection, named MRG, workspace UI public access enabled); optional `databricks_metastore_assignment` when `metastore_id` is set. |
 | **dns_zones.tf** | Private DNS zones for control plane and DBFS (dfs/blob); VNet links. |
 | **pe_backend.tf** | Private endpoint for Databricks control plane in the Private Link subnet. |
 | **pe_dbfs.tf** | Private endpoints for DBFS storage (dfs and blob) in the Private Link subnet. |

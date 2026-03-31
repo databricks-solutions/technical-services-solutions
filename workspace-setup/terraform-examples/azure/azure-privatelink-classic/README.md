@@ -87,6 +87,7 @@ The code provisions:
    - **Control plane** – One private endpoint for the Databricks UI/API (`databricks_ui_api`), in the Private Link subnet, with DNS in `privatelink.azuredatabricks.net`.
    - **DBFS** – Two private endpoints for the workspace root storage account: one for `dfs` and one for `blob`, each with the corresponding private DNS zone.
 7. **Network Connectivity Config (NCC)** – Creates an account-level NCC, attaches it to the workspace, and adds private endpoint rules for the same DBFS storage (blob, then dfs with a short delay to avoid API timeouts). Databricks creates private endpoint requests for serverless compute; Terraform **auto-approves** them on the storage account so serverless (SQL warehouses, serverless jobs, etc.) can reach DBFS over Private Link without manual approval in the portal.
+8. **Unity Catalog (optional)** – If you set `metastore_id` to an existing metastore’s UUID, Terraform assigns that metastore to the workspace (account API). If you leave it empty, no assignment runs here; attach a metastore manually in the [account console](https://accounts.azuredatabricks.net/) (or rely on org defaults that auto-assign new workspaces in some regions).
 
 Backend and DBFS traffic from classic compute use the private endpoints in your VNet; serverless compute uses the NCC private endpoints (auto-approved). Workspace UI remains reachable via public network.
 
@@ -101,15 +102,16 @@ Copy `terraform.tfvars.example` to `terraform.tfvars` in the `tf/` directory and
 | `prefix` | **(Optional)** Prefix for the Databricks workspace name (display). Default: `databricks-workspace`. |
 | `resource_prefix` | **(Optional)** Prefix for Azure resource names (VNet, NSG, subnets, resource group). Also used to derive the DBFS root storage account name (alphanumeric only). Must be 1–40 characters: a-z, 0-9, `-`, `.`. Default: `databricks-workspace`. |
 | `az_subscription` | **(Required)** Azure subscription ID where resources are deployed. |
-| `location` | **(Required)** Azure region for the resource group and all resources (e.g. `eastus2`). See [supported regions](https://learn.microsoft.com/en-us/azure/databricks/resources/supported-regions). |
+| `location` | **Required when creating a resource group:** Azure region for the new RG and all resources (e.g. `eastus2`). **When using an existing resource group:** omit or leave empty; the template uses the existing RG’s region for the VNet, workspace, private endpoints, and NCC so they stay aligned. See [supported regions](https://learn.microsoft.com/en-us/azure/databricks/resources/supported-regions). |
 | `create_data_plane_resource_group` | Set to `true` to create a new resource group (name: `rg-<resource_prefix>-dp` per [Azure CAF abbreviations](https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/ready/azure-best-practices/resource-abbreviations)). Set to `false` to use `existing_data_plane_resource_group_name`. |
-| `existing_data_plane_resource_group_name` | Name of the existing resource group when `create_data_plane_resource_group` is `false`. Must be non-empty in that case. |
+| `existing_data_plane_resource_group_name` | Name of the existing resource group when `create_data_plane_resource_group` is `false`. Must be non-empty in that case. The RG must be in `az_subscription`; its region drives all regional resources. |
 | `cidr_dp` | **(Required)** CIDR for the data plane VNet address space (e.g. `10.0.0.0/16`). Must encompass all subnets. |
 | `subnet_workspace_cidrs` | **(Required)** List of two CIDRs for the workspace subnets: `[public, private]`. Must be within the VNet. Example: `["10.0.0.0/24", "10.0.1.0/24"]`. |
 | `subnet_private_endpoint_cidr` | **(Required)** CIDR for the Private Link subnet (control plane and DBFS private endpoints). Must be within the VNet. Example: `10.0.2.0/26`. |
 | `subnets_service_endpoints` | **(Optional)** List of Azure service endpoints for the public and private subnets (e.g. `["Microsoft.Storage"]`). Default: `[]`. |
 | `databricks_account_id` | **(Required)** Databricks account ID for serverless NCC. Find it in the account console URL: `https://accounts.azuredatabricks.net/accounts/<account_id>`. NCC is always created so serverless compute can reach DBFS over Private Link; private endpoint connections are auto-approved. |
-| `tags` | **(Optional)** Map of tags to apply to all Azure resources. Merged with default `Project` (from prefix) and `Owner` (from Azure CLI); values in `tags` override those. Default: `{}`. |
+| `metastore_id` | **(Optional)** Unity Catalog metastore UUID to assign to the workspace. Default `""` skips Terraform assignment (attach manually after deploy if your account does not auto-assign). |
+| `tags` | **(Optional)** Tags applied to Azure resources that support tags. Default `{}` applies no tags (no built-in `Project` or `owner`). |
 
 ## Deploy
 
@@ -186,6 +188,7 @@ Type `yes` when prompted. Destruction can take several minutes. The workspace is
 | DBFS or control plane timeout | NSG or routing blocking outbound 443 | Ensure NSG rules allow outbound to Azure Active Directory and Azure Front Door; ensure NAT gateway (or egress) is attached to the workspace subnets. |
 | `mws ncc private endpoint rule` request timed out after 1m5s | Account API is slow creating the Azure PE request | The code creates the blob rule first, then waits (~75s), then the dfs rule to reduce timeouts. If the dfs rule still times out, run `terraform apply` again; the rule creation often succeeds on retry. |
 | `cannot delete mws network connectivity config ... attached to one or more workspaces` | NCC cannot be deleted while attached to a workspace | The workspace is configured to be destroyed before the NCC. If you see this after a partial destroy, run `terraform destroy` again; once the workspace is gone, the NCC can be deleted. |
+| Workspace has no Unity Catalog metastore | This template does not create a metastore; auto-assignment depends on your account | Set `metastore_id` to an existing metastore UUID and re-apply, or assign the workspace to a metastore in the Databricks account console. |
 
 ## File structure
 
@@ -195,14 +198,14 @@ This scenario follows the [repository Terraform guidelines](../../README.md#terr
 azure-privatelink-classic/
 ├── README.md
 └── tf/
-    ├── main.tf                      # Shared locals (prefix, DBFS name, tags, dp_rg_*) and data sources
+    ├── main.tf                      # Shared locals (prefix, DBFS name, optional tags, dp_rg_*) and client config
     ├── azure.tf                     # Data plane resource group (create or reference existing)
-    ├── versions.tf                  # Terraform and provider version constraints (azurerm, azapi, databricks, time, external)
+    ├── versions.tf                  # Terraform and provider version constraints (azurerm, azapi, databricks, time)
     ├── providers.tf                 # Azure, azapi, and Databricks account provider configuration
     ├── variables.tf                 # Input variable definitions
     ├── terraform.tfvars.example     # Example variable values (copy to terraform.tfvars)
     ├── network.tf                   # Data plane VNet, NSG, subnets (CIDRs from variables)
-    ├── databricks.tf                # Databricks workspace (VNet injection, named MRG, root storage)
+    ├── databricks.tf                # Access connector, workspace (VNet injection, DBFS storage firewall), optional UC assignment
     ├── dns_zones.tf                 # Private DNS zones (control plane + DBFS) and VNet links
     ├── pe_backend.tf                # Private endpoint for control plane (databricks_ui_api)
     ├── pe_dbfs.tf                   # Private endpoints for DBFS storage (dfs and blob)
@@ -212,14 +215,14 @@ azure-privatelink-classic/
 
 | File | Purpose |
 |------|--------|
-| **main.tf** | Azure client config and current user data; locals (prefix, dbfsname, tags, dp_rg_name/id/location). |
+| **main.tf** | Azure client config data source; locals (prefix, dbfsname, tags from `var.tags`, dp_rg_name/id/location). |
 | **azure.tf** | Data plane resource group (created or referenced via data source depending on create_data_plane_resource_group). |
-| **versions.tf** | Terraform and provider version constraints (azurerm, azapi, databricks, time, external). |
+| **versions.tf** | Terraform and provider version constraints (azurerm, azapi, databricks, time). |
 | **providers.tf** | Azure, azapi, and Databricks account provider (subscription_id, account_id). Auth via Azure CLI or ARM_* / account-level env. |
-| **variables.tf** | Input variables (naming, Azure, network including subnet CIDRs, NCC, tags) with validation. |
+| **variables.tf** | Input variables (naming, Azure, network including subnet CIDRs, NCC, optional `metastore_id`, tags) with validation. |
 | **terraform.tfvars.example** | Example variable values; copy to `terraform.tfvars` and set subscription, VNet CIDR, subnet CIDRs, location, etc. |
 | **network.tf** | Data plane VNet (address_space from cidr_dp); NSG; public, private, and Private Link subnets (CIDRs from subnet_workspace_cidrs and subnet_private_endpoint_cidr). |
-| **databricks.tf** | `azurerm_databricks_workspace` (Premium, VNet injection, named managed resource group, public access always enabled). |
+| **databricks.tf** | `azurerm_databricks_access_connector` for DBFS; `azurerm_databricks_workspace` with `default_storage_firewall_enabled` and `access_connector_id` (Premium, VNet injection, named MRG, workspace UI public access enabled); optional `databricks_metastore_assignment` when `metastore_id` is set. |
 | **dns_zones.tf** | Private DNS zones for control plane and DBFS (dfs/blob); VNet links. |
 | **pe_backend.tf** | Private endpoint for Databricks control plane in the Private Link subnet. |
 | **pe_dbfs.tf** | Private endpoints for DBFS storage (dfs and blob) in the Private Link subnet. |

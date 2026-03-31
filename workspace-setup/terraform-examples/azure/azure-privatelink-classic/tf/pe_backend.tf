@@ -11,6 +11,7 @@ resource "azurerm_private_endpoint" "dp_dpcp" {
   location            = local.dp_rg_location
   resource_group_name = local.dp_rg_name
   subnet_id           = azurerm_subnet.dp_plsubnet.id
+  tags                = local.tags
 
   # Connect to the Databricks workspace control plane (databricks_ui_api).
   private_service_connection {

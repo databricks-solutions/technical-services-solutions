@@ -28,4 +28,6 @@ provider "databricks" {
   host             = "https://accounts.azuredatabricks.net"
   account_id       = var.databricks_account_id
   azure_tenant_id  = data.azurerm_client_config.current.tenant_id
+  # NCC private-endpoint rule creation can sit on the account API longer than the default (~65s idle).
+  http_timeout_seconds = 300
 }

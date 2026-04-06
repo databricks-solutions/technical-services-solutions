@@ -1,8 +1,10 @@
-# Databricks Metric Views - Retail Store Dimensional Model
+# UC Business Semantics - Retail Store Dimensional Model
 
 <img src="./figures/dimensional_model.png" alt="dimensional model" width="50%" />
 
-This demo shows how to use [Metric Views](https://docs.databricks.com/aws/en/metric-views/) in Databricks to create semantic models directly on the platform. Adding your semantic models in Databricks lets you benefit from Databricks compute for querying your data, while being fully integrated with Unity Catalog for unified governance and optimal performance.
+This demo shows how to use [UC Business Semantics](https://docs.databricks.com/aws/en/metric-views/) in Databricks to define, manage, and govern business KPIs directly on the platform. UC Business Semantics provides a unified, open semantic foundation that makes core business concepts accessible for both human-driven analytics (BI) and AI/ML workloads.
+
+The demo creates **metric views** — centrally defined, governed SQL objects in Unity Catalog — that encode joins, dimensions, measures, and rich semantic metadata (display names, synonyms, formatting rules). These metric views can then be queried from any BI tool, SQL client, or AI agent (like Genie).
 
 ## Dataset
 
@@ -50,7 +52,7 @@ Downloads the Kaggle dataset into a UC Volume and loads each CSV file as a Delta
 **Parameters:** `CATALOG_NAME`, `SCHEMA_NAME`, `VOLUME_PATH`
 
 ### [`1_CreateMetricView.ipynb`](./1_CreateMetricView.ipynb)
-Creates the `sales_relationships` metric view with YAML definition including:
+Creates the `sales_relationships` metric view as part of UC Business Semantics. The YAML definition includes:
 - Star and snowflake joins across all dimension tables
 - Dimensions with semantic metadata (display names, synonyms, comments)
 - Aggregate measures (sum, avg, stddev, percentiles, min, max, mode)
@@ -71,9 +73,9 @@ Creates a materialized version of the metric view with scheduled refreshes. Comp
 ## Directory Structure
 
 ```
-dbrx-metric-views/
+dbrx-business-semantics/
 ├── 0_IngestData.ipynb                  # Data ingestion from Kaggle
-├── 1_CreateMetricView.ipynb            # Metric view creation
+├── 1_CreateMetricView.ipynb            # Metric view creation (UC Business Semantics)
 ├── 2_QueryMetricView.ipynb             # Querying, Genie Space, and Dashboard
 ├── 3_MaterializeMetricView.ipynb       # Materialized metric view
 ├── README.md
@@ -88,9 +90,18 @@ dbrx-metric-views/
     └── metric_view_in_genie.png        # Genie Space screenshot
 ```
 
+## What is UC Business Semantics?
+
+UC Business Semantics provides a unified, open semantic foundation for enterprises. It consists of two parts:
+
+- **Metric Views**: Centrally define and govern business KPIs (e.g., revenue, churn, ARR) as reusable SQL objects, fully governed in Unity Catalog.
+- **Agent Metadata**: Rich semantic metadata (synonyms, formatting rules, display names) that makes AI agents more accurate and reliable.
+
+Unlike BI-native semantic layers that trap definitions inside a single tool, UC Business Semantics is **open and reusable** across different BI tools, SQL clients, and AI agents. It is **AI-ready** — extending seamlessly to workloads like Genie — and **unified and governed**, inheriting Unity Catalog policies automatically.
+
 ## Resources
 
-- [Docs - Unity Catalog metric views](https://docs.databricks.com/aws/en/metric-views/)
+- [Docs - UC Business Semantics (Metric Views)](https://docs.databricks.com/aws/en/metric-views/)
 - [Docs - Metric view joins](https://docs.databricks.com/aws/en/metric-views/data-modeling/joins)
 - [Docs - Semantic metadata](https://docs.databricks.com/aws/en/metric-views/data-modeling/semantic-metadata)
 - [Docs - Window measures](https://docs.databricks.com/aws/en/metric-views/data-modeling/window-measures)

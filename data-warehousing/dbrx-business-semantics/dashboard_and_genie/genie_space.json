@@ -207,7 +207,7 @@
           "What are the sales statistics by day of the week?"
         ],
         "sql": [
-          "-- This is just a simple query example, demonstrating that you can query Metric Views just like any other view!\n",
+          "-- This is just a simple query example, demonstrating that you can query UC Business Semantics metric views just like any other view!\n",
           "SELECT\n",
           "  dayOfWeek,\n",
           "  MEASURE(`sales_sum`),\n",

@@ -1,0 +1,5 @@
+config:
+  azure-databricks:location: eastus
+  azure-databricks:resourceGroupName: my-resource-group
+  azure-databricks:workspaceName: my-databricks-workspace
+  azure-databricks:pricingTier: premium

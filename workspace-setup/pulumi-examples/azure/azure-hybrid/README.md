@@ -1,122 +1,67 @@
 # Azure Hybrid Databricks Workspace — Pulumi
 
-## Overview
+## What is Pulumi?
 
-Deploys an Azure Databricks workspace with **Hybrid compute mode** and **No Public IP** (NPIP) using Pulumi and Python. Hybrid compute mode enables serverless compute alongside classic clusters, giving you the flexibility to use both.
+[Pulumi](https://www.pulumi.com/) is an infrastructure-as-code tool — like Terraform, but instead of HCL you write real Python (or TypeScript, Go, etc.). You define your cloud resources in code, run `pulumi up`, and Pulumi creates them for you.
 
-## Architecture
+## What does this project do?
 
-This scenario creates:
+It deploys an Azure Databricks workspace configured with:
 
-- **Resource Group** with Environment and ManagedBy tags
-- **Azure Databricks Workspace** (Premium tier) with:
-  - Hybrid compute mode (serverless + classic)
-  - No Public IP enabled (Secure Cluster Connectivity)
-  - Managed resource group for Databricks-managed resources
+- **Hybrid compute mode** — enables both serverless and classic compute
+- **No Public IP** — secure cluster connectivity (NPIP)
+- **Premium tier** by default
 
-## Prerequisites
+That's it — one resource group, one workspace, ready to use.
 
+## Quick Start
+
+### 1. Install tools
+
+- [Pulumi CLI](https://www.pulumi.com/docs/get-started/install/) (`brew install pulumi/tap/pulumi` on macOS)
+- [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) (`brew install azure-cli` on macOS)
 - Python 3.7+
-- Azure CLI (`brew install azure-cli`)
-- Pulumi CLI
-- Azure subscription with permissions to create Databricks workspaces
 
-### Installing Pulumi
-
-**macOS:**
-```bash
-brew install pulumi/tap/pulumi
-```
-
-**Linux / WSL:**
-```bash
-curl -fsSL https://get.pulumi.com | sh
-```
-
-**Windows:**
-```bash
-choco install pulumi
-```
-
-Verify:
-```bash
-pulumi version
-```
-
-## Configuration
-
-| Config Key | Description | Default |
-|------------|-------------|---------|
-| `location` | Azure region | `eastus` |
-| `resourceGroupName` | Resource group name | `rg-databricks` |
-| `workspaceName` | Databricks workspace name | `databricks-workspace` |
-| `pricingTier` | Pricing tier (`standard`, `premium`, `trial`) | `premium` |
-
-## Deployment Steps
-
-### 1. Install Python dependencies
+### 2. Set up and deploy
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate
+# Install Python dependencies
+python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-```
 
-### 2. Authenticate with Azure
-
-```bash
+# Log in to Azure
 az login
-az account set --subscription "<subscription-id>"
-```
+az account set --subscription "<your-subscription-id>"
 
-### 3. Initialize Pulumi
-
-```bash
-pulumi login --local   # or `pulumi login` for Pulumi Cloud
+# Initialize Pulumi
+pulumi login --local
 pulumi stack init dev
-```
 
-### 4. Configure
-
-```bash
+# Configure (or copy Pulumi.dev.yaml.example → Pulumi.dev.yaml)
 pulumi config set location eastus
 pulumi config set resourceGroupName my-resource-group
 pulumi config set workspaceName my-databricks-workspace
-pulumi config set pricingTier premium
-```
 
-Or copy the example config:
-```bash
-cp Pulumi.dev.yaml.example Pulumi.dev.yaml
-```
-
-### 5. Deploy
-
-```bash
+# Deploy
 pulumi up
 ```
 
-Review the plan and confirm with "yes".
-
-## Validation
-
-After deployment, verify the workspace:
+### 3. Verify
 
 ```bash
 pulumi stack output workspace_url
 ```
 
-Open the URL in a browser to confirm the workspace is accessible.
+Open the URL in a browser — your workspace is ready.
 
-## Outputs
+## Configuration
 
-| Output | Description |
-|--------|-------------|
-| `resource_group_name` | Name of the created resource group |
-| `workspace_id` | Azure resource ID of the workspace |
-| `workspace_url` | URL to access the Databricks workspace |
-| `workspace_name` | Name of the workspace |
-| `location` | Azure region |
+| Key | Description | Default |
+|-----|-------------|---------|
+| `location` | Azure region | `eastus` |
+| `resourceGroupName` | Resource group name | `rg-databricks` |
+| `workspaceName` | Workspace name | `databricks-workspace` |
+| `pricingTier` | `standard`, `premium`, or `trial` | `premium` |
 
 ## Clean-up
 
@@ -125,14 +70,6 @@ pulumi destroy
 pulumi stack rm dev
 ```
 
-## Troubleshooting
-
-| Issue | Solution |
-|-------|----------|
-| Authentication error | Run `az account show` to verify login |
-| Resource already exists | Use `pulumi import` to adopt existing resources |
-| State issues | Export/import state: `pulumi stack export > stack.json` |
-
 ## Project Support
 
-Please note that this project is provided for your exploration only and is not formally supported by Databricks with Service Level Agreements (SLAs). They are provided AS-IS, and we do not make any guarantees. Please do not submit a support ticket relating to any issues arising from the use of this project.
+These examples are provided AS-IS for exploration and are not formally supported by Databricks with SLAs. Do not submit support tickets for issues arising from their use.

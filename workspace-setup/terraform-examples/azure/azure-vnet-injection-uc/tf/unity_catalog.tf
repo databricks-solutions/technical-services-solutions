@@ -22,7 +22,7 @@ resource "azurerm_storage_account" "db_uc_catalog" {
 // Create a container in storage account to be used by unity catalog metastore as root storage
 resource "azurerm_storage_container" "db_uc_catalog" {
   name                  = "${var.workspace_name}-uc-container"
-  storage_account_name  = azurerm_storage_account.db_uc_catalog.name
+  storage_account_id    = azurerm_storage_account.db_uc_catalog.id
   container_access_type = "private"
 }
 
@@ -50,7 +50,7 @@ resource "databricks_external_location" "db_ext_loc" {
   name = "${var.workspace_name}-ext-loc"
   url = format("abfss://%s@%s.dfs.core.windows.net",
     azurerm_storage_container.db_uc_catalog.name,
-    azurerm_storage_account.db_uc_catalog.name)
+  azurerm_storage_account.db_uc_catalog.name)
   credential_name = databricks_storage_credential.db_uc_storage_cred.id
   comment         = "Managed by TF"
   depends_on = [

@@ -1,9 +1,9 @@
 resource "azurerm_databricks_workspace" "this" {
-  name                = var.workspace_name
-  resource_group_name = azurerm_resource_group.this.name
-  location            = azurerm_resource_group.this.location
-  sku                 = "premium"
-  tags                = var.tags
+  name                        = var.workspace_name
+  resource_group_name         = azurerm_resource_group.this.name
+  location                    = azurerm_resource_group.this.location
+  sku                         = "premium"
+  tags                        = var.tags
   managed_resource_group_name = var.managed_resource_group_name
 
   custom_parameters {
@@ -25,12 +25,12 @@ resource "azurerm_databricks_workspace" "this" {
 # assign admin access to the workspace
 
 data "databricks_user" "workspace_access" {
-  provider = databricks.accounts
+  provider  = databricks.accounts
   user_name = var.admin_user
 }
 
 resource "databricks_mws_permission_assignment" "workspace_access" {
-  provider = databricks.accounts
+  provider     = databricks.accounts
   workspace_id = azurerm_databricks_workspace.this.workspace_id
   principal_id = data.databricks_user.workspace_access.id
   permissions  = ["ADMIN"]
@@ -42,29 +42,29 @@ resource "databricks_mws_permission_assignment" "workspace_access" {
 # metastore creation and assignment to the workspace
 
 resource "databricks_metastore" "this" {
-  count         = var.existing_metastore_id == "" ? 1 : 0
-  provider      = databricks.accounts
-  name          = var.new_metastore_name
-  region        = var.location
-  owner         = "${var.new_metastore_name}-admins"
+  count      = var.existing_metastore_id == "" ? 1 : 0
+  provider   = databricks.accounts
+  name       = var.new_metastore_name
+  region     = var.location
+  owner      = "${var.new_metastore_name}-admins"
   depends_on = [databricks_group.metastore_owner_group]
 }
 
 resource "databricks_group" "metastore_owner_group" {
-    count = var.existing_metastore_id == "" ? 1 : 0
-    provider = databricks.accounts
-    display_name = "${var.new_metastore_name}-admins"
+  count        = var.existing_metastore_id == "" ? 1 : 0
+  provider     = databricks.accounts
+  display_name = "${var.new_metastore_name}-admins"
 }
 
 data "databricks_user" "metastore_owner" {
-  count = var.existing_metastore_id == "" ? 1 : 0
-  provider = databricks.accounts
+  count     = var.existing_metastore_id == "" ? 1 : 0
+  provider  = databricks.accounts
   user_name = var.admin_user
 }
 
 resource "databricks_group_member" "metastore_owner" {
-  count = var.existing_metastore_id == "" ? 1 : 0
-  provider = databricks.accounts
+  count     = var.existing_metastore_id == "" ? 1 : 0
+  provider  = databricks.accounts
   group_id  = databricks_group.metastore_owner_group[0].id
   member_id = data.databricks_user.metastore_owner[0].id
 }

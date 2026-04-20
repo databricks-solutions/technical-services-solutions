@@ -117,6 +117,10 @@ variable "new_metastore_name" {
 variable "vnet_resource_group_name" {
   description = "The name of the VNet resource group"
   type        = string
+  validation {
+    condition     = var.vnet_resource_group_name != var.resource_group_name
+    error_message = "vnet_resource_group_name must not be the same as resource_group_name"
+  }
 }
 
 variable "cidr" {

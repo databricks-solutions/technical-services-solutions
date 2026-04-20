@@ -5,8 +5,8 @@ provider "azurerm" {
 }
 
 provider "databricks" {
-  host                = azurerm_databricks_workspace.this.workspace_url
-  azure_tenant_id     = var.tenant_id
+  host            = azurerm_databricks_workspace.this.workspace_url
+  azure_tenant_id = var.tenant_id
 }
 
 provider "databricks" {

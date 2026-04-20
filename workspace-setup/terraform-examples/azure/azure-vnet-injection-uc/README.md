@@ -15,6 +15,7 @@ The difference between this deployment option and the standard option for azure-
 - Databricks account created
 - Databricks account admin access
 - Contributor rights to your Azure subscription (Contributor rights on the resource group level are not sufficient, as Databricks provisioning creates resources in a separate managed resource group, which requires subscription-level access.)
+- When using an existing metastore (i.e. `existing_metastore_id` is set), the `admin_user` must have the `CREATE EXTERNAL LOCATION` privilege on the metastore. This is required to create the external location backing the default catalog. New metastores created by this module grant the necessary privileges automatically.
 
 ## Before you begin
 
@@ -29,6 +30,12 @@ az login
 ```
 
 This command opens a browser for user authentication, and it is commonly referred to as U2M (User-to-machine) authentication. This command is sufficient for all operations in this document.
+
+As a best practice, explicitly pin the Databricks provider to Azure CLI auth:
+
+```sh
+export DATABRICKS_AUTH_TYPE=azure-cli
+```
 
 ### Option 2: Service principal login (for automation, CI/CD)
 
@@ -128,7 +135,7 @@ Copy `terraform.tfvars.example` to `terraform.tfvars` in the `tf/` directory and
 | `root_storage_name` | **(Required)** Root DBFS storage account name. Lowercase letters and numbers only, 3-24 characters. |
 | `uc_storage_name` | **(Required)** Storage account name for the Unity Catalog external location. Lowercase letters and numbers only, 3-24 characters. Must be globally unique. |
 | `location` | **(Required)** Azure region for all resources (e.g. `eastus`). See [supported regions](https://learn.microsoft.com/en-us/azure/databricks/resources/supported-regions). |
-| `existing_metastore_id` | **(Optional)** ID of an existing metastore. Leave empty to create a new one. |
+| `existing_metastore_id` | **(Optional)** ID of an existing metastore. Leave empty to create a new one. When set, `admin_user` must have the `CREATE EXTERNAL LOCATION` privilege on that metastore. |
 | `new_metastore_name` | **(Optional)** Name for the new metastore. Required when `existing_metastore_id` is empty. |
 | `vnet_name` | **(Required)** Name of the virtual network. |
 | `vnet_resource_group_name` | **(Required)** Name of the resource group for the VNet and networking resources. Must differ from `resource_group_name`. |

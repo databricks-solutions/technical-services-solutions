@@ -16,9 +16,9 @@ Ready-to-deploy Pulumi projects that create Databricks workspaces. Each folder i
 
 ## Prerequisites
 
-- [Pulumi CLI](https://www.pulumi.com/docs/get-started/install/)
-- Cloud provider CLI (e.g. `az` for Azure)
-- Python 3.7+
+- [Pulumi CLI](https://www.pulumi.com/docs/get-started/install/) — install instructions for macOS, Linux, and Windows
+- Cloud provider CLI for your target cloud (e.g. [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli))
+- Python 3.10+
 
 ## Project Support
 

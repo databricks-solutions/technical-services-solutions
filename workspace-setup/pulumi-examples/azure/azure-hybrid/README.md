@@ -18,9 +18,9 @@ That's it — one resource group, one workspace, ready to use.
 
 ### 1. Install tools
 
-- [Pulumi CLI](https://www.pulumi.com/docs/get-started/install/) (`brew install pulumi/tap/pulumi` on macOS)
-- [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) (`brew install azure-cli` on macOS)
-- Python 3.7+
+- [Pulumi CLI](https://www.pulumi.com/docs/get-started/install/) — install instructions for macOS, Linux, and Windows
+- [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) — install instructions for macOS, Linux, and Windows
+- Python 3.10+
 
 ### 2. Set up and deploy
 

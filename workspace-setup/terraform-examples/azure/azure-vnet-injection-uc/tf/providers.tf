@@ -7,6 +7,7 @@ provider "azurerm" {
 provider "databricks" {
   host            = azurerm_databricks_workspace.this.workspace_url
   azure_tenant_id = var.tenant_id
+  auth_type       = "azure-cli"
 }
 
 provider "databricks" {
@@ -14,4 +15,5 @@ provider "databricks" {
   host            = "https://accounts.azuredatabricks.net"
   account_id      = var.databricks_account_id
   azure_tenant_id = var.tenant_id
+  auth_type       = "azure-cli"
 }

@@ -69,17 +69,30 @@ variable "root_storage_name" {
     error_message = "root_storage_name can only contain lowercase letters and numbers."
   }
 }
+variable "catalog_name" {
+  type        = string
+  description = "The name of the Unity Catalog catalog"
+}
 
-variable "uc_storage_name" {
+variable "storage_credential_name" {
+  type        = string
+  description = "The name of the Databricks storage credential"
+}
+
+variable "external_location_name" {
+  type        = string
+  description = "The name of the external location"
+}
+variable "uc_storage_account_name" {
   type        = string
   description = "Azure storage account name for the Unity Catalog external location. Must be globally unique, only lowercase letters and numbers, 3-24 characters."
   validation {
-    condition     = length(var.uc_storage_name) >= 3 && length(var.uc_storage_name) <= 24
-    error_message = "uc_storage_name must be between 3 and 24 characters."
+    condition     = length(var.uc_storage_account_name) >= 3 && length(var.uc_storage_account_name) <= 24
+    error_message = "uc_storage_account_name must be between 3 and 24 characters."
   }
   validation {
-    condition     = can(regex("^[a-z0-9]+$", var.uc_storage_name))
-    error_message = "uc_storage_name can only contain lowercase letters and numbers."
+    condition     = can(regex("^[a-z0-9]+$", var.uc_storage_account_name))
+    error_message = "uc_storage_account_name can only contain lowercase letters and numbers."
   }
 }
 

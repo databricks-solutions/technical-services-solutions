@@ -42,12 +42,13 @@ resource "databricks_mws_permission_assignment" "workspace_access" {
 # metastore creation and assignment to the workspace
 
 resource "databricks_metastore" "this" {
-  count      = var.existing_metastore_id == "" ? 1 : 0
-  provider   = databricks.accounts
-  name       = var.new_metastore_name
-  region     = var.location
-  owner      = "${var.new_metastore_name}-admins"
-  depends_on = [databricks_group.metastore_owner_group]
+  count         = var.existing_metastore_id == "" ? 1 : 0
+  provider      = databricks.accounts
+  name          = var.new_metastore_name
+  region        = var.location
+  owner         = "${var.new_metastore_name}-admins"
+  force_destroy = true
+  depends_on    = [databricks_group.metastore_owner_group]
 }
 
 resource "databricks_group" "metastore_owner_group" {

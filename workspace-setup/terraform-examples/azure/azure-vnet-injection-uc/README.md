@@ -1,11 +1,11 @@
-# Azure VNet injection with Default Catalog Workspace Setup Guide (with VNet deployment)
+# Azure VNet injection with User-Defined Catalog Workspace Setup Guide (with VNet deployment)
 
-This Terraform example deploys an Azure Databricks workspace with VNet Injection, Unity Catalog, and a default catalog with an external location. It provisions the full networking stack (VNet, subnets, NSG, NAT Gateway), a Databricks workspace with Secure Cluster Connectivity (No Public IP), and configures Unity Catalog with a storage credential, external location, and default catalog backed by an Azure Storage Account.
+This Terraform example deploys an Azure Databricks workspace with VNet Injection, Unity Catalog, and a user-defined catalog with an external location. It provisions the full networking stack (VNet, subnets, NSG, NAT Gateway), a Databricks workspace with Secure Cluster Connectivity (No Public IP), and configures Unity Catalog with a storage credential, external location, and user-defined catalog backed by an Azure Storage Account.
 
 It is important to note that this deployment creates a new virtual network from scratch and currently does not support using an existing VNet.
 
 ### Important 
-The difference between this deployment option and the standard option for azure-vnet-injection is the inclusion of a default catalog and external location. The requirements and authentication procedures remain the same.
+The difference between this deployment option and the standard option for azure-vnet-injection is the inclusion of a user-defined catalog and external location. The requirements and authentication procedures remain the same.
 
 ## Requirements
 
@@ -15,7 +15,7 @@ The difference between this deployment option and the standard option for azure-
 - Databricks account created
 - Databricks account admin access
 - Contributor rights to your Azure subscription (Contributor rights on the resource group level are not sufficient, as Databricks provisioning creates resources in a separate managed resource group, which requires subscription-level access.)
-- When using an existing metastore (i.e. `existing_metastore_id` is set), the `admin_user` must have the `CREATE EXTERNAL LOCATION` privilege on the metastore. This is required to create the external location backing the default catalog. New metastores created by this module grant the necessary privileges automatically.
+- When using an existing metastore (i.e. `existing_metastore_id` is set), the `admin_user` must have the `CREATE EXTERNAL LOCATION` privilege on the metastore. This is required to create the external location backing the user-defined catalog. New metastores created by this module grant the necessary privileges automatically.
 
 ## Before you begin
 
@@ -114,7 +114,7 @@ The code provisions:
 8. **Managed identity and storage** – An Azure Databricks Access Connector (system-assigned managed identity), a storage account and container for the catalog, and a Storage Blob Data Contributor role assignment on the storage account.
 9. **Storage credential** – A Unity Catalog storage credential backed by the managed identity.
 10. **External location** – Points to the storage container using the storage credential.
-11. **Default catalog** – A Unity Catalog catalog backed by the external location's storage.
+11. **User-defined catalog** – A Unity Catalog catalog backed by the external location's storage.
 
 ### Variables
 
@@ -216,7 +216,7 @@ tf/
 ├── terraform.tfvars.example    # Configuration template
 ├── variables.tf                # All input variable definitions
 ├── versions.tf                 # Version of the providers
-├── unity_catalog.tf            # Creates default catalog and external location
+├── unity_catalog.tf            # Creates user-defined catalog and external location
 ```
 
 | File | Purpose |
@@ -228,7 +228,7 @@ tf/
 | **variables.tf** | Input variables (Azure config, Databricks config, network CIDRs, metastore options) with validation. |
 | **terraform.tfvars.example** | Example variable values; copy to `terraform.tfvars` and set subscription, tenant, VNet CIDR, subnet CIDRs, location, etc. |
 | **versions.tf** | Terraform and provider version constraints (azurerm, databricks). |
-| **unity_catalog.tf** | Access connector (managed identity), storage account and container, role assignment, storage credential, external location, and default catalog. |
+| **unity_catalog.tf** | Access connector (managed identity), storage account and container, role assignment, storage credential, external location, and user-defined catalog. |
 | **outputs.tf** | Workspace URL/ID; managed resource group ID; VNet ID; public and private subnet IDs; NSG ID; NAT gateway ID and public IP; catalog and external location names. |
 
 **Note:** There is no `main.tf` file in this project. Instead, resources are organized into descriptive, purpose-specific files. 

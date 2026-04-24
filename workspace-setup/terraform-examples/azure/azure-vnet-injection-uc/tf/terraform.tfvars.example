@@ -25,8 +25,6 @@ uc_storage_account_name = "ucrootstorage"
 catalog_name            = "my-catalog"
 storage_credential_name = "my-uc-storage-cred"
 external_location_name = "my-ext-loc"
-node_type_id = "Standard_DS3_v2" # optional. Override for a larger driver
-autotermination_minutes = 10     # optional. Minimum 10
 
 # =============================================================================
 # Network Configuration

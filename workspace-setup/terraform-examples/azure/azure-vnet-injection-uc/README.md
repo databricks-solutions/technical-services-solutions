@@ -12,7 +12,7 @@ The difference between this deployment option and the standard option for azure-
 - Terraform is installed on your local machine: [link](https://developer.hashicorp.com/terraform/tutorials/aws-get-started/install-cli#install-terraform)
 - Azure CLI is installed on your local machine: [Mac](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli-macos?view=azure-cli-latest#install-with-homebrew) or [Windows](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli-windows?view=azure-cli-latest&pivots=winget)
 - Azure CLI configured with appropriate credentials
-- Databricks account created
+- Databricks account initialized: If this is your first time accessing Azure Databricks at the account level (and no account admin has been established yet), follow [this](https://learn.microsoft.com/en-us/azure/databricks/admin/admin-concepts#establish-first-account-admin) documentation to assign the first account admin.
 - Databricks account admin access
 - Contributor rights to your Azure subscription (Contributor rights on the resource group level are not sufficient, as Databricks provisioning creates resources in a separate managed resource group, which requires subscription-level access.)
 - When using an existing metastore (i.e. `existing_metastore_id` is set), the `admin_user` must have the `CREATE EXTERNAL LOCATION` privilege on the metastore. This is required to create the external location backing the user-defined catalog. New metastores created by this module grant the necessary privileges automatically.

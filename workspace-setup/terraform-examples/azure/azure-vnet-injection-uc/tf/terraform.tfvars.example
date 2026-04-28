@@ -20,11 +20,14 @@ location = "westeurope"
 databricks_account_id = "xxx-xxx"
 existing_metastore_id = "xxx-xxx"
 new_metastore_name = ""
-managed_resource_group_name = null #optional. if no name is provided, azure will generate one on it's own
+managed_resource_group_name = null # optional. If no name is provided, azure will generate one on it's own
 uc_storage_account_name = "ucrootstorage"
 catalog_name            = "my-catalog"
 storage_credential_name = "my-uc-storage-cred"
 external_location_name = "my-ext-loc"
+node_type_id = "Standard_DS3_v2"
+cluster_autotermination_minutes = "10"
+
 # =============================================================================
 # Network Configuration
 # =============================================================================

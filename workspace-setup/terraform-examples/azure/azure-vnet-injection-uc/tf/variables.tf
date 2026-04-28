@@ -123,6 +123,22 @@ variable "new_metastore_name" {
   }
 }
 
+variable "node_type_id" {
+  description = "Azure VM SKU for the single-node UC cluster driver."
+  type        = string
+  default     = "Standard_DS3_v2"
+}
+
+variable "cluster_autotermination_minutes" {
+  description = "Idle minutes before the single-node UC cluster auto-terminates."
+  type        = number
+  default     = 10
+  validation {
+    condition     = var.cluster_autotermination_minutes >= 10
+    error_message = "cluster_autotermination_minutes must be at least 10 (Databricks minimum for auto-termination)."
+  }
+}
+
 # =============================================================================
 # Network Configuration
 # =============================================================================

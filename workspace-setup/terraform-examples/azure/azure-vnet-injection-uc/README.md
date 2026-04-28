@@ -115,7 +115,7 @@ The code provisions:
 9. **Storage credential** – A Unity Catalog storage credential backed by the managed identity.
 10. **External location** – Points to the storage container using the storage credential.
 11. **User-defined catalog** – A Unity Catalog catalog backed by the external location's storage.
-12. **Single-node cluster** – A UC-compatible cluster attached to the built-in **Personal Compute** policy, which enforces Single User access mode, the single-node profile, and other UC-safe defaults. Overrides set by this template: latest LTS Databricks Runtime (via the `databricks_spark_version` data source), node type (`var.node_type_id`), idle auto-termination (`var.autotermination_minutes`, default `10`), access mode (`var.data_security_mode`, default `SINGLE_USER`), and a `ClusterType = TerraformDeploymentTesting` custom tag. The cluster is created after the metastore assignment and workspace admin permission so UC is fully wired up before it boots. Single-user ownership is assigned to `var.admin_user`.
+12. **Single-node cluster** – A UC-compatible cluster attached to the built-in **Personal Compute** policy, which enforces Single User access mode, the single-node profile, and other UC-safe defaults. Overrides set by this template: latest LTS Databricks Runtime (via the `databricks_spark_version` data source), node type (`var.node_type_id`), idle auto-termination (`var.cluster_autotermination_minutes`, default `10`), access mode (constant `SINGLE_USER`), and a `ClusterType = TerraformDeploymentTesting` custom tag. The cluster is created after the metastore assignment and workspace admin permission so UC is fully wired up before it boots. Single-user ownership is assigned to `var.admin_user`.
 
 ### Variables
 
@@ -139,8 +139,7 @@ Copy `terraform.tfvars.example` to `terraform.tfvars` in the `tf/` directory and
 | `existing_metastore_id` | **(Optional)** ID of an existing metastore. Leave empty to create a new one. When set, `admin_user` must have the `CREATE EXTERNAL LOCATION` privilege on that metastore. |
 | `new_metastore_name` | **(Optional)** Name for the new metastore. Required when `existing_metastore_id` is empty. |
 | `node_type_id` | **(Optional)** Azure VM SKU used for the single-node UC cluster driver. Default: `Standard_DS3_v2`. |
-| `autotermination_minutes` | **(Optional)** Idle minutes before the single-node cluster auto-terminates. Default: `10`. Minimum: `10`. Must fit within the Personal Compute policy's allowed range in your workspace. |
-| `data_security_mode` | **(Optional)** Access mode for the UC-compatible single-node cluster. Default: `SINGLE_USER` (required by the Personal Compute policy). Allowed values: `SINGLE_USER`, `USER_ISOLATION`, `NONE`, `LEGACY_TABLE_ACL`, `LEGACY_PASSTHROUGH`, `LEGACY_SINGLE_USER`, `LEGACY_SINGLE_USER_STANDARD`. |
+| `cluster_autotermination_minutes` | **(Optional)** Idle minutes before the single-node cluster auto-terminates. Default: `10`. Minimum: `10`. Must fit within the Personal Compute policy's allowed range in your workspace. |
 | `vnet_name` | **(Required)** Name of the virtual network. |
 | `vnet_resource_group_name` | **(Required)** Name of the resource group for the VNet and networking resources. Must differ from `resource_group_name`. |
 | `cidr` | **(Optional)** CIDR for the VNet address space. Default: `10.0.0.0/20`. |
@@ -185,7 +184,7 @@ To verify the deployment succeeded:
 1. **Terraform outputs** – From the `tf/` directory, run `terraform output` and confirm `workspace_url`, `workspace_id`, `cluster_id`, and `vnet_id` are present and non-empty.
 2. **Azure portal** – In your subscription, check that the resource group, VNet, subnets, NAT gateway, and the Databricks workspace exist and are in "Succeeded" or "Ready" state.
 3. **Workspace access** – Open `terraform output -raw workspace_url` in a browser and sign in (public access is always enabled).
-4. **Single-node cluster** – Under **Compute**, locate the cluster named `<workspace_name>-uc-cluster`. Confirm the **Policy** field is `Personal Compute`, access mode matches `var.data_security_mode` (default **Single user**), runtime is the latest LTS, node type matches `var.node_type_id`, auto-termination matches `var.autotermination_minutes` (default `10`), and the cluster carries the `ClusterType = TerraformDeploymentTesting` tag. Start the cluster and wait for "Running".
+4. **Single-node cluster** – Under **Compute**, locate the cluster named `<workspace_name>-uc-cluster`. Confirm the **Policy** field is `Personal Compute`, access mode matches `var.data_security_mode` (default **Single user**), runtime is the latest LTS, node type matches `var.node_type_id`, auto-termination matches `var.cluster_autotermination_minutes` (default `10`), and the cluster carries the `ClusterType = TerraformDeploymentTesting` tag. Start the cluster and wait for "Running".
 
 ## Clean-up
 

@@ -129,23 +129,13 @@ variable "node_type_id" {
   default     = "Standard_DS3_v2"
 }
 
-variable "autotermination_minutes" {
+variable "cluster_autotermination_minutes" {
   description = "Idle minutes before the single-node UC cluster auto-terminates."
   type        = number
   default     = 10
   validation {
-    condition     = var.autotermination_minutes >= 10
-    error_message = "autotermination_minutes must be at least 10 (Databricks minimum for auto-termination)."
-  }
-}
-
-variable "data_security_mode" {
-  description = "Access mode for the UC-compatible single-node cluster. SINGLE_USER is required for UC workloads with the Personal Compute policy."
-  type        = string
-  default     = "SINGLE_USER"
-  validation {
-    condition     = contains(["SINGLE_USER", "USER_ISOLATION", "NONE", "LEGACY_TABLE_ACL", "LEGACY_PASSTHROUGH", "LEGACY_SINGLE_USER", "LEGACY_SINGLE_USER_STANDARD"], var.data_security_mode)
-    error_message = "data_security_mode must be one of: SINGLE_USER, USER_ISOLATION, NONE, LEGACY_TABLE_ACL, LEGACY_PASSTHROUGH, LEGACY_SINGLE_USER, LEGACY_SINGLE_USER_STANDARD."
+    condition     = var.cluster_autotermination_minutes >= 10
+    error_message = "cluster_autotermination_minutes must be at least 10 (Databricks minimum for auto-termination)."
   }
 }
 

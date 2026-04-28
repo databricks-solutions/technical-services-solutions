@@ -26,8 +26,8 @@ resource "databricks_cluster" "uc_single_node" {
   policy_id               = data.databricks_cluster_policy.personal.id
   spark_version           = data.databricks_spark_version.latest_lts.id
   node_type_id            = var.node_type_id
-  autotermination_minutes = var.autotermination_minutes
-  data_security_mode      = var.data_security_mode
+  autotermination_minutes = var.cluster_autotermination_minutes
+  data_security_mode      = "SINGLE_USER"
   single_user_name        = var.admin_user
 
   custom_tags = {

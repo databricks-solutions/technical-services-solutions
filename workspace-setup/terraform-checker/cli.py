@@ -28,7 +28,7 @@ _dbx_precheck_completion() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
     
-    opts="--cloud --all --region --output --profile --subscription-id --resource-group --project --credentials-file --verbose --dry-run --verify-only --cleanup-orphans --json --log-level --log-file --config --quiet --version --help"
+    opts="--cloud --all --region --output --output-format --profile --subscription-id --resource-group --project --credentials-file --verbose --dry-run --verify-only --cleanup-orphans --json --log-level --log-file --config --quiet --version --help"
     
     case "${prev}" in
         --cloud|-c)
@@ -77,6 +77,7 @@ _dbx_precheck() {
         '(-v --verbose)'{-v,--verbose}'[Verbose output]' \\
         '--dry-run[Dry run mode]' \\
         '--verify-only[Read-only checks without resource creation]' \\
+        '--output-format[Report format]:format:(text checklist-aws)' \\
         '--cleanup-orphans[Cleanup orphaned resources]' \\
         '--json[JSON output]' \\
         '--log-level[Log level]:level:(${log_levels})' \\

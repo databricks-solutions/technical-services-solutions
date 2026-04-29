@@ -19,6 +19,12 @@ import click
 from checkers import AWSChecker, AzureChecker, GCPChecker
 from checkers.base import CheckReport
 from reporters import TxtReporter, JsonReporter
+from reporters.checklist_aws import (
+    build_aws_results_dict_from_report,
+    compute_deployment_status,
+    derive_capabilities_from_aws_results,
+    render_checklist_aws_output,
+)
 from utils import CredentialLoader, ExitCode, load_config, setup_logging
 
 
@@ -416,6 +422,12 @@ def run_gcp_checks(
     is_flag=True,
     help="Suppress banner and progress output (only show results)"
 )
+@click.option(
+    "--output-format",
+    type=click.Choice(["text", "checklist-aws"], case_sensitive=False),
+    default="text",
+    help="Console report format (checklist-aws: AWS workspace deployment checklist)",
+)
 @click.version_option(
     version="1.2.0",
     prog_name="Databricks Terraform Pre-Check"
@@ -439,6 +451,7 @@ def main(
     log_file: Optional[str],
     config: Optional[str],
     quiet: bool,
+    output_format: str,
 ):
     """
     Databricks Terraform Pre-Check Tool
@@ -609,20 +622,43 @@ def main(
         
         sys.exit(exit_code)
     
-    # Text output mode
-    reporter = TxtReporter()
+    output_format = (output_format or "text").lower()
+    aws_report = next((r for r in reports if r.cloud and r.cloud.lower() == "aws"), None)
+    use_checklist_aws = (
+        output_format == "checklist-aws"
+        and aws_report is not None
+        and aws_checker is not None
+    )
+    if output_format == "checklist-aws" and not use_checklist_aws:
+        click.echo(
+            click.style(
+                "Note: --output-format checklist-aws applies when AWS checks run; using standard text report.",
+                fg="yellow",
+            )
+        )
     
-    if len(reports) == 1:
-        report_content = reporter.generate(reports[0])
+    report_content: Optional[str] = None
+    if use_checklist_aws:
+        aws_results = build_aws_results_dict_from_report(aws_report, aws_checker)
+        caps = derive_capabilities_from_aws_results(aws_results)
+        deploy_status = compute_deployment_status(caps)
+        report_region = aws_report.region or region or "us-east-1"
+        report_content = render_checklist_aws_output(caps, deploy_status, region=report_region)
     else:
-        report_content = reporter.generate_all_clouds(reports)
-    
-    # Print report
-    click.echo("\n" + "─" * 70)
-    click.echo(report_content)
+        # Text output mode
+        reporter = TxtReporter()
+        
+        if len(reports) == 1:
+            report_content = reporter.generate(reports[0])
+        else:
+            report_content = reporter.generate_all_clouds(reports)
+        
+        # Print report
+        click.echo("\n" + "─" * 70)
+        click.echo(report_content)
     
     # Save to file if requested
-    if output:
+    if output and report_content is not None:
         with open(output, 'w') as f:
             f.write(report_content)
         click.echo(f"\n✓ Report saved to: {output}")
@@ -639,32 +675,30 @@ def main(
         logger.warning("%d permission(s) denied", total_not_ok)
         
         # Generate suggested policy for AWS
-        if aws_checker and cloud == "aws":
-            aws_report = reports[0] if reports else None
-            if aws_report:
-                suggested_policy = aws_checker.generate_suggested_policy(aws_report)
-                if suggested_policy:
-                    click.echo()
-                    click.echo(click.style("╔══════════════════════════════════════════════════════════════════════╗", fg="yellow"))
-                    click.echo(click.style("║  📋 SUGGESTED IAM POLICY - Add this policy to fix the issues        ║", fg="yellow"))
-                    click.echo(click.style("╠══════════════════════════════════════════════════════════════════════╣", fg="yellow"))
-                    click.echo(click.style("║                                                                      ║", fg="yellow"))
-                    click.echo(click.style("║  HOW TO APPLY:                                                       ║", fg="yellow"))
-                    click.echo(click.style("║  1. Go to AWS Console → IAM → Policies → Create Policy              ║", fg="yellow"))
-                    click.echo(click.style("║  2. Paste the JSON below                                             ║", fg="yellow"))
-                    click.echo(click.style("║  3. Attach the policy to your user/role                              ║", fg="yellow"))
-                    click.echo(click.style("║                                                                      ║", fg="yellow"))
-                    click.echo(click.style("╚══════════════════════════════════════════════════════════════════════╝", fg="yellow"))
-                    click.echo()
-                    click.echo(json.dumps(suggested_policy, indent=2))
-                    click.echo()
-                    
-                    # Save suggested policy to file
-                    policy_file = output.replace('.txt', '-policy.json') if output else 'suggested-policy.json'
-                    with open(policy_file, 'w') as f:
-                        json.dump(suggested_policy, f, indent=2)
-                    click.echo(click.style(f"✓ Policy saved to: {policy_file}", fg="green"))
-                    click.echo(click.style("  You can import this file directly in the AWS Console", fg="cyan"))
+        if aws_checker and aws_report is not None:
+            suggested_policy = aws_checker.generate_suggested_policy(aws_report)
+            if suggested_policy:
+                click.echo()
+                click.echo(click.style("╔══════════════════════════════════════════════════════════════════════╗", fg="yellow"))
+                click.echo(click.style("║  📋 SUGGESTED IAM POLICY - Add this policy to fix the issues        ║", fg="yellow"))
+                click.echo(click.style("╠══════════════════════════════════════════════════════════════════════╣", fg="yellow"))
+                click.echo(click.style("║                                                                      ║", fg="yellow"))
+                click.echo(click.style("║  HOW TO APPLY:                                                       ║", fg="yellow"))
+                click.echo(click.style("║  1. Go to AWS Console → IAM → Policies → Create Policy              ║", fg="yellow"))
+                click.echo(click.style("║  2. Paste the JSON below                                             ║", fg="yellow"))
+                click.echo(click.style("║  3. Attach the policy to your user/role                              ║", fg="yellow"))
+                click.echo(click.style("║                                                                      ║", fg="yellow"))
+                click.echo(click.style("╚══════════════════════════════════════════════════════════════════════╝", fg="yellow"))
+                click.echo()
+                click.echo(json.dumps(suggested_policy, indent=2))
+                click.echo()
+                
+                # Save suggested policy to file
+                policy_file = output.replace('.txt', '-policy.json') if output else 'suggested-policy.json'
+                with open(policy_file, 'w') as f:
+                    json.dump(suggested_policy, f, indent=2)
+                click.echo(click.style(f"✓ Policy saved to: {policy_file}", fg="green"))
+                click.echo(click.style("  You can import this file directly in the AWS Console", fg="cyan"))
         
         sys.exit(exit_code)
     elif total_warning > 0:

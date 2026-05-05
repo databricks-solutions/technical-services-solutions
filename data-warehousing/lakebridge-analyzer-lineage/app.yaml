@@ -1,0 +1,22 @@
+authorization:
+  enabled: true
+  scopes:
+    - sql
+    - files.files
+    - all-apis
+
+command:
+  - python
+  - -m
+  - uvicorn
+  - migration_accelerator.app.main:app
+  - --host
+  - 0.0.0.0
+  - --port
+  - "8000"
+
+resources:
+  - name: uc_volume
+    permissions:
+      - level: CAN_READ
+      - level: CAN_WRITE

@@ -1,0 +1,8 @@
+# Table name mapping: source table -> Unity Catalog 3-level namespace
+# Lines starting with # are comments
+# Format: source_table,uc_table
+#
+# Example:
+# Employees,hr_catalog.raw.employees
+# dim_party,analytics_catalog.dw.dim_party
+# dim_departments,analytics_catalog.dw.dim_departments

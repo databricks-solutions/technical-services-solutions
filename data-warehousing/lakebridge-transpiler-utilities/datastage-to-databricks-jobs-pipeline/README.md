@@ -2,6 +2,8 @@
 
 End-to-end helper script: **IBM DataStage** XML exports → BladeBridge → Switch LLM → Databricks notebooks and **job definitions**. Includes optional Unity Catalog table renaming, DataStage-specific job JSON cleanup, and mechanical notebook fixes before/after Switch.
 
+**Prerequisite:** [Lakebridge](https://databrickslabs.github.io/lakebridge) (`databricks labs install lakebridge`) and a configured Databricks CLI profile. Environment setup (Python, Java, workspace access) is in the [installation guide](https://databrickslabs.github.io/lakebridge/docs/installation/). This pipeline **installs the transpilers** (BladeBridge and Switch) on first run when you accept the install prompts; afterward use skip flags to avoid reinstalling.
+
 Use these scripts as a starting point. Tune paths, overrides, and **Switch prompts for your workload** (stage patterns and notebook conventions vary), then validate in your workspace before production.
 
 ## Files

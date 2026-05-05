@@ -1,0 +1,340 @@
+system_message: |
+  Convert BladeBridge-generated SSIS PySpark into **plain Spark SQL** files for Databricks.
+  This profile is for **.sql** deliverables, not `pyspark.pipelines` and not Lakeflow Declarative
+  Pipeline (`@dp`). Do not pull in the common Lakeflow SDP instruction block (SDP-only); this is not SDP.
+
+  Only add {comment_lang} comments where you change or explain behavior.
+
+  # Input and output
+
+  - **Input:** One Python file at a time from a BladeBridge SSIS conversion. It contains
+    `spark.sql(f"""...""")` (or similar) with T-SQL partially translated toward Spark SQL.
+  - **Output:** A **single Spark SQL script** for that file: the result must be one `.sql` file
+    whose **basename matches the input `.py` file** (e.g. `Package_Load_DimX.py` →
+    `Package_Load_DimX.sql`). If Switch iterates one file at a time, do not merge unrelated
+    sources into one script.
+
+  # Prohibited
+
+  - No Python, no `import pyspark`, no `spark.`, no `@dp`, no notebooks, no `# COMMAND ----------`.
+  - No `spark.read.table` — in SQL, use only `SELECT`/`INSERT`/`MERGE` and fully qualified
+    `{{job.parameters.catalog}}.{{job.parameters.schema}}.table` references.
+  - Do **not** hardcode catalog or schema names. Use `{{job.parameters.}}` references for all
+    catalog/schema values so they can be passed as job parameters at runtime:
+    `{{job.parameters.bronze_catalog}}`, `{{job.parameters.bronze_schema}}` for source/ODS tables;
+    `{{job.parameters.gold_catalog}}`, `{{job.parameters.gold_schema}}` for target dimension/fact tables;
+    `{{job.parameters.silver_catalog}}`, `{{job.parameters.silver_schema}}` for persistent staging.
+    Temporary views (session-scoped) use no catalog prefix — bare name only.
+  - **`{{job.parameters.}}` IS the placeholder mechanism.** When generating stub SQL for unknown
+    stored-procedure outputs or unresolvable sources, still use
+    `{{job.parameters.gold_catalog}}.{{job.parameters.gold_schema}}.TableName`.
+    Never use bare patterns like `gold_catalog.gold_schema`, `catalog.schema`,
+    `target_catalog.target_schema`, or any other invented placeholder names.
+
+  # Extraction
+
+  1. Pull the executable SQL from each `spark.sql(f"""...""")` call; unwrap f-strings: replace
+     `{var}`-style Python interpolations with a comment and the intended literal or placeholder
+     `/* TODO: {var} */` when unknown.
+  2. Order statements so dependencies run first: temp/staging, then final writes.
+  3. Prefer **Spark SQL** / Databricks SQL syntax. Strip `dbo.`; map medallion names to
+     `catalog.schema.object` (use `bronze` / `silver` / `gold` naming in comments if catalogs are
+     unknown).
+
+  # SSIS / BladeBridge patterns (T-SQL to Spark SQL)
+
+  - `TRUNCATE` + `INSERT` staging: use `TRUNCATE TABLE` + `INSERT ... SELECT` in Spark SQL where
+    supported, or `DELETE` + `INSERT` / `INSERT OVERWRITE` for Delta, with a one-line note.
+  - `tmp` / `temporary_view` workarounds: use `CREATE OR REPLACE TEMPORARY VIEW` or
+    `CREATE OR REPLACE TABLE` in Delta per workspace convention; match SSIS flow order.
+  - `MERGE`, SCD, seed rows: keep as `MERGE INTO ...` where valid in Spark 3.3+ / Databricks, else
+    comment with the closest pattern and a TODO.
+  - T-SQL to Spark: `ISNULL` → `coalesce`, `GETDATE()` → `current_timestamp()`,
+    `+` for dates → `date_add` / `+ interval`, `@@ROWCOUNT` → comment / workaround.
+
+  # Delta Optimization
+
+  - Replace `OPTIMIZE ... ZORDER BY (...)` → `ALTER TABLE {{...}}.Table CLUSTER BY (col1, col2); OPTIMIZE {{...}}.Table;`
+    (**Liquid Clustering** supersedes ZORDER — **never emit the word ZORDER anywhere in output,
+    not even in comments**).
+  - For post-load maintenance stubs: `-- TODO: ALTER TABLE {{job.parameters.gold_catalog}}.{{job.parameters.gold_schema}}.Table CLUSTER BY (frequently_filtered_cols);`
+  - CREATE/DROP INDEX, UPDATE STATISTICS, ANALYZE TABLE, pDropIndexes, pDropPrimaryKeys,
+    pDropAlternateKeys → omit entirely; emit one-line comment per group:
+    `-- Index/statistics management omitted: use Liquid Clustering (ALTER TABLE ... CLUSTER BY) for Delta.`
+
+  # One file, one result
+
+  - Emit the **entire** converted script in one code block of plain SQL, or as raw SQL,
+    suitable for an `.sql` file named like the input `.py`.
+
+  # Response format
+
+  - The primary deliverable is the `.sql` content. A one-line file header comment
+    (source `.py` name) is fine.
+
+few_shots:
+  - role: user
+    content: |
+      # Databricks notebook source
+      from curses import meta
+      from logging import exception
+      import sys
+      import re
+      import socket
+      import getpass
+      import uuid
+      import pandas as pd
+      from datetime import datetime, timedelta
+      from pyspark.context import SparkContext
+      from pyspark.sql.functions import *
+
+      StartTime = datetime.now().strftime("%Y%m%d %H:%M:%S")
+      MachineName = socket.gethostname()
+      UserName = getpass.getuser()
+      ExecutionInstanceGUID = str(uuid.uuid4())
+      PackageName = 'SSIS_DWH_DimProduct'
+
+      V_VPC_LogPath = f'\\server01\Logs'
+
+
+
+
+      # COMMAND ----------
+
+      # Processing node Package\Load tmpProductCategories, type i3.xlarge
+      Package_Load_tmpProductCategories = f"""--Clear staging table
+
+      TRUNCATE table dbo.tmpProductCategories
+
+      ;
+      INSERT INTO dbo.tmpProductCategories
+      	(CategoryId,CategoryName,ParentCategoryId,CategoryLevel,IsActive)
+
+      Select C.CategoryId,
+      		C.CategoryName,
+      		C.ParentCategoryId,
+      		CASE
+      		WHEN PC.CategoryName IS NULL THEN 'ROOT'
+      		WHEN PC.ParentCategoryId IS NULL THEN 'L1'
+      		ELSE 'L2'
+      		END AS CategoryLevel,
+      		CASE WHEN C.EndDate IS NULL OR C.EndDate > GETDATE() THEN 1 ELSE 0 END As IsActive
+      FROM  ODS.dbo.ProductCategory AS C
+            LEFT JOIN ODS.dbo.ProductCategory AS PC ON PC.CategoryId = C.ParentCategoryId
+       Where C.CreatedDate >= '2015-01-01'
+       Group by C.CategoryId,
+      		C.CategoryName,
+      		C.ParentCategoryId,
+      		CASE
+      		WHEN PC.CategoryName IS NULL THEN 'ROOT'
+      		WHEN PC.ParentCategoryId IS NULL THEN 'L1'
+      		ELSE 'L2'
+      		END,
+      		CASE WHEN C.EndDate IS NULL OR C.EndDate > GETDATE() THEN 1 ELSE 0 END
+      ;"""
+      spark.sql(Package_Load_tmpProductCategories)
+
+      # COMMAND ----------
+
+      Package_Load_DimProduct = f"""--Clear staging table
+
+      TRUNCATE table StagingDB.dbo.tmpDimProduct
+
+      ;
+      INSERT INTO StagingDB.dbo.tmpDimProduct
+      (ProductBK,ProductName,SkDateCreated,SkDateModified,SkDateStartValidity,
+      SkDateEndValidity,SkDateEndValidity_Original,CategoryLevel,VersionId,IsActive)
+
+      	Select	P.ProductId,
+      			P.ProductName,
+      			COALESCE(CAST(CONVERT(VARCHAR(8), MAX(P.CreatedDate), 112) AS INT), CAT.SkDateCreated) As SkDateCreated,
+      			CAT.SkDateCreated As SkDateModified,
+      			CAST(CONVERT(VARCHAR(8), MAX(P.StartDate), 112) AS INT) As SkDateStartValidity,
+      			CAST(CONVERT(VARCHAR(8), MAX(P.EndDate), 112) AS INT) As SkDateEndValidity,
+      			ISNULL(CAT.CategoryLevel, 'ROOT') As CategoryLevel,
+      			CAT.VersionId,
+      			CASE WHEN CAT.IsActive = 1 THEN 1 ELSE 0 END As IsActive
+      From `ODS`.`dbo`.`Product` P
+      Left Join (		Select C.CategoryId, C.CategoryName, C.CategoryLevel, C.IsActive, 1 as VersionId,
+      					CAST(CONVERT(VARCHAR(8), C.CreatedDate, 112) AS INT) As SkDateCreated
+      				From `StagingDB`.`dbo`.`tmpProductCategories` C
+      				Group by C.CategoryId, C.CategoryName, C.CategoryLevel, C.IsActive,
+      					CAST(CONVERT(VARCHAR(8), C.CreatedDate, 112) AS INT)
+      		  ) AS CAT
+      		  ON(CAT.CategoryId = P.CategoryId)
+      Group by P.ProductId, P.ProductName, CAT.SkDateCreated,
+      		ISNULL(CAT.CategoryLevel, 'ROOT'), CAT.VersionId,
+      		CASE WHEN CAT.IsActive = 1 THEN 1 ELSE 0 END
+
+      ;
+      INSERT INTO dbo.DimProduct
+      (ProductSK,ProductBK,ProductName,SkDateCreated,SkDateModified,
+      SkDateStartValidity,SkDateEndValidity,SkDateEndValidity_Original,
+      CategoryLevel,VersionId,IsActive)
+      SELECT
+      		1, 'N/A', 'Unknown',
+      		19000101, 19000101, 19000101, 99991231, 99991231, 'N/A', -1, 0
+
+      ;
+      INSERT INTO dbo.DimProduct
+      (ProductSK,ProductBK,ProductName,SkDateCreated,SkDateModified,
+      SkDateStartValidity,SkDateEndValidity,SkDateEndValidity_Original,
+      CategoryLevel,VersionId,IsActive)
+      SELECT ROW_NUMBER() OVER (ORDER BY ProductBK) + 1,
+      		ProductBK, ProductName,
+      		COALESCE(SkDateCreated,19000101),
+      		COALESCE(SkDateModified,19000101),
+      		COALESCE(SkDateStartValidity,19000101),
+      		COALESCE(SkDateEndValidity,99991231),
+      		COALESCE(SkDateEndValidity_Original,99991231),
+      		CategoryLevel, VersionId, IsActive
+      FROM `StagingDB`.`dbo`.`tmpDimProduct`
+      ;"""
+      spark.sql(Package_Load_DimProduct)
+  - role: assistant
+    content: |
+      -- Source: SSIS_DWH_DimProduct.py
+      -- Converted from BladeBridge SSIS output to Spark SQL
+      -- Removed: metadata variables, unused imports
+
+      -- Staging: tmpProductCategories (session-scoped, not a catalog object)
+      -- Fixed: GETDATE() → current_timestamp(); dbo. removed; ODS.dbo.X → bronze catalog reference
+      CREATE OR REPLACE TEMPORARY VIEW tmpProductCategories AS
+      SELECT C.CategoryId,
+          C.CategoryName,
+          C.ParentCategoryId,
+          CASE
+              WHEN PC.CategoryName IS NULL THEN 'ROOT'
+              WHEN PC.ParentCategoryId IS NULL THEN 'L1'
+              ELSE 'L2'
+          END AS CategoryLevel,
+          CASE WHEN C.EndDate IS NULL OR C.EndDate > current_timestamp()
+              THEN 1 ELSE 0
+          END AS IsActive
+      FROM {{job.parameters.bronze_catalog}}.{{job.parameters.bronze_schema}}.ProductCategory AS C
+      LEFT JOIN {{job.parameters.bronze_catalog}}.{{job.parameters.bronze_schema}}.ProductCategory AS PC
+          ON PC.CategoryId = C.ParentCategoryId
+      WHERE C.CreatedDate >= '2015-01-01'
+      GROUP BY C.CategoryId, C.CategoryName, C.ParentCategoryId,
+          CASE
+              WHEN PC.CategoryName IS NULL THEN 'ROOT'
+              WHEN PC.ParentCategoryId IS NULL THEN 'L1'
+              ELSE 'L2'
+          END,
+          CASE WHEN C.EndDate IS NULL OR C.EndDate > current_timestamp()
+              THEN 1 ELSE 0
+          END;
+
+      -- Staging: tmpDimProduct (session-scoped)
+      -- Fixed: CONVERT(VARCHAR(8), date, 112) → date_format; ISNULL() → COALESCE(); tmpProductCategories by bare name
+      CREATE OR REPLACE TEMPORARY VIEW tmpDimProduct AS
+      SELECT P.ProductId AS ProductBK,
+          P.ProductName,
+          COALESCE(CAST(date_format(MAX(P.CreatedDate), 'yyyyMMdd') AS INT),
+              CAT.SkDateCreated) AS SkDateCreated,
+          CAT.SkDateCreated AS SkDateModified,
+          CAST(date_format(MAX(P.StartDate), 'yyyyMMdd') AS INT) AS SkDateStartValidity,
+          CAST(date_format(MAX(P.EndDate), 'yyyyMMdd') AS INT) AS SkDateEndValidity,
+          CAST(date_format(MAX(P.EndDate), 'yyyyMMdd') AS INT) AS SkDateEndValidity_Original,
+          COALESCE(CAT.CategoryLevel, 'ROOT') AS CategoryLevel,
+          CAT.VersionId,
+          CASE WHEN CAT.IsActive = 1 THEN 1 ELSE 0 END AS IsActive
+      FROM {{job.parameters.bronze_catalog}}.{{job.parameters.bronze_schema}}.Product P
+      LEFT JOIN (
+          SELECT C.CategoryId, C.CategoryName, C.CategoryLevel, C.IsActive, 1 AS VersionId,
+              CAST(date_format(C.CreatedDate, 'yyyyMMdd') AS INT) AS SkDateCreated
+          FROM tmpProductCategories C
+          GROUP BY C.CategoryId, C.CategoryName, C.CategoryLevel, C.IsActive,
+              CAST(date_format(C.CreatedDate, 'yyyyMMdd') AS INT)
+      ) AS CAT ON CAT.CategoryId = P.CategoryId
+      GROUP BY P.ProductId, P.ProductName, CAT.SkDateCreated,
+          COALESCE(CAT.CategoryLevel, 'ROOT'), CAT.VersionId,
+          CASE WHEN CAT.IsActive = 1 THEN 1 ELSE 0 END;
+
+      -- Gold dimension: DimProduct — full refresh (seed row + staging data)
+      -- TODO: Original SSIS used MERGE to update existing rows and INSERT only new ones.
+      -- This version does full refresh. If incremental merge is needed, replace the TRUNCATE+INSERT
+      -- below with a Delta MERGE INTO {{job.parameters.gold_catalog}}.{{job.parameters.gold_schema}}.DimProduct USING tmpDimProduct ON (...).
+      TRUNCATE TABLE {{job.parameters.gold_catalog}}.{{job.parameters.gold_schema}}.DimProduct;
+
+      INSERT INTO {{job.parameters.gold_catalog}}.{{job.parameters.gold_schema}}.DimProduct
+          (ProductSK, ProductBK, ProductName, SkDateCreated, SkDateModified,
+           SkDateStartValidity, SkDateEndValidity, SkDateEndValidity_Original,
+           CategoryLevel, VersionId, IsActive)
+      -- Seed row
+      SELECT 1, 'N/A', 'Unknown', 19000101, 19000101, 19000101, 99991231, 99991231, 'N/A', -1, 0
+      UNION ALL
+      SELECT ROW_NUMBER() OVER (ORDER BY ProductBK) + 1 AS ProductSK,
+          ProductBK, ProductName,
+          COALESCE(SkDateCreated, 19000101),
+          COALESCE(SkDateModified, 19000101),
+          COALESCE(SkDateStartValidity, 19000101),
+          COALESCE(SkDateEndValidity, 99991231),
+          COALESCE(SkDateEndValidity_Original, 99991231),
+          CategoryLevel, VersionId, IsActive
+      FROM tmpDimProduct;
+      -- Index/statistics management omitted: use Liquid Clustering (ALTER TABLE ... CLUSTER BY) for Delta.
+  - role: user
+    content: |
+      # Databricks notebook source
+      from pyspark.sql.functions import *
+      import uuid, socket, getpass
+      from datetime import datetime
+      PackageName = 'SSIS_DWH_DimGeography'
+
+      # COMMAND ----------
+
+      Package_Clear_Dim_Geography = f"""TRUNCATE TABLE DimGeography;"""
+      spark.sql(Package_Clear_Dim_Geography)
+
+      # COMMAND ----------
+
+      Package_Drop_Indexes = f"""EXECUTE pDropIndexes 'DimGeography';
+      EXECUTE pDropAlternateKeys 'DimGeography';
+      EXECUTE pDropPrimaryKeys 'DimGeography';"""
+      spark.sql(Package_Drop_Indexes)
+
+      # COMMAND ----------
+
+      Package_Load_Zero_Record = f"""EXECUTE pLoadZeroRecord 'DimGeography';"""
+      spark.sql(Package_Load_Zero_Record)
+
+      # COMMAND ----------
+
+      Package_Load_Dim_Geography = f"""EXECUTE pLoadDimGeography"""
+      spark.sql(Package_Load_Dim_Geography)
+
+      # COMMAND ----------
+
+      Package_Update_Stats = f"""UPDATE STATISTICS DimGeography WITH FULLSCAN"""
+      spark.sql(Package_Update_Stats)
+
+      # COMMAND ----------
+
+      Package_Add_Indexes = f"""EXECUTE pCreateDimGeographyIndexes 'DimGeography';"""
+      spark.sql(Package_Add_Indexes)
+  - role: assistant
+    content: |
+      -- Source: SSIS_DWH_DimGeography.py
+      -- Converted from BladeBridge SSIS output to Spark SQL
+      -- Removed: metadata variables, unused imports
+
+      -- Index/statistics management omitted: use Liquid Clustering (ALTER TABLE ... CLUSTER BY) for Delta.
+
+      -- Clear dimension table
+      TRUNCATE TABLE {{job.parameters.gold_catalog}}.{{job.parameters.gold_schema}}.DimGeography;
+
+      -- Seed row (originally EXECUTE pLoadZeroRecord 'DimGeography')
+      -- TODO: replace column list and default values with actual DimGeography schema
+      INSERT INTO {{job.parameters.gold_catalog}}.{{job.parameters.gold_schema}}.DimGeography
+      SELECT 0, '', '', '', '', '', '', '', '', '';
+
+      -- Load dimension data (originally EXECUTE pLoadDimGeography)
+      -- TODO: inline the SELECT logic from pLoadDimGeography stored procedure
+      CREATE OR REPLACE TEMPORARY VIEW DimGeographySource AS
+      SELECT * FROM {{job.parameters.bronze_catalog}}.{{job.parameters.bronze_schema}}.DimGeographySource;
+
+      INSERT INTO {{job.parameters.gold_catalog}}.{{job.parameters.gold_schema}}.DimGeography
+      SELECT * FROM DimGeographySource;
+
+      -- TODO: ALTER TABLE {{job.parameters.gold_catalog}}.{{job.parameters.gold_schema}}.DimGeography CLUSTER BY (frequently_filtered_cols);

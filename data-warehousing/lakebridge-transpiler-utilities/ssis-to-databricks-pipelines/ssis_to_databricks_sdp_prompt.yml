@@ -26,8 +26,8 @@ system_message: |
 
   ## SSIS-Specific Overrides to the Above Guidelines
   - **spark.sql() IS required**: SSIS conversions use spark.sql(f"""...""") inside @dp-decorated
-    functions because the input is T-SQL translated to Spark SQL. This overrides any rule above
-    that says "do not wrap SQL in Python API like spark.sql()".
+    functions because the input SQL (from SSIS Execute SQL tasks) is embedded in spark.sql calls.
+    This overrides any rule above that says "do not wrap SQL in Python API like spark.sql()".
   - **Do NOT use spark.read**: See TABLE REFERENCE METHOD above — all table references go
     inside spark.sql() f-strings. Any spark.read variable is dead code.
 
@@ -35,7 +35,7 @@ system_message: |
 
   - Input: A single file from a BladeBridge SSIS conversion folder. BladeBridge converts
     SSIS packages (.dtsx) and produces Python files containing `spark.sql(f"""...""")` calls
-    with T-SQL that has been partially translated to Spark SQL.
+    with SQL Server dialect SQL that has been partially translated to Spark SQL.
   - Output: A Python module using `import pyspark.pipelines as dp` with decorated functions
     that define tables, materialized views, and CDC flows for a Lakeflow Declarative Pipeline.
     Do NOT output notebook-format cells with `# COMMAND ----------` separators.
@@ -179,14 +179,14 @@ system_message: |
     expectation for it — the filter itself enforces the constraint.
 
 
-  # SQL Dialect Translation (T-SQL to Spark SQL)
+  # SQL Dialect Translation (SQL Server Dialect → Spark SQL)
 
   BladeBridge passes through source-dialect SQL untranslated inside `spark.sql(f"""...""")`.
-  Convert T-SQL to Spark SQL using these mappings:
+  Convert SQL Server dialect functions to Spark SQL using these mappings:
 
-  ### T-SQL to Spark SQL
+  ### SQL Server → Spark SQL
 
-  | T-SQL | Spark SQL Equivalent |
+  | SQL Server | Spark SQL Equivalent |
   |---|---|
   | ISNULL(a, b) | COALESCE(a, b) |
   | GETDATE() | current_timestamp() |
@@ -245,7 +245,7 @@ system_message: |
   | EXEC / EXECUTE sp_name | Comment out with TODO — stored procedures need manual migration |
   | sp_executesql | Comment out with TODO — dynamic SQL needs manual review |
 
-  Data type mapping: All T-SQL string types (NVARCHAR, VARCHAR, CHAR, NCHAR, NTEXT, TEXT) → STRING.
+  Data type mapping: SQL Server string types (NVARCHAR, VARCHAR, CHAR, NCHAR, NTEXT, TEXT) → STRING.
   DATETIME/DATETIME2 → TIMESTAMP. MONEY → DECIMAL(19,4). SMALLMONEY → DECIMAL(10,4). BIT → BOOLEAN.
   FLOAT → DOUBLE. REAL → FLOAT. UNIQUEIDENTIFIER → STRING. VARBINARY/IMAGE → BINARY. XML → STRING.
   TIME → STRING (Spark has no TIME type). INT/BIGINT/SMALLINT/TINYINT/DECIMAL/DATE keep same syntax.

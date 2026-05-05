@@ -22,14 +22,26 @@ log = get_logger()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
+    import signal
+
     # Startup
     log.info("Starting Migration Accelerator API")
     log.info(f"Storage backend: {settings.storage_backend}")
     log.info(f"LLM endpoint: {settings.llm_endpoint}")
 
+    # Track shutdown state so background tasks can exit early
+    app.state.shutting_down = False
+
+    def _handle_sigterm(signum, frame):
+        log.info("SIGTERM received — marking app as shutting down")
+        app.state.shutting_down = True
+
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+
     yield
 
     # Shutdown
+    app.state.shutting_down = True
     log.info("Shutting down Migration Accelerator API")
 
 

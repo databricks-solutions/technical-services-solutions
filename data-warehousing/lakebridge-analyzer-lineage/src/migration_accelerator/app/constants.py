@@ -32,6 +32,7 @@ class ExportFormat(str, Enum):
 class NodeType(str, Enum):
     """Node types in lineage graphs."""
     FILE = "FILE"
+    FLAT_FILE = "FLAT_FILE"
     TABLE_OR_VIEW = "TABLE_OR_VIEW"
 
 

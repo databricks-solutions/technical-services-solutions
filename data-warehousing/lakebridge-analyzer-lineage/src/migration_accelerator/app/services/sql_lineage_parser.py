@@ -72,14 +72,21 @@ class SQLLineageParser:
         global_temp_tables_count = 0
         variables_filtered = 0
         
-        for _, row in df.iterrows():
-            program = row[program_col]
-            obj = row[object_col]
-            operation = row[operation_col] if operation_col else ""
-            
+        # Use itertuples for performance (3-10x faster than iterrows)
+        # Get column indices for direct access
+        col_list = list(df.columns)
+        program_idx = col_list.index(program_col)
+        object_idx = col_list.index(object_col)
+        operation_idx = col_list.index(operation_col) if operation_col else None
+
+        for row in df.itertuples(index=False):
+            program = row[program_idx]
+            obj = row[object_idx]
+            operation = row[operation_idx] if operation_idx is not None else ""
+
             if pd.isna(program) or pd.isna(obj):
                 continue
-            
+
             program = str(program).strip()
             obj = str(obj).strip()
             operation = str(operation).strip().upper() if not pd.isna(operation) else ""
@@ -96,9 +103,9 @@ class SQLLineageParser:
             # Double ## = global temp table (treated as TABLE_OR_VIEW)
             if obj.startswith('#'):
                 if obj.startswith('##'):
-                    # Global temp table - keep it as TABLE_OR_VIEW
+                    # Global temp table - keep it as TABLE_OR_VIEW (ID normalized to lowercase)
                     object_type = NodeTypeHelper.TABLE_OR_VIEW
-                    global_temp_tables_count += 1 if obj not in nodes else 0
+                    global_temp_tables_count += 1 if obj.lower() not in nodes else 0
                 else:
                     # Local temp table - skip it
                     temp_tables_filtered += 1
@@ -121,59 +128,73 @@ class SQLLineageParser:
                 # Determine node types based on file extensions
                 is_file = any(program.lower().endswith(ext) for ext in file_extensions)
                 program_type = NodeTypeHelper.FILE if is_file else NodeTypeHelper.TABLE_OR_VIEW
-            
-            # Add nodes
-            if program not in nodes:
-                nodes[program] = {"id": program, "type": program_type, "label": program}
-            if obj not in nodes:
-                nodes[obj] = {"id": obj, "type": object_type, "label": obj}
-            
+
+            # Normalize IDs to lowercase for TABLE_OR_VIEW so case variants merge; keep display names original
+            program_id = program.lower() if program_type == NodeTypeHelper.TABLE_OR_VIEW else program
+            obj_id = obj.lower() if object_type == NodeTypeHelper.TABLE_OR_VIEW else obj
+
+            # Add nodes (keyed by normalized ID; label/name keep original case)
+            if program_id not in nodes:
+                nodes[program_id] = {
+                    "id": program_id,
+                    "type": program_type,
+                    "label": program,
+                    "name": program,
+                }
+            if obj_id not in nodes:
+                nodes[obj_id] = {
+                    "id": obj_id,
+                    "type": object_type,
+                    "label": obj,
+                    "name": obj,
+                }
+
             # Map Operation column value to standardized relationship
-            # Create edges with correct direction based on data flow
+            # Create edges with correct direction (use normalized IDs)
             if operation == "CREATE":
                 # FILE creates TABLE → FILE is source, TABLE is target
                 edge = {
-                    "source": program,
-                    "target": obj,
+                    "source": program_id,
+                    "target": obj_id,
                     "relationship": "CREATES"
                 }
             elif operation in ["CREATE INDEX", "INDEX", "CREATE_INDEX"]:
                 # FILE creates INDEX on TABLE → FILE is source, TABLE is target
                 # Indexes are schema modifications, treated like WRITES_TO
                 edge = {
-                    "source": program,
-                    "target": obj,
+                    "source": program_id,
+                    "target": obj_id,
                     "relationship": "CREATES_INDEX"
                 }
             elif operation in ["READ", "SELECT"]:
                 # FILE reads from TABLE → FILE is source (active reader), TABLE is target (being read from)
                 # This makes the direction intuitive: "FILE reads from TABLE"
                 edge = {
-                    "source": program,  # FILE is source (performs the read)
-                    "target": obj,      # TABLE is target (being read from)
+                    "source": program_id,  # FILE is source (performs the read)
+                    "target": obj_id,      # TABLE is target (being read from)
                     "relationship": "READS_FROM"
                 }
-                log.debug(f"Created READS_FROM edge: {program} -> {obj}")
+                log.debug(f"Created READS_FROM edge: {program_id} -> {obj_id}")
             elif operation in ["WRITE", "INSERT", "UPDATE"]:
                 # FILE writes to TABLE → FILE is source, TABLE is target
                 edge = {
-                    "source": program,
-                    "target": obj,
+                    "source": program_id,
+                    "target": obj_id,
                     "relationship": "WRITES_TO"
                 }
             elif operation in ["DELETE", "TRUNCATE"]:
                 # FILE deletes from TABLE → FILE is source, TABLE is target
                 # Destructive operations separated for impact analysis
                 edge = {
-                    "source": program,
-                    "target": obj,
+                    "source": program_id,
+                    "target": obj_id,
                     "relationship": "DELETES_FROM"
                 }
             elif operation == "DROP":
                 # FILE drops TABLE → FILE is source, TABLE is target
                 edge = {
-                    "source": program,
-                    "target": obj,
+                    "source": program_id,
+                    "target": obj_id,
                     "relationship": "DROPS"
                 }
             else:
@@ -182,18 +203,18 @@ class SQLLineageParser:
                     log.warning(f"Unknown operation type: {operation}")
                     # Default to treating as read (reverse direction)
                     edge = {
-                        "source": obj,
-                        "target": program,
+                        "source": obj_id,
+                        "target": program_id,
                         "relationship": operation
                     }
                 else:
                     # Default fallback: treat as read
                     edge = {
-                        "source": program,  # FILE performs the read
-                        "target": obj,      # TABLE is being read from
+                        "source": program_id,  # FILE performs the read
+                        "target": obj_id,     # TABLE is being read from
                         "relationship": "READS_FROM"
                     }
-            
+
             edges.append(edge)
         
         # Count node types using NodeTypeHelper

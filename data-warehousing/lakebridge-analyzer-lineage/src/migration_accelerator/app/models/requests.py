@@ -68,10 +68,8 @@ class ExportRequest(BaseModel):
 
 class FilterAggregateRequest(BaseModel):
     """Request model for filtering aggregate lineage."""
-
     file_ids: List[str] = Field(..., description="List of file IDs to filter by")
     include_file_dependencies: bool = Field(
         default=False,
         description="Include FILE->FILE dependency edges derived from table lineage"
     )
-

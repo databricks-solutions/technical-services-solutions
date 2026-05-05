@@ -2,6 +2,8 @@
 LLM query endpoints.
 """
 
+import asyncio
+
 from fastapi import APIRouter, Body, Depends, HTTPException
 
 from migration_accelerator.app.api.dependencies import (
@@ -48,7 +50,7 @@ async def query_analyzer(
     
     if request.scope == "all":
         # Query all user files
-        all_files = storage.list_user_files(user_id)
+        all_files = await asyncio.to_thread(storage.list_user_files, user_id)
         file_ids_to_query = [f["file_id"] for f in all_files]
     elif request.scope == "multiple" and request.analyzer_ids:
         # Query specific files
@@ -65,7 +67,7 @@ async def query_analyzer(
     file_data = []
     for file_id in file_ids_to_query:
         try:
-            file_path, metadata = MetadataHelper.get_file_with_metadata(
+            file_path, metadata = await MetadataHelper.get_file_with_metadata_async(
                 file_id, user_id, storage
             )
             dialect = MetadataHelper.get_dialect_str(metadata)

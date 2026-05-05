@@ -4,6 +4,7 @@ Analyzer Query Service for LLM-based querying of analyzer data.
 Handles natural language queries against analyzer files using LLM agents.
 """
 
+import asyncio
 from typing import Any, Dict, List, Optional
 
 from migration_accelerator.configs.modules import AnalyzerConfig
@@ -66,23 +67,29 @@ class AnalyzerQueryService:
             
             if config.settings.storage_backend == StorageBackend.UNITY_CATALOG:
                 from databricks.sdk import WorkspaceClient
-                databricks_client = WorkspaceClient()
-                
-                # Download from UC to temp file
+
+                def _download_uc():
+                    databricks_client = WorkspaceClient()
+                    resp = databricks_client.files.download(file_path)
+                    return resp.contents.read()
+
                 temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=PathLib(file_path).suffix)
                 temp_file.close()
-                
-                download_response = databricks_client.files.download(file_path)
+
+                content = await asyncio.to_thread(_download_uc)
                 with open(temp_file.name, 'wb') as f:
-                    f.write(download_response.contents.read())
-                
+                    f.write(content)
+
                 local_file_path = temp_file.name
-            
+
             analyzer_config = AnalyzerConfig(analyzer_file=local_file_path, dialect=dialect)
             analyzer = SourceAnalyzer(analyzer_config, llm_config=self.llm_config)
             
             log.info(f"Querying analyzer with: {question}")
-            result = analyzer.query(question)
+            result = await asyncio.wait_for(
+                asyncio.to_thread(analyzer.query, question),
+                timeout=45,  # 45s timeout to stay under 60s proxy limit
+            )
             
             return {
                 "question": question,
@@ -157,29 +164,33 @@ class AnalyzerQueryService:
                     # Download from UC if needed
                     local_file_path = file_info["file_path"]
                     temp_file = None
-                    
+
                     if config.settings.storage_backend == StorageBackend.UNITY_CATALOG:
                         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=PathLib(file_info["file_path"]).suffix)
                         temp_file.close()
                         temp_files.append(temp_file.name)
-                        
-                        download_response = databricks_client.files.download(file_info["file_path"])
+
+                        def _download(path=file_info["file_path"]):
+                            return databricks_client.files.download(path).contents.read()
+
+                        content = await asyncio.to_thread(_download)
                         with open(temp_file.name, 'wb') as f:
-                            f.write(download_response.contents.read())
-                        
+                            f.write(content)
+
                         local_file_path = temp_file.name
-                    
+
                     analyzer_config = AnalyzerConfig(
                         analyzer_file=local_file_path, dialect=dialect
                     )
                     analyzer = SourceAnalyzer(
                         analyzer_config, llm_config=self.llm_config
                     )
-                    
+
                     # Get relevant sheets based on dialect
                     sheet_names = self._get_dialect_sheets(dialect)
-                    
-                    data = analyzer.parse(sheet_names=sheet_names)
+
+                    # Run CPU-bound Excel parsing in thread pool
+                    data = await asyncio.to_thread(analyzer.parse, sheet_names)
                     for sheet_name, df in data.items():
                         all_dataframes.append(df)
                         sources_used.append(f"{file_info['filename']}:{sheet_name}")
@@ -202,7 +213,10 @@ class AnalyzerQueryService:
                 f"Querying {len(all_dataframes)} dataframes from "
                 f"{len(file_data)} files: {question}"
             )
-            result = agent.invoke(question)
+            result = await asyncio.wait_for(
+                asyncio.to_thread(agent.invoke, question),
+                timeout=45,  # 45s timeout to stay under 60s proxy limit
+            )
             
             return {
                 "question": question,

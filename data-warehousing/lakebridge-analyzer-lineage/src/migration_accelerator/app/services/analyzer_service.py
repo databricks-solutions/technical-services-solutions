@@ -2,6 +2,7 @@
 Analyzer service for processing uploaded analyzer files.
 """
 
+import asyncio
 from typing import Any, Dict, List, Optional
 
 from migration_accelerator.app.constants import Dialect
@@ -59,74 +60,71 @@ class AnalyzerService:
         from migration_accelerator.app.config import StorageBackend
         from migration_accelerator.app import config
         
-        temp_file = None
-        try:
-            # If using Unity Catalog, download file to temp location first
-            local_file_path = file_path
-            
-            if config.settings.storage_backend == StorageBackend.UNITY_CATALOG:
-                # Initialize Databricks client with service principal
-                from databricks.sdk import WorkspaceClient
-                
-                databricks_client = WorkspaceClient()
-                log.info("Using service principal for UC file download")
-                
-                # Download from UC to temp file
-                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=Path(file_path).suffix)
-                temp_file.close()
-                
-                download_response = databricks_client.files.download(file_path)
-                with open(temp_file.name, 'wb') as f:
-                    f.write(download_response.contents.read())
-                
-                local_file_path = temp_file.name
-                log.info(f"Downloaded UC file to temp location for analysis: {local_file_path}")
-            
-            # Convert string dialect to Dialect enum
+        def _analyze_sync():
+            """Run all blocking I/O + CPU work in a thread."""
+            nonlocal file_path
+            _temp_file = None
             try:
-                dialect_enum = Dialect(dialect.lower())
-            except ValueError:
-                dialect_enum = Dialect.TALEND  # Default fallback
-            
-            # Use factory to create analyzer with local file path
-            analyzer = self.analyzer_factory.create(local_file_path, dialect_enum)
+                local_file_path = file_path
 
-            # Parse file
-            log.info(f"Parsing analyzer file: {file_path}")
-            data = analyzer.parse()
+                is_uc_path = (
+                    config.settings.storage_backend == StorageBackend.UNITY_CATALOG
+                    and file_path.startswith("/Volumes/")
+                )
+                if is_uc_path:
+                    from databricks.sdk import WorkspaceClient
+                    databricks_client = WorkspaceClient()
 
-            # Extract available sheets
-            sheets = list(data.keys())
-            log.info(f"Found {len(sheets)} sheets: {sheets}")
+                    _temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=Path(file_path).suffix)
+                    _temp_file.close()
 
-            # Get metrics if Summary sheet exists
-            metrics = None
-            complexity = None
+                    download_response = databricks_client.files.download(file_path)
+                    with open(_temp_file.name, 'wb') as f:
+                        f.write(download_response.contents.read())
 
-            if "Summary" in sheets:
+                    local_file_path = _temp_file.name
+                    log.info(f"Downloaded UC file to temp location for analysis: {local_file_path}")
+
                 try:
-                    metrics = analyzer.get_key_metrics("Summary")
-                    complexity = analyzer.get_job_complexity_breakdown("Summary")
-                except Exception as e:
-                    log.warning(f"Could not extract metrics from Summary: {e}")
+                    dialect_enum = Dialect(dialect.lower())
+                except ValueError:
+                    dialect_enum = Dialect.TALEND
 
-            return {
-                "sheets": sheets,
-                "metrics": metrics,
-                "complexity": complexity,
-                "dialect": dialect,
-                "user_id": user_id,
-                "lineages": [],  # Lineages will be generated separately
-            }
+                analyzer = self.analyzer_factory.create(local_file_path, dialect_enum)
 
-        except Exception as e:
-            log.error(f"Failed to analyze file {file_path}: {e}")
-            raise
-        finally:
-            # Clean up temp file if created
-            if temp_file and os.path.exists(temp_file.name):
-                os.unlink(temp_file.name)
-                log.debug(f"Cleaned up temp file: {temp_file.name}")
+                log.info(f"Parsing analyzer file: {file_path}")
+                data = analyzer.parse()
+
+                sheets = list(data.keys())
+                log.info(f"Found {len(sheets)} sheets: {sheets}")
+
+                metrics = None
+                complexity = None
+
+                if "Summary" in sheets:
+                    try:
+                        metrics = analyzer.get_key_metrics("Summary")
+                        complexity = analyzer.get_job_complexity_breakdown("Summary")
+                    except Exception as e:
+                        log.warning(f"Could not extract metrics from Summary: {e}")
+
+                return {
+                    "sheets": sheets,
+                    "metrics": metrics,
+                    "complexity": complexity,
+                    "dialect": dialect,
+                    "user_id": user_id,
+                    "lineages": [],
+                }
+
+            except Exception as e:
+                log.error(f"Failed to analyze file {file_path}: {e}")
+                raise
+            finally:
+                if _temp_file and os.path.exists(_temp_file.name):
+                    os.unlink(_temp_file.name)
+
+        return await asyncio.to_thread(_analyze_sync)
 
     async def get_metrics(
         self, file_path: str, dialect: str, sheet_name: str = "Summary"
@@ -148,45 +146,43 @@ class AnalyzerService:
         from migration_accelerator.app.config import StorageBackend
         from migration_accelerator.app import config
         
-        temp_file = None
-        try:
-            # If using Unity Catalog, download file to temp location first
-            local_file_path = file_path
-            
-            if config.settings.storage_backend == StorageBackend.UNITY_CATALOG:
-                from databricks.sdk import WorkspaceClient
-                databricks_client = WorkspaceClient()
-                
-                # Download from UC to temp file
-                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=Path(file_path).suffix)
-                temp_file.close()
-                
-                download_response = databricks_client.files.download(file_path)
-                with open(temp_file.name, 'wb') as f:
-                    f.write(download_response.contents.read())
-                
-                local_file_path = temp_file.name
-            
-            # Convert string dialect to Dialect enum
+        def _get_metrics_sync():
+            _temp_file = None
             try:
-                dialect_enum = Dialect(dialect.lower())
-            except ValueError:
-                dialect_enum = Dialect.TALEND
-            
-            analyzer = self.analyzer_factory.create(local_file_path, dialect_enum)
-            metrics = analyzer.get_key_metrics(sheet_name)
-            return metrics
+                local_file_path = file_path
 
-        except Exception as e:
-            log.error(f"Failed to get metrics: {e}")
-            raise
-        finally:
-            # Clean up temp file
-            if temp_file:
+                if config.settings.storage_backend == StorageBackend.UNITY_CATALOG:
+                    from databricks.sdk import WorkspaceClient
+                    databricks_client = WorkspaceClient()
+
+                    _temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=Path(file_path).suffix)
+                    _temp_file.close()
+
+                    download_response = databricks_client.files.download(file_path)
+                    with open(_temp_file.name, 'wb') as f:
+                        f.write(download_response.contents.read())
+
+                    local_file_path = _temp_file.name
+
                 try:
-                    os.unlink(temp_file.name)
-                except Exception:
-                    pass
+                    dialect_enum = Dialect(dialect.lower())
+                except ValueError:
+                    dialect_enum = Dialect.TALEND
+
+                analyzer = self.analyzer_factory.create(local_file_path, dialect_enum)
+                return analyzer.get_key_metrics(sheet_name)
+
+            except Exception as e:
+                log.error(f"Failed to get metrics: {e}")
+                raise
+            finally:
+                if _temp_file:
+                    try:
+                        os.unlink(_temp_file.name)
+                    except Exception:
+                        pass
+
+        return await asyncio.to_thread(_get_metrics_sync)
 
     async def get_complexity(
         self, file_path: str, dialect: str, sheet_name: str = "Summary"
@@ -208,50 +204,47 @@ class AnalyzerService:
         from migration_accelerator.app.config import StorageBackend
         from migration_accelerator.app import config
         
-        temp_file = None
-        try:
-            # If using Unity Catalog, download file to temp location first
-            local_file_path = file_path
-            
-            if config.settings.storage_backend == StorageBackend.UNITY_CATALOG:
-                from databricks.sdk import WorkspaceClient
-                databricks_client = WorkspaceClient()
-                
-                # Download from UC to temp file
-                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=Path(file_path).suffix)
-                temp_file.close()
-                
-                download_response = databricks_client.files.download(file_path)
-                with open(temp_file.name, 'wb') as f:
-                    f.write(download_response.contents.read())
-                
-                local_file_path = temp_file.name
-            
-            # Convert string dialect to Dialect enum
+        def _get_complexity_sync():
+            _temp_file = None
             try:
-                dialect_enum = Dialect(dialect.lower())
-            except ValueError:
-                dialect_enum = Dialect.TALEND
-            
-            analyzer = self.analyzer_factory.create(local_file_path, dialect_enum)
+                local_file_path = file_path
 
-            if dialect == "sql":
-                complexity = analyzer.get_sql_complexity_breakdown(sheet_name)
-            else:
-                complexity = analyzer.get_job_complexity_breakdown(sheet_name)
+                if config.settings.storage_backend == StorageBackend.UNITY_CATALOG:
+                    from databricks.sdk import WorkspaceClient
+                    databricks_client = WorkspaceClient()
 
-            return complexity
+                    _temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=Path(file_path).suffix)
+                    _temp_file.close()
 
-        except Exception as e:
-            log.error(f"Failed to get complexity: {e}")
-            raise
-        finally:
-            # Clean up temp file
-            if temp_file:
+                    download_response = databricks_client.files.download(file_path)
+                    with open(_temp_file.name, 'wb') as f:
+                        f.write(download_response.contents.read())
+
+                    local_file_path = _temp_file.name
+
                 try:
-                    os.unlink(temp_file.name)
-                except Exception:
-                    pass
+                    dialect_enum = Dialect(dialect.lower())
+                except ValueError:
+                    dialect_enum = Dialect.TALEND
+
+                analyzer = self.analyzer_factory.create(local_file_path, dialect_enum)
+
+                if dialect == "sql":
+                    return analyzer.get_sql_complexity_breakdown(sheet_name)
+                else:
+                    return analyzer.get_job_complexity_breakdown(sheet_name)
+
+            except Exception as e:
+                log.error(f"Failed to get complexity: {e}")
+                raise
+            finally:
+                if _temp_file:
+                    try:
+                        os.unlink(_temp_file.name)
+                    except Exception:
+                        pass
+
+        return await asyncio.to_thread(_get_complexity_sync)
 
     async def get_sheet_data(
         self, file_path: str, dialect: str, sheet_name: str

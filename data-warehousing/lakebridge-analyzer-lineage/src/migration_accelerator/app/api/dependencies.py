@@ -221,7 +221,9 @@ async def verify_file_access(
     # Simply check if we can get the file path
     # For UC: get_file_path already verified existence via SDK
     # For Local: get_file_path checks existence
-    file_path = storage.get_file_path(file_id, user_id)
+    # Run in thread — UC SDK calls are blocking and must not block the event loop
+    import asyncio
+    file_path = await asyncio.to_thread(storage.get_file_path, file_id, user_id)
     
     if not file_path:
         raise HTTPException(status_code=404, detail="File not found")

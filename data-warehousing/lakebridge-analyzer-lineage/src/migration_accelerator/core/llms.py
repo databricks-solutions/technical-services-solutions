@@ -22,6 +22,7 @@ class LLMManager:
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,
             client=self.client,
+            timeout=45,  # 45s timeout to stay under 60s proxy limit
         )
 
     def _initialize_dspy_llm(self) -> None:

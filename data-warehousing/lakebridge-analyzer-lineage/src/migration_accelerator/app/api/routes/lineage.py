@@ -2,7 +2,7 @@
 Lineage visualization endpoints.
 """
 
-from typing import List
+import asyncio
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import Response
@@ -65,12 +65,12 @@ async def create_lineage(
         # Verify access to analyzer file
         await verify_file_access(request.analyzer_id, user_id, storage)
 
-        file_path = storage.get_file_path(request.analyzer_id, user_id)
+        file_path = await asyncio.to_thread(storage.get_file_path, request.analyzer_id, user_id)
         if not file_path:
             raise HTTPException(status_code=404, detail="Analyzer not found")
 
         # Get dialect from metadata
-        metadata = storage.get_file_metadata(request.analyzer_id, user_id)
+        metadata = await asyncio.to_thread(storage.get_file_metadata, request.analyzer_id, user_id)
         dialect = metadata.get("dialect", "talend") if metadata else "talend"
         
         # Create lineage
@@ -99,7 +99,8 @@ async def create_lineage(
                 "created_at": result["created_at"],
                 "auto_generated": False,
             })
-            storage.update_file_metadata(
+            await asyncio.to_thread(
+                storage.update_file_metadata,
                 request.analyzer_id,
                 user_id,
                 {"lineages": current_lineages}

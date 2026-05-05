@@ -27,6 +27,17 @@ class UploadResponse(BaseModel):
     lineages: List[Dict[str, Any]] = Field(default=[], description="Auto-generated lineages")
 
 
+class UploadStatusResponse(BaseModel):
+    """Response for upload processing status."""
+
+    file_id: str = Field(..., description="File identifier")
+    status: str = Field(..., description="Processing status: processing, complete, error")
+    filename: str = Field(..., description="Original filename")
+    dialect: Optional[str] = Field(None, description="Detected dialect")
+    lineages: List[Dict[str, Any]] = Field(default=[], description="Generated lineages (when complete)")
+    error: Optional[str] = Field(None, description="Error message if processing failed")
+
+
 class MetricsResponse(BaseModel):
     """Response for analyzer metrics."""
 
@@ -175,10 +186,14 @@ class MigrationOrderResponse(BaseModel):
     - source_files: Original source files this node came from
     """
     
+    migration_unit: str = Field(
+        default="FILE",
+        description="Migration unit type: FILE (SQL), WORKFLOW (Informatica), or MIXED (both)",
+    )
     groups: List[Dict[str, Any]] = Field(
         ..., description="Migration groups with ordered waves"
     )
-    total_nodes: int = Field(..., description="Total number of FILE nodes")
+    total_nodes: int = Field(..., description="Total number of migration unit nodes")
     total_groups: int = Field(..., description="Total number of migration groups")
     has_cycles: bool = Field(..., description="Whether circular dependencies exist")
     cycle_info: Optional[str] = Field(None, description="Information about cycles if detected")

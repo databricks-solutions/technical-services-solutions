@@ -11,7 +11,7 @@ import shutil
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import UploadFile
 
@@ -84,6 +84,92 @@ class StorageService:
             log.info(f"Local storage path ready: {self.base_path}")
         except Exception as e:
             log.warning(f"Could not create local path {self.base_path}: {e}")
+
+    def _read_manifest_uc(self, user_id: str) -> Dict[str, Any]:
+        """Read user manifest from UC. Returns {"files": {}} if not found."""
+        manifest_path = f"{self.base_path}/{user_id}/manifest.json"
+        try:
+            content = self.databricks_client.files.download(manifest_path).contents.read()
+            return json.loads(content)
+        except Exception:
+            return {"files": {}, "updated_at": None}
+
+    def _write_manifest_uc(self, user_id: str, manifest: Dict[str, Any]) -> None:
+        """Write user manifest to UC."""
+        manifest["updated_at"] = datetime.utcnow().isoformat()
+        manifest_path = f"{self.base_path}/{user_id}/manifest.json"
+        content = json.dumps(manifest, separators=(',', ':')).encode()
+        self.databricks_client.files.upload(manifest_path, io.BytesIO(content), overwrite=True)
+
+    def _read_manifest_local(self, user_id: str) -> Dict[str, Any]:
+        """Read user manifest from local filesystem. Returns {"files": {}} if not found."""
+        manifest_path = Path(self.base_path) / user_id / "manifest.json"
+        try:
+            if manifest_path.exists():
+                with open(manifest_path, "r") as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        return {"files": {}, "updated_at": None}
+
+    def _write_manifest_local(self, user_id: str, manifest: Dict[str, Any]) -> None:
+        """Write user manifest to local filesystem."""
+        manifest["updated_at"] = datetime.utcnow().isoformat()
+        manifest_path = Path(self.base_path) / user_id / "manifest.json"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(manifest_path, "w") as f:
+            json.dump(manifest, f, separators=(',', ':'))
+
+    def _upsert_manifest(self, user_id: str, file_id: str, metadata: Dict[str, Any]) -> None:
+        """Upsert a file entry in the user manifest."""
+        entry = {
+            "file_id": metadata.get("file_id", file_id),
+            "filename": metadata.get("filename", "unknown"),
+            "dialect": metadata.get("dialect", "unknown"),
+            "file_size": metadata.get("file_size", 0),
+            "user_id": user_id,
+            "created_at": metadata.get("created_at", ""),
+            "lineages": metadata.get("lineages", []),
+        }
+        if self.storage_backend == StorageBackend.UNITY_CATALOG:
+            manifest = self._read_manifest_uc(user_id)
+            manifest["files"][file_id] = entry
+            self._write_manifest_uc(user_id, manifest)
+        else:
+            manifest = self._read_manifest_local(user_id)
+            manifest["files"][file_id] = entry
+            self._write_manifest_local(user_id, manifest)
+
+    def _remove_from_manifest(self, user_id: str, file_id: str) -> None:
+        """Remove a file entry from the user manifest."""
+        if self.storage_backend == StorageBackend.UNITY_CATALOG:
+            manifest = self._read_manifest_uc(user_id)
+            manifest["files"].pop(file_id, None)
+            self._write_manifest_uc(user_id, manifest)
+        else:
+            manifest = self._read_manifest_local(user_id)
+            manifest["files"].pop(file_id, None)
+            self._write_manifest_local(user_id, manifest)
+
+    def get_all_file_metadata(self, user_id: str) -> Dict[str, Dict[str, Any]]:
+        """
+        Get metadata for all files via manifest (O(1) SDK call).
+        Falls back to per-file reads if manifest is empty.
+
+        Returns:
+            Dictionary mapping file_id to metadata dict
+        """
+        if self.storage_backend == StorageBackend.UNITY_CATALOG:
+            manifest = self._read_manifest_uc(user_id)
+        else:
+            manifest = self._read_manifest_local(user_id)
+
+        if manifest["files"]:
+            return manifest["files"]
+
+        # Fallback: build from individual files
+        files = self.list_user_files(user_id)
+        return {f["file_id"]: f for f in files}
 
     def _validate_user_path(self, user_id: str, operation: str = "access") -> None:
         """
@@ -169,6 +255,12 @@ class StorageService:
             else:
                 await self._save_metadata_local(metadata_path, metadata)
 
+            # Update manifest for O(1) file listing
+            try:
+                self._upsert_manifest(user_id, file_id, metadata)
+            except Exception as e:
+                log.warning(f"Failed to update manifest (non-fatal): {e}")
+
             return {
                 "file_id": file_id,
                 "filename": file.filename,
@@ -185,16 +277,22 @@ class StorageService:
 
     async def _save_file_uc(self, file_path: str, content: bytes) -> None:
         """Save file to Unity Catalog using Databricks SDK."""
-        # Ensure parent directory exists
-        parent_dir = "/".join(file_path.rsplit("/", 1)[:-1])
-        try:
-            self.databricks_client.files.create_directory(parent_dir)
-        except Exception:
-            pass  # Directory might already exist
+        import asyncio
 
-        # Upload file to UC (SDK expects file-like object)
-        file_obj = io.BytesIO(content)
-        self.databricks_client.files.upload(file_path, file_obj, overwrite=True)
+        def _upload():
+            # Ensure parent directory exists
+            parent_dir = "/".join(file_path.rsplit("/", 1)[:-1])
+            try:
+                self.databricks_client.files.create_directory(parent_dir)
+            except Exception:
+                pass  # Directory might already exist
+
+            # Upload file to UC (SDK expects file-like object)
+            file_obj = io.BytesIO(content)
+            self.databricks_client.files.upload(file_path, file_obj, overwrite=True)
+
+        # Run blocking SDK calls in thread to avoid blocking the event loop
+        await asyncio.to_thread(_upload)
 
     async def _save_file_local(self, file_path: Path, content: bytes) -> None:
         """Save file to local filesystem."""
@@ -204,11 +302,15 @@ class StorageService:
 
     async def _save_metadata_uc(self, metadata_path: str, metadata: dict) -> None:
         """Save metadata to Unity Catalog."""
+        import asyncio
+
         metadata_content = json.dumps(metadata, indent=2).encode()
         try:
-            # Wrap bytes in BytesIO for SDK
-            metadata_obj = io.BytesIO(metadata_content)
-            self.databricks_client.files.upload(metadata_path, metadata_obj, overwrite=True)
+            def _upload_metadata():
+                metadata_obj = io.BytesIO(metadata_content)
+                self.databricks_client.files.upload(metadata_path, metadata_obj, overwrite=True)
+
+            await asyncio.to_thread(_upload_metadata)
             log.info(f"Saved metadata to {metadata_path}")
         except Exception as e:
             log.warning(f"Failed to save metadata: {e}")
@@ -348,9 +450,9 @@ class StorageService:
         """Delete file from Unity Catalog."""
         # Validate user path for security
         self._validate_user_path(user_id, "delete_file")
-        
+
         user_path = f"{self.base_path}/{user_id}/{file_id}"
-        
+
         try:
             # Try to list files in directory
             try:
@@ -358,37 +460,39 @@ class StorageService:
             except Exception as list_error:
                 # Directory might not exist or is already deleted
                 log.warning(f"Could not list directory {user_path}: {list_error}")
-                # Try to get the file path to see if it exists in a different format
-                file_path = self.get_file_path(file_id, user_id)
-                if file_path:
-                    # File exists, try to delete it directly
-                    try:
-                        self.databricks_client.files.delete(str(file_path))
-                        log.info(f"Deleted file directly from UC: {file_path}")
-                        return True
-                    except Exception as delete_error:
-                        log.error(f"Failed to delete file directly: {delete_error}")
-                        return False
-                else:
-                    # File doesn't exist, consider it already deleted
-                    log.info(f"File {file_id} for user {user_id} not found, considering it deleted")
-                    return True
-            
+                # Try deleting the directory itself (it may be empty/orphaned)
+                try:
+                    self.databricks_client.files.delete_directory(user_path)
+                    log.info(f"Deleted orphaned directory from UC: {user_path}")
+                except Exception:
+                    pass
+                log.info(f"File {file_id} for user {user_id} not found, considering it deleted")
+                return True
+
             # List succeeded, delete all files in directory
             for file_info in files:
                 try:
-                    self.databricks_client.files.delete(file_info.path)
-                    log.debug(f"Deleted file: {file_info.path}")
+                    if file_info.is_directory:
+                        self.databricks_client.files.delete_directory(file_info.path)
+                    else:
+                        self.databricks_client.files.delete(file_info.path)
+                    log.debug(f"Deleted: {file_info.path}")
                 except Exception as delete_error:
                     log.warning(f"Failed to delete {file_info.path}: {delete_error}")
-            
-            # Now try to delete the directory itself
+
+            # Now delete the directory itself
             try:
-                self.databricks_client.files.delete(user_path)
+                self.databricks_client.files.delete_directory(user_path)
                 log.info(f"Deleted file directory from UC: {user_path}")
             except Exception as dir_delete_error:
                 log.warning(f"Failed to delete directory {user_path}: {dir_delete_error}")
-            
+
+            # Remove from manifest
+            try:
+                self._remove_from_manifest(user_id, file_id)
+            except Exception as e:
+                log.warning(f"Failed to update manifest after delete (non-fatal): {e}")
+
             return True
         except Exception as e:
             log.error(f"Failed to delete file from UC: {e}")
@@ -398,13 +502,18 @@ class StorageService:
         """Delete file from local filesystem."""
         # Validate user path for security
         self._validate_user_path(user_id, "delete_file")
-        
+
         user_path = Path(self.base_path) / user_id / file_id
 
         try:
             if user_path.exists():
                 shutil.rmtree(user_path)
                 log.info(f"Deleted file: {user_path}")
+                # Remove from manifest
+                try:
+                    self._remove_from_manifest(user_id, file_id)
+                except Exception as e:
+                    log.warning(f"Failed to update manifest after delete (non-fatal): {e}")
                 return True
             return False
         except Exception as e:
@@ -427,12 +536,22 @@ class StorageService:
             return self._list_user_files_local(user_id)
 
     def _list_user_files_uc(self, user_id: str) -> list:
-        """List files from Unity Catalog."""
+        """List files from Unity Catalog. Uses manifest for O(1) listing."""
         # Validate user path for security
         self._validate_user_path(user_id, "list_files")
-        
+
+        # Try manifest first (O(1) SDK call)
+        manifest = self._read_manifest_uc(user_id)
+        if manifest["files"]:
+            return list(manifest["files"].values())
+
+        # Fallback: legacy O(N) behavior for pre-manifest users
+        return self._list_user_files_uc_legacy(user_id)
+
+    def _list_user_files_uc_legacy(self, user_id: str) -> list:
+        """Legacy O(N) file listing from Unity Catalog (pre-manifest fallback)."""
         user_path = f"{self.base_path}/{user_id}"
-        
+
         try:
             # List directories in user path (each directory is a file_id)
             file_dirs = list(self.databricks_client.files.list_directory_contents(user_path))
@@ -441,16 +560,17 @@ class StorageService:
             return []
 
         files = []
+        orphaned_dirs = []
         for file_dir in file_dirs:
             if file_dir.is_directory:
                 file_id = file_dir.name
                 metadata_path = f"{user_path}/{file_id}/metadata.json"
-                
+
                 # Try to read metadata
                 try:
                     metadata_content = self.databricks_client.files.download(metadata_path).contents.read()
                     metadata = json.loads(metadata_content)
-                    
+
                     files.append({
                         "file_id": metadata.get("file_id", file_id),
                         "filename": metadata.get("filename", "unknown"),
@@ -460,31 +580,56 @@ class StorageService:
                         "lineages": metadata.get("lineages", []),
                     })
                 except Exception as e:
-                    log.warning(f"Failed to read metadata for {file_id}: {e}")
-                    # Fallback: list files in directory
-                    try:
-                        dir_files = list(self.databricks_client.files.list_directory_contents(f"{user_path}/{file_id}"))
-                        for f in dir_files:
-                            if not f.path.endswith("metadata.json"):
-                                files.append({
-                                    "file_id": file_id,
-                                    "filename": f.name,
-                                    "dialect": "unknown",
-                                    "file_size": f.file_size or 0,
-                                    "created_at": "",
-                                    "lineages": [],
-                                })
-                                break
-                    except Exception:
-                        pass
+                    # Metadata missing — this is an orphaned directory from a
+                    # failed delete.  Skip it (don't do expensive fallback API
+                    # calls) and queue it for cleanup.
+                    log.warning(f"Skipping orphaned file dir {file_id} (no metadata): {e}")
+                    orphaned_dirs.append(f"{user_path}/{file_id}")
+
+        # Best-effort cleanup of orphaned directories in the background so
+        # they don't slow down future list calls.
+        for orphan_path in orphaned_dirs:
+            try:
+                # Delete any remaining files inside the orphaned dir first
+                try:
+                    remaining = list(self.databricks_client.files.list_directory_contents(orphan_path))
+                    for item in remaining:
+                        try:
+                            if item.is_directory:
+                                self.databricks_client.files.delete_directory(item.path)
+                            else:
+                                self.databricks_client.files.delete(item.path)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                self.databricks_client.files.delete_directory(orphan_path)
+                log.info(f"Cleaned up orphaned directory: {orphan_path}")
+            except Exception as cleanup_err:
+                log.debug(f"Could not clean up orphaned dir {orphan_path}: {cleanup_err}")
+
+        # Self-heal: write manifest from legacy data so future calls are O(1)
+        if files:
+            try:
+                manifest = {"files": {f["file_id"]: f for f in files}}
+                self._write_manifest_uc(user_id, manifest)
+                log.info(f"Self-healed manifest for user {user_id} with {len(files)} files")
+            except Exception as e:
+                log.warning(f"Failed to self-heal manifest: {e}")
 
         return files
 
     def _list_user_files_local(self, user_id: str) -> list:
-        """List files from local filesystem."""
+        """List files from local filesystem. Uses manifest for consistency."""
         # Validate user path for security
         self._validate_user_path(user_id, "list_files")
-        
+
+        # Try manifest first
+        manifest = self._read_manifest_local(user_id)
+        if manifest["files"]:
+            return list(manifest["files"].values())
+
+        # Fallback: legacy per-directory scan
         user_path = Path(self.base_path) / user_id
 
         if not user_path.exists():
@@ -510,7 +655,7 @@ class StorageService:
                         continue
                     except Exception as e:
                         log.warning(f"Failed to read metadata for {file_dir.name}: {e}")
-                
+
                 # Fallback: scan directory for files
                 for file_path in file_dir.glob("*"):
                     if file_path.is_file() and file_path.name != "metadata.json":
@@ -524,6 +669,14 @@ class StorageService:
                             "lineages": [],
                         })
                         break
+
+        # Self-heal: write manifest from legacy data
+        if files:
+            try:
+                manifest = {"files": {f["file_id"]: f for f in files}}
+                self._write_manifest_local(user_id, manifest)
+            except Exception:
+                pass
 
         return files
 
@@ -603,9 +756,9 @@ class StorageService:
         """Update metadata in Unity Catalog."""
         # Validate user path for security
         self._validate_user_path(user_id, "update_metadata")
-        
+
         metadata_path = f"{self.base_path}/{user_id}/{file_id}/metadata.json"
-        
+
         try:
             # Read existing metadata
             try:
@@ -618,18 +771,24 @@ class StorageService:
                     "user_id": user_id,
                     "lineages": [],
                 }
-            
+
             # Apply updates
             metadata.update(updates)
-            
+
             # Write back
             metadata_content = json.dumps(metadata, indent=2).encode()
             metadata_obj = io.BytesIO(metadata_content)
             self.databricks_client.files.upload(metadata_path, metadata_obj, overwrite=True)
-            
+
+            # Update manifest
+            try:
+                self._upsert_manifest(user_id, file_id, metadata)
+            except Exception as e:
+                log.warning(f"Failed to update manifest (non-fatal): {e}")
+
             log.info(f"Updated metadata for {file_id} in UC")
             return True
-            
+
         except Exception as e:
             log.error(f"Failed to update metadata in UC: {e}")
             return False
@@ -640,10 +799,10 @@ class StorageService:
         """Update metadata in local filesystem."""
         # Validate user path for security
         self._validate_user_path(user_id, "update_metadata")
-        
+
         user_path = Path(self.base_path) / user_id / file_id
         metadata_path = user_path / "metadata.json"
-        
+
         try:
             # Read existing metadata
             if metadata_path.exists():
@@ -656,17 +815,23 @@ class StorageService:
                     "user_id": user_id,
                     "lineages": [],
                 }
-            
+
             # Apply updates
             metadata.update(updates)
-            
+
             # Write back
             with open(metadata_path, "w") as f:
                 json.dump(metadata, f, indent=2)
-            
+
+            # Update manifest
+            try:
+                self._upsert_manifest(user_id, file_id, metadata)
+            except Exception as e:
+                log.warning(f"Failed to update manifest (non-fatal): {e}")
+
             log.info(f"Updated metadata for {file_id}")
             return True
-            
+
         except Exception as e:
             log.error(f"Failed to update metadata: {e}")
             return False

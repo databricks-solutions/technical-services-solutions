@@ -64,7 +64,13 @@ class EdgeRelationshipHelper:
     WRITE_RELATIONSHIPS = {"WRITES_TO", "WRITES", "CREATES", "CREATES_INDEX"}
 
     # Relationship types that indicate destructive operations (DELETE/TRUNCATE)
-    DESTRUCTIVE_RELATIONSHIPS = {"DELETES_FROM"}
+    DESTRUCTIVE_RELATIONSHIPS = {"DELETES_FROM", "TRUNCATES"}
+
+    # Node types that can act as the source (actor) in FILE -> TABLE edges
+    ACTOR_TYPES = {"FILE", "MAPPING"}
+
+    # CONTAINS: FILE -> MAPPING (file contains mapping); used to expand MAPPING to FILE in maps
+    CONTAINS_RELATIONSHIP = "CONTAINS"
 
     # Relationship types that indicate table/view dropping (metadata destruction)
     DROP_RELATIONSHIPS = {"DROPS"}
@@ -229,17 +235,24 @@ class EdgeRelationshipHelper:
 
         for edge in edges:
             if cls.is_table_read_edge(edge, table_id):
-                # With new direction FILE -> TABLE, file is the source
+                # With new direction FILE/MAPPING -> TABLE, actor is the source
                 file_id = edge["source"]
                 file_node = nodes_dict.get(file_id)
-                if file_node and file_node.get("type") == "FILE":
-                    # Get all source file references
-                    for source in file_node.get("sources", []):
-                        source_file_id = source["file_id"]
-                        if source_file_id not in reading_files_map:
-                            reading_files_map[source_file_id] = {
-                                "file_id": source_file_id,
-                                "filename": source["filename"],
+                if file_node and file_node.get("type") in cls.ACTOR_TYPES:
+                    if file_node.get("type") == "FILE":
+                        for source in file_node.get("sources", []):
+                            source_file_id = source["file_id"]
+                            if source_file_id not in reading_files_map:
+                                reading_files_map[source_file_id] = {
+                                    "file_id": source_file_id,
+                                    "filename": source["filename"],
+                                }
+                    else:
+                        label = file_node.get("label", file_id)
+                        if file_id not in reading_files_map:
+                            reading_files_map[file_id] = {
+                                "file_id": file_id,
+                                "filename": label,
                             }
 
         return list(reading_files_map.values())
@@ -265,14 +278,21 @@ class EdgeRelationshipHelper:
             if cls.is_table_modified_edge(edge, table_id):
                 file_id = edge["source"]
                 file_node = nodes_dict.get(file_id)
-                if file_node and file_node.get("type") == "FILE":
-                    # Get all source file references
-                    for source in file_node.get("sources", []):
-                        source_file_id = source["file_id"]
-                        if source_file_id not in writing_files_map:
-                            writing_files_map[source_file_id] = {
-                                "file_id": source_file_id,
-                                "filename": source["filename"],
+                if file_node and file_node.get("type") in cls.ACTOR_TYPES:
+                    if file_node.get("type") == "FILE":
+                        for source in file_node.get("sources", []):
+                            source_file_id = source["file_id"]
+                            if source_file_id not in writing_files_map:
+                                writing_files_map[source_file_id] = {
+                                    "file_id": source_file_id,
+                                    "filename": source["filename"],
+                                }
+                    else:
+                        label = file_node.get("label", file_id)
+                        if file_id not in writing_files_map:
+                            writing_files_map[file_id] = {
+                                "file_id": file_id,
+                                "filename": label,
                             }
 
         return list(writing_files_map.values())
@@ -298,14 +318,21 @@ class EdgeRelationshipHelper:
             if cls.is_table_deleted_edge(edge, table_id):
                 file_id = edge["source"]
                 file_node = nodes_dict.get(file_id)
-                if file_node and file_node.get("type") == "FILE":
-                    # Get all source file references
-                    for source in file_node.get("sources", []):
-                        source_file_id = source["file_id"]
-                        if source_file_id not in deleting_files_map:
-                            deleting_files_map[source_file_id] = {
-                                "file_id": source_file_id,
-                                "filename": source["filename"],
+                if file_node and file_node.get("type") in cls.ACTOR_TYPES:
+                    if file_node.get("type") == "FILE":
+                        for source in file_node.get("sources", []):
+                            source_file_id = source["file_id"]
+                            if source_file_id not in deleting_files_map:
+                                deleting_files_map[source_file_id] = {
+                                    "file_id": source_file_id,
+                                    "filename": source["filename"],
+                                }
+                    else:
+                        label = file_node.get("label", file_id)
+                        if file_id not in deleting_files_map:
+                            deleting_files_map[file_id] = {
+                                "file_id": file_id,
+                                "filename": label,
                             }
 
         return list(deleting_files_map.values())
@@ -331,14 +358,21 @@ class EdgeRelationshipHelper:
             if cls.is_table_dropped_edge(edge, table_id):
                 file_id = edge["source"]
                 file_node = nodes_dict.get(file_id)
-                if file_node and file_node.get("type") == "FILE":
-                    # Get all source file references
-                    for source in file_node.get("sources", []):
-                        source_file_id = source["file_id"]
-                        if source_file_id not in dropping_files_map:
-                            dropping_files_map[source_file_id] = {
-                                "file_id": source_file_id,
-                                "filename": source["filename"],
+                if file_node and file_node.get("type") in cls.ACTOR_TYPES:
+                    if file_node.get("type") == "FILE":
+                        for source in file_node.get("sources", []):
+                            source_file_id = source["file_id"]
+                            if source_file_id not in dropping_files_map:
+                                dropping_files_map[source_file_id] = {
+                                    "file_id": source_file_id,
+                                    "filename": source["filename"],
+                                }
+                    else:
+                        label = file_node.get("label", file_id)
+                        if file_id not in dropping_files_map:
+                            dropping_files_map[file_id] = {
+                                "file_id": file_id,
+                                "filename": label,
                             }
 
         return list(dropping_files_map.values())
@@ -364,14 +398,21 @@ class EdgeRelationshipHelper:
             if cls.is_table_created_edge(edge, table_id):
                 file_id = edge["source"]
                 file_node = nodes_dict.get(file_id)
-                if file_node and file_node.get("type") == "FILE":
-                    # Get all source file references
-                    for source in file_node.get("sources", []):
-                        source_file_id = source["file_id"]
-                        if source_file_id not in creating_files_map:
-                            creating_files_map[source_file_id] = {
-                                "file_id": source_file_id,
-                                "filename": source["filename"],
+                if file_node and file_node.get("type") in cls.ACTOR_TYPES:
+                    if file_node.get("type") == "FILE":
+                        for source in file_node.get("sources", []):
+                            source_file_id = source["file_id"]
+                            if source_file_id not in creating_files_map:
+                                creating_files_map[source_file_id] = {
+                                    "file_id": source_file_id,
+                                    "filename": source["filename"],
+                                }
+                    else:
+                        label = file_node.get("label", file_id)
+                        if file_id not in creating_files_map:
+                            creating_files_map[file_id] = {
+                                "file_id": file_id,
+                                "filename": label,
                             }
 
         return list(creating_files_map.values())
@@ -517,38 +558,240 @@ class EdgeRelationshipHelper:
             source_node = nodes_dict.get(source)
             target_node = nodes_dict.get(target)
 
-            # Track which FILES create which tables
-            # CREATES: FILE -> TABLE (source is file, target is table)
+            # Only include TABLE_OR_VIEW targets for migration ordering (exclude FLAT_FILE)
+            if not target_node or not NodeTypeHelper.is_table_node(target_node):
+                continue
+
+            # Track which FILES/MAPPINGS create which tables
+            # CREATES: FILE/MAPPING -> TABLE (source is actor, target is table)
             if (
                 relationship in cls.CREATE_RELATIONSHIPS
                 and source_node
-                and source_node.get("type") == "FILE"
+                and source_node.get("type") in cls.ACTOR_TYPES
             ):
                 if target not in table_creators:
                     table_creators[target] = set()
                 table_creators[target].add(source)
 
-            # Track which FILES read from which tables
-            # READS_FROM: FILE -> TABLE (source is file, target is table)
+            # Track which FILES/MAPPINGS read from which tables
+            # READS_FROM: FILE/MAPPING -> TABLE (source is actor, target is table)
             if (
                 relationship in cls.READ_RELATIONSHIPS
                 and source_node
-                and source_node.get("type") == "FILE"
+                and source_node.get("type") in cls.ACTOR_TYPES
             ):
                 if target not in table_readers:
                     table_readers[target] = set()
                 table_readers[target].add(source)
 
-            # Track which FILES write to which tables (includes all modifications)
-            # WRITES_TO/DELETES_FROM/DROPS: FILE -> TABLE (source is file, target is table)
+            # Track which FILES/MAPPINGS write to which tables (includes all modifications)
+            # WRITES_TO/DELETES_FROM/TRUNCATES/DROPS: FILE/MAPPING -> TABLE
             if (
                 relationship in cls.ALL_MODIFICATION_RELATIONSHIPS
                 and source_node
-                and source_node.get("type") == "FILE"
+                and source_node.get("type") in cls.ACTOR_TYPES
             ):
                 if target not in table_writers:
                     table_writers[target] = set()
                 table_writers[target].add(source)
 
+        # Expand MAPPING -> FILE via CONTAINS so migration ordering uses FILE as actor
+        # When a FILE contains a MAPPING, attribute the mapping's table ops to the FILE
+        mapping_to_files: Dict[str, Set[str]] = {}
+        for edge in edges:
+            if edge.get("relationship") != cls.CONTAINS_RELATIONSHIP:
+                continue
+            src_id = edge.get("source")
+            tgt_id = edge.get("target")
+            src_node = nodes_dict.get(src_id) if src_id else None
+            tgt_node = nodes_dict.get(tgt_id) if tgt_id else None
+            if not src_node or not tgt_node:
+                continue
+            if src_node.get("type") == NodeTypeHelper.FILE and tgt_node.get("type") in (
+                NodeTypeHelper.MAPPING,
+                NodeTypeHelper.MAPPLET,
+            ):
+                if tgt_id not in mapping_to_files:
+                    mapping_to_files[tgt_id] = set()
+                mapping_to_files[tgt_id].add(src_id)
+
+        def expand_actors(actor_set: Set[str]) -> Set[str]:
+            out: Set[str] = set()
+            for aid in actor_set:
+                if aid in mapping_to_files:
+                    out.update(mapping_to_files[aid])
+                else:
+                    out.add(aid)
+            return out
+
+        for table_id in list(table_creators.keys()):
+            table_creators[table_id] = expand_actors(table_creators[table_id])
+        for table_id in list(table_readers.keys()):
+            table_readers[table_id] = expand_actors(table_readers[table_id])
+        for table_id in list(table_writers.keys()):
+            table_writers[table_id] = expand_actors(table_writers[table_id])
+
         return table_creators, table_readers, table_writers
+
+    # ------------------------------------------------------------------
+    # Informatica WORKFLOW-level helpers
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def _build_workflow_to_mappings(
+        cls, edges: List[Dict[str, Any]], nodes_dict: Dict[str, Any]
+    ) -> Dict[str, Set[str]]:
+        """Build WORKFLOW -> set-of-MAPPING map via CONTAINS chains.
+
+        Chain: WORKFLOW -CONTAINS-> SESSION -CONTAINS-> MAPPING
+        """
+        workflow_to_sessions: Dict[str, Set[str]] = {}
+        session_to_mappings: Dict[str, Set[str]] = {}
+
+        for edge in edges:
+            if edge.get("relationship") != cls.CONTAINS_RELATIONSHIP:
+                continue
+            src = edge["source"]
+            tgt = edge["target"]
+            src_node = nodes_dict.get(src)
+            tgt_node = nodes_dict.get(tgt)
+            if not src_node or not tgt_node:
+                continue
+
+            src_type = src_node.get("type")
+            tgt_type = tgt_node.get("type")
+
+            if src_type == NodeTypeHelper.WORKFLOW and tgt_type == NodeTypeHelper.SESSION:
+                workflow_to_sessions.setdefault(src, set()).add(tgt)
+            elif src_type == NodeTypeHelper.SESSION and tgt_type == NodeTypeHelper.MAPPING:
+                session_to_mappings.setdefault(src, set()).add(tgt)
+
+        wf_to_mappings: Dict[str, Set[str]] = {}
+        for wf_id, sessions in workflow_to_sessions.items():
+            mappings: Set[str] = set()
+            for sess_id in sessions:
+                mappings.update(session_to_mappings.get(sess_id, set()))
+            if mappings:
+                wf_to_mappings[wf_id] = mappings
+
+        return wf_to_mappings
+
+    @classmethod
+    def build_table_workflow_maps(
+        cls, edges: List[Dict[str, Any]], nodes_dict: Dict[str, Any]
+    ) -> Tuple[Dict[str, Set[str]], Dict[str, Set[str]], Dict[str, Set[str]]]:
+        """Build maps of tables to workflows for creators, readers, and writers.
+
+        Traverses WORKFLOW -> SESSION -> MAPPING via CONTAINS edges, then
+        collects MAPPING -> TABLE read/write/create edges and attributes
+        them to the owning WORKFLOW.
+
+        Same return signature as :meth:`build_table_file_maps` but keyed
+        by workflow ID instead of file ID.
+
+        Returns:
+            Tuple of (table_creators, table_readers, table_writers)
+            where each maps table_id -> set of workflow_ids.
+        """
+        wf_to_mappings = cls._build_workflow_to_mappings(edges, nodes_dict)
+
+        # Invert: mapping -> set of workflows
+        mapping_to_wfs: Dict[str, Set[str]] = {}
+        for wf_id, mappings in wf_to_mappings.items():
+            for m_id in mappings:
+                mapping_to_wfs.setdefault(m_id, set()).add(wf_id)
+
+        # Collect MAPPING -> TABLE edges
+        mapping_table_creators: Dict[str, Set[str]] = {}
+        mapping_table_readers: Dict[str, Set[str]] = {}
+        mapping_table_writers: Dict[str, Set[str]] = {}
+
+        for edge in edges:
+            relationship = edge.get("relationship", "")
+            source = edge["source"]
+            target = edge["target"]
+            source_node = nodes_dict.get(source)
+            target_node = nodes_dict.get(target)
+
+            if not target_node or not NodeTypeHelper.is_table_node(target_node):
+                continue
+            if not source_node or source_node.get("type") != NodeTypeHelper.MAPPING:
+                continue
+
+            if relationship in cls.CREATE_RELATIONSHIPS:
+                mapping_table_creators.setdefault(target, set()).add(source)
+            if relationship in cls.READ_RELATIONSHIPS:
+                mapping_table_readers.setdefault(target, set()).add(source)
+            if relationship in cls.ALL_MODIFICATION_RELATIONSHIPS:
+                mapping_table_writers.setdefault(target, set()).add(source)
+
+        # Expand MAPPING -> WORKFLOW
+        def _expand(mapping_set: Set[str]) -> Set[str]:
+            wfs: Set[str] = set()
+            for m_id in mapping_set:
+                wfs.update(mapping_to_wfs.get(m_id, set()))
+            return wfs
+
+        table_creators: Dict[str, Set[str]] = {}
+        table_readers: Dict[str, Set[str]] = {}
+        table_writers: Dict[str, Set[str]] = {}
+
+        for table_id, mappings in mapping_table_creators.items():
+            wfs = _expand(mappings)
+            if wfs:
+                table_creators[table_id] = wfs
+        for table_id, mappings in mapping_table_readers.items():
+            wfs = _expand(mappings)
+            if wfs:
+                table_readers[table_id] = wfs
+        for table_id, mappings in mapping_table_writers.items():
+            wfs = _expand(mappings)
+            if wfs:
+                table_writers[table_id] = wfs
+
+        return table_creators, table_readers, table_writers
+
+    @classmethod
+    def build_workflow_to_file_map(
+        cls, edges: List[Dict[str, Any]], nodes_dict: Dict[str, Any]
+    ) -> Dict[str, str]:
+        """Map each WORKFLOW to its source FILE via shared MAPPINGs.
+
+        Matching logic:
+        - FILE -CONTAINS-> MAPPING  (from Mapping Details sheet)
+        - WORKFLOW -CONTAINS-> SESSION -CONTAINS-> MAPPING  (from Subjob Info)
+        - If a workflow's mappings overlap with a file's mappings, that
+          workflow belongs to that file.
+
+        Returns:
+            Dict mapping workflow_id -> file_id.
+        """
+        # FILE -> set of MAPPINGs
+        file_to_mappings: Dict[str, Set[str]] = {}
+        for edge in edges:
+            if edge.get("relationship") != cls.CONTAINS_RELATIONSHIP:
+                continue
+            src = edge["source"]
+            tgt = edge["target"]
+            src_node = nodes_dict.get(src)
+            tgt_node = nodes_dict.get(tgt)
+            if not src_node or not tgt_node:
+                continue
+            if src_node.get("type") == NodeTypeHelper.FILE and tgt_node.get("type") in (
+                NodeTypeHelper.MAPPING,
+                NodeTypeHelper.MAPPLET,
+            ):
+                file_to_mappings.setdefault(src, set()).add(tgt)
+
+        wf_to_mappings = cls._build_workflow_to_mappings(edges, nodes_dict)
+
+        # Match workflows to files via shared mappings
+        workflow_to_file: Dict[str, str] = {}
+        for wf_id, wf_mappings in wf_to_mappings.items():
+            for file_id, file_mappings in file_to_mappings.items():
+                if wf_mappings & file_mappings:
+                    workflow_to_file[wf_id] = file_id
+                    break  # first matching file wins
+
+        return workflow_to_file
 

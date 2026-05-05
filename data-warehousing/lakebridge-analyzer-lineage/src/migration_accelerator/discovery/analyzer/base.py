@@ -19,11 +19,13 @@ class SourceAnalyzer:
         self.dialect = analyzer_config.dialect
         self.analyzer_keys = None
         self.llm_config = llm_config
+        self._parsed_cache: Dict[str, pd.DataFrame] = {}
 
     def parse(self, sheet_names: Optional[List[str]] = None) -> Dict[str, Any]:
         log.info(f"Parsing analyzer file: {self.analyzer_path}")
         data = read_excel(self.analyzer_path, sheet_names=sheet_names)
         log.info(f"Parsed analyzer file: successfully read {len(data)} sheets")
+        self._parsed_cache.update(data)
         self.analyzer_keys = list(data.keys())
         return data
 
@@ -32,9 +34,13 @@ class SourceAnalyzer:
         return self.get_sheet("Summary").to_dict()  # type: ignore
 
     def get_sheet(self, sheet_name: str) -> pd.DataFrame:
+        if sheet_name in self._parsed_cache:
+            log.info(f"Cache hit for sheet: {sheet_name}")
+            return self._parsed_cache[sheet_name]
         log.info(f"Parsing sheet: {sheet_name} from {self.analyzer_path}")
         data = read_excel(self.analyzer_path, sheet_names=[sheet_name])
         log.info(f"Successfully parsed sheet: {sheet_name} from {self.analyzer_path}")
+        self._parsed_cache[sheet_name] = data[sheet_name]
         return data[sheet_name]
 
     def query(self, query: str) -> Dict[str, Any]:

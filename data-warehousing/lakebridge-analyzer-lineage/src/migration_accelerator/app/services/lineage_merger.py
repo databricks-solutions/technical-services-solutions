@@ -6,6 +6,7 @@ All other services (LineageAnalyzer, MigrationPlanner, LineageExporter) receive
 the merged graph data and operate as pure functions.
 """
 
+import asyncio
 import time
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Set
@@ -88,8 +89,8 @@ class LineageMerger:
             f"(include_file_dependencies={include_file_dependencies})"
         )
 
-        # Get all files for user
-        files = self.storage.list_user_files(user_id)
+        # Get all files for user — run in thread since UC SDK is blocking
+        files = await asyncio.to_thread(self.storage.list_user_files, user_id)
         
         # Generate cache key (independent of include_file_dependencies flag)
         file_ids = [f["file_id"] for f in files]
@@ -127,13 +128,19 @@ class LineageMerger:
         merged_edges: Dict[str, Dict[str, Any]] = {}  # keyed by edge composite key
         file_sources: List[Dict[str, Any]] = []
 
-        # Process each file
+        # Collect all lineage IDs with their file context for batch loading.
+        # Use get_all_file_metadata() for O(1) manifest read instead of
+        # O(N) sequential get_file_metadata() calls per file.
+        lineage_file_map: Dict[str, Dict[str, str]] = {}  # lineage_id -> {file_id, filename}
+        all_lineage_ids: List[str] = []
+
+        all_metadata = await asyncio.to_thread(self.storage.get_all_file_metadata, user_id)
+
         for file_info in files:
             file_id = file_info["file_id"]
             filename = file_info["filename"]
 
-            # Get metadata for lineages
-            metadata = self.storage.get_file_metadata(file_id, user_id)
+            metadata = all_metadata.get(file_id)
             if not metadata:
                 log.warning(f"No metadata found for file {file_id}")
                 continue
@@ -152,72 +159,73 @@ class LineageMerger:
             }
             file_sources.append(file_source)
 
-            # Process each lineage in the file
             for lineage_ref in lineages:
                 lineage_id = lineage_ref.get("lineage_id")
                 if not lineage_id:
                     continue
+                lineage_file_map[lineage_id] = {
+                    "file_id": file_id,
+                    "filename": filename,
+                }
+                all_lineage_ids.append(lineage_id)
 
-                try:
-                    # Get lineage graph data (with user_id for access control)
-                    lineage_data = await self.lineage.get_lineage_graph(lineage_id, user_id)
+        # Batch load all lineage graphs in parallel (avoids sequential UC reads)
+        if all_lineage_ids:
+            log.info(f"Batch loading {len(all_lineage_ids)} lineage graphs...")
+            batch_results = await self.lineage.get_lineage_graphs_batch(
+                all_lineage_ids, user_id
+            )
 
-                    # Merge nodes
-                    for node in lineage_data.get("nodes", []):
-                        node_id = node["id"]
+            for lineage_id, lineage_data in batch_results.items():
+                file_ctx = lineage_file_map[lineage_id]
+                file_id = file_ctx["file_id"]
+                filename = file_ctx["filename"]
 
-                        if node_id not in merged_nodes:
-                            # New node - add with source tracking
-                            merged_nodes[node_id] = {
-                                "id": node_id,
-                                "name": node.get("name", node_id),
-                                "type": node.get("type", "Unknown"),
-                                "properties": node.get("properties", {}),
-                                "sources": [],
-                            }
+                # Merge nodes
+                for node in lineage_data.get("nodes", []):
+                    node_id = node["id"]
 
-                        # Add source reference
-                        merged_nodes[node_id]["sources"].append(
-                            {
-                                "file_id": file_id,
-                                "filename": filename,
-                                "lineage_id": lineage_id,
-                            }
-                        )
+                    if node_id not in merged_nodes:
+                        merged_nodes[node_id] = {
+                            "id": node_id,
+                            "name": node.get("name", node_id),
+                            "type": node.get("type", "Unknown"),
+                            "properties": node.get("properties", {}),
+                            "sources": [],
+                        }
 
-                    # Merge edges
-                    for edge in lineage_data.get("edges", []):
-                        source = edge["source"]
-                        target = edge["target"]
-                        relationship = edge.get("relationship", "DEPENDS_ON")
-
-                        # Create composite key for deduplication
-                        edge_key = f"{source}||{target}||{relationship}"
-
-                        if edge_key not in merged_edges:
-                            # New edge - add with source tracking
-                            merged_edges[edge_key] = {
-                                "source": source,
-                                "target": target,
-                                "relationship": relationship,
-                                "properties": edge.get("properties", {}),
-                                "sources": [],
-                            }
-
-                        # Add source reference
-                        merged_edges[edge_key]["sources"].append(
-                            {
-                                "file_id": file_id,
-                                "filename": filename,
-                                "lineage_id": lineage_id,
-                            }
-                        )
-
-                except Exception as e:
-                    log.error(
-                        f"Failed to load lineage {lineage_id} from file {filename}: {e}"
+                    merged_nodes[node_id]["sources"].append(
+                        {
+                            "file_id": file_id,
+                            "filename": filename,
+                            "lineage_id": lineage_id,
+                        }
                     )
-                    continue
+
+                # Merge edges
+                for edge in lineage_data.get("edges", []):
+                    source = edge["source"]
+                    target = edge["target"]
+                    relationship = edge.get("relationship", "DEPENDS_ON")
+
+                    edge_key = f"{source}||{target}||{relationship}"
+
+                    if edge_key not in merged_edges:
+                        merged_edges[edge_key] = {
+                            "source": source,
+                            "target": target,
+                            "relationship": relationship,
+                            "properties": edge.get("properties", {}),
+                            "sources": [],
+                        }
+
+                    merged_edges[edge_key]["sources"].append(
+                        {
+                            "file_id": file_id,
+                            "filename": filename,
+                            "lineage_id": lineage_id,
+                        }
+                    )
 
         # Convert to lists
         nodes_list = list(merged_nodes.values())
@@ -391,32 +399,39 @@ class LineageMerger:
     ) -> Dict[str, Any]:
         """
         Filter file dependency edges from graph data.
-        
+
         This is a client-side filter that operates on pre-computed file dependencies,
         making the toggle instant without recomputing the graph.
-        
+
+        Uses references instead of copies to avoid expensive deep-copy of large
+        edge lists (62K+ edges).
+
         Args:
             graph_data: Full graph data with pre-computed file dependencies
             include_file_dependencies: Whether to include file dependency edges
-        
+
         Returns:
             Filtered graph data
         """
-        result = {
+        base_edges = graph_data["edges"]
+        stats = graph_data["stats"]
+
+        if include_file_dependencies:
+            # Concatenate pre-computed file dependency edges
+            file_dep_edges = graph_data.get("file_dependency_edges", [])
+            edges = base_edges + file_dep_edges
+            total_edges = len(edges)
+        else:
+            edges = base_edges
+            total_edges = stats.get("total_edges", len(edges))
+
+        return {
             "nodes": graph_data["nodes"],
-            "edges": graph_data["edges"].copy(),  # Start with base edges
-            "stats": graph_data["stats"].copy(),
+            "edges": edges,
+            "stats": {**stats, "total_edges": total_edges},
             "compute_time_ms": graph_data.get("compute_time_ms", 0),
             "cached": graph_data.get("cached", False),
         }
-        
-        if include_file_dependencies:
-            # Add pre-computed file dependency edges
-            file_dep_edges = graph_data.get("file_dependency_edges", [])
-            result["edges"] = result["edges"] + file_dep_edges
-            result["stats"]["total_edges"] = len(result["edges"])
-        
-        return result
     
     def invalidate_cache_for_user(self, user_id: str) -> None:
         """

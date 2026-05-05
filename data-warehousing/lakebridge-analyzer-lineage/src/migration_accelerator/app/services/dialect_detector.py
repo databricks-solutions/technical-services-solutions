@@ -99,12 +99,16 @@ def detect_dialect_from_excel(file_path: str) -> Optional[str]:
 async def detect_dialect_from_excel_async(file_path: str) -> Optional[str]:
     """
     Async wrapper for dialect detection.
-    
+
+    Runs the blocking SDK download + Excel parsing in a thread pool
+    to avoid blocking the event loop.
+
     Args:
         file_path: Path to Excel analyzer file
-        
+
     Returns:
         Detected dialect or None
     """
-    return detect_dialect_from_excel(file_path)
+    import asyncio
+    return await asyncio.to_thread(detect_dialect_from_excel, file_path)
 

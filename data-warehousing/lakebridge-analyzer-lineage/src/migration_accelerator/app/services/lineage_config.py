@@ -35,8 +35,15 @@ LINEAGE_SHEET_MAPPINGS: Dict[str, LineageSheetConfig] = {
         parser_type="sql"
     ),
     "informatica": LineageSheetConfig(
-        primary_sheet="RAW_PROGRAM_OBJECT_XREF",
-        secondary_sheets=["Subjob Info", "Mappings Objects Xref"],
+        primary_sheet="Mappings Objects List",
+        secondary_sheets=[
+            "Subjob Info",
+            "Mapping Details",
+            "System Types",
+            "Workflow Links and Conditions",
+            "Item Node Info",
+            "Database Connections",
+        ],
         format="cross_reference",
         parser_type="informatica"
     ),

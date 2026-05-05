@@ -19,8 +19,7 @@ setup_logger(persist=PERSIST_LOGS)
 
 
 __version__ = _get_version()
-__author__ = "Migration Accelerator Team"
-__email__ = "ps-labs-tooling-gdc@databricks.com"
+__author__ = "Migration Accelerator"
 __description__ = "Non-functional migration accelerator utilities"
 
 

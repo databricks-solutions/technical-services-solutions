@@ -4,6 +4,7 @@ Lineage service for creating and managing data lineage visualizations.
 Supports both Unity Catalog (via Databricks SDK) and local filesystem storage.
 """
 
+import asyncio
 import io
 import json
 import os
@@ -186,19 +187,26 @@ class LineageService:
         from migration_accelerator.app.config import StorageBackend
         
         try:
-            # If using Unity Catalog, download file to temp location first
+            # If using Unity Catalog and path is a UC path, download to temp location
             local_file_path = file_path
             temp_file = None
-            
-            if self.storage_backend == StorageBackend.UNITY_CATALOG:
+
+            is_uc_path = (
+                self.storage_backend == StorageBackend.UNITY_CATALOG
+                and file_path.startswith("/Volumes/")
+            )
+            if is_uc_path:
                 # Download from UC to temp file using service principal
                 temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=Path(file_path).suffix)
                 temp_file.close()
-                
-                download_response = self.databricks_client.files.download(file_path)
+
+                def _download_uc():
+                    return self.databricks_client.files.download(file_path).contents.read()
+
+                content = await asyncio.to_thread(_download_uc)
                 with open(temp_file.name, 'wb') as f:
-                    f.write(download_response.contents.read())
-                
+                    f.write(content)
+
                 local_file_path = temp_file.name
                 log.info(f"Downloaded UC file to temp location: {local_file_path}")
             
@@ -227,9 +235,10 @@ class LineageService:
                 merged_edges = []
                 
                 for sheet in sheet_names:
-                    df = analyzer.get_sheet(sheet)
+                    # Run CPU-bound Excel parsing in thread pool
+                    df = await asyncio.to_thread(analyzer.get_sheet, sheet)
                     log.info(f"Loaded sheet '{sheet}' with {len(df)} rows")
-                    
+
                     parsed_data = SQLLineageParser.parse_program_object_xref(df)
                     
                     # Merge nodes (deduplicate by ID)
@@ -325,6 +334,100 @@ class LineageService:
                     f"Added {len(merged_nodes)} nodes and "
                     f"{len(merged_edges)} edges to visualizer"
                 )
+            
+            elif lineage_config.parser_type == "informatica" and format == "cross_reference":
+                from migration_accelerator.app.services.informatica_lineage_parser import (
+                    InformaticaLineageParser,
+                )
+                
+                log.info("Using Informatica-specific lineage parsing")
+                
+                # Load required sheets into a dict (parser resolves names case-insensitively)
+                sheets_dict = {}
+                for name in sheet_names:
+                    try:
+                        # Run CPU-bound Excel parsing in thread pool
+                        sheets_dict[name] = await asyncio.to_thread(analyzer.get_sheet, name)
+                        log.info(f"Loaded sheet '{name}' with {len(sheets_dict[name])} rows")
+                    except Exception as e:
+                        log.warning(f"Could not load sheet '{name}': {e}")
+                
+                parsed_data = InformaticaLineageParser.parse_infa_sheets(sheets_dict)
+                
+                merged_nodes = {node["id"]: node for node in parsed_data["nodes"]}
+                merged_edges = parsed_data["edges"]
+                counts = NodeTypeHelper.count_by_type(list(merged_nodes.values()))
+                
+                log.info(
+                    f"Informatica lineage: {len(merged_nodes)} nodes, {len(merged_edges)} edges. "
+                    f"Mappings: {counts['mappings']}, Tables: {counts['tables']}, "
+                    f"Sessions: {counts['sessions']}, Workflows: {counts['workflows']}"
+                )
+                
+                table_operations = EdgeRelationshipHelper.categorize_table_operations(
+                    merged_edges, merged_nodes
+                )
+                tables_only_read = [
+                    merged_nodes[table_id].get("label", table_id)
+                    for table_id, ops in table_operations.items()
+                    if ops["reads"] > 0 and ops["writes"] == 0 and ops["deletes"] == 0 and ops["drops"] == 0
+                ]
+                tables_never_read = [
+                    merged_nodes[table_id].get("label", table_id)
+                    for table_id, ops in table_operations.items()
+                    if ops["reads"] == 0 and (ops["writes"] > 0 or ops["deletes"] > 0 or ops["drops"] > 0)
+                ]
+                tables_with_deletes = [
+                    merged_nodes[table_id].get("label", table_id)
+                    for table_id, ops in table_operations.items()
+                    if ops["deletes"] > 0
+                ]
+                tables_with_drops = [
+                    merged_nodes[table_id].get("label", table_id)
+                    for table_id, ops in table_operations.items()
+                    if ops["drops"] > 0
+                ]
+                
+                log.info(f"  -> Tables/Views ONLY READ: {len(tables_only_read)}")
+                log.info(f"  -> Tables/Views NEVER READ (sink): {len(tables_never_read)}")
+                log.info(f"  -> Tables/Views with DESTRUCTIVE ops: {len(tables_with_deletes)}")
+                log.info(f"  -> Tables/Views with DROP ops: {len(tables_with_drops)}")
+                
+                visualizer = DataLineageVisualizer(
+                    llm_config=self.llm_config if enhance_with_llm else None,
+                    enable_llm_enhancement=enhance_with_llm,
+                )
+                _INFA_PROPERTY_KEYS = {
+                    "connection", "connection_type", "workflow", "session",
+                    "folder", "transformations", "transformation_count",
+                    "conformed_types", "label",
+                }
+                for node in merged_nodes.values():
+                    props = {
+                        k: v for k, v in node.items()
+                        if k in _INFA_PROPERTY_KEYS and v
+                    }
+                    props.setdefault("label", node.get("label", node["id"]))
+                    visualizer._add_node(
+                        node_id=node["id"],
+                        node_type=node["type"],
+                        properties=props,
+                    )
+                for edge in merged_edges:
+                    edge_props: dict = {}
+                    if edge.get("condition"):
+                        edge_props["condition"] = edge["condition"]
+                    if edge.get("workflow"):
+                        edge_props["workflow"] = edge["workflow"]
+                    visualizer._add_edge(
+                        source=edge["source"],
+                        target=edge["target"],
+                        relationship=edge["relationship"],
+                        properties=edge_props,
+                    )
+                log.info(
+                    f"Added {len(merged_nodes)} nodes and {len(merged_edges)} edges to visualizer"
+                )
                 
             # Parse lineage based on format (for non-SQL or other formats)
             elif format == "cross_reference":
@@ -335,7 +438,7 @@ class LineageService:
                 )
                 
                 # Process first sheet only for non-SQL dialects (backward compatibility)
-                df = analyzer.get_sheet(sheet_names[0])
+                df = await asyncio.to_thread(analyzer.get_sheet, sheet_names[0])
                 log.info(f"Loaded sheet '{sheet_names[0]}' with {len(df)} rows")
                 
                 # Use default column names if not provided
@@ -359,7 +462,7 @@ class LineageService:
                 )
                 
                 # Process first sheet only for matrix format (backward compatibility)
-                df = analyzer.get_sheet(sheet_names[0])
+                df = await asyncio.to_thread(analyzer.get_sheet, sheet_names[0])
                 log.info(f"Loaded sheet '{sheet_names[0]}' with {len(df)} rows")
                 
                 if not script_column:
@@ -410,19 +513,22 @@ class LineageService:
             lineage_data["graph"] = graph_data
 
             # Ensure user's lineage directory exists
-            self._ensure_user_lineage_directory(user_id)
+            await asyncio.to_thread(self._ensure_user_lineage_directory, user_id)
 
             # Save to file (UC or local) with per-user path
             lineage_file_path = self._get_user_lineage_path(user_id, lineage_id)
             
             if self.storage_backend.value == "unity_catalog":
-                lineage_content = json.dumps(lineage_data, indent=2).encode()
-                # Wrap bytes in BytesIO for SDK
-                lineage_obj = io.BytesIO(lineage_content)
-                self.databricks_client.files.upload(str(lineage_file_path), lineage_obj, overwrite=True)
+                lineage_content = json.dumps(lineage_data, separators=(',', ':')).encode()
+
+                def _upload_lineage():
+                    lineage_obj = io.BytesIO(lineage_content)
+                    self.databricks_client.files.upload(str(lineage_file_path), lineage_obj, overwrite=True)
+
+                await asyncio.to_thread(_upload_lineage)
             else:
                 with open(lineage_file_path, "w") as f:
-                    json.dump(lineage_data, f, indent=2)
+                    json.dump(lineage_data, f, separators=(',', ':'))
 
             log.info(f"Created lineage {lineage_id} for user {user_id} with {stats['nodes']['total']} nodes")
 
@@ -462,20 +568,22 @@ class LineageService:
             
             if self.storage_backend.value == "unity_catalog":
                 try:
-                    lineage_content = self.databricks_client.files.download(str(lineage_file_path)).contents.read()
+                    def _download():
+                        return self.databricks_client.files.download(str(lineage_file_path)).contents.read()
+
+                    lineage_content = await asyncio.to_thread(_download)
                     lineage_data = json.loads(lineage_content)
                 except Exception as e:
                     # Convert SDK "file not found" errors to FileNotFoundError
-                    # Check for various indicators that the file doesn't exist
                     error_str = str(e).lower() if e else ""
-                    if ("not found" in error_str or "404" in error_str or 
+                    if ("not found" in error_str or "404" in error_str or
                         "nosuchkey" in error_str or not error_str or error_str == "none"):
                         raise FileNotFoundError(f"Lineage {lineage_id} not found")
                     raise
             else:
                 if not lineage_file_path.exists():
                     raise FileNotFoundError(f"Lineage {lineage_id} not found")
-                
+
                 with open(lineage_file_path, "r") as f:
                     lineage_data = json.load(f)
 
@@ -485,10 +593,22 @@ class LineageService:
                 log.warning(f"Access denied: user {user_id} attempted to access lineage {lineage_id} owned by {stored_user_id}")
                 raise FileNotFoundError(f"Lineage {lineage_id} not found")
 
+            nodes = lineage_data["graph"]["nodes"]
+            edges = lineage_data["graph"]["edges"]
+            # For Informatica, FILE nodes must only have CONTAINS (and DEPENDS_ON_FILE); strip any FILE->TABLE edges
+            if lineage_data.get("dialect", "").lower() == "informatica":
+                node_types = {n["id"]: n.get("type") for n in nodes}
+                allowed_file_relationships = {"CONTAINS", "DEPENDS_ON_FILE"}
+                edges = [
+                    e for e in edges
+                    if node_types.get(e.get("source")) != NodeTypeHelper.FILE
+                    or e.get("relationship") in allowed_file_relationships
+                ]
+
             return {
                 "lineage_id": lineage_id,
-                "nodes": lineage_data["graph"]["nodes"],
-                "edges": lineage_data["graph"]["edges"],
+                "nodes": nodes,
+                "edges": edges,
                 "stats": lineage_data["stats"],
             }
 
@@ -498,41 +618,97 @@ class LineageService:
             log.error(f"Failed to get lineage graph {lineage_id}: {e}")
             raise
     
+    def _get_lineage_graph_sync(self, lineage_id: str, user_id: str) -> Dict[str, Any]:
+        """
+        Synchronous version of get_lineage_graph for use with asyncio.to_thread.
+
+        The Databricks SDK files.download() is blocking I/O, so running it in
+        a thread pool allows true parallelism for batch loading.
+        """
+        try:
+            lineage_file_path = self._get_user_lineage_path(user_id, lineage_id)
+
+            if self.storage_backend.value == "unity_catalog":
+                try:
+                    lineage_content = self.databricks_client.files.download(str(lineage_file_path)).contents.read()
+                    lineage_data = json.loads(lineage_content)
+                except Exception as e:
+                    error_str = str(e).lower() if e else ""
+                    if ("not found" in error_str or "404" in error_str or
+                        "nosuchkey" in error_str or not error_str or error_str == "none"):
+                        raise FileNotFoundError(f"Lineage {lineage_id} not found")
+                    raise
+            else:
+                if not lineage_file_path.exists():
+                    raise FileNotFoundError(f"Lineage {lineage_id} not found")
+                with open(lineage_file_path, "r") as f:
+                    lineage_data = json.load(f)
+
+            stored_user_id = lineage_data.get("user_id")
+            if stored_user_id and stored_user_id != user_id:
+                raise FileNotFoundError(f"Lineage {lineage_id} not found")
+
+            nodes = lineage_data["graph"]["nodes"]
+            edges = lineage_data["graph"]["edges"]
+
+            if lineage_data.get("dialect", "").lower() == "informatica":
+                node_types = {n["id"]: n.get("type") for n in nodes}
+                allowed_file_relationships = {"CONTAINS", "DEPENDS_ON_FILE"}
+                edges = [
+                    e for e in edges
+                    if node_types.get(e.get("source")) != NodeTypeHelper.FILE
+                    or e.get("relationship") in allowed_file_relationships
+                ]
+
+            return {
+                "lineage_id": lineage_id,
+                "nodes": nodes,
+                "edges": edges,
+                "stats": lineage_data["stats"],
+            }
+        except FileNotFoundError:
+            raise
+        except Exception as e:
+            log.error(f"Failed to get lineage graph {lineage_id}: {e}")
+            raise
+
     async def get_lineage_graphs_batch(
         self, lineage_ids: List[str], user_id: str
     ) -> Dict[str, Dict[str, Any]]:
         """
-        Get multiple lineage graphs in batch using async gather.
-        
-        This eliminates N+1 query pattern by loading all lineages in parallel.
-        
+        Get multiple lineage graphs in batch using thread pool.
+
+        Uses asyncio.to_thread for each download so that the blocking
+        Databricks SDK calls run in parallel worker threads instead of
+        sequentially blocking the event loop.
+
         Args:
             lineage_ids: List of lineage identifiers
             user_id: User identifier for access control
-        
+
         Returns:
             Dictionary mapping lineage_id to graph data
         """
-        import asyncio
-        
         try:
-            # Load all lineages in parallel
-            tasks = [self.get_lineage_graph(lid, user_id) for lid in lineage_ids]
+            # Run each blocking SDK download in a separate thread
+            tasks = [
+                asyncio.to_thread(self._get_lineage_graph_sync, lid, user_id)
+                for lid in lineage_ids
+            ]
             results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            # Build result dict, filtering out errors
+
             batch_result = {}
             for lineage_id, result in zip(lineage_ids, results):
                 if isinstance(result, Exception):
                     log.warning(f"Failed to load lineage {lineage_id}: {result}")
                     continue
                 batch_result[lineage_id] = result
-            
+
             log.info(
                 f"Batch loaded {len(batch_result)}/{len(lineage_ids)} lineages for user {user_id}"
             )
             return batch_result
-        
+
         except Exception as e:
             log.error(f"Failed to batch load lineages: {e}")
             raise
@@ -557,19 +733,21 @@ class LineageService:
             
             if self.storage_backend.value == "unity_catalog":
                 try:
-                    lineage_content = self.databricks_client.files.download(str(lineage_file_path)).contents.read()
+                    def _download_export():
+                        return self.databricks_client.files.download(str(lineage_file_path)).contents.read()
+
+                    lineage_content = await asyncio.to_thread(_download_export)
                     lineage_data = json.loads(lineage_content)
                 except Exception as e:
-                    # Convert SDK "file not found" errors to FileNotFoundError
                     error_str = str(e).lower() if e else ""
-                    if ("not found" in error_str or "404" in error_str or 
+                    if ("not found" in error_str or "404" in error_str or
                         "nosuchkey" in error_str or not error_str or error_str == "none"):
                         raise FileNotFoundError(f"Lineage {lineage_id} not found")
                     raise
             else:
                 if not lineage_file_path.exists():
                     raise FileNotFoundError(f"Lineage {lineage_id} not found")
-                
+
                 with open(lineage_file_path, "r") as f:
                     lineage_data = json.load(f)
 
@@ -665,9 +843,9 @@ class LineageService:
         
         return self._infer_column(df, dialect_enum, ColumnRole.TARGET)
 
-    async def delete_lineage(self, lineage_id: str, user_id: str) -> bool:
+    def _delete_lineage_sync(self, lineage_id: str, user_id: str) -> bool:
         """
-        Delete a lineage file from storage.
+        Synchronous lineage deletion — safe to call via asyncio.to_thread().
 
         Args:
             lineage_id: Lineage identifier
@@ -681,6 +859,23 @@ class LineageService:
                 return self._delete_lineage_uc(lineage_id, user_id)
             else:
                 return self._delete_lineage_local(lineage_id, user_id)
+        except Exception as e:
+            log.warning(f"Failed to delete lineage {lineage_id}: {e}")
+            return False
+
+    async def delete_lineage(self, lineage_id: str, user_id: str) -> bool:
+        """
+        Delete a lineage file from storage.
+
+        Args:
+            lineage_id: Lineage identifier
+            user_id: User identifier for access control
+
+        Returns:
+            True if deleted successfully, False otherwise
+        """
+        try:
+            return await asyncio.to_thread(self._delete_lineage_sync, lineage_id, user_id)
         except Exception as e:
             log.error(f"Failed to delete lineage {lineage_id}: {e}")
             return False

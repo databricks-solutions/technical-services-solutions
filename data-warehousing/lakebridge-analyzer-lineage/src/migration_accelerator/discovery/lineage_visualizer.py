@@ -143,9 +143,13 @@ class DataLineageVisualizer:
         self.nodes.clear()
         self.edges.clear()
 
-        # Process each row (script)
-        for idx, row in df.iterrows():
-            script_name = str(row[script_column])
+        # Process each row (script) — use itertuples for performance
+        col_list = list(df.columns)
+        script_idx = col_list.index(script_column)
+        table_col_indices = [col_list.index(tc) for tc in table_file_columns]
+
+        for row in df.itertuples(index=False):
+            script_name = str(row[script_idx])
             if pd.isna(script_name) or script_name.strip() == "":
                 continue
 
@@ -153,8 +157,8 @@ class DataLineageVisualizer:
             self._add_node(script_name, "Script")
 
             # Process relationships with tables/files
-            for table_col in table_file_columns:
-                relationship_value = str(row[table_col]).lower().strip()
+            for ti, table_col in zip(table_col_indices, table_file_columns):
+                relationship_value = str(row[ti]).lower().strip()
 
                 if relationship_value and relationship_value not in ["nan", "", "none"]:
                     # Add table/file node
@@ -232,9 +236,14 @@ class DataLineageVisualizer:
         
         temp_tables_filtered = 0
 
-        for idx, row in df.iterrows():
-            source = str(row[source_column])
-            target = str(row[target_column])
+        col_list = list(df.columns)
+        source_idx = col_list.index(source_column)
+        target_idx = col_list.index(target_column)
+        rel_idx = col_list.index(relationship_column) if relationship_column and relationship_column in df.columns else None
+
+        for row in df.itertuples(index=False):
+            source = str(row[source_idx])
+            target = str(row[target_idx])
 
             if (
                 pd.isna(source)
@@ -243,7 +252,7 @@ class DataLineageVisualizer:
                 or target.strip() == ""
             ):
                 continue
-            
+
             # Filter temporary tables (single # = local temp, skip them)
             # Global temp tables (##) are kept with special type
             if source.startswith('#') and not source.startswith('##'):
@@ -256,14 +265,14 @@ class DataLineageVisualizer:
             # Add nodes
             source_type = "GLOBAL_TEMP_TABLE" if source.startswith('##') else self._infer_node_type(source)
             target_type = "GLOBAL_TEMP_TABLE" if target.startswith('##') else self._infer_node_type(target)
-            
+
             self._add_node(source, source_type)
             self._add_node(target, target_type)
 
             # Determine relationship
             relationship = default_relationship
-            if relationship_column and relationship_column in df.columns:
-                rel_value = str(row[relationship_column])
+            if rel_idx is not None:
+                rel_value = str(row[rel_idx])
                 if not pd.isna(rel_value) and rel_value.strip():
                     relationship = rel_value.upper().replace(" ", "_")
 

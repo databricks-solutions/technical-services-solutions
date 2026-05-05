@@ -53,7 +53,7 @@ async def get_analyzer(
     await verify_file_access(analyzer_id, user_id, storage)
 
     # Get file path and metadata
-    file_path, metadata = MetadataHelper.get_file_with_metadata(
+    file_path, metadata = await MetadataHelper.get_file_with_metadata_async(
         analyzer_id, user_id, storage
     )
     
@@ -103,7 +103,7 @@ async def get_metrics(
     await verify_file_access(analyzer_id, user_id, storage)
 
     # Get file path and metadata
-    file_path, metadata = MetadataHelper.get_file_with_metadata(
+    file_path, metadata = await MetadataHelper.get_file_with_metadata_async(
         analyzer_id, user_id, storage
     )
     dialect = MetadataHelper.get_dialect_str(metadata)
@@ -144,7 +144,7 @@ async def get_complexity(
     await verify_file_access(analyzer_id, user_id, storage)
 
     # Get file path and metadata
-    file_path, metadata = MetadataHelper.get_file_with_metadata(
+    file_path, metadata = await MetadataHelper.get_file_with_metadata_async(
         analyzer_id, user_id, storage
     )
     dialect = MetadataHelper.get_dialect_str(metadata)
@@ -201,7 +201,7 @@ async def get_sheet_data(
     await verify_file_access(analyzer_id, user_id, storage)
 
     # Get file path and metadata
-    file_path, metadata = MetadataHelper.get_file_with_metadata(
+    file_path, metadata = await MetadataHelper.get_file_with_metadata_async(
         analyzer_id, user_id, storage
     )
     dialect = MetadataHelper.get_dialect_str(metadata)

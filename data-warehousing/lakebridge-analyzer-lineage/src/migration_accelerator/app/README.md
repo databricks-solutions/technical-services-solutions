@@ -30,7 +30,7 @@ Visit: http://localhost:8080/docs for interactive API documentation
 
 ### Production Deployment
 
-See [APP_SETUP.md](../../../docs/APP_SETUP.md) for full deployment guide.
+See the repository root `README.md` for Unity Catalog setup, bundle configuration, and `databricks bundle deploy` / `run` instructions.
 
 ## Architecture
 

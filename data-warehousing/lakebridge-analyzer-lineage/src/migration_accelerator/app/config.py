@@ -26,7 +26,7 @@ class Settings(BaseSettings):
 
     # App settings
     app_name: str = "Migration Accelerator"
-    app_version: str = "0.2.0"
+    app_version: str = "1.0.0"
     debug: bool = False
     
     # LLM settings
@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     # Storage settings - NO HARDCODED PRODUCTION PATHS
     storage_backend: StorageBackend = StorageBackend.IN_MEMORY  # Safe default
     uc_volume_path: Optional[str] = None  # Unity Catalog volume path (e.g., /Volumes/catalog/schema/volume)
-    
+
     # API settings
     api_prefix: str = "/api/v1"
     cors_origins: list = []
@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     
     # Session settings
     session_timeout_hours: int = 24
-    
+
     model_config = ConfigDict(
         env_file=".env",
         case_sensitive=False

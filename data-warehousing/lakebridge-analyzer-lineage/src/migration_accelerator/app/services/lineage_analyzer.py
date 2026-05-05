@@ -5,6 +5,7 @@ This is a PURE FUNCTION SERVICE - receives graph data and processes it in-memory
 Does NOT perform any I/O or re-merging operations.
 """
 
+import asyncio
 import hashlib
 import json
 from collections import defaultdict
@@ -43,16 +44,21 @@ class LineageAnalyzer:
     async def compute_insights(self, graph_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Compute insights from aggregate lineage graph.
-        
+
         Uses cached NetworkX graph if available (built once, reused).
-        Optimized: Single pass through edges for all table patterns.
-        
+        Runs in thread pool to avoid blocking the event loop with CPU-heavy
+        NetworkX operations on large graphs (30K+ nodes, 62K+ edges).
+
         Args:
             graph_data: Graph data with nodes and edges
-        
+
         Returns:
             Dictionary with insights including most connected nodes, orphans, statistics
         """
+        return await asyncio.to_thread(self._compute_insights_sync, graph_data)
+
+    def _compute_insights_sync(self, graph_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Synchronous implementation of compute_insights."""
         nodes = graph_data.get("nodes", [])
         edges = graph_data.get("edges", [])
 
@@ -89,7 +95,7 @@ class LineageAnalyzer:
                     "connection_count": degree,
                 }
                 for node_id, degree in degree_dict.items()
-                if nodes_dict.get(node_id, {}).get("type") != "FILE"  # Exclude FILE nodes
+                if NodeTypeHelper.is_table_node(nodes_dict.get(node_id, {}))
             ],
             key=lambda x: x["connection_count"],
             reverse=True,
@@ -134,7 +140,7 @@ class LineageAnalyzer:
         # Get counts using NodeTypeHelper
         counts = NodeTypeHelper.count_by_type(nodes)
         total_files = counts['files']
-        total_tables = counts['tables']
+        total_tables = counts['data_targets']
 
         # Count by relationship type
         relationship_types = defaultdict(int)
@@ -214,16 +220,15 @@ class LineageAnalyzer:
     ) -> Dict[str, Any]:
         """
         Search for nodes matching query and compute their upstream/downstream paths.
-        
-        Reuses cached NetworkX graph if insights was called first.
-        
-        Args:
-            graph_data: Graph data with nodes and edges
-            query: Search query (node name or ID)
-        
-        Returns:
-            Dictionary with matched nodes and their paths
+
+        Runs in thread pool to avoid blocking the event loop.
         """
+        return await asyncio.to_thread(self._search_node_with_paths_sync, graph_data, query)
+
+    def _search_node_with_paths_sync(
+        self, graph_data: Dict[str, Any], query: str
+    ) -> Dict[str, Any]:
+        """Synchronous implementation of search_node_with_paths."""
         nodes = graph_data.get("nodes", [])
         edges = graph_data.get("edges", [])
 
@@ -246,6 +251,12 @@ class LineageAnalyzer:
         # Build NetworkX graph (cached)
         G = self._get_or_build_nx_graph(graph_data)
 
+        # Pre-compute degree centrality once (avoid O(n) per matched node)
+        try:
+            degree_centrality_map = nx.degree_centrality(G)
+        except Exception:
+            degree_centrality_map = {}
+
         # For each matched node, compute upstream and downstream paths
         paths = []
 
@@ -264,12 +275,8 @@ class LineageAnalyzer:
             except nx.NetworkXError:
                 downstream = []
 
-            # Calculate centrality score
-            try:
-                degree_centrality = nx.degree_centrality(G)
-                centrality_score = degree_centrality.get(node_id, 0.0)
-            except:
-                centrality_score = 0.0
+            # Calculate centrality score (use pre-computed values)
+            centrality_score = degree_centrality_map.get(node_id, 0.0)
 
             # Get all edges in the upstream/downstream subgraph
             affected_nodes = {node_id} | set(upstream) | set(downstream)

@@ -4,6 +4,7 @@ Centralized metadata operations helper.
 Eliminates duplicate metadata retrieval and dialect extraction patterns.
 """
 
+import asyncio
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
@@ -90,14 +91,30 @@ class MetadataHelper:
     def get_dialect_str(metadata: Dict[str, Any]) -> str:
         """
         Get dialect as string from metadata with fallback.
-        
+
         Args:
             metadata: Metadata dictionary
-            
+
         Returns:
             Dialect string value
         """
         return MetadataHelper.get_dialect(metadata).value
+
+    @staticmethod
+    async def get_file_with_metadata_async(
+        file_id: str,
+        user_id: str,
+        storage: StorageService
+    ) -> Tuple[Path, Dict[str, Any]]:
+        """
+        Async version of get_file_with_metadata.
+
+        Runs blocking UC SDK calls in a thread pool so they don't block
+        the event loop and cause 502/504 timeouts on concurrent requests.
+        """
+        return await asyncio.to_thread(
+            MetadataHelper.get_file_with_metadata, file_id, user_id, storage
+        )
 
 
 

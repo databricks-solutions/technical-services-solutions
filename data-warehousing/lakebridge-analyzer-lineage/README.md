@@ -26,7 +26,7 @@ TO `users`;
 SHOW VOLUMES IN my_catalog.migration_accelerator;
 ```
 
-Note the full volume path (e.g. `/Volumes/my_catalog/migration_accelerator/app_storage`) for the next step.
+Replace `my_catalog` / `migration_accelerator` / `app_storage` with names that match your organization. Note the full volume path (e.g. `/Volumes/my_catalog/migration_accelerator/app_storage`) and the three-part securable name (`my_catalog.migration_accelerator.app_storage`) for the next step.
 
 ### CLI auth
 
@@ -38,18 +38,45 @@ Use your workspace URL when prompted (e.g. `https://your-workspace.cloud.databri
 
 ## 2. Configure and deploy
 
-### Set volume path
+### Bundle configuration
 
-In `databricks.yml`, under `targets.dev.variables` and `targets.prod.variables`, set `uc_volume_path` to your volume path from step 1:
+The bundle file is **`databricks.yaml`** in the project root. For each target you use (`dev`, `prod`), set:
+
+- **`uc_volume_path`**: Filesystem-style path, e.g. `/Volumes/<catalog>/<schema>/<volume>`
+- **`uc_volume_securable_name`**: Unity Catalog name in the form `<catalog>.<schema>.<volume>` (same components as the path; no leading `/Volumes`)
+
+Example (after creating the objects above):
 
 ```yaml
+# under targets.dev.variables and/or targets.prod.variables
 variables:
   uc_volume_path: /Volumes/my_catalog/migration_accelerator/app_storage
+  uc_volume_securable_name: my_catalog.migration_accelerator.app_storage
+```
+
+**Targets**
+
+- **dev**: Syncs bundle files under the current user workspace path. Good for individual testing.
+- **prod**: Uses `/Workspace/Shared/.bundle/...` for the bundle root; use a production catalog/schema/volume and appropriate grants.
+
+You can override variables without editing the file:
+
+```bash
+databricks bundle deploy -t prod \
+  --var uc_volume_path=/Volumes/prod_catalog/migration/app_storage \
+  --var uc_volume_securable_name=prod_catalog.migration.app_storage
+```
+
+Validate before deploy:
+
+```bash
+databricks bundle validate -t dev
+# or: databricks bundle validate -t prod
 ```
 
 ### Deploy and run
 
-From the project root:
+From the project root (the directory that contains `databricks.yaml`):
 
 ```bash
 # Deploy
@@ -93,16 +120,16 @@ Access uses Databricks user identity; files are isolated per user. Users need th
 | Issue | What to check |
 |-------|----------------|
 | Deploy fails | CLI config, workspace URL/token, `databricks bundle deploy -t prod --debug` |
-| App ERROR / won’t start | Correct `uc_volume_path` in `databricks.yml`; catalog/schema/volume exist; `databricks apps logs migration-accelerator` for build/runtime errors |
+| App ERROR / won’t start | Correct `uc_volume_path` and `uc_volume_securable_name` in `databricks.yaml` (or `--var` overrides); catalog/schema/volume exist; `databricks apps logs migration-accelerator` for build/runtime errors |
 | Permission errors in app | Re-run `GRANT READ VOLUME, WRITE VOLUME` on the volume for `users`; `SHOW GRANTS ON VOLUME ...` |
 | Frontend 500 / backend unreachable | Logs for backend errors; confirm both frontend and backend started; `UC_VOLUME_PATH` set from bundle |
 
 ## Project layout
 
-- `databricks.yml` – Bundle and app config (targets, env, `uc_volume_path`)
+- `databricks.yaml` – Bundle and app config (targets, env, volume variables)
+- `app.yaml` – App command and resource permissions (referenced by the bundle)
 - `src/migration_accelerator/` – Python backend (API, lineage, analyzer, storage)
 - `frontend/` – Next.js UI
-- `app.yaml` – App runtime config (if present)
 
 ## References
 

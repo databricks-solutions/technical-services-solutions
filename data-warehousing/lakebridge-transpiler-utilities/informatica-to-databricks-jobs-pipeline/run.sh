@@ -30,6 +30,10 @@
 #   -m, --foundation-model   Foundation model endpoint (default: databricks-claude-sonnet-4-5)
 #   -t, --target-tech        BladeBridge target technology: PYSPARK or SPARKSQL (default: PYSPARK)
 #   -r, --overrides-file     Override JSON for BladeBridge (default: sample_override.json in script dir)
+#       --error-file-path    Local path for BladeBridge conversion error log (default: <output-folder>/errors.log)
+#       --transpiler-config-path  Path to BladeBridge config.yml (default: see DEFAULT_TRANSPILER_CONFIG_PATH;
+#                                 always passed to transpile so the CLI does not use a bad built-in path)
+#       --no-transpiler-config-path  Do not pass --transpiler-config-path (Lakebridge chooses the path)
 #   -x, --custom-prompt      Custom Switch prompt YAML (default: informatica_to_databricks_prompt.yml in script dir)
 #       --compute            Job compute type: serverless or classic (default: serverless)
 #       --cloud              Cloud provider: azure, aws, or gcp (only used with classic compute)
@@ -37,7 +41,9 @@
 #       --skip-det-install   Skip BladeBridge installation only (still run conversion)
 #       --skip-llm-install   Skip Switch LLM installation only (still run conversion)
 #       --skip-bladebridge   Skip BladeBridge entirely (install + conversion; use existing output)
-#       --skip-switch        Skip Switch LLM entirely (install + conversion)
+#       --skip-switch        Skip Switch LLM entirely (no Switch-only prompts; Steps 4–5 skipped)
+#       --non-interactive-install  Pass --interactive false to install-transpile (default: interactive, so
+#                                 existing Lakebridge config can be updated like a fresh interactive install)
 #   -h, --help               Show this help message
 #
 # All flags are prompted interactively if not provided.
@@ -53,6 +59,9 @@ cleanup() {
 trap cleanup EXIT
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# After `databricks labs lakebridge install-transpile`, remorph/BladeBridge config is installed here
+# (same layout the CLI uses; $HOME e.g. /Users/you, not /root).
+DEFAULT_TRANSPILER_CONFIG_PATH="${HOME}/.databricks/labs/remorph-transpilers/bladebridge/lib/config.yml"
 
 INPUT_SOURCE=""
 OUTPUT_FOLDER=""
@@ -65,6 +74,9 @@ VOLUME=""
 FOUNDATION_MODEL=""
 TARGET_TECH=""
 OVERRIDES_FILE=""
+ERROR_LOG_PATH=""
+TRANSPILER_CONFIG_PATH=""
+SKIP_TRANSPILER_CONFIG_PATH=false
 CUSTOM_PROMPT=""
 CLOUD=""
 COMPUTE_TYPE=""
@@ -75,6 +87,7 @@ SKIP_DET_INSTALL=false
 SKIP_LLM_INSTALL=false
 SKIP_BLADEBRIDGE=false
 SKIP_SWITCH=false
+NON_INTERACTIVE_INSTALL=false
 
 usage() {
     sed -n '/^# Usage:/,/^[^#]/{ /^#/s/^# \?//p }' "$0"
@@ -94,6 +107,9 @@ while [[ $# -gt 0 ]]; do
         -m|--foundation-model)   FOUNDATION_MODEL="$2"; shift 2 ;;
         -t|--target-tech)        TARGET_TECH="$2"; shift 2 ;;
         -r|--overrides-file)     OVERRIDES_FILE="$2"; shift 2 ;;
+        --error-file-path)        ERROR_LOG_PATH="$2"; shift 2 ;;
+        --transpiler-config-path) TRANSPILER_CONFIG_PATH="$2"; shift 2 ;;
+        --no-transpiler-config-path) SKIP_TRANSPILER_CONFIG_PATH=true; shift ;;
         -x|--custom-prompt)      CUSTOM_PROMPT="$2"; shift 2 ;;
         --cloud)                 CLOUD="$2"; shift 2 ;;
         --compute)               COMPUTE_TYPE="$2"; shift 2 ;;
@@ -102,6 +118,7 @@ while [[ $# -gt 0 ]]; do
         --skip-llm-install)      SKIP_LLM_INSTALL=true; shift ;;
         --skip-bladebridge)      SKIP_BLADEBRIDGE=true; SKIP_DET_INSTALL=true; shift ;;
         --skip-switch)           SKIP_SWITCH=true; SKIP_LLM_INSTALL=true; shift ;;
+        --non-interactive-install) NON_INTERACTIVE_INSTALL=true; shift ;;
         -h|--help)               usage ;;
         *) echo "Unknown option: $1"; usage ;;
     esac
@@ -120,10 +137,7 @@ fi
 if [ -z "$CUSTOM_PROMPT" ]; then
     CUSTOM_PROMPT="${SCRIPT_DIR}/informatica_to_databricks_prompt.yml"
 fi
-if [ ! -f "$CUSTOM_PROMPT" ]; then
-    echo "Error: custom prompt file '${CUSTOM_PROMPT}' not found."
-    exit 1
-fi
+# custom prompt is only required when Switch/LLM runs (validated in Step 4)
 
 # --- Prompt for missing values ---
 
@@ -145,7 +159,23 @@ if [ -z "$USER_EMAIL" ]; then
     echo "  Detected: ${USER_EMAIL}"
 fi
 
-# --- BladeBridge (deterministic transpiler) ---
+# --- Switch (LLM) first: "no" skips Switch-only prompts and Steps 4–5
+if [ "$SKIP_SWITCH" = false ]; then
+    read -rp "Run Switch LLM conversion? (Y/n): " run_switch_answer
+    if [[ "$run_switch_answer" =~ ^[Nn]$ ]]; then
+        SKIP_SWITCH=true
+        SKIP_LLM_INSTALL=true
+    elif [ "$SKIP_LLM_INSTALL" = false ]; then
+        read -rp "  Install Switch LLM transpiler first? (y/N): " install_switch_answer
+        if [[ "$install_switch_answer" =~ ^[Yy]$ ]]; then
+            SKIP_LLM_INSTALL=false
+        else
+            SKIP_LLM_INSTALL=true
+        fi
+    fi
+fi
+
+# --- BladeBridge: "no" skips BladeBridge-only prompts and Step 2
 if [ "$SKIP_BLADEBRIDGE" = false ]; then
     read -rp "Run BladeBridge deterministic conversion? (Y/n): " run_bb_answer
     if [[ "$run_bb_answer" =~ ^[Nn]$ ]]; then
@@ -155,20 +185,6 @@ if [ "$SKIP_BLADEBRIDGE" = false ]; then
         read -rp "  Install BladeBridge transpiler first? (y/N): " install_bb_answer
         if [[ ! "$install_bb_answer" =~ ^[Yy]$ ]]; then
             SKIP_DET_INSTALL=true
-        fi
-    fi
-fi
-
-# --- Switch (LLM transpiler) ---
-if [ "$SKIP_SWITCH" = false ]; then
-    read -rp "Run Switch LLM cleanup? (Y/n): " run_switch_answer
-    if [[ "$run_switch_answer" =~ ^[Nn]$ ]]; then
-        SKIP_SWITCH=true
-        SKIP_LLM_INSTALL=true
-    elif [ "$SKIP_LLM_INSTALL" = false ]; then
-        read -rp "  Install Switch LLM transpiler first? (y/N): " install_switch_answer
-        if [[ ! "$install_switch_answer" =~ ^[Yy]$ ]]; then
-            SKIP_LLM_INSTALL=true
         fi
     fi
 fi
@@ -184,44 +200,64 @@ if [ "$SKIP_BLADEBRIDGE" = false ]; then
 fi
 
 if [ -z "$OUTPUT_FOLDER" ]; then
-    read -rp "Local output folder for BladeBridge results: " OUTPUT_FOLDER
+    if [ "$SKIP_BLADEBRIDGE" = true ]; then
+        read -rp "Local output folder (use existing BladeBridge/switch state): " OUTPUT_FOLDER
+    else
+        read -rp "Local output folder for BladeBridge results: " OUTPUT_FOLDER
+    fi
 fi
 if [ -z "$OUTPUT_FOLDER" ]; then
     echo "Error: output folder is required."
     exit 1
 fi
 
-if [ -z "$OUTPUT_WS_FOLDER" ]; then
-    read -rp "Workspace output folder (must start with /Workspace/): " OUTPUT_WS_FOLDER
-fi
-if [[ ! "$OUTPUT_WS_FOLDER" == /Workspace/* ]]; then
-    echo "Error: workspace output folder must start with /Workspace/"
-    exit 1
-fi
-
-if [ -z "$TARGET_TECH" ]; then
-    read -rp "BladeBridge target technology (PYSPARK or SPARKSQL) [default: PYSPARK]: " TARGET_TECH
+if [ "$SKIP_BLADEBRIDGE" = false ]; then
+    if [ -z "$TARGET_TECH" ]; then
+        read -rp "BladeBridge target technology (PYSPARK or SPARKSQL) [default: PYSPARK]: " TARGET_TECH
+    fi
+    TARGET_TECH="${TARGET_TECH:-PYSPARK}"
+else
     TARGET_TECH="${TARGET_TECH:-PYSPARK}"
 fi
 
-if [ -z "$CATALOG" ]; then
-    read -rp "Catalog name for Switch artifacts [default: lakebridge]: " CATALOG
+if [ "$SKIP_SWITCH" = true ]; then
+    # Defaults for summary / TASK_PATH in override sed; Switch LLM not invoked
+    if [ -z "$OUTPUT_WS_FOLDER" ]; then
+        OUTPUT_WS_FOLDER="/Workspace/Users/${USER_EMAIL}/$(basename "$OUTPUT_FOLDER")"
+    fi
     CATALOG="${CATALOG:-lakebridge}"
-fi
-
-if [ -z "$SCHEMA" ]; then
-    read -rp "Schema name for Switch artifacts [default: switch]: " SCHEMA
     SCHEMA="${SCHEMA:-switch}"
-fi
-
-if [ -z "$VOLUME" ]; then
-    read -rp "UC Volume name for Switch artifacts [default: switch_volume]: " VOLUME
     VOLUME="${VOLUME:-switch_volume}"
+    FOUNDATION_MODEL="${FOUNDATION_MODEL:-databricks-claude-sonnet-4-5}"
+else
+    if [ -z "$OUTPUT_WS_FOLDER" ]; then
+        read -rp "Workspace output folder (must start with /Workspace/): " OUTPUT_WS_FOLDER
+    fi
+    if [[ ! "$OUTPUT_WS_FOLDER" == /Workspace/* ]]; then
+        echo "Error: workspace output folder must start with /Workspace/"
+        exit 1
+    fi
+    if [ -z "$CATALOG" ]; then
+        read -rp "Catalog name for Switch artifacts [default: lakebridge]: " CATALOG
+        CATALOG="${CATALOG:-lakebridge}"
+    fi
+    if [ -z "$SCHEMA" ]; then
+        read -rp "Schema name for Switch artifacts [default: switch]: " SCHEMA
+        SCHEMA="${SCHEMA:-switch}"
+    fi
+    if [ -z "$VOLUME" ]; then
+        read -rp "UC Volume name for Switch artifacts [default: switch_volume]: " VOLUME
+        VOLUME="${VOLUME:-switch_volume}"
+    fi
+    if [ -z "$FOUNDATION_MODEL" ]; then
+        read -rp "Foundation model endpoint [default: databricks-claude-sonnet-4-5]: " FOUNDATION_MODEL
+        FOUNDATION_MODEL="${FOUNDATION_MODEL:-databricks-claude-sonnet-4-5}"
+    fi
 fi
 
-if [ -z "$FOUNDATION_MODEL" ]; then
-    read -rp "Foundation model endpoint [default: databricks-claude-sonnet-4-5]: " FOUNDATION_MODEL
-    FOUNDATION_MODEL="${FOUNDATION_MODEL:-databricks-claude-sonnet-4-5}"
+if [[ ! "$OUTPUT_WS_FOLDER" == /Workspace/* ]]; then
+    echo "Error: workspace output folder must start with /Workspace/"
+    exit 1
 fi
 
 if [ -z "$COMPUTE_TYPE" ]; then
@@ -291,14 +327,25 @@ echo "  Profile:            ${PROFILE}"
 echo "  User email:         ${USER_EMAIL}"
 [ "$SKIP_BLADEBRIDGE" = false ] && echo "  Input source:       ${INPUT_SOURCE}"
 echo "  Output folder:      ${OUTPUT_FOLDER}"
+echo "  BB error log:       ${ERROR_LOG_PATH:-${OUTPUT_FOLDER}/errors.log}"
+if [ "$SKIP_TRANSPILER_CONFIG_PATH" = true ]; then
+    echo "  Transpiler config:  (not passed; Lakebridge default)"
+else
+    echo "  Transpiler config:  ${TRANSPILER_CONFIG_PATH:-${DEFAULT_TRANSPILER_CONFIG_PATH}} (default if unset)"
+fi
 echo "  Workspace folder:   ${OUTPUT_WS_FOLDER}"
 echo "  Target technology:  ${TARGET_TECH}"
 echo "  Override file:      ${OVERRIDES_FILE}"
-echo "  Custom prompt:      ${CUSTOM_PROMPT}"
-echo "  Catalog:            ${CATALOG}"
-echo "  Schema:             ${SCHEMA}"
-echo "  Volume:             ${VOLUME}"
-echo "  Foundation model:   ${FOUNDATION_MODEL}"
+if [ "$SKIP_SWITCH" = true ]; then
+    echo "  Custom prompt:      (N/A – Switch disabled)"
+    echo "  Switch catalog/UC:  (N/A – Switch disabled)"
+else
+    echo "  Custom prompt:      ${CUSTOM_PROMPT}"
+    echo "  Catalog:            ${CATALOG}"
+    echo "  Schema:             ${SCHEMA}"
+    echo "  Volume:             ${VOLUME}"
+    echo "  Foundation model:   ${FOUNDATION_MODEL}"
+fi
 echo "  Job compute:        ${COMPUTE_TYPE}"
 [ "$COMPUTE_TYPE" = "classic" ] && echo "  Cloud / Node type:  ${CLOUD} / ${NODE_TYPE}"
 [ -n "$TABLE_MAPPING" ] && echo "  Table mapping:      ${TABLE_MAPPING}"
@@ -331,13 +378,21 @@ fi
 sed -i.bak "${SED_ARGS[@]}" "$OVERRIDES_FILE"
 rm -f "${OVERRIDES_FILE}.bak"
 
+# install-transpile defaults to interactive: re-run prompts so workspace config (e.g. error log path)
+# can be updated; use --non-interactive-install for CI / unattended
+if [ "$NON_INTERACTIVE_INSTALL" = true ]; then
+    LB_INSTALL_I=(--interactive false)
+else
+    LB_INSTALL_I=(--interactive true)
+fi
+
 # =========================================================================
 # Step 1: Install transpilers
 # =========================================================================
 
 if [ "$SKIP_DET_INSTALL" = false ]; then
     echo "Step 1a: Installing deterministic transpiler (BladeBridge)..."
-    databricks labs lakebridge install-transpile --interactive false $PROFILE_FLAG
+    databricks labs lakebridge install-transpile "${LB_INSTALL_I[@]}" $PROFILE_FLAG
     echo ""
 else
     echo "Step 1a: Skipping BladeBridge install."
@@ -345,7 +400,7 @@ fi
 
 if [ "$SKIP_LLM_INSTALL" = false ]; then
     echo "Step 1b: Installing LLM transpiler (Switch)..."
-    databricks labs lakebridge install-transpile --include-llm-transpiler true --interactive false $PROFILE_FLAG
+    databricks labs lakebridge install-transpile --include-llm-transpiler true "${LB_INSTALL_I[@]}" $PROFILE_FLAG
     echo ""
 else
     echo "Step 1b: Skipping Switch LLM install."
@@ -361,14 +416,36 @@ if [ "$SKIP_BLADEBRIDGE" = false ]; then
     echo ""
 
     mkdir -p "${OUTPUT_FOLDER}"
-    databricks labs lakebridge transpile \
-        --source-dialect "informatica (desktop edition)" \
-        --target-technology "${TARGET_TECH}" \
-        --input-source "${INPUT_SOURCE}" \
-        --output-folder "${OUTPUT_FOLDER}" \
-        --overrides-file "${OVERRIDES_FILE}" \
-        --skip-validation true \
-        $PROFILE_FLAG
+    if [ -z "$ERROR_LOG_PATH" ]; then
+        ERROR_LOG_PATH="${OUTPUT_FOLDER}/errors.log"
+    fi
+    mkdir -p "$(dirname "$ERROR_LOG_PATH")"
+    if [ "$SKIP_TRANSPILER_CONFIG_PATH" = false ]; then
+        if [ -z "$TRANSPILER_CONFIG_PATH" ]; then
+            TRANSPILER_CONFIG_PATH="${DEFAULT_TRANSPILER_CONFIG_PATH}"
+        fi
+        if [ ! -f "$TRANSPILER_CONFIG_PATH" ]; then
+            echo "Error: BladeBridge config not found: ${TRANSPILER_CONFIG_PATH}"
+            echo "  Run: databricks labs lakebridge install-transpile ${PROFILE_FLAG}"
+            echo "  Or set: --transpiler-config-path /path/to/.../config.yml  or  --no-transpiler-config-path"
+            exit 1
+        fi
+    fi
+    # BladeBridge always receives --overrides-file (BladeBridge-only runs still patch USER/TASK_PATH via sed below).
+    # One argv array (never empty) — avoids "unbound variable" on bash 3.2 + set -u
+    _lb_transpile=(databricks labs lakebridge transpile
+        --source-dialect "informatica (desktop edition)"
+        --target-technology "${TARGET_TECH}"
+        --input-source "${INPUT_SOURCE}"
+        --output-folder "${OUTPUT_FOLDER}"
+        --overrides-file "${OVERRIDES_FILE}"
+        --error-file-path "${ERROR_LOG_PATH}"
+    )
+    if [ "$SKIP_TRANSPILER_CONFIG_PATH" = false ]; then
+        _lb_transpile+=(--transpiler-config-path "$TRANSPILER_CONFIG_PATH")
+    fi
+    _lb_transpile+=(--skip-validation true -p "$PROFILE")
+    "${_lb_transpile[@]}"
 
     echo ""
     echo "  BladeBridge output: ${OUTPUT_FOLDER}"
@@ -428,7 +505,7 @@ py_files=("${OUTPUT_FOLDER}"/*.py)
 shopt -u nullglob
 
 if [ ${#py_files[@]} -eq 0 ]; then
-    echo "Error: no .py files remaining in ${OUTPUT_FOLDER} for LLM conversion."
+    echo "Error: no .py files remaining in ${OUTPUT_FOLDER} (expected after BladeBridge)."
     exit 1
 fi
 
@@ -437,7 +514,11 @@ for f in "${py_files[@]}"; do
     echo "  Moved: $(basename "$f") -> switch_input/"
 done
 
-echo "  ${#py_files[@]} Python file(s) ready for LLM conversion."
+if [ "$SKIP_SWITCH" = true ]; then
+    echo "  ${#py_files[@]} Python file(s) in switch_input/ (Switch disabled)."
+else
+    echo "  ${#py_files[@]} Python file(s) ready for LLM conversion."
+fi
 
 # Drop params files that contain only Informatica system variables (never referenced).
 # Start is already excluded by skip_component_types in the override.
@@ -691,6 +772,10 @@ if [ "$SKIP_SWITCH" = true ]; then
 else
 echo "Step 4: Uploading custom prompt and updating Switch configuration..."
 
+if [ ! -f "$CUSTOM_PROMPT" ]; then
+    echo "Error: custom prompt file '${CUSTOM_PROMPT}' not found."
+    exit 1
+fi
 PROMPT_FILENAME="$(basename "$CUSTOM_PROMPT")"
 WS_PROMPT_DIR="/Workspace/Users/${USER_EMAIL}/Prompts"
 WS_PROMPT_PATH="${WS_PROMPT_DIR}/${PROMPT_FILENAME}"
@@ -791,6 +876,10 @@ shopt -u nullglob
 if [ ${#job_json_files[@]} -gt 0 ]; then
     echo "Step 7: Creating Databricks jobs..."
     echo ""
+    if [ "$SKIP_SWITCH" = true ]; then
+        echo "  Note: Switch was skipped — job JSON notebook paths must exist in the workspace (or edit JSON before create)."
+        echo ""
+    fi
 
     # Strip classic cluster config from job JSONs when using serverless
     if [ "$COMPUTE_TYPE" = "serverless" ]; then

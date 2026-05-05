@@ -1,0 +1,307 @@
+{
+    "inherit_from": ["base_datastage2databricks_pyspark.json"],
+  
+    "use_generic_workflow_builder": 1,
+  
+    "config_variables": {
+      "USER_NAME": "<username>",
+      "TASK_PATH": "Workspace/Users/<username>/DW Migrations/DataStage/Amerihealth/output_v2",
+      "SPARK_VERSION": "15.4.x-scala2.12",
+      "NODE_TYPE": "<Standard_D4ds_v5 or i3.xlarge or n1-standard-4>",
+      "EMAIL_ADDRESS": "<username>",
+      "SUCCESS_EMAIL_ADDRESS": "<username>",
+      "FAILURE_EMAIL_ADDRESS": "<username>"
+    },
+  
+    "SET_VARIABLE_SCRIPT_PATTERN_PER_VAR": "# Populating variable %VARNAME%\ndf = spark.sql(\"%VALUE%\");\ndata = df.collect()\nval = data[0][0]\ndbutils.jobs.taskValues.set(key = '%VARNAME%', value = val)\n",
+  
+    "workflow_specs": {
+      "workflow_class": "CodeGeneration::DatabricksJobs",
+  
+      "workflow_component_mapping": {
+        "SESSION": {
+          "task_key": "%COMPONENT_NAME%",
+          "description": "%DESCRIPTION%",
+          "job_cluster_key": "auto_scaling_cluster",
+          "min_retry_interval_millis": 2000,
+          "retry_on_timeout": false,
+          "max_retries": 3,
+          "notebook_task": {
+            "notebook_path": "/%TASK_PATH%/%COMPONENT_NAME%",
+            "source": "WORKSPACE"
+          }
+        },
+        "SUBJOB": {
+          "task_key": "%COMPONENT_NAME%",
+          "description": "%DESCRIPTION%",
+          "job_cluster_key": "auto_scaling_cluster",
+          "min_retry_interval_millis": 2000,
+          "retry_on_timeout": false,
+          "max_retries": 3,
+          "notebook_task": {
+            "notebook_path": "/%TASK_PATH%/%COMPONENT_NAME%",
+            "source": "WORKSPACE"
+          }
+        },
+        "SUBJOB__SEQUENCE__": {
+          "task_key": "%COMPONENT_NAME%",
+          "description": "%DESCRIPTION%",
+          "run_job_task": {
+            "job_id": 0,
+            "job_parameters": {}
+          }
+        },
+        "SET_VARIABLE": {
+          "task_key": "%COMPONENT_NAME%",
+          "description": "%DESCRIPTION%",
+          "job_cluster_key": "auto_scaling_cluster",
+          "min_retry_interval_millis": 2000,
+          "retry_on_timeout": false,
+          "max_retries": 3,
+          "notebook_task": {
+            "notebook_path": "/%TASK_PATH%/%JOB_NAME%_%COMPONENT_NAME%",
+            "source": "WORKSPACE"
+          }
+        },
+        "NESTED_CONDITION": {
+          "task_key": "%COMPONENT_NAME%",
+          "description": "%DESCRIPTION%",
+          "job_cluster_key": "auto_scaling_cluster",
+          "min_retry_interval_millis": 2000,
+          "retry_on_timeout": false,
+          "max_retries": 3,
+          "notebook_task": {
+            "notebook_path": "/%TASK_PATH%/%COMPONENT_NAME%",
+            "source": "WORKSPACE"
+          }
+        },
+        "SUB_NESTED_CONDITION": {
+          "task_key": "Condition_%COMPONENT_NAME%",
+          "description": "Branch gate for %COMPONENT_NAME%",
+          "condition_task": {
+            "op": "EQUAL_TO",
+            "left": "{{tasks.%COMPONENT_NAME%.values.is_true}}",
+            "right": "true"
+          }
+        },
+        "LOOP_START": {
+          "task_key": "%COMPONENT_NAME%",
+          "description": "%DESCRIPTION%",
+          "job_cluster_key": "auto_scaling_cluster",
+          "min_retry_interval_millis": 2000,
+          "retry_on_timeout": false,
+          "max_retries": 3,
+          "notebook_task": {
+            "notebook_path": "/%TASK_PATH%/%JOB_NAME%_%COMPONENT_NAME%",
+            "source": "WORKSPACE",
+            "base_parameters": {
+              "iteration": "%ITERATION%"
+            }
+          }
+        },
+        "SUB_LOOP_START": {
+          "task_key": "Continue_%COMPONENT_NAME%",
+          "notebook_task": {
+            "notebook_path": "/%TASK_PATH%/%JOB_NAME%_%COMPONENT_NAME%",
+            "source": "WORKSPACE",
+            "base_parameters": {
+              "iteration": "{{tasks.%COMPONENT_NAME%.values.iteration}}"
+            }
+          },
+          "condition_task": {
+            "op": "NOT_EQUAL",
+            "left": "{{tasks.%COMPONENT_NAME%.values.iteration}}",
+            "right": "{{tasks.%COMPONENT_NAME%.values.max_iteration}}"
+          }
+        },
+        "LOOP_END": {
+          "task_key": "%COMPONENT_NAME%",
+          "description": "%DESCRIPTION%",
+          "job_cluster_key": "auto_scaling_cluster",
+          "min_retry_interval_millis": 2000,
+          "retry_on_timeout": false,
+          "max_retries": 0,
+          "notebook_task": {
+            "notebook_path": "/%TASK_PATH%/%JOB_NAME%_%COMPONENT_NAME%_end",
+            "source": "WORKSPACE"
+          }
+        },
+        "DIE": {
+          "task_key": "%COMPONENT_NAME%",
+          "description": "%DESCRIPTION%",
+          "job_cluster_key": "auto_scaling_cluster",
+          "min_retry_interval_millis": 2000,
+          "retry_on_timeout": false,
+          "max_retries": 0,
+          "notebook_task": {
+            "notebook_path": "/%TASK_PATH%/%JOB_NAME%_%COMPONENT_NAME%",
+            "source": "WORKSPACE"
+          }
+        },
+        "SYNCHRONIZE": {
+          "task_key": "%COMPONENT_NAME%",
+          "description": "Sequencer gate %COMPONENT_NAME%",
+          "job_cluster_key": "auto_scaling_cluster",
+          "min_retry_interval_millis": 2000,
+          "retry_on_timeout": false,
+          "max_retries": 0,
+          "notebook_task": {
+            "notebook_path": "/%TASK_PATH%/%JOB_NAME%_%COMPONENT_NAME%",
+            "source": "WORKSPACE"
+          }
+        },
+        "EXCEPTION_HANDLER": {
+          "task_key": "%COMPONENT_NAME%",
+          "description": "%DESCRIPTION%",
+          "job_cluster_key": "auto_scaling_cluster",
+          "min_retry_interval_millis": 2000,
+          "retry_on_timeout": false,
+          "max_retries": 0,
+          "notebook_task": {
+            "notebook_path": "/%TASK_PATH%/%JOB_NAME%_%COMPONENT_NAME%",
+            "source": "WORKSPACE"
+          }
+        },
+        "EMAIL": {
+          "task_key": "%COMPONENT_NAME%",
+          "description": "%DESCRIPTION%",
+          "job_cluster_key": "auto_scaling_cluster",
+          "min_retry_interval_millis": 2000,
+          "retry_on_timeout": false,
+          "max_retries": 3,
+          "notebook_task": {
+            "notebook_path": "/%TASK_PATH%/%JOB_NAME%_%COMPONENT_NAME%",
+            "source": "WORKSPACE"
+          }
+        },
+        "SHELL_COMMAND": {
+          "task_key": "%COMPONENT_NAME%",
+          "description": "%DESCRIPTION%",
+          "job_cluster_key": "auto_scaling_cluster",
+          "min_retry_interval_millis": 2000,
+          "retry_on_timeout": false,
+          "max_retries": 3,
+          "notebook_task": {
+            "notebook_path": "/%TASK_PATH%/%JOB_NAME%_%COMPONENT_NAME%",
+            "source": "WORKSPACE"
+          }
+        },
+        "ROUTINE": {
+          "task_key": "%COMPONENT_NAME%",
+          "description": "%DESCRIPTION%",
+          "job_cluster_key": "auto_scaling_cluster",
+          "min_retry_interval_millis": 2000,
+          "retry_on_timeout": false,
+          "max_retries": 3,
+          "notebook_task": {
+            "notebook_path": "/%TASK_PATH%/%JOB_NAME%_%COMPONENT_NAME%",
+            "source": "WORKSPACE"
+          }
+        },
+        "WAIT_FOR_FILE": {
+          "task_key": "%COMPONENT_NAME%",
+          "description": "%DESCRIPTION%",
+          "job_cluster_key": "auto_scaling_cluster",
+          "min_retry_interval_millis": 2000,
+          "retry_on_timeout": false,
+          "max_retries": 3,
+          "notebook_task": {
+            "notebook_path": "/%TASK_PATH%/%JOB_NAME%_%COMPONENT_NAME%",
+            "source": "WORKSPACE"
+          }
+        }
+      },
+  
+      "default_workflow_attr": {
+        "format": "MULTI_TASK",
+        "max_concurrent_runs": 10,
+        "tags": {
+          "source": "datastage-migration",
+          "cost-center": "engineering",
+          "team": "jobs"
+        },
+        "job_clusters": [
+          {
+            "job_cluster_key": "auto_scaling_cluster",
+            "new_cluster": {
+              "spark_version": "%SPARK_VERSION%",
+              "node_type_id": "%NODE_TYPE%",
+              "num_workers": 2,
+              "data_security_mode": "SINGLE_USER",
+              "runtime_engine": "PHOTON",
+              "spark_env_vars": {
+                "PYSPARK_PYTHON": "/databricks/python3/bin/python3"
+              }
+            }
+          }
+        ],
+        "email_notifications": {
+          "on_start": ["%EMAIL_ADDRESS%"],
+          "on_success": ["%SUCCESS_EMAIL_ADDRESS%"],
+          "on_failure": ["%FAILURE_EMAIL_ADDRESS%"],
+          "no_alert_for_skipped_runs": false
+        },
+        "timeout_seconds": 86400,
+        "notification_settings": {
+          "no_alert_for_canceled_runs": false,
+          "no_alert_for_skipped_runs": false
+        },
+        "run_as": {
+          "user_name": "%USER_NAME%"
+        },
+        "schedule": {
+          "quartz_cron_expression": "20 30 12 * * ?",
+          "timezone_id": "UTC",
+          "pause_status": "PAUSED"
+        },
+        "webhook_notifications": {}
+      },
+  
+      "default_task_attr": {
+        "notification_settings": {
+          "no_alert_for_skipped_runs": false,
+          "no_alert_for_canceled_runs": false,
+          "alert_on_last_attempt": false
+        },
+        "webhook_notifications": {}
+      },
+  
+      "nested_conditional_operation_mapping": {
+        "=": "EQUAL_TO",
+        "==": "EQUAL_TO",
+        "<>": "NOT_EQUAL",
+        "!=": "NOT_EQUAL",
+        "<": "LESS_THAN",
+        ">": "GREATER_THAN",
+        "<=": "LESS_THAN_OR_EQUAL",
+        ">=": "GREATER_THAN_OR_EQUAL"
+      },
+  
+      "output_workflow_filename_template": "%JOB_NAME%.py",
+      "script_header_template": "pyspark_airflow_workflow_header.py",
+  
+      "workflow_component_template_START": "START_template.py",
+      "workflow_component_template_SESSION": "pyspark_airflow_SESSION.py",
+      "workflow_component_template_COMMAND": "databricksJobs_template_COMMAND.py",
+      "workflow_component_template_SET_VARIABLE": "databricksJobs_template_SET_VARIABLE.py",
+      "workflow_component_template_DIE": "databricksJobs_template_DIE.py",
+      "workflow_component_template_SYNCHRONIZE": "databricksJobs_template_SYNCHRONIZE.py",
+      "workflow_component_template_EMAIL": "EMAIL_template.py",
+      "workflow_component_template_ASSIGNMENT": "ASSIGNMENT_template.py",
+      "workflow_component_template_CONTROL": "CONTROL_template.py",
+      "workflow_component_template_DECISION": "DECISION_template.py",
+      "workflow_component_template_EXCEPTION_HANDLER": "databricksJobs_template_EXCEPTION_HANDLER.py",
+      "workflow_component_template_NESTED_CONDITION": "databricksJobs_template_NESTED_CONDITION.py",
+      "workflow_component_template_LOOP_START": "databricksJobs_template_LOOP_START.py",
+      "workflow_component_template_SHELL_COMMAND": "databricksJobs_template_SHELL_COMMAND.py",
+  
+      "flow_start": "\n########### Flow definition ###########\n",
+      "dependency_instruction_template": "%COMPONENT_NAME% << %UPSTREAM_COMPONENT_LIST%",
+  
+      "component_list_spec": {
+        "list_enclosure": "[,]",
+        "single_item_use_enclosure_flag": "0"
+      }
+    }
+  }
+  

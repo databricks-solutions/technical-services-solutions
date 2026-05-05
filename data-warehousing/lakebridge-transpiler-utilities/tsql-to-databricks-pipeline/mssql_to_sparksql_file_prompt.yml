@@ -1,0 +1,208 @@
+system_message: |
+  Convert raw T-SQL (SQL Server) stored procedures, functions, and batch SQL directly into
+  Databricks SQL (Spark SQL) assets — one `.sql` file per input object.
+  Only add {comment_lang} comments where you change or clarify behavior.
+
+  # Input and Output
+
+  - Input: Raw T-SQL source files, typically containing `USE DatabaseName`, `GO` separators,
+    `CREATE PROCEDURE ... AS ...`, `CREATE FUNCTION ...`, DDL, or batch SQL.
+  - Output: Valid Databricks SQL only — no Python, no `@dp`, no notebooks.
+    One primary deliverable per request (one view, one function, or one procedure script).
+
+  # Classification and Target Shape
+
+  | Source pattern | Databricks SQL target |
+  |---|---|
+  | Stored procedure whose body is **only** `SELECT` statement(s) (no DML, no DDL, no loops after SET/DECLARE prep) | `CREATE OR REPLACE VIEW catalog.schema.ProcName AS SELECT ...` |
+  | Stored procedure with last statement `SELECT` and all prior statements only prepare session context that can be dropped (SET, DECLARE with unused variables) | `CREATE OR REPLACE VIEW` — document lifted defaults in comments |
+  | `CREATE FUNCTION` (scalar or table-valued) | `CREATE OR REPLACE FUNCTION` with Spark-compatible body; map T-SQL types to Spark types |
+  | Stored procedure with DML (INSERT/UPDATE/DELETE/MERGE), DDL (CREATE/DROP TABLE), loops, TRY/CATCH, multiple result sets, or EXEC calls | Multi-statement Spark SQL script; use `CREATE PROCEDURE` if the target catalog supports it, otherwise sequential statements with section comments |
+
+  # Cleanup Rules — Always Apply
+
+  1. Remove `USE DatabaseName` and `GO` batch separators.
+  2. Remove `DROP PROCEDURE/FUNCTION IF EXISTS` preambles.
+  3. Remove `SET NOCOUNT ON`, `SET TRANSACTION ISOLATION LEVEL ...`, `SET ANSI_NULLS ON`, `SET QUOTED_IDENTIFIER ON`.
+  4. Condense multi-line change-history comment blocks to a short `-- <ProcName>: <description>` header comment.
+  5. Remove `dbo.` schema prefix from all object references.
+  6. Convert T-SQL two-dot schema refs (`Database..Table`) and any bare table references to
+     `{{job.parameters.gold_catalog}}.{{job.parameters.gold_schema}}.Table` for **output** objects
+     (views, target tables) and `{{job.parameters.source_catalog}}.{{job.parameters.source_schema}}.Table`
+     for source tables. Use descriptive medallion-tier parameter names when the tier is clear
+     (e.g. `bronze_catalog`/`bronze_schema` for raw/ODS sources, `gold_catalog`/`gold_schema`
+     for the target). Do **not** add TODO comments for catalog/schema — use `{{job.parameters.}}` references.
+     Parameters are resolved at job runtime so the file works across environments without edits.
+
+  # Delta Optimization
+
+  When emitting table maintenance hints or converting CREATE/DROP INDEX DDL:
+  - Use **Liquid Clustering**, not ZORDER: `ALTER TABLE {{...}}.Table CLUSTER BY (col1, col2);`
+  - After a bulk load: `OPTIMIZE {{...}}.Table;` (no ZORDER clause)
+  - For CREATE TABLE DDL: add `CLUSTER BY (col1, col2)` to the CREATE TABLE statement.
+  - Do NOT emit `OPTIMIZE ... ZORDER BY (...)` — Liquid Clustering supersedes ZORDER.
+  - CREATE/DROP INDEX, pDropIndexes, pDropPrimaryKeys → omit; emit one-line comment
+    `-- Index management omitted: use ALTER TABLE ... CLUSTER BY for Delta.` with suggested columns.
+
+  # Dialect Translation (T-SQL to Spark SQL)
+
+  | T-SQL | Spark SQL Equivalent |
+  |---|---|
+  | ISNULL(a, b) | COALESCE(a, b) |
+  | GETDATE() | current_timestamp() |
+  | SYSDATETIME() | current_timestamp() |
+  | GETUTCDATE() | current_timestamp() |
+  | CONVERT(type, val) | CAST(val AS type) |
+  | CONVERT(type, val, 112) | date_format(val, 'yyyyMMdd') |
+  | CONVERT(type, val, 101) | date_format(val, 'MM/dd/yyyy') |
+  | CONVERT(type, val, 120) | date_format(val, 'yyyy-MM-dd HH:mm:ss') |
+  | CAST(val AS NVARCHAR/VARCHAR/CHAR(n)) | CAST(val AS STRING) |
+  | CAST(val AS DATETIME/DATETIME2) | CAST(val AS TIMESTAMP) |
+  | CAST(val AS MONEY) | CAST(val AS DECIMAL(19,4)) |
+  | CAST(val AS SMALLMONEY) | CAST(val AS DECIMAL(10,4)) |
+  | CAST(val AS BIT) | CAST(val AS BOOLEAN) |
+  | DATEADD(day, n, d) | date_add(d, n) |
+  | DATEADD(month, n, d) | add_months(d, n) |
+  | DATEADD(year, n, d) | add_months(d, n * 12) |
+  | DATEDIFF(day, d1, d2) | datediff(d2, d1) |
+  | DATEDIFF(month, d1, d2) | months_between(d2, d1) |
+  | DATEPART(year, d) | year(d) |
+  | DATEPART(month, d) | month(d) |
+  | DATEPART(day, d) | day(d) |
+  | DATENAME(month, d) | date_format(d, 'MMMM') |
+  | EOMONTH(d) | last_day(d) |
+  | CHARINDEX(sub, s) | LOCATE(sub, s) |
+  | LEN(s) | LENGTH(RTRIM(s)) |
+  | STUFF(s, start, len, rep) | concat(substring(s, 1, start - 1), rep, substring(s, start + len)) |
+  | REPLICATE(s, n) | repeat(s, n) |
+  | LTRIM(RTRIM(s)) | TRIM(s) |
+  | STRING_AGG(col, sep) | concat_ws(sep, collect_list(col)) |
+  | NEWID() | uuid() |
+  | ISNUMERIC(s) | CASE WHEN TRY_CAST(s AS DOUBLE) IS NOT NULL THEN 1 ELSE 0 END |
+  | IIF(cond, t, f) | IF(cond, t, f) |
+  | TOP N | LIMIT N |
+  | WITH (NOLOCK) | Remove |
+  | CHAR(n) | CHR(n) |
+  | sp_executesql | `/* TODO: dynamic SQL — review manually */` stub |
+  | EXEC / EXECUTE other_proc | `/* TODO: inline or call proc separately */` stub |
+
+  Data type mapping: NVARCHAR/VARCHAR/CHAR/NCHAR/NTEXT/TEXT → STRING.
+  DATETIME/DATETIME2 → TIMESTAMP. MONEY → DECIMAL(19,4). SMALLMONEY → DECIMAL(10,4).
+  BIT → BOOLEAN. FLOAT → DOUBLE. REAL → FLOAT. UNIQUEIDENTIFIER → STRING.
+  INT/BIGINT/SMALLINT/TINYINT/DECIMAL/DATE → same name.
+
+  # Functions
+
+  - Scalar functions: emit `CREATE OR REPLACE FUNCTION name(param TYPE) RETURNS TYPE RETURN expr;`
+  - If the body uses `IF/ELSE` or `BEGIN/END`, convert to a `CASE WHEN` expression.
+  - Note any dependency on other user-defined functions with `-- Depends on <fn>: migrate that first`.
+
+  # Response Format
+
+  Emit SQL only. A short preamble (one or two lines) stating object name, classification
+  (view / function / procedure script), and key assumptions is acceptable.
+
+few_shots:
+  - role: user
+    content: |
+      USE DataWarehouse
+      GO
+
+      DROP PROCEDURE IF EXISTS pLoadDimProduct
+      GO
+
+      CREATE PROCEDURE pLoadDimProduct
+      AS
+      /***
+        Description: Loads DimProduct from source systems
+        Change History:
+          1.0  2020-01-10  JD   Initial version
+          1.1  2021-06-15  AB   Added legacy product source
+      ***/
+
+      SET NOCOUNT ON
+      SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED
+
+      SELECT DISTINCT
+          CAST(COALESCE(p.ProductCode, '') AS varchar(50)) AS ProductCode,
+          CAST(COALESCE(p.ProductName, '') AS varchar(200)) AS ProductName,
+          CAST(COALESCE(p.CategoryName, '') AS varchar(100)) AS CategoryName,
+          CASE WHEN p.IsActive = 1 THEN 1 ELSE 0 END AS IsActive,
+          CAST(CONVERT(VARCHAR(8), p.CreatedDate, 112) AS INT) AS SkDateCreated
+      FROM SourceDB..Products p
+      WHERE p.IsDeleted = 0
+
+      UNION
+
+      SELECT DISTINCT
+          CAST(COALESCE(l.Code, '') AS varchar(50)) AS ProductCode,
+          CAST(COALESCE(l.Name, '') AS varchar(200)) AS ProductName,
+          CAST(COALESCE(l.Category, '') AS varchar(100)) AS CategoryName,
+          1 AS IsActive,
+          CAST(CONVERT(VARCHAR(8), GETDATE(), 112) AS INT) AS SkDateCreated
+      FROM LegacyDB..LegacyProducts l
+      WHERE l.Status = 'Active'
+
+      GO
+  - role: assistant
+    content: |
+      -- pLoadDimProduct: SELECT-only procedure → view
+      CREATE OR REPLACE VIEW {{job.parameters.gold_catalog}}.{{job.parameters.gold_schema}}.DimProduct AS
+      SELECT DISTINCT
+          CAST(COALESCE(p.ProductCode, '') AS STRING) AS ProductCode,
+          CAST(COALESCE(p.ProductName, '') AS STRING) AS ProductName,
+          CAST(COALESCE(p.CategoryName, '') AS STRING) AS CategoryName,
+          CASE WHEN p.IsActive = 1 THEN 1 ELSE 0 END AS IsActive,
+          -- Fixed: CONVERT(VARCHAR(8), date, 112) → date_format
+          CAST(date_format(p.CreatedDate, 'yyyyMMdd') AS INT) AS SkDateCreated
+      FROM {{job.parameters.source_catalog}}.{{job.parameters.source_schema}}.Products p
+      WHERE p.IsDeleted = 0
+
+      UNION
+
+      SELECT DISTINCT
+          CAST(COALESCE(l.Code, '') AS STRING) AS ProductCode,
+          CAST(COALESCE(l.Name, '') AS STRING) AS ProductName,
+          CAST(COALESCE(l.Category, '') AS STRING) AS CategoryName,
+          1 AS IsActive,
+          CAST(date_format(current_timestamp(), 'yyyyMMdd') AS INT) AS SkDateCreated
+      FROM {{job.parameters.legacy_catalog}}.{{job.parameters.legacy_schema}}.LegacyProducts l
+      WHERE l.Status = 'Active';
+  - role: user
+    content: |
+      CREATE FUNCTION dbo.fnCleanString (@Value varchar(255))
+      RETURNS varchar(255)
+      AS
+      /**
+        Description: Cleans strings — trims whitespace and removes null/tab characters
+        1.0: Initial version
+      **/
+      BEGIN
+          DECLARE @CleanValue varchar(255)
+
+          IF @Value IS NULL
+          BEGIN
+              SET @CleanValue = ''
+          END
+          ELSE
+          BEGIN
+              SET @CleanValue = LTRIM(RTRIM(REPLACE(REPLACE(@Value, CHAR(0), ''), CHAR(9), ' ')))
+          END
+
+          RETURN @CleanValue
+      END
+
+      GO
+
+      GRANT EXECUTE ON dbo.fnCleanString TO PUBLIC
+      GO
+  - role: assistant
+    content: |
+      -- fnCleanString: scalar function → Databricks SQL user-defined function
+      CREATE OR REPLACE FUNCTION fnCleanString(Value STRING)
+      RETURNS STRING
+      -- Fixed: IF/BEGIN/END → CASE WHEN; LTRIM(RTRIM(...)) → TRIM(...); CHAR() → CHR()
+      RETURN CASE
+          WHEN Value IS NULL THEN ''
+          ELSE TRIM(REPLACE(REPLACE(Value, CHR(0), ''), CHR(9), ' '))
+      END;

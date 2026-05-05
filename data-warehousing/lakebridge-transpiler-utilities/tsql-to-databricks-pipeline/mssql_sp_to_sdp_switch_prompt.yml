@@ -1,0 +1,178 @@
+system_message: |
+  Convert T-SQL (SQL Server) stored procedures and functions to **Lakeflow Declarative Pipeline (LDP) SQL**.
+
+  Output is **SQL only** — no Python, no `@dp` decorators, no `spark.conf.get()`, no notebook cell markers.
+  **HARD RULE: `# COMMAND ----------` is forbidden.** The first character of your output must be `--` or a SQL keyword.
+
+  **HARD RULE: NEVER use `{{job.parameters.xxx}}` — that is SQL Warehouse Job syntax and BREAKS in a pipeline.**
+  Pipeline parameters use `${parameter_name}` (single dollar-sign curly braces): `${gold_catalog}`, `${bronze_schema}`.
+
+  **HARD RULE: NEVER use `CREATE OR REPLACE VIEW` for output tables.** It is not published to Unity Catalog.
+  Use `CREATE OR REFRESH MATERIALIZED VIEW ${gold_catalog}.${gold_schema}.TableName` for any table users can query.
+
+  # LDP SQL Statement Reference
+
+  | Statement | Use When |
+  |-----------|----------|
+  | `CREATE TEMPORARY VIEW name AS query` | Pipeline-scoped staging; not published to catalog. Use for TRUNCATE+INSERT `tmp*` patterns. |
+  | `CREATE OR REFRESH MATERIALIZED VIEW ${catalog}.${schema}.name AS query` | Final tables; publishes to Unity Catalog. Use for all dimension/fact outputs. |
+  | `CREATE OR REPLACE FUNCTION name(arg TYPE) RETURNS TYPE RETURN expr` | Scalar SQL UDF for T-SQL scalar functions. |
+
+  # Medallion Layers
+
+  | Layer  | Purpose                          | Parameter prefix |
+  |--------|----------------------------------|------------------|
+  | Bronze | Raw source data                  | `${bronze_catalog}.${bronze_schema}` |
+  | Silver | Cleaned / conformed staging      | `${silver_catalog}.${silver_schema}` |
+  | Gold   | Business-ready dimensions/facts  | `${gold_catalog}.${gold_schema}` |
+
+  Temporary views (tmp-prefixed) → reference by bare name only, no catalog/schema prefix.
+  Do NOT hardcode catalog or schema names.
+
+  # T-SQL → Spark SQL
+
+  | T-SQL | Spark SQL |
+  |---|---|
+  | `ISNULL(x, y)` | `COALESCE(x, y)` |
+  | `GETDATE()` | `current_timestamp()` |
+  | `CONVERT(type, expr)` | `CAST(expr AS type)` or `date_format(expr, ...)` |
+  | `DATEADD(day, n, d)` / `DATEADD(month, n, d)` | `date_add(d, n)` / `add_months(d, n)` |
+  | `DATEDIFF(part, d1, d2)` | `datediff(d2, d1)` |
+  | `varchar` / `nvarchar` / `char` | `STRING` |
+  | `datetime` / `datetime2` | `TIMESTAMP` |
+  | `bit` | `BOOLEAN` |
+  | `TOP n` | `LIMIT n` |
+  | `LEN(x)` | `LENGTH(RTRIM(x))` |
+  | `CHARINDEX(s, str)` | `LOCATE(s, str)` |
+
+  # Cleanup
+
+  - Remove `USE DatabaseName`, `GO`, `SET NOCOUNT ON`, `SET TRANSACTION ISOLATION LEVEL`, `SET ANSI_NULLS`, `SET QUOTED_IDENTIFIER`
+  - Remove `dbo.` prefix
+  - Two-dot refs (`Database..Table`) → `${source_catalog}.${source_schema}.Table` + TODO comment
+  - Remove `CREATE/DROP INDEX`, `UPDATE STATISTICS` — Delta manages these; add one-line comment
+  - Remove `DROP SECURITY POLICY`, `REVOKE SELECT ON` — Unity Catalog manages permissions
+  - Condense change-history comment blocks to a single short header comment
+  - MERGE / upsert → full-refresh `CREATE OR REFRESH MATERIALIZED VIEW` + TODO comment
+
+few_shots:
+  - role: user
+    content: |
+      CREATE PROCEDURE dbo.pLoadDimProduct
+      AS
+      SET NOCOUNT ON;
+      -- Load product dimension with seed row
+      SELECT p.ProductId, p.ProductCode, p.ProductName,
+             ISNULL(c.CategoryName, 'Uncategorized') AS CategoryName,
+             ISNULL(p.IsActive, 0) AS IsActive,
+             GETDATE() AS LoadDate
+      FROM dbo.Product p
+      LEFT JOIN dbo.Category c ON p.CategoryId = c.CategoryId
+      WHERE p.IsDeleted = 0
+      UNION ALL
+      SELECT -1, 'N/A', 'Unknown', 'Uncategorized', 1, GETDATE()
+      GO
+  - role: assistant
+    content: |
+      -- pLoadDimProduct → DimProduct (gold layer, full-refresh materialized view)
+      CREATE OR REFRESH MATERIALIZED VIEW ${gold_catalog}.${gold_schema}.DimProduct
+      COMMENT "Product dimension with seed row, loaded from bronze Product and Category"
+      AS
+      SELECT -1 AS ProductId, 'N/A' AS ProductCode, 'Unknown' AS ProductName,
+             'Uncategorized' AS CategoryName, 1 AS IsActive, current_timestamp() AS LoadDate
+      UNION ALL
+      SELECT p.ProductId, p.ProductCode, p.ProductName,
+             COALESCE(c.CategoryName, 'Uncategorized') AS CategoryName,
+             COALESCE(p.IsActive, 0) AS IsActive,
+             current_timestamp() AS LoadDate
+      FROM ${bronze_catalog}.${bronze_schema}.Product p
+      LEFT JOIN ${bronze_catalog}.${bronze_schema}.Category c ON p.CategoryId = c.CategoryId
+      WHERE p.IsDeleted = 0;
+  - role: user
+    content: |
+      CREATE PROCEDURE dbo.pLoadDimCustomer
+      AS
+      SET NOCOUNT ON;
+      -- Stage cleaned customers
+      TRUNCATE TABLE dbo.tmpCustomerStage;
+      INSERT INTO dbo.tmpCustomerStage (CustomerId, CustomerCode, Region, Segment, LoadDate)
+      SELECT c.CustomerId, c.CustomerCode, r.RegionName,
+             ISNULL(s.SegmentName, 'Unknown'), GETDATE()
+      FROM dbo.Customer c
+      LEFT JOIN dbo.Region r ON c.RegionId = r.RegionId
+      LEFT JOIN dbo.Segment s ON c.SegmentId = s.SegmentId
+      WHERE c.IsActive = 1;
+      -- Load gold dimension
+      INSERT INTO dbo.DimCustomer (CustomerId, CustomerCode, Region, Segment, LoadDate)
+      SELECT CustomerId, CustomerCode, Region, Segment, LoadDate
+      FROM dbo.tmpCustomerStage;
+      GO
+  - role: assistant
+    content: |
+      -- pLoadDimCustomer → staging + DimCustomer (gold layer)
+      -- TODO: Original proc used TRUNCATE+INSERT staging. Converted to TEMPORARY VIEW (pipeline-scoped)
+      -- and MATERIALIZED VIEW (full-refresh). If incremental merge is needed, implement outside the pipeline.
+
+      CREATE TEMPORARY VIEW tmpCustomerStage AS
+      SELECT c.CustomerId, c.CustomerCode, r.RegionName AS Region,
+             COALESCE(s.SegmentName, 'Unknown') AS Segment,
+             current_timestamp() AS LoadDate
+      FROM ${bronze_catalog}.${bronze_schema}.Customer c
+      LEFT JOIN ${bronze_catalog}.${bronze_schema}.Region r ON c.RegionId = r.RegionId
+      LEFT JOIN ${bronze_catalog}.${bronze_schema}.Segment s ON c.SegmentId = s.SegmentId
+      WHERE c.IsActive = 1;
+
+      CREATE OR REFRESH MATERIALIZED VIEW ${gold_catalog}.${gold_schema}.DimCustomer
+      COMMENT "Customer dimension loaded from bronze Customer, Region, Segment"
+      AS
+      SELECT CustomerId, CustomerCode, Region, Segment, LoadDate
+      FROM tmpCustomerStage;
+  - role: user
+    content: |
+      CREATE PROCEDURE dbo.pLoadFactSales
+      AS
+      SET NOCOUNT ON;
+      -- Stage recent sales
+      TRUNCATE TABLE dbo.tmpSalesStage;
+      INSERT INTO dbo.tmpSalesStage (SalesId, CustomerId, ProductId, Quantity, Amount, SaleDate, LoadDate)
+      SELECT s.SalesId, s.CustomerId, s.ProductId, s.Quantity, s.Amount, s.SaleDate, GETDATE()
+      FROM dbo.SalesTransaction s
+      INNER JOIN dbo.Customer c ON s.CustomerId = c.CustomerId
+      INNER JOIN dbo.Product p ON s.ProductId = p.ProductId
+      WHERE s.SaleDate >= DATEADD(day, -30, GETDATE())
+        AND s.IsVoided = 0;
+      -- Upsert into fact table
+      MERGE INTO dbo.FactSales AS tgt
+      USING dbo.tmpSalesStage AS src
+      ON tgt.SalesId = src.SalesId
+      WHEN MATCHED THEN UPDATE SET
+          tgt.Quantity = src.Quantity,
+          tgt.Amount   = src.Amount,
+          tgt.LoadDate = src.LoadDate
+      WHEN NOT MATCHED THEN INSERT
+          (SalesId, CustomerId, ProductId, Quantity, Amount, SaleDate, LoadDate)
+      VALUES
+          (src.SalesId, src.CustomerId, src.ProductId,
+           src.Quantity, src.Amount, src.SaleDate, src.LoadDate);
+      GO
+  - role: assistant
+    content: |
+      -- pLoadFactSales → staging + FactSales (gold layer)
+      -- TODO: Original proc used TRUNCATE+INSERT staging and MERGE upsert.
+      -- Converted to TEMPORARY VIEW + full-refresh MATERIALIZED VIEW.
+      -- If incremental merge is needed, implement outside the pipeline.
+
+      CREATE TEMPORARY VIEW tmpSalesStage AS
+      SELECT s.SalesId, s.CustomerId, s.ProductId, s.Quantity, s.Amount, s.SaleDate,
+             current_timestamp() AS LoadDate
+      FROM ${bronze_catalog}.${bronze_schema}.SalesTransaction s
+      INNER JOIN ${bronze_catalog}.${bronze_schema}.Customer c ON s.CustomerId = c.CustomerId
+      INNER JOIN ${bronze_catalog}.${bronze_schema}.Product p ON s.ProductId = p.ProductId
+      WHERE s.SaleDate >= date_add(current_date(), -30)
+        AND s.IsVoided = 0;
+
+      CREATE OR REFRESH MATERIALIZED VIEW ${gold_catalog}.${gold_schema}.FactSales
+      COMMENT "Daily sales facts loaded from bronze SalesTransaction, Customer, Product"
+      AS
+      SELECT SalesId, CustomerId, ProductId, Quantity, Amount, SaleDate, LoadDate
+      FROM tmpSalesStage;

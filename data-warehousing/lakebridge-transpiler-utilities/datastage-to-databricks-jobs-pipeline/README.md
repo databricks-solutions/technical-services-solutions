@@ -11,7 +11,7 @@ Use these scripts as a starting point. Tune paths, overrides, and **Switch promp
 | `run.sh` | Orchestrates install (optional), BladeBridge, staging, mapping, JSON fixes, Switch, uploads, and job creation. |
 | `datastage_to_databricks_prompt.yml` | Default Switch prompt; override with `-x`. |
 | `sample_override.json` | Default BladeBridge override for this folder; override with `-r` or start from `../bladebridge-overrides/sample_override_datastage.json`. |
-| `run.txt` | Long-form commented reference for the same pipeline (do not substitute for `run.sh` execution). |
+| `run.txt` | Same script as `run.sh`, stored as `.txt` when `.sh` downloads are blocked; after copy, rename to `run.sh` and `chmod +x`, or run `bash run.txt`. |
 
 ## How to run
 

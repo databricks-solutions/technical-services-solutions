@@ -99,6 +99,11 @@ output "external_location_url" {
   value       = databricks_external_location.uc_external_location.url
 }
 
+output "storage_credential_name" {
+  description = "Name of the Unity Catalog storage credential"
+  value       = databricks_storage_credential.uc_storage_cred.name
+}
+
 # =============================================================================
 # Databricks Account Objects Outputs
 # =============================================================================

@@ -66,4 +66,11 @@ metastore_name = "my-unity-catalog-metastore"
 # AWS account ID where Unity Catalog IAM role and S3 bucket will be created
 aws_account_id = "your-aws-account-id"
 
+# =============================================================================
+# User-defined Catalog in UC
+# =============================================================================
+# catalog_name              = "my_catalog"
+# external_location_name    = "my-external-location"
+# storage_credential_name   = "my-storage-credential"
+
 

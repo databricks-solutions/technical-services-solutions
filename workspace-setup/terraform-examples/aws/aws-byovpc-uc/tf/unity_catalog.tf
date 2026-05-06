@@ -1,6 +1,7 @@
-# Wait to prevent race condition between IAM role and external location validation
+# Delay after IAM policy is attached so AWS / UC propagation can settle before
+# Databricks validates S3 read on external location creation.
 resource "time_sleep" "wait_60_seconds" {
-  depends_on      = [null_resource.previous]
+  depends_on      = [aws_iam_policy_attachment.unity_catalog_attach]
   create_duration = "60s"
 }
 
@@ -8,6 +9,11 @@ locals {
   uc_iam_role         = "${var.resource_prefix}-catalog"
   uc_catalog_name_us  = replace(var.prefix, "-", "_")
   catalog_bucket_name = "${var.resource_prefix}-catalog-storage-${random_string.catalog_bucket_suffix.result}"
+
+  # Resolved UC object names (optional vars default to "" in variables.tf; prefix-based defaults cannot live in variable defaults)
+  uc_catalog_name            = var.catalog_name != "" ? var.catalog_name : "${var.prefix}-catalog"
+  uc_external_location_name  = var.external_location_name != "" ? var.external_location_name : "${var.resource_prefix}-external-location"
+  uc_storage_credential_name = var.storage_credential_name != "" ? var.storage_credential_name : "${var.resource_prefix}-storage-credential"
 }
 
 resource "random_string" "catalog_bucket_suffix" {
@@ -19,7 +25,7 @@ resource "random_string" "catalog_bucket_suffix" {
 # Storage Credential (created before role): https://registry.terraform.io/providers/databricks/databricks/latest/docs/guides/unity-catalog#configure-external-locations-and-credentials
 resource "databricks_storage_credential" "uc_storage_cred" {
   provider = databricks.workspace
-  name     = "${var.resource_prefix}-storage-credential"
+  name     = local.uc_storage_credential_name
   aws_iam_role {
     role_arn = "arn:aws:iam::${var.aws_account_id}:role/${local.uc_iam_role}"
   }
@@ -89,17 +95,17 @@ resource "aws_s3_bucket_public_access_block" "unity_catalog" {
 # External Location
 resource "databricks_external_location" "uc_external_location" {
   provider        = databricks.workspace
-  name            = "${var.resource_prefix}-external-location"
+  name            = local.uc_external_location_name
   url             = "s3://${aws_s3_bucket.unity_catalog_bucket.id}"
   credential_name = databricks_storage_credential.uc_storage_cred.id
   force_destroy   = true
-  depends_on      = [aws_iam_policy_attachment.unity_catalog_attach, time_sleep.wait_60_seconds]
+  depends_on      = [time_sleep.wait_60_seconds]
 }
 resource "databricks_catalog" "uc_quickstart" {
-  provider     = databricks.workspace
-  name         = var.prefix
+  provider = databricks.workspace
+  name     = local.uc_catalog_name
   # storage_root = "${var.storage_root}"
-  storage_root = databricks_external_location.uc_external_location.url
+  storage_root  = databricks_external_location.uc_external_location.url
   comment       = "this catalog is managed by terraform"
   force_destroy = true
   # enable_predictive_optimization = "ENABLE"

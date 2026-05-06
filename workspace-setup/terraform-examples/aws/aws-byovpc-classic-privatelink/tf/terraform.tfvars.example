@@ -11,9 +11,6 @@ prefix = "my-databricks-workspace"
 # Prefix for AWS resources (VPC, S3, IAM, etc.)
 resource_prefix = "my-databricks-workspace"
 
-# Pricing tier of account (ENTERPRISE or PREMIUM)
-pricing_tier = "PREMIUM"
-
 # =============================================================================
 # AWS Configuration
 # =============================================================================
@@ -31,28 +28,37 @@ region = "us-west-2"
 # =============================================================================
 # Network Configuration
 # =============================================================================
+# network_configuration: "standard" | "fully_private" | "custom"
+#   - standard: Template creates VPC with NAT+IGW and S3/STS/Kinesis endpoints.
+#   - fully_private: Template creates VPC with no NAT/IGW; dedicated endpoint subnet and S3/STS/Kinesis.
+#   - custom: You supply vpc_id, subnet_ids, security_group_ids, and the two backend VPC endpoint IDs; no AWS networking created.
+network_configuration = "standard"
 
-# Option 1: Create new VPC (leave vpc_id empty and specify network config)
-vpc_id              = ""
-vpc_cidr_range      = "10.0.0.0/16"
-availability_zones  = ["us-west-2a", "us-west-2b"]
-private_subnets_cidr = ["10.0.1.0/24", "10.0.2.0/24"]
-public_subnets_cidr  = ["10.0.101.0/24", "10.0.102.0/24"]
-intra_subnet_cidr    = ["10.0.201.0/24"]
+# Pathway 1 (template-owned): use "standard" or "fully_private" and set the following
+vpc_cidr_range       = "10.0.0.0/16"
+availability_zones   = ["us-west-2a", "us-west-2b"]
+private_subnets_cidr  = ["10.0.1.0/24", "10.0.2.0/24"]
+public_subnets_cidr   = ["10.0.101.0/24", "10.0.102.0/24"]
+# For fully_private only (optional): endpoint subnet CIDR, must not overlap private_subnets_cidr
+# endpoint_subnet_cidr = "10.0.3.0/27"
 
-# Option 2: Use existing VPC (uncomment and specify IDs)
-# vpc_id     = "vpc-xxxxxxxxx"
-# subnet_ids = ["subnet-xxxxxxxxx", "subnet-yyyyyyyyy"]
+# Pathway 2 (custom): set network_configuration = "custom" and uncomment/set the following.
+# Create VPC, subnets, security groups, and the two Databricks Private Link VPC endpoints first; see README "Creating network resources first".
+# vpc_id                    = "vpc-xxxxxxxxx"
+# subnet_ids                = ["subnet-xxxxxxxxx", "subnet-yyyyyyyyy"]
+# security_group_ids        = ["sg-xxxxxxxxx"]
+# backend_rest_aws_vpce_id  = "vpce-xxxxxxxxx"
+# backend_relay_aws_vpce_id = "vpce-yyyyyyyyy"
 
 # =============================================================================
 # Security Group Configuration
 # =============================================================================
 
-# Optional: Use existing security groups (leave empty to use VPC default)
-security_group_ids = []
-
 # Egress ports for Databricks connectivity
-sg_egress_ports = [443, 3306, 2443, 8443, 8444, 8445, 8446, 8447, 8448, 8449, 8450, 8451]
+sg_egress_ports = [443, 2443, 5432, 6666, 8443, 8444, 8445, 8446, 8447, 8448, 8449, 8450, 8451]
+
+# Additional egress IPs (optional)
+additional_egress_ips = []
 
 # =============================================================================
 # Unity Catalog Metastore Configuration
@@ -64,5 +70,3 @@ metastore_name = "my-unity-catalog-metastore"
 
 # Option 2: Use existing metastore (uncomment and specify ID)
 # metastore_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-
-

@@ -1,0 +1,31 @@
+# Local .terraform directories
+*/.terraform/*
+*/.terraform
+
+# .tfstate files
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Crash log files
+crash.log
+crash.*.log
+
+# Ignore CLI configuration files
+.terraformrc
+terraform.rc
+
+# Ignore .tfvars files that may contain secrets
+# Use terraform.tfvars.example as template
+terraform.tfvars
+*auto.tfvars
+*.auto.tfvars
+
+# Ignore override files
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+.DS_Store
+.idea/

@@ -1,5 +1,6 @@
 ######################################################
 # Databricks BYO VPC Network Configuration
+# Uses an existing shared/external VPC and subnet
 ######################################################
 resource "databricks_mws_networks" "databricks_network" {
   provider     = databricks.accounts
@@ -7,9 +8,9 @@ resource "databricks_mws_networks" "databricks_network" {
   network_name = "dbx-nwt-${random_string.databricks_suffix.result}"
 
   gcp_network_info {
-    network_project_id = var.google_project_name
-    vpc_id             = google_compute_network.databricks_vpc.name
-    subnet_id          = google_compute_subnetwork.databricks_subnet.name
+    network_project_id = var.vpc_network_project_id
+    vpc_id             = data.google_compute_network.existing_vpc.name
+    subnet_id          = data.google_compute_subnetwork.existing_subnet.name
     subnet_region      = var.google_region
   }
 }
@@ -33,6 +34,18 @@ resource "databricks_mws_workspaces" "databricks_workspace" {
 }
 
 ######################################################
+# Assign Existing Unity Catalog Metastore to Workspace
+# Only created when metastore_id is provided
+######################################################
+resource "databricks_metastore_assignment" "this" {
+  count        = var.metastore_id != "" ? 1 : 0
+  provider     = databricks.accounts
+  depends_on   = [databricks_mws_workspaces.databricks_workspace]
+  workspace_id = databricks_mws_workspaces.databricks_workspace.workspace_id
+  metastore_id = var.metastore_id
+}
+
+######################################################
 # Add Admin User
 ######################################################
 data "databricks_group" "admins" {
@@ -52,5 +65,3 @@ resource "databricks_group_member" "admin_member" {
   group_id  = data.databricks_group.admins.id
   member_id = databricks_user.admin.id
 }
-
-

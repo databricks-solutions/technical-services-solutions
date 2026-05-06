@@ -15,5 +15,3 @@ provider "databricks" {
   host                   = databricks_mws_workspaces.databricks_workspace.workspace_url
   google_service_account = var.google_service_account_email
 }
-
-

@@ -17,10 +17,11 @@ resource "google_compute_network" "databricks_vpc" {
 }
 
 resource "google_compute_subnetwork" "databricks_subnet" {
-  name          = "databricks-subnet-${random_string.databricks_suffix.result}"
-  ip_cidr_range = var.subnet_cidr
-  region        = var.google_region
-  network       = google_compute_network.databricks_vpc.id
+  name                     = "databricks-subnet-${random_string.databricks_suffix.result}"
+  ip_cidr_range            = var.subnet_cidr
+  region                   = var.google_region
+  network                  = google_compute_network.databricks_vpc.id
+  private_ip_google_access = true
 }
 
 resource "google_compute_router" "databricks_router" {

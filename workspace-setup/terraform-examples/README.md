@@ -70,11 +70,14 @@ This naming helps you quickly identify the right scenario for your needs.
 | Scenario | Description |
 |----------|-------------|
 | [aws-byovpc](./aws/aws-byovpc/) | Deploy a Databricks workspace using "Bring Your Own VPC" (BYOVPC) pattern with Unity Catalog Metastore. Create a new VPC or use an existing one with full control over network infrastructure. |
+| [aws-byovpc-classic-privatelink](./aws/aws-byovpc-classic-privatelink/) | Deploy a Databricks workspace with classic Private Link (REST API and SCC relay). Choose **standard** (template creates VPC with NAT/IGW and S3/STS/Kinesis endpoints), **fully_private** (no NAT/IGW, dedicated endpoint subnet), or **custom** (you supply VPC, subnets, security groups, and backend VPC endpoint IDs; no AWS networking created). Optional Unity Catalog metastore creation or attachment. |
 
 ### Azure
 | Scenario | Description |
 |----------|-------------|
 | [azure-vnet-injection](./azure/azure-vnet-injection/) | Deploy a Databricks workspace with VNet injection. Create a new VNet or use an existing one with support for both user login and service principal authentication. |
+| [azure-vnet-injection-uc](./azure/azure-vnet-injection-uc/) | Deploy a Databricks workspace with VNet injection and Unity Catalog. Creates a new VNet with a NAT gateway, and configures a Unity Catalog metastore (new or existing), storage account, access connector, external location, and catalog. |
+| [azure-privatelink-classic](./azure/azure-privatelink-classic/) | Deploy a Databricks workspace with Azure Private Link (classic): VNet injection, NAT gateway, and private endpoints for control plane and DBFS. Optional public network access. |
 
 ### GCP
 | Scenario | Description |

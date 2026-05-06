@@ -97,6 +97,12 @@ variable "public_subnets_cidr" {
   default     = []
 }
 
+variable "intra_subnet_cidr" {
+  description = "List of intra subnet CIDR blocks that contain the VPC endpoints (only used if creating new VPC)"
+  type        = list(string)
+  default     = []
+}
+
 # =============================================================================
 # Security Group Configuration
 # =============================================================================

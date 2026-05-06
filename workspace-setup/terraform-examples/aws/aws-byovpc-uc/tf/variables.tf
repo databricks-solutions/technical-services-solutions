@@ -127,5 +127,23 @@ variable "metastore_name" {
   type        = string
   default     = ""
 }
+# =============================================================================
+# User Defined Catalog
+# =============================================================================
+variable "catalog_name" {
+  description = "Name for the user defined catalog"
+  type        = string
+  default     = ""
+}
 
+variable "external_location_name" {
+  description = "Name for the user defined external location"
+  type        = string
+  default     = ""
+}
 
+variable "storage_credential_name" {
+  description = "Name for the user defined storage credential (Unity Catalog). If empty, defaults to \"{resource_prefix}-storage-credential\""
+  type        = string
+  default     = ""
+}

@@ -24,7 +24,7 @@ provider "databricks" {
 }
 
 provider "databricks" {
-  alias = "workspace"
-  host  = databricks_mws_workspaces.this.workspace_url
-  workspace_id = databricks_mws_workspaces.this.workspace_id                                         
+  alias        = "workspace"
+  host         = databricks_mws_workspaces.this.workspace_url
+  workspace_id = databricks_mws_workspaces.this.workspace_id
 }

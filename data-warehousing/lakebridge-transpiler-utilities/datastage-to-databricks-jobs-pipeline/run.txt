@@ -61,7 +61,7 @@
 #       --transpiler-config-path  Path to BladeBridge config.yml (default: see DEFAULT_TRANSPILER_CONFIG_PATH;
 #                                 always passed to transpile so the CLI does not use a bad built-in path)
 #       --no-transpiler-config-path  Do not pass --transpiler-config-path (Lakebridge chooses the path)
-#   -x, --custom-prompt      Custom Switch prompt YAML (default: datastage_to_databricks_prompt.yml in script dir)
+#   -x, --custom-prompt      Custom Switch prompt YAML (default: datastage_to_jobs_prompt.yml in script dir)
 #       --compute            Job compute type: serverless or classic (default: serverless)
 #       --cloud              Cloud provider: azure, aws, or gcp (auto-detected from profile URL if not set)
 #       --node-type          Worker node type for classic compute (default: cloud-specific standard)
@@ -79,7 +79,7 @@ set -euo pipefail
 CLEANUP_FILES=()
 cleanup() {
     for f in "${CLEANUP_FILES[@]:-}"; do
-        [[ -n "$f" ]] && rm -rf "$f" 2>/dev/null
+        [[ -n "$f" ]] && rm -rf "$f" 2>/dev/null || true
     done
 }
 trap cleanup EXIT
@@ -114,7 +114,7 @@ SKIP_BLADEBRIDGE=false
 SKIP_SWITCH=false
 
 usage() {
-    sed -n '/^# Usage:/,/^[^#]/{ /^#/s/^# \?//p }' "$0"
+    awk '/^# Usage:/{flag=1} flag && /^[^#]/{exit} flag && /^#/{sub(/^# ?/, ""); print}' "$0"
     exit 0
 }
 
@@ -159,7 +159,7 @@ if [ ! -f "$OVERRIDES_FILE" ]; then
 fi
 
 if [ -z "$CUSTOM_PROMPT" ]; then
-    CUSTOM_PROMPT="${SCRIPT_DIR}/datastage_to_databricks_prompt.yml"
+    CUSTOM_PROMPT="${SCRIPT_DIR}/datastage_to_jobs_prompt.yml"
 fi
 
 # --- Prompt for missing values ---
@@ -629,7 +629,7 @@ if [ -n "$TABLE_MAPPING" ] || [ -n "$UC_CATALOG" ]; then
     switch_py_files=("${SWITCH_INPUT_DIR}"/*.py)
     shopt -u nullglob
 
-    UC_MAPPER_SCRIPT=$(mktemp /tmp/uc_mapper_XXXXXX.py)
+    UC_MAPPER_SCRIPT=$(mktemp /tmp/uc_mapper.XXXXXX)
     CLEANUP_FILES+=("$UC_MAPPER_SCRIPT")
     cat > "$UC_MAPPER_SCRIPT" << 'PYEOF'
 import sys, re
@@ -1139,7 +1139,7 @@ shopt -u nullglob
 
 fixed_prefixed=0
 
-DS_PREFIXER_SCRIPT=$(mktemp /tmp/ds_prefixer_XXXXXX.py)
+DS_PREFIXER_SCRIPT=$(mktemp /tmp/ds_prefixer.XXXXXX)
 CLEANUP_FILES+=("$DS_PREFIXER_SCRIPT")
 cat > "$DS_PREFIXER_SCRIPT" << 'PYEOF'
 import sys, re, os, json as _json

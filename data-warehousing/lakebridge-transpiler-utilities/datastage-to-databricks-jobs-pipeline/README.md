@@ -11,7 +11,7 @@ Use these scripts as a starting point. Tune paths, overrides, and **Switch promp
 | File | Role |
 | --- | --- |
 | `run.sh` | Orchestrates install (optional), BladeBridge, staging, mapping, JSON fixes, Switch, uploads, and job creation. |
-| `datastage_to_databricks_prompt.yml` | Default Switch prompt; override with `-x`. |
+| `datastage_to_jobs_prompt.yml` | Default Switch prompt; override with `-x`. |
 | `sample_override.json` | Default BladeBridge override for this folder; override with `-r` or start from `../bladebridge-overrides/sample_override_datastage.json`. |
 | `run.txt` | Same script as `run.sh`, stored as `.txt` when `.sh` downloads are blocked; after copy, rename to `run.sh` and `chmod +x`, or run `bash run.txt`. |
 
@@ -63,7 +63,7 @@ The script is **interactive**: every setting below can be supplied ahead of time
 | Schema name for Switch artifacts | `-s`, `--schema` | `switch` | Schema inside that catalog (auto-created when possible). |
 | UC Volume name for Switch artifacts | `-v`, `--volume` | `switch_volume` | Volume under that schema where Switch stages files during the LLM run. |
 | Foundation model endpoint | `-m`, `--foundation-model` | `databricks-claude-sonnet-4-5` | Model-serving endpoint Switch calls; must be reachable from your workspace. |
-| Custom Switch prompt YAML | `-x`, `--custom-prompt` | `datastage_to_databricks_prompt.yml` here | Point to your own prompt file when you need different instructions or examples. |
+| Custom Switch prompt YAML | `-x`, `--custom-prompt` | `datastage_to_jobs_prompt.yml` here | Point to your own prompt file when you need different instructions or examples. |
 
 ### Compute for the generated Databricks jobs
 
@@ -91,7 +91,7 @@ When the run completes, converted notebooks land under your chosen workspace lay
 ## What to change
 
 - **BladeBridge behavior:** Edit `-r` JSON (component mappings, skips) or merge ideas from `../bladebridge-overrides/sample_override_datastage.json`.
-- **Switch / LLM output:** Replace or fork `datastage_to_databricks_prompt.yml` and pass `-x`. Expect to iterate: defaults are not optimized for every DataStage workload—add rules and examples that reflect your jobs.
+- **Switch / LLM output:** Replace or fork `datastage_to_jobs_prompt.yml` and pass `-x`. Expect to iterate: defaults are not optimized for every DataStage workload—add rules and examples that reflect your jobs.
 - **UC naming:** Maintain a CSV and pass `--table-mapping` so generated code targets the right `catalog.schema.table`.
 - **Target technology:** `-t PYSPARK` vs `SPARKSQL` changes BladeBridge’s target output type when your export needs it.
 - **Iterating:** Use `--skip-bladebridge` or `--skip-switch` to rerun only the phase you are debugging; adjust intermediate job JSON or notebooks in the output folder if you need manual fixes between steps.

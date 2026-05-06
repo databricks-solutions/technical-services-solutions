@@ -14,6 +14,7 @@ Before you use an override file, open it and replace every **angle-bracket place
 | `sample_override_ssis.json` | SSIS: `config_variables`, `workflow_specs` for tasks like `EXECUTE_SQL_TASK`, `EXECUTE_PACKAGE`, `PIPELINE`, etc. Contains the placeholders described under **Replace placeholder values**—edit before use. |
 | `sample_override_informatica.json` | Informatica: `SESSION`, `SUBJOB`, `WORKLET`, `SET_VARIABLE`, `skip_component_types`, etc. Contains the placeholders described under **Replace placeholder values**—edit before use. |
 | `sample_override_datastage.json` | DataStage: job/stage workflow mappings and config variables. Contains the placeholders described under **Replace placeholder values**—edit before use. |
+| `sample_override_tsql.json` | T-SQL (mssql2sparksql base): minimal `config_variables` with `<username>` placeholders; lean on the BladeBridge built-in base for component mappings. Edit `<username>` before use. |
 
 ## How to use
 

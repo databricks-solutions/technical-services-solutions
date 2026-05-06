@@ -2,8 +2,8 @@
 # End-to-end T-SQL (SQL Server / mssql) to Databricks using Lakebridge.
 #
 # Two output modes (--switch-style):
-#   sdp  — Lakeflow Declarative Pipeline with SQL (LDP SQL) notebooks
-#   sql  — SQL .sql FILE objects + SQL Warehouse Job (BladeBridge off by default)
+#   sdp    — Lakeflow Declarative Pipeline with SQL (LDP SQL) notebooks
+#   dbsql  — Databricks SQL .sql FILE objects + SQL Warehouse Job (BladeBridge off by default)
 #
 # Steps:
 #   1. Install BladeBridge and/or Switch LLM transpiler
@@ -11,8 +11,8 @@
 #   3. Stage .sql files for Switch LLM; preserve first_pass/ copy of BladeBridge output
 #   4. Upload custom Switch prompt and update switch_config.yml
 #   5. Run Switch LLM (llm-transpile); optionally wait for completion
-#   6. sdp: Create Lakeflow Declarative Pipeline
-#      sql: Create Databricks SQL Warehouse Job
+#   6. sdp:   Create Lakeflow Declarative Pipeline
+#      dbsql: Create Databricks SQL Warehouse Job
 #
 # Default prompts are alongside this script; -x overrides the prompt.
 #
@@ -29,20 +29,24 @@
 #   -s, --schema              Schema for Switch artifacts (default: switch)
 #   -v, --volume              UC Volume name (default: switch_volume)
 #   -m, --foundation-model    Foundation model endpoint (default: databricks-claude-sonnet-4-5)
-#       --switch-style        Output mode: sdp (Lakeflow SQL pipeline) or sql (FILE + SQL Warehouse Job) [default: sdp]
+#       --switch-style        Output mode: sdp (Lakeflow SQL pipeline) or dbsql (FILE + SQL Warehouse Job) [default: sdp]
 #   -x, --custom-prompt       Custom Switch prompt YAML (default: from --switch-style in script dir)
-#   -r, --overrides-file      BladeBridge override JSON (default: sample_override_tsql.json in script dir)
+#                             For sdp:   tsql_to_sdp_prompt.yml
+#                             For dbsql: tsql_to_dbsql_prompt.yml
+#   -r, --overrides-file      BladeBridge override JSON (default: sample_override.json in script dir; or use ../bladebridge-overrides/sample_override_tsql.json)
 #       --error-file-path     BladeBridge conversion error log (default: <output-folder>/errors.log)
 #       --transpiler-config-path   BladeBridge config path (default: ~/.databricks/labs/.../config.yml)
 #       --no-transpiler-config-path  Do not pass --transpiler-config-path to BladeBridge
-#       --pipeline-catalog    Lakeflow DLP catalog (sdp only; default: same as -c/--catalog)
-#       --pipeline-target     Lakeflow DLP target schema (sdp only; default: default)
+#       --pipeline-catalog    Lakeflow SDP catalog (sdp only; default: same as -c/--catalog)
+#       --pipeline-target     Lakeflow SDP target schema (sdp only; default: default)
 #       --pipeline-name       Lakeflow pipeline name (sdp only; default: derived from first .sql basename)
 #       --cluster-policy      Cluster policy ID for pipeline compute (sdp only; omit for serverless)
-#       --warehouse-id        SQL warehouse ID (sql only; default: interactive selection)
-#       --job-name            SQL Warehouse Job name (sql only; default: derived from .sql basename)
-#       --skip-job-create     Skip Step 6 SQL Warehouse Job creation (sql only)
-#       --single-catalog      All data layers share the same catalog as Switch artifacts
+#       --warehouse-id        SQL warehouse ID (dbsql only; default: interactive selection)
+#       --job-name            SQL Warehouse Job name (dbsql only; default: derived from .sql basename)
+#       --skip-job-create     Skip Step 6 SQL Warehouse Job creation (dbsql only)
+#       --table-mapping       CSV file mapping source tables to UC 3-level names (auto-detected: ./table_mapping.csv if non-empty)
+#       --medallion           Enable medallion (bronze/silver/gold) catalog/schema separation (default: off — uses -c/-s for everything)
+#       --single-catalog      Implies --medallion; all layers share the same catalog as Switch artifacts
 #       --wait                Wait for Switch LLM to complete before finishing (default: async)
 #       --skip-det-install    Skip BladeBridge installation
 #       --skip-llm-install    Skip Switch LLM installation
@@ -93,6 +97,7 @@ SKIP_DET_INSTALL=false
 SKIP_LLM_INSTALL=false
 SKIP_BLADEBRIDGE=false
 SKIP_SWITCH=false
+MEDALLION=false
 SINGLE_CATALOG=false
 WAIT_FOR_SWITCH=false
 YES=false
@@ -104,8 +109,12 @@ SILVER_SCHEMA=""
 GOLD_CATALOG=""
 GOLD_SCHEMA=""
 
+TABLE_MAPPING=""
+UC_CATALOG=""
+UC_SCHEMA=""
+
 usage() {
-    sed -n '/^# Usage:/,/^[^#]/{ /^#/s/^# \?//p }' "$0"
+    awk '/^# Usage:/{flag=1} flag && /^[^#]/{exit} flag && /^#/{sub(/^# ?/, ""); print}' "$0"
     exit 0
 }
 
@@ -133,7 +142,9 @@ while [[ $# -gt 0 ]]; do
         --warehouse-id)              WAREHOUSE_ID="$2"; shift 2 ;;
         --job-name)                  JOB_NAME="$2"; shift 2 ;;
         --skip-job-create)           SKIP_JOB_CREATE=true; shift ;;
-        --single-catalog)            SINGLE_CATALOG=true; shift ;;
+        --table-mapping)             TABLE_MAPPING="$2"; shift 2 ;;
+        --medallion)                 MEDALLION=true; shift ;;
+        --single-catalog)            MEDALLION=true; SINGLE_CATALOG=true; shift ;;
         --wait)                      WAIT_FOR_SWITCH=true; shift ;;
         --skip-det-install)          SKIP_DET_INSTALL=true; shift ;;
         --skip-llm-install)          SKIP_LLM_INSTALL=true; shift ;;
@@ -147,15 +158,18 @@ done
 
 if [ -n "$SWITCH_STYLE" ]; then
     _ss_lc=$(printf '%s' "$SWITCH_STYLE" | tr '[:upper:]' '[:lower:]')
-    if [ "$_ss_lc" != "sdp" ] && [ "$_ss_lc" != "sql" ]; then
-        echo "Error: --switch-style must be 'sdp' or 'sql' (got: ${SWITCH_STYLE})"
+    # Accept legacy "sql" / "sparksql" as aliases for "dbsql"
+    [ "$_ss_lc" = "sql" ] && _ss_lc="dbsql"
+    [ "$_ss_lc" = "sparksql" ] && _ss_lc="dbsql"
+    if [ "$_ss_lc" != "sdp" ] && [ "$_ss_lc" != "dbsql" ]; then
+        echo "Error: --switch-style must be 'sdp' or 'dbsql' (got: ${SWITCH_STYLE})"
         exit 1
     fi
     SWITCH_STYLE="$_ss_lc"
 fi
 
 if [ -z "$OVERRIDES_FILE" ]; then
-    OVERRIDES_FILE="${SCRIPT_DIR}/sample_override_tsql.json"
+    OVERRIDES_FILE="${SCRIPT_DIR}/sample_override.json"
 fi
 if [ ! -f "$OVERRIDES_FILE" ]; then
     echo "Error: override file '${OVERRIDES_FILE}' not found."
@@ -170,6 +184,14 @@ if [ -z "$PROFILE" ]; then
 fi
 
 PROFILE_FLAG="-p $PROFILE"
+
+ON_CLUSTER=false
+if [ -n "${DB_CLUSTER_ID:-}" ] || \
+   [ -d "/databricks/spark" ] || \
+   [ -d "/databricks/python" ] || \
+   [ -d "/databricks/driver" ]; then
+    ON_CLUSTER=true
+fi
 
 if [ -z "$USER_EMAIL" ]; then
     echo "Detecting user email from Databricks profile '${PROFILE}'..."
@@ -197,15 +219,19 @@ fi
 
 if [ "$SKIP_SWITCH" = false ]; then
     if [ -z "$SWITCH_STYLE" ] && [ "$YES" = false ]; then
-        read -rp "Switch target: (sdp) Lakeflow SQL pipeline or (sql) SQL files + Warehouse Job [default: sdp]: " _sws
+        read -rp "Switch output: (sdp) Lakeflow SDP or (dbsql) Databricks SQL files + Warehouse Job [default: sdp]: " _sws
         _sws="${_sws:-sdp}"
         _sws=$(printf '%s' "$_sws" | tr '[:upper:]' '[:lower:]')
-        [ "$_sws" = "sql" ] && SWITCH_STYLE=sql || SWITCH_STYLE=sdp
+        if [ "$_sws" = "dbsql" ] || [ "$_sws" = "sql" ] || [ "$_sws" = "sparksql" ]; then
+            SWITCH_STYLE=dbsql
+        else
+            SWITCH_STYLE=sdp
+        fi
     fi
     SWITCH_STYLE="${SWITCH_STYLE:-sdp}"
 fi
 
-if [ "$SKIP_SWITCH" = false ] && [ "$SWITCH_STYLE" = "sql" ] && [ "$YES" = false ]; then
+if [ "$SKIP_SWITCH" = false ] && [ "$SWITCH_STYLE" = "dbsql" ] && [ "$YES" = false ]; then
     if [ "$SKIP_JOB_CREATE" = false ]; then
         read -rp "Create a SQL Warehouse Job for the converted files? (Y/n): " _job_ans
         [[ "$_job_ans" =~ ^[Nn]$ ]] && SKIP_JOB_CREATE=true
@@ -218,21 +244,31 @@ if [ "$SKIP_SWITCH" = false ] && [ "$WAIT_FOR_SWITCH" = false ] && [ "$YES" = fa
 fi
 
 if [ "$SKIP_BLADEBRIDGE" = false ] && [ "$YES" = false ]; then
-    if [ "${SWITCH_STYLE:-sdp}" = "sql" ]; then
+    if [ "${SWITCH_STYLE:-sdp}" = "dbsql" ]; then
         read -rp "Run BladeBridge pre-processing? (y/N — often fails on complex stored procedures): " run_bb_answer
         if [[ ! "$run_bb_answer" =~ ^[Yy]$ ]]; then
             SKIP_BLADEBRIDGE=true; SKIP_DET_INSTALL=true
+        elif [ "$SKIP_DET_INSTALL" = false ]; then
+            read -rp "  Install BladeBridge transpiler first? (y/N): " install_bb_answer
+            if [[ ! "$install_bb_answer" =~ ^[Yy]$ ]]; then
+                SKIP_DET_INSTALL=true
+            fi
         fi
     else
         read -rp "Run BladeBridge deterministic conversion? (Y/n): " run_bb_answer
         if [[ "$run_bb_answer" =~ ^[Nn]$ ]]; then
             SKIP_BLADEBRIDGE=true; SKIP_DET_INSTALL=true
+        elif [ "$SKIP_DET_INSTALL" = false ]; then
+            read -rp "  Install BladeBridge transpiler first? (y/N): " install_bb_answer
+            if [[ ! "$install_bb_answer" =~ ^[Yy]$ ]]; then
+                SKIP_DET_INSTALL=true
+            fi
         fi
     fi
 fi
 
 if [ -z "$INPUT_SOURCE" ]; then
-    read -rp "Path to a .sql file, or a folder of .sql files: " INPUT_SOURCE
+    read -rp "Path to T-SQL source files (.sql file or folder of .sql files): " INPUT_SOURCE
 fi
 if [ ! -e "$INPUT_SOURCE" ]; then
     echo "Error: input source '${INPUT_SOURCE}' does not exist."
@@ -254,12 +290,31 @@ else
     exit 1
 fi
 
-if [ -z "$OUTPUT_FOLDER" ]; then
-    read -rp "Local output folder for staged files: " OUTPUT_FOLDER
-fi
-if [ -z "$OUTPUT_FOLDER" ]; then
-    echo "Error: output folder is required."
-    exit 1
+if [ "$ON_CLUSTER" = true ]; then
+    # ── Cluster web terminal ─────────────────────────────────────────────────
+    # /Workspace/ paths persist across cluster restarts.
+    # One base path → two subfolders: pipeline/ (staging) and notebooks/ (LLM output).
+    if [ -z "$OUTPUT_FOLDER" ]; then
+        read -rp "Workspace output folder (must start with /Workspace/): " OUTPUT_FOLDER
+    fi
+    if [[ ! "$OUTPUT_FOLDER" == /Workspace/* ]]; then
+        echo "Error: on cluster, workspace output folder must start with /Workspace/"
+        exit 1
+    fi
+    OUTPUT_FOLDER="${OUTPUT_FOLDER%/}"
+    OUTPUT_WS_FOLDER="${OUTPUT_FOLDER}/notebooks"
+    OUTPUT_FOLDER="${OUTPUT_FOLDER}/pipeline"
+    echo "  Staging folder:   ${OUTPUT_FOLDER}"
+    echo "  Notebooks folder: ${OUTPUT_WS_FOLDER}"
+    echo ""
+else
+    if [ -z "$OUTPUT_FOLDER" ]; then
+        read -rp "Output folder for staged files: " OUTPUT_FOLDER
+    fi
+    if [ -z "$OUTPUT_FOLDER" ]; then
+        echo "Error: output folder is required."
+        exit 1
+    fi
 fi
 
 if [ "$SKIP_SWITCH" = true ]; then
@@ -270,14 +325,15 @@ if [ "$SKIP_SWITCH" = true ]; then
     FOUNDATION_MODEL="${FOUNDATION_MODEL:-databricks-claude-sonnet-4-5}"
     PIPELINE_CATALOG="${PIPELINE_CATALOG:-${CATALOG}}"
     PIPELINE_TARGET="${PIPELINE_TARGET:-default}"
+    # Medallion off by default: layer catalogs/schemas mirror -c/-s
     BRONZE_CATALOG="${BRONZE_CATALOG:-${CATALOG}}"
-    BRONZE_SCHEMA="${BRONZE_SCHEMA:-bronze}"
+    BRONZE_SCHEMA="${BRONZE_SCHEMA:-${SCHEMA}}"
     SILVER_CATALOG="${SILVER_CATALOG:-${CATALOG}}"
-    SILVER_SCHEMA="${SILVER_SCHEMA:-silver}"
+    SILVER_SCHEMA="${SILVER_SCHEMA:-${SCHEMA}}"
     GOLD_CATALOG="${GOLD_CATALOG:-${CATALOG}}"
-    GOLD_SCHEMA="${GOLD_SCHEMA:-gold}"
+    GOLD_SCHEMA="${GOLD_SCHEMA:-${SCHEMA}}"
 else
-    if [ -z "$OUTPUT_WS_FOLDER" ]; then
+    if [ "$ON_CLUSTER" = false ] && [ -z "$OUTPUT_WS_FOLDER" ]; then
         read -rp "Workspace output folder (must start with /Workspace/): " OUTPUT_WS_FOLDER
     fi
     if [[ ! "$OUTPUT_WS_FOLDER" == /Workspace/* ]]; then
@@ -285,27 +341,46 @@ else
         exit 1
     fi
     if [ -z "$CATALOG" ]; then
-        [ "$YES" = false ] && read -rp "Catalog for Switch artifacts (required): " CATALOG
+        [ "$YES" = false ] && read -rp "Catalog name for Switch artifacts (required): " CATALOG
         if [ -z "$CATALOG" ]; then
             echo "Error: --catalog is required."
             exit 1
         fi
     fi
     if [ -z "$SCHEMA" ]; then
-        [ "$YES" = false ] && read -rp "Schema for Switch artifacts [default: switch]: " SCHEMA
+        [ "$YES" = false ] && read -rp "Schema name for Switch artifacts [default: switch]: " SCHEMA
         SCHEMA="${SCHEMA:-switch}"
     fi
     if [ -z "$VOLUME" ]; then
-        [ "$YES" = false ] && read -rp "UC Volume name [default: switch_volume]: " VOLUME
+        [ "$YES" = false ] && read -rp "UC Volume name for Switch artifacts [default: switch_volume]: " VOLUME
         VOLUME="${VOLUME:-switch_volume}"
     fi
 
-    # Medallion layer catalog/schema resolution
-    if [ "$SINGLE_CATALOG" = false ] && [ "$YES" = false ]; then
-        read -rp "Are all data layers (bronze/silver/gold) in the same catalog? (Y/n): " _sc_ans
-        [[ ! "$_sc_ans" =~ ^[Nn]$ ]] && SINGLE_CATALOG=true
+    # Reject --medallion combined with dbsql before any layer prompts fire.
+    if [ "$MEDALLION" = true ] && [ "$SWITCH_STYLE" = "dbsql" ]; then
+        echo "Error: --medallion (and --single-catalog) are only supported with --switch-style sdp."
+        echo "       For dbsql output, use a flat catalog/schema via -c and -s."
+        exit 1
     fi
-    if [ "$SINGLE_CATALOG" = true ]; then
+    # Medallion: opt-in via flag or interactive prompt; sdp mode only. dbsql collapses to flat.
+    if [ "$SWITCH_STYLE" = "sdp" ]; then
+        if [ "$MEDALLION" = false ] && [ "$YES" = false ]; then
+            read -rp "Use medallion architecture (separate bronze/silver/gold catalogs/schemas)? (y/N): " _med_ans
+            [[ "$_med_ans" =~ ^[Yy]$ ]] && MEDALLION=true
+        fi
+    else
+        # dbsql: medallion is not supported; force flat layer references.
+        MEDALLION=false
+        SINGLE_CATALOG=false
+    fi
+    if [ "$MEDALLION" = false ]; then
+        BRONZE_CATALOG="${BRONZE_CATALOG:-$CATALOG}"
+        BRONZE_SCHEMA="${BRONZE_SCHEMA:-$SCHEMA}"
+        SILVER_CATALOG="${SILVER_CATALOG:-$CATALOG}"
+        SILVER_SCHEMA="${SILVER_SCHEMA:-$SCHEMA}"
+        GOLD_CATALOG="${GOLD_CATALOG:-$CATALOG}"
+        GOLD_SCHEMA="${GOLD_SCHEMA:-$SCHEMA}"
+    elif [ "$SINGLE_CATALOG" = true ]; then
         BRONZE_CATALOG="${BRONZE_CATALOG:-$CATALOG}"
         BRONZE_SCHEMA="${BRONZE_SCHEMA:-bronze}"
         SILVER_CATALOG="${SILVER_CATALOG:-$CATALOG}"
@@ -344,17 +419,51 @@ else
         FOUNDATION_MODEL="${FOUNDATION_MODEL:-databricks-claude-sonnet-4-5}"
     fi
 
+    # --- Table mapping for Unity Catalog 3-level namespace ---
+    if [ -z "$TABLE_MAPPING" ]; then
+        default_mapping="${SCRIPT_DIR}/table_mapping.csv"
+        if [ -f "$default_mapping" ]; then
+            has_entries=$(grep -v '^\s*#' "$default_mapping" | grep -v '^\s*$' | head -1 || true)
+            if [ -n "$has_entries" ] && [ "$YES" = false ]; then
+                read -rp "Table mapping file found (${default_mapping}). Use it? (Y/n): " use_mapping
+                if [[ ! "$use_mapping" =~ ^[Nn]$ ]]; then
+                    TABLE_MAPPING="$default_mapping"
+                fi
+            elif [ -n "$has_entries" ]; then
+                TABLE_MAPPING="$default_mapping"
+            fi
+        fi
+
+        if [ -z "$TABLE_MAPPING" ] && [ "$YES" = false ]; then
+            echo "No table mapping file. Enter a default UC catalog and schema for unqualified table"
+            echo "names, or press Enter to skip."
+            read -rp "Default UC catalog [skip]: " UC_CATALOG
+            if [ -n "$UC_CATALOG" ]; then
+                read -rp "Default UC schema: " UC_SCHEMA
+                if [ -z "$UC_SCHEMA" ]; then
+                    echo "Error: UC schema is required when catalog is specified."
+                    exit 1
+                fi
+            fi
+        fi
+    fi
+
+    if [ -n "$TABLE_MAPPING" ] && [ ! -f "$TABLE_MAPPING" ]; then
+        echo "Error: table mapping file '${TABLE_MAPPING}' not found."
+        exit 1
+    fi
+
     if [ "$SWITCH_STYLE" = "sdp" ]; then
         if [ -z "$PIPELINE_CATALOG" ]; then
-            [ "$YES" = false ] && read -rp "Lakeflow DLP catalog [default: ${CATALOG}]: " PIPELINE_CATALOG
+            [ "$YES" = false ] && read -rp "Lakeflow SDP catalog [default: ${CATALOG}]: " PIPELINE_CATALOG
             PIPELINE_CATALOG="${PIPELINE_CATALOG:-$CATALOG}"
         fi
         if [ -z "$PIPELINE_TARGET" ]; then
-            [ "$YES" = false ] && read -rp "Lakeflow DLP target schema [default: default]: " PIPELINE_TARGET
+            [ "$YES" = false ] && read -rp "Lakeflow SDP target schema [default: default]: " PIPELINE_TARGET
             PIPELINE_TARGET="${PIPELINE_TARGET:-default}"
         fi
         if [ -z "$CLUSTER_POLICY" ] && [ "$YES" = false ]; then
-            read -rp "DLP compute — Serverless (S) or Cluster Policy (C)? [default: S]: " compute_choice
+            read -rp "SDP compute — Serverless (S) or Cluster Policy (C)? [default: S]: " compute_choice
             if [[ "$compute_choice" =~ ^[Cc]$ ]]; then
                 USE_SERVERLESS=false
                 read -rp "  Cluster policy ID: " CLUSTER_POLICY
@@ -372,10 +481,10 @@ fi
 
 # Set custom prompt default after SWITCH_STYLE is resolved
 if [ -z "$CUSTOM_PROMPT" ] && [ "$SKIP_SWITCH" = false ]; then
-    if [ "$SWITCH_STYLE" = "sql" ]; then
-        CUSTOM_PROMPT="${SCRIPT_DIR}/mssql_to_sparksql_file_prompt.yml"
+    if [ "$SWITCH_STYLE" = "dbsql" ]; then
+        CUSTOM_PROMPT="${SCRIPT_DIR}/tsql_to_dbsql_prompt.yml"
     else
-        CUSTOM_PROMPT="${SCRIPT_DIR}/mssql_sp_to_sdp_switch_prompt.yml"
+        CUSTOM_PROMPT="${SCRIPT_DIR}/tsql_to_sdp_prompt.yml"
     fi
 fi
 
@@ -404,7 +513,9 @@ else
     echo "  Volume:             ${VOLUME}"
     echo "  Foundation model:   ${FOUNDATION_MODEL}"
     echo "  Switch style:       ${SWITCH_STYLE}"
-    if [ "$SINGLE_CATALOG" = true ]; then
+    if [ "$MEDALLION" = false ]; then
+        echo "  Medallion:          off (using ${CATALOG}.${SCHEMA} for all layers)"
+    elif [ "$SINGLE_CATALOG" = true ]; then
         echo "  Layers (single):    ${CATALOG}  bronze=${BRONZE_SCHEMA}  silver=${SILVER_SCHEMA}  gold=${GOLD_SCHEMA}"
     else
         echo "  Bronze:             ${BRONZE_CATALOG}.${BRONZE_SCHEMA}"
@@ -412,9 +523,9 @@ else
         echo "  Gold:               ${GOLD_CATALOG}.${GOLD_SCHEMA}"
     fi
     if [ "$SWITCH_STYLE" = "sdp" ]; then
-        echo "  DLP:                catalog=${PIPELINE_CATALOG} target=${PIPELINE_TARGET}"
+        echo "  SDP:                catalog=${PIPELINE_CATALOG} target=${PIPELINE_TARGET}"
         echo "  Pipeline name:      ${PIPELINE_NAME:-<from first .sql>}"
-        echo "  DLP compute:        $([ "$USE_SERVERLESS" = true ] && echo 'Serverless' || echo "Cluster Policy: ${CLUSTER_POLICY}")"
+        echo "  SDP compute:        $([ "$USE_SERVERLESS" = true ] && echo 'Serverless' || echo "Cluster Policy: ${CLUSTER_POLICY}")"
     else
         echo "  SQL Warehouse Job:  $([ "$SKIP_JOB_CREATE" = true ] && echo 'skip' || echo 'yes (warehouse selection at Step 6)')"
     fi
@@ -447,7 +558,7 @@ rm -f "${OVERRIDES_FILE}.bak"
 
 if [ "$SKIP_DET_INSTALL" = false ]; then
     echo "Step 1a: Installing deterministic transpiler (BladeBridge)..."
-    databricks labs lakebridge install-transpile --interactive false $PROFILE_FLAG
+    (yes || true) | databricks labs lakebridge install-transpile $PROFILE_FLAG
     echo ""
 else
     echo "Step 1a: Skipping deterministic transpiler install."
@@ -455,7 +566,7 @@ fi
 
 if [ "$SKIP_LLM_INSTALL" = false ]; then
     echo "Step 1b: Installing LLM transpiler (Switch)..."
-    databricks labs lakebridge install-transpile --include-llm-transpiler true --interactive false $PROFILE_FLAG
+    (yes || true) | databricks labs lakebridge install-transpile --include-llm-transpiler true $PROFILE_FLAG
     echo ""
 else
     echo "Step 1b: Skipping LLM transpiler install."
@@ -571,6 +682,116 @@ if [ -z "$PIPELINE_NAME" ]; then
 fi
 
 # =========================================================================
+# Step 3b: Apply Unity Catalog table namespace mapping to staged .sql files
+# =========================================================================
+
+if [ -n "$TABLE_MAPPING" ] || [ -n "$UC_CATALOG" ]; then
+    echo "Step 3b: Applying UC table namespace mapping to switch_input files..."
+
+    tables_mapped=0
+    UC_MAPPER_SCRIPT=$(mktemp /tmp/uc_mapper.XXXXXX)
+    CLEANUP_FILES+=("$UC_MAPPER_SCRIPT")
+    cat > "$UC_MAPPER_SCRIPT" << 'PYEOF'
+import sys, re
+
+sql_file = sys.argv[1]
+mapping_file = sys.argv[2]
+uc_catalog = sys.argv[3] if len(sys.argv) > 3 else ''
+uc_schema = sys.argv[4] if len(sys.argv) > 4 else ''
+
+with open(sql_file, 'r') as f:
+    content = f.read()
+
+original = content
+table_map = {}
+
+if mapping_file:
+    with open(mapping_file, 'r') as mf:
+        for line in mf:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            parts = line.split(',', 1)
+            if len(parts) == 2:
+                src = parts[0].strip()
+                tgt = parts[1].strip()
+                if src and tgt:
+                    table_map[src] = tgt
+
+# Keywords that introduce a table name in T-SQL / Spark SQL.
+# Multi-word phrases must come before their single-word counterparts so the longer match wins.
+KEYWORDS = [
+    r'CREATE\s+OR\s+REFRESH\s+MATERIALIZED\s+VIEW',
+    r'CREATE\s+OR\s+REPLACE\s+MATERIALIZED\s+VIEW',
+    r'CREATE\s+MATERIALIZED\s+VIEW',
+    r'CREATE\s+OR\s+REFRESH\s+STREAMING\s+TABLE',
+    r'CREATE\s+OR\s+REPLACE\s+TABLE',
+    r'CREATE\s+OR\s+REPLACE\s+VIEW',
+    r'CREATE\s+TABLE',
+    r'CREATE\s+VIEW',
+    r'TRUNCATE\s+TABLE',
+    r'INSERT\s+INTO',
+    r'MERGE\s+INTO',
+    r'DELETE\s+FROM',
+    r'UPDATE',
+    r'FROM',
+    r'JOIN',
+    r'INTO',
+]
+KW_RE = '(?:' + '|'.join(KEYWORDS) + ')'
+
+if table_map:
+    for src, tgt in sorted(table_map.items(), key=lambda x: -len(x[0])):
+        # match KW <whitespace> [optional schema/db prefix].src(\b)
+        # accepts:  FROM dbo.MyTable  /  FROM Source.dbo.MyTable  /  FROM MyTable
+        pattern = (
+            r'(\b' + KW_RE + r'\s+)'
+            r'(?:[A-Za-z_][\w]*\.)?'      # optional db
+            r'(?:\[?dbo\]?\.)?'           # optional dbo
+            r'\[?' + re.escape(src) + r'\]?\b'
+        )
+        content = re.sub(pattern, r'\1' + tgt, content, flags=re.IGNORECASE)
+elif uc_catalog and uc_schema:
+    # Default-namespace fallback: prefix bare 1-part table names with catalog.schema.
+    # Skip names already qualified with a dot.
+    def _prefix(m):
+        return f"{m.group(1)}{uc_catalog}.{uc_schema}.{m.group(2)}"
+    pattern = (
+        r'(\b' + KW_RE + r'\s+)'
+        r'(?!\$\{)(?!\{\{)'              # don't touch existing parameter refs
+        r'(?!#)'                          # don't touch comments
+        r'([A-Za-z_][\w]*)\b'
+        r'(?!\.)'                         # only unqualified (no dot follows)
+    )
+    content = re.sub(pattern, _prefix, content, flags=re.IGNORECASE)
+
+if content != original:
+    with open(sql_file, 'w') as f:
+        f.write(content)
+    print('modified')
+else:
+    print('unchanged')
+PYEOF
+
+    for sqlf in "${staged_files[@]}"; do
+        modified=$(python3 "$UC_MAPPER_SCRIPT" "$sqlf" "${TABLE_MAPPING:-}" "${UC_CATALOG:-}" "${UC_SCHEMA:-}" 2>&1) || modified="error"
+        if [ "$modified" = "modified" ]; then
+            echo "  Mapped tables in: $(basename "$sqlf")"
+            tables_mapped=$((tables_mapped + 1))
+        elif [ "$modified" = "error" ]; then
+            echo "  WARNING: UC mapper failed for: $(basename "$sqlf")"
+        fi
+    done
+
+    if [ "$tables_mapped" -eq 0 ]; then
+        echo "  No table references needed mapping."
+    else
+        echo "  Mapped tables in ${tables_mapped} file(s)."
+    fi
+    echo ""
+fi
+
+# =========================================================================
 # Step 4: Upload custom prompt and update switch_config.yml
 # =========================================================================
 
@@ -604,7 +825,7 @@ echo "  Uploaded prompt to: ${WS_PROMPT_PATH}"
 SWITCH_CONFIG_WS_PATH="/Users/${USER_EMAIL}/.lakebridge/switch/resources/switch_config.yml"
 SWITCH_CONFIG_LOCAL="${OUTPUT_FOLDER}/switch_config.yml"
 
-if [ "$SWITCH_STYLE" = "sql" ]; then
+if [ "$SWITCH_STYLE" = "dbsql" ]; then
     cat > "$SWITCH_CONFIG_LOCAL" <<SWITCHEOF
 # Switch configuration file
 # Auto-generated by tsql-to-databricks run.sh
@@ -679,7 +900,7 @@ SWITCH_RUN_ID=$(sed 's/\x1b\[[0-9;]*m//g' "$_switch_log" \
 rm -f "$_switch_log"
 
 echo ""
-if [ "$SWITCH_STYLE" = "sql" ]; then
+if [ "$SWITCH_STYLE" = "dbsql" ]; then
     echo "  LLM conversion in progress. SQL files will appear under ${OUTPUT_WS_FOLDER} when completed."
 else
     echo "  LLM conversion in progress. Notebooks at: ${OUTPUT_WS_FOLDER} when completed."
@@ -729,7 +950,7 @@ if [ "$SKIP_SWITCH" = true ]; then
     echo "  Workspace:          (N/A – Switch disabled)"
     echo "============================================"
 
-elif [ "$SWITCH_STYLE" = "sql" ]; then
+elif [ "$SWITCH_STYLE" = "dbsql" ]; then
     # -------------------------------------------------------------------------
     # SQL Warehouse Job creation
     # -------------------------------------------------------------------------
@@ -812,8 +1033,7 @@ print(whs[${_sel}-1]['name'])")
         if [ "$SKIP_JOB_CREATE" = false ]; then
             JOB_SPEC_FILE="${OUTPUT_FOLDER}/job_spec.json"
             export SWITCH_INPUT_DIR OUTPUT_WS_FOLDER WAREHOUSE_ID JOB_NAME JOB_SPEC_FILE \
-                   GOLD_CATALOG GOLD_SCHEMA BRONZE_CATALOG BRONZE_SCHEMA \
-                   SILVER_CATALOG SILVER_SCHEMA
+                   CATALOG SCHEMA
             python3 <<'PYEOF'
 import os, re, json
 
@@ -875,7 +1095,11 @@ for fname in sql_files:
         "task_key": key,
         "sql_task": {
             "file": {"path": f"{output_ws_folder}/{fname}"},
-            "warehouse_id": warehouse_id
+            "warehouse_id": warehouse_id,
+            "parameters": {
+                "catalog": "{{job.parameters.catalog}}",
+                "schema":  "{{job.parameters.schema}}"
+            }
         }
     }
     if deps:
@@ -883,14 +1107,8 @@ for fname in sql_files:
     tasks.append(task)
 
 parameters = [
-    {"name": "gold_catalog",   "default": os.environ.get('GOLD_CATALOG', '')},
-    {"name": "gold_schema",    "default": os.environ.get('GOLD_SCHEMA', '')},
-    {"name": "bronze_catalog", "default": os.environ.get('BRONZE_CATALOG', '')},
-    {"name": "bronze_schema",  "default": os.environ.get('BRONZE_SCHEMA', '')},
-    {"name": "silver_catalog", "default": os.environ.get('SILVER_CATALOG', '')},
-    {"name": "silver_schema",  "default": os.environ.get('SILVER_SCHEMA', '')},
-    {"name": "source_catalog", "default": os.environ.get('BRONZE_CATALOG', '')},
-    {"name": "source_schema",  "default": os.environ.get('BRONZE_SCHEMA', '')},
+    {"name": "catalog", "default": os.environ.get('CATALOG', '')},
+    {"name": "schema",  "default": os.environ.get('SCHEMA', '')},
 ]
 json.dump({"name": job_name, "parameters": parameters, "tasks": tasks}, open(job_spec_file, 'w'), indent=2)
 print(f"  {len(tasks)} task(s) in job spec", flush=True)

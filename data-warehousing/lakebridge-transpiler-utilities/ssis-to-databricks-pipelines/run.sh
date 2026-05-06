@@ -8,12 +8,12 @@
 #   2. Runs BladeBridge to produce initial PySpark conversion from SSIS packages
 #   3. Separates job JSONs (orchestration reference) and moves .py files to switch_input/
 #   4. Uploads custom prompt and updates switch_config.yml on workspace
-#   5. Runs Switch LLM transpiler (SDP: notebooks; sparksql: .sql per .py) to the workspace
-#   6. Creates a Lakeflow Declarative Pipeline (skipped for --ssis-output sparksql; same idea as
-#      tsql dbsql — DLP is Python graph–based; SQL path uses a SQL job or DBSQL instead)
+#   5. Runs Switch LLM transpiler (SDP: notebooks; dbsql: .sql per .py) to the workspace
+#   6. Creates a Lakeflow Declarative Pipeline (skipped for --ssis-output dbsql; same idea as
+#      tsql dbsql — SDP is Python graph–based; SQL path uses a SQL Warehouse job instead)
 #
 # Default override JSON and prompt YAML are located alongside this script.
-# Use --ssis-output sdp|sparksql to pick sdp vs Spark SQL .sql (unless -x overrides the prompt).
+# Use --ssis-output sdp|dbsql to pick SDP vs Databricks SQL .sql (unless -x overrides the prompt).
 # Pass -r or -x to use files from other locations.
 #
 # Usage:
@@ -29,14 +29,16 @@
 #   -s, --schema             Schema for Switch artifacts (default: switch)
 #   -v, --volume             UC Volume name (default: switch_volume)
 #   -m, --foundation-model   Foundation model endpoint (default: databricks-claude-sonnet-4-5)
-#       --sdp-language       Switch sdp_language: python or sql (default: python for sdp, sql for sparksql)
-#       --ssis-output        Switch result type: sdp (Lakeflow / pyspark.pipelines) or sparksql (one .sql per .py; default: sdp)
+#       --sdp-language       Switch sdp_language: python or sql (default: python for sdp, sql for dbsql)
+#       --ssis-output        Switch result type: sdp (Lakeflow / pyspark.pipelines) or dbsql (one .sql per .py; default: sdp)
 #   -r, --overrides-file     Override JSON for BladeBridge (default: sample_override.json in script dir)
 #       --error-file-path    Local path for BladeBridge conversion error log (default: <output-folder>/errors.log)
 #       --transpiler-config-path  Path to BladeBridge config.yml (default: see DEFAULT_TRANSPILER_CONFIG_PATH;
 #                                 always passed to transpile so the CLI does not use a bad built-in path)
 #       --no-transpiler-config-path  Do not pass --transpiler-config-path (Lakebridge chooses the path)
 #   -x, --custom-prompt      Custom Switch prompt YAML (default: from --ssis-output in script dir, unless -x is set)
+#                            For SDP: ssis_to_sdp_python_prompt.yml (or _sdp_sql_prompt.yml when --sdp-language sql)
+#                            For DBSQL: ssis_to_dbsql_prompt.yml
 #       --bronze-catalog     Bronze layer catalog (default: value of -c/--catalog)
 #       --bronze-schema      Bronze layer schema (default: value of -s/--schema)
 #       --silver-catalog     Silver layer catalog (default: prompted)
@@ -48,11 +50,12 @@
 #       --skip-det-install   Skip deterministic transpiler (BladeBridge) installation
 #       --skip-llm-install   Skip LLM transpiler (Switch) installation
 #       --skip-bladebridge   Skip BladeBridge step (if output already exists)
-#       --skip-switch        Skip Switch LLM entirely (no Switch-only prompts; no DLP step 6)
-#       --warehouse-id       SQL warehouse ID (skip interactive selection; sparksql mode only)
-#       --job-name           Job name (default: last file in switch_input/ + " SQL Job"; sparksql mode only)
-#       --skip-job-create    Skip Step 6 SQL Warehouse Job creation (sparksql mode only)
-#       --single-catalog     All data layers (bronze/silver/gold) share the same catalog as Switch artifacts
+#       --skip-switch        Skip Switch LLM entirely (no Switch-only prompts; no SDP step 6)
+#       --warehouse-id       SQL warehouse ID (skip interactive selection; dbsql mode only)
+#       --job-name           Job name (default: last file in switch_input/ + " SQL Job"; dbsql mode only)
+#       --skip-job-create    Skip Step 6 SQL Warehouse Job creation (dbsql mode only)
+#       --medallion          Enable medallion (bronze/silver/gold) catalog/schema separation (default: off — uses -c/-s for everything)
+#       --single-catalog     Implies --medallion; all data layers (bronze/silver/gold) share the same catalog as Switch artifacts
 #       --wait               Wait for Switch LLM job to complete before finishing (default: async)
 #   -y, --yes                Non-interactive: skip all y/n prompts, accept defaults
 #   -h, --help               Show this help message
@@ -96,23 +99,24 @@ GOLD_CATALOG=""
 GOLD_SCHEMA=""
 PIPELINE_NAME=""
 CLUSTER_POLICY=""
-USE_SERVERLESS=true
+COMPUTE_TYPE="serverless"
 SKIP_DET_INSTALL=false
 SKIP_LLM_INSTALL=false
 SKIP_BLADEBRIDGE=false
 SKIP_SWITCH=false
 SDP_LANGUAGE=""
-# sdp = Lakeflow SDP; sparksql = Spark SQL .sql per .py (Step 6 = SQL Warehouse Job)
+# sdp = Lakeflow SDP; dbsql = Databricks SQL .sql per .py (Step 6 = SQL Warehouse Job)
 SSIS_OUTPUT=""
 WAREHOUSE_ID=""
 JOB_NAME=""
 SKIP_JOB_CREATE=false
+MEDALLION=false
 SINGLE_CATALOG=false
 WAIT_FOR_SWITCH=false
 YES=false
 
 usage() {
-    sed -n '/^# Usage:/,/^[^#]/{ /^#/s/^# \?//p }' "$0"
+    awk '/^# Usage:/{flag=1} flag && /^[^#]/{exit} flag && /^#/{sub(/^# ?/, ""); print}' "$0"
     exit 0
 }
 
@@ -141,7 +145,7 @@ while [[ $# -gt 0 ]]; do
         --gold-catalog)          GOLD_CATALOG="$2"; shift 2 ;;
         --gold-schema)           GOLD_SCHEMA="$2"; shift 2 ;;
         --pipeline-name)         PIPELINE_NAME="$2"; shift 2 ;;
-        --cluster-policy)       CLUSTER_POLICY="$2"; USE_SERVERLESS=false; shift 2 ;;
+        --cluster-policy)       CLUSTER_POLICY="$2"; COMPUTE_TYPE="classic"; shift 2 ;;
         --skip-det-install)      SKIP_DET_INSTALL=true; shift ;;
         --skip-llm-install)      SKIP_LLM_INSTALL=true; shift ;;
         --skip-bladebridge)      SKIP_BLADEBRIDGE=true; SKIP_DET_INSTALL=true; shift ;;
@@ -149,7 +153,8 @@ while [[ $# -gt 0 ]]; do
         --warehouse-id)          WAREHOUSE_ID="$2"; shift 2 ;;
         --job-name)              JOB_NAME="$2"; shift 2 ;;
         --skip-job-create)       SKIP_JOB_CREATE=true; shift ;;
-        --single-catalog)        SINGLE_CATALOG=true; shift ;;
+        --medallion)             MEDALLION=true; shift ;;
+        --single-catalog)        MEDALLION=true; SINGLE_CATALOG=true; shift ;;
         --wait)                  WAIT_FOR_SWITCH=true; shift ;;
         -y|--yes)                YES=true; shift ;;
         -h|--help)               usage ;;
@@ -168,8 +173,11 @@ fi
 
 if [ -n "$SSIS_OUTPUT" ]; then
     _so_lc=$(printf '%s' "$SSIS_OUTPUT" | tr '[:upper:]' '[:lower:]')
-    if [ "$_so_lc" != "sdp" ] && [ "$_so_lc" != "sparksql" ]; then
-        echo "Error: --ssis-output must be 'sdp' or 'sparksql' (got: ${SSIS_OUTPUT})"
+    # Accept legacy "sparksql" / "sql" as aliases for "dbsql"
+    [ "$_so_lc" = "sparksql" ] && _so_lc="dbsql"
+    [ "$_so_lc" = "sql" ] && _so_lc="dbsql"
+    if [ "$_so_lc" != "sdp" ] && [ "$_so_lc" != "dbsql" ]; then
+        echo "Error: --ssis-output must be 'sdp' or 'dbsql' (got: ${SSIS_OUTPUT})"
         exit 1
     fi
     SSIS_OUTPUT="$_so_lc"
@@ -195,6 +203,14 @@ if [ -z "$PROFILE" ]; then
 fi
 
 PROFILE_FLAG="-p $PROFILE"
+
+ON_CLUSTER=false
+if [ -n "${DB_CLUSTER_ID:-}" ] || \
+   [ -d "/databricks/spark" ] || \
+   [ -d "/databricks/python" ] || \
+   [ -d "/databricks/driver" ]; then
+    ON_CLUSTER=true
+fi
 
 if [ -z "$USER_EMAIL" ]; then
     echo "Detecting user email from Databricks profile '${PROFILE}'..."
@@ -238,7 +254,7 @@ fi
 
 if [ "$SKIP_BLADEBRIDGE" = false ]; then
     if [ -z "$INPUT_SOURCE" ]; then
-        read -rp "Local path to SSIS packages (.dtsx files or project folder): " INPUT_SOURCE
+        read -rp "Path to SSIS packages (.dtsx files or project folder): " INPUT_SOURCE
     fi
     if [ ! -e "$INPUT_SOURCE" ]; then
         echo "Error: input source '${INPUT_SOURCE}' does not exist."
@@ -246,16 +262,35 @@ if [ "$SKIP_BLADEBRIDGE" = false ]; then
     fi
 fi
 
-if [ -z "$OUTPUT_FOLDER" ]; then
-    if [ "$SKIP_BLADEBRIDGE" = true ]; then
-        read -rp "Local output folder (use existing BladeBridge/switch state): " OUTPUT_FOLDER
-    else
-        read -rp "Local output folder for BladeBridge results: " OUTPUT_FOLDER
+if [ "$ON_CLUSTER" = true ]; then
+    # ── Cluster web terminal ─────────────────────────────────────────────────
+    # /Workspace/ paths persist across cluster restarts.
+    # One base path → two subfolders: pipeline/ (staging) and notebooks/ (LLM output).
+    if [ -z "$OUTPUT_FOLDER" ]; then
+        read -rp "Workspace output folder (must start with /Workspace/): " OUTPUT_FOLDER
     fi
-fi
-if [ -z "$OUTPUT_FOLDER" ]; then
-    echo "Error: output folder is required."
-    exit 1
+    if [[ ! "$OUTPUT_FOLDER" == /Workspace/* ]]; then
+        echo "Error: on cluster, workspace output folder must start with /Workspace/"
+        exit 1
+    fi
+    OUTPUT_FOLDER="${OUTPUT_FOLDER%/}"
+    OUTPUT_WS_FOLDER="${OUTPUT_FOLDER}/notebooks"
+    OUTPUT_FOLDER="${OUTPUT_FOLDER}/pipeline"
+    echo "  Staging folder:   ${OUTPUT_FOLDER}"
+    echo "  Notebooks folder: ${OUTPUT_WS_FOLDER}"
+    echo ""
+else
+    if [ -z "$OUTPUT_FOLDER" ]; then
+        if [ "$SKIP_BLADEBRIDGE" = true ]; then
+            read -rp "Output folder (use existing BladeBridge/switch state): " OUTPUT_FOLDER
+        else
+            read -rp "Output folder for BladeBridge results: " OUTPUT_FOLDER
+        fi
+    fi
+    if [ -z "$OUTPUT_FOLDER" ]; then
+        echo "Error: output folder is required."
+        exit 1
+    fi
 fi
 
 if [ "$SKIP_SWITCH" = true ]; then
@@ -267,16 +302,17 @@ if [ "$SKIP_SWITCH" = true ]; then
     SCHEMA="${SCHEMA:-switch}"
     VOLUME="${VOLUME:-switch_volume}"
     FOUNDATION_MODEL="${FOUNDATION_MODEL:-databricks-claude-sonnet-4-5}"
+    # Medallion off: layer catalogs/schemas mirror -c/-s
     BRONZE_CATALOG="${BRONZE_CATALOG:-$CATALOG}"
-    BRONZE_SCHEMA="${BRONZE_SCHEMA:-bronze}"
-    SILVER_CATALOG="${SILVER_CATALOG:-$BRONZE_CATALOG}"
-    SILVER_SCHEMA="${SILVER_SCHEMA:-silver}"
-    GOLD_CATALOG="${GOLD_CATALOG:-$BRONZE_CATALOG}"
-    GOLD_SCHEMA="${GOLD_SCHEMA:-gold}"
-    USE_SERVERLESS=true
+    BRONZE_SCHEMA="${BRONZE_SCHEMA:-$SCHEMA}"
+    SILVER_CATALOG="${SILVER_CATALOG:-$CATALOG}"
+    SILVER_SCHEMA="${SILVER_SCHEMA:-$SCHEMA}"
+    GOLD_CATALOG="${GOLD_CATALOG:-$CATALOG}"
+    GOLD_SCHEMA="${GOLD_SCHEMA:-$SCHEMA}"
+    COMPUTE_TYPE="serverless"
     CLUSTER_POLICY=""
 else
-    if [ -z "$OUTPUT_WS_FOLDER" ]; then
+    if [ "$ON_CLUSTER" = false ] && [ -z "$OUTPUT_WS_FOLDER" ]; then
         read -rp "Workspace output folder (must start with /Workspace/): " OUTPUT_WS_FOLDER
     fi
     if [[ ! "$OUTPUT_WS_FOLDER" == /Workspace/* ]]; then
@@ -284,7 +320,7 @@ else
         exit 1
     fi
     if [ -z "$CATALOG" ]; then
-        [ "$YES" = false ] && read -rp "Catalog for Switch artifacts (required): " CATALOG
+        [ "$YES" = false ] && read -rp "Catalog name for Switch artifacts (required): " CATALOG
         if [ -z "$CATALOG" ]; then
             echo "Error: --catalog is required."
             exit 1
@@ -295,18 +331,53 @@ else
         SCHEMA="${SCHEMA:-switch}"
     fi
     if [ -z "$VOLUME" ]; then
-        [ "$YES" = false ] && read -rp "UC Volume name [default: switch_volume]: " VOLUME
+        [ "$YES" = false ] && read -rp "UC Volume name for Switch artifacts [default: switch_volume]: " VOLUME
         VOLUME="${VOLUME:-switch_volume}"
     fi
     if [ -z "$FOUNDATION_MODEL" ]; then
         [ "$YES" = false ] && read -rp "Foundation model endpoint [default: databricks-claude-sonnet-4-5]: " FOUNDATION_MODEL
         FOUNDATION_MODEL="${FOUNDATION_MODEL:-databricks-claude-sonnet-4-5}"
     fi
-    if [ "$SINGLE_CATALOG" = false ] && [ "$YES" = false ]; then
-        read -rp "Are all data layers (bronze/silver/gold) in the same catalog? (Y/n): " _sc_ans
-        [[ ! "$_sc_ans" =~ ^[Nn]$ ]] && SINGLE_CATALOG=true
+    # Resolve output mode first — medallion is only available in sdp mode.
+    if [ -z "$SSIS_OUTPUT" ]; then
+        if [ "$YES" = false ]; then
+            read -rp "Switch output: (sdp) Lakeflow SDP or (dbsql) Databricks SQL files + Warehouse Job [default: sdp]: " _so_ans
+            _so_ans="${_so_ans:-sdp}"
+        else
+            _so_ans="sdp"
+        fi
+        _so_ans=$(printf '%s' "$_so_ans" | tr '[:upper:]' '[:lower:]')
+        if [ "$_so_ans" = "dbsql" ] || [ "$_so_ans" = "sparksql" ] || [ "$_so_ans" = "sql" ]; then
+            SSIS_OUTPUT=dbsql
+        else
+            SSIS_OUTPUT=sdp
+        fi
     fi
-    if [ "$SINGLE_CATALOG" = true ]; then
+    # Reject the invalid combo before any medallion prompts fire.
+    if [ "$MEDALLION" = true ] && [ "$SSIS_OUTPUT" = "dbsql" ]; then
+        echo "Error: --medallion (and --single-catalog) are only supported with --ssis-output sdp."
+        echo "       For dbsql output, use a flat catalog/schema via -c and -s."
+        exit 1
+    fi
+    # Medallion: opt-in via flag or interactive prompt; sdp mode only. dbsql collapses to flat.
+    if [ "$SSIS_OUTPUT" = "sdp" ]; then
+        if [ "$MEDALLION" = false ] && [ "$YES" = false ]; then
+            read -rp "Use medallion architecture (separate bronze/silver/gold catalogs/schemas)? (y/N): " _med_ans
+            [[ "$_med_ans" =~ ^[Yy]$ ]] && MEDALLION=true
+        fi
+    else
+        # dbsql: medallion is not supported; force flat layer references.
+        MEDALLION=false
+        SINGLE_CATALOG=false
+    fi
+    if [ "$MEDALLION" = false ]; then
+        BRONZE_CATALOG="${BRONZE_CATALOG:-$CATALOG}"
+        BRONZE_SCHEMA="${BRONZE_SCHEMA:-$SCHEMA}"
+        SILVER_CATALOG="${SILVER_CATALOG:-$CATALOG}"
+        SILVER_SCHEMA="${SILVER_SCHEMA:-$SCHEMA}"
+        GOLD_CATALOG="${GOLD_CATALOG:-$CATALOG}"
+        GOLD_SCHEMA="${GOLD_SCHEMA:-$SCHEMA}"
+    elif [ "$SINGLE_CATALOG" = true ]; then
         BRONZE_CATALOG="${BRONZE_CATALOG:-$CATALOG}"
         BRONZE_SCHEMA="${BRONZE_SCHEMA:-bronze}"
         SILVER_CATALOG="${SILVER_CATALOG:-$CATALOG}"
@@ -339,10 +410,10 @@ else
             GOLD_SCHEMA="${GOLD_SCHEMA:-gold}"
         fi
     fi
-    if [ -z "$CLUSTER_POLICY" ] && [ "$YES" = false ]; then
-        read -rp "Pipeline compute — Serverless (S) or Cluster Policy (C)? [default: S]: " compute_choice
+    if [ -z "$CLUSTER_POLICY" ] && [ "$YES" = false ] && [ "$SSIS_OUTPUT" = "sdp" ]; then
+        read -rp "SDP compute — Serverless (S) or Cluster Policy (C)? [default: S]: " compute_choice
         if [[ "$compute_choice" =~ ^[Cc]$ ]]; then
-            USE_SERVERLESS=false
+            COMPUTE_TYPE="classic"
             read -rp "  Cluster policy ID: " CLUSTER_POLICY
             if [ -z "$CLUSTER_POLICY" ]; then
                 echo "Error: cluster policy ID is required when using cluster compute."
@@ -350,18 +421,8 @@ else
             fi
         fi
     fi
-    if [ -z "$SSIS_OUTPUT" ]; then
-        read -rp "SSIS Switch output: (sdp) Lakeflow SDP or (sparksql) Spark SQL .sql per .py [default: sdp]: " _so_ans
-        _so_ans="${_so_ans:-sdp}"
-        _so_ans=$(printf '%s' "$_so_ans" | tr '[:upper:]' '[:lower:]')
-        if [ "$_so_ans" = "sparksql" ] || [ "$_so_ans" = "sql" ]; then
-            SSIS_OUTPUT=sparksql
-        else
-            SSIS_OUTPUT=sdp
-        fi
-    fi
     # Resolve SDP_LANGUAGE before CUSTOM_PROMPT so sdp+sql auto-selects the right prompt
-    if [ "$SSIS_OUTPUT" = "sparksql" ] && [ -z "$SDP_LANGUAGE" ]; then
+    if [ "$SSIS_OUTPUT" = "dbsql" ] && [ -z "$SDP_LANGUAGE" ]; then
         SDP_LANGUAGE=sql
     fi
     if [ -z "$SDP_LANGUAGE" ] && [ "$YES" = false ]; then
@@ -374,28 +435,28 @@ else
         fi
         SDP_LANGUAGE="$_sdp_ans"
     fi
-    if [ "$SSIS_OUTPUT" = "sparksql" ]; then
+    if [ "$SSIS_OUTPUT" = "dbsql" ]; then
         SDP_LANGUAGE="${SDP_LANGUAGE:-sql}"
     else
         SDP_LANGUAGE="${SDP_LANGUAGE:-python}"
     fi
     if [ -z "$CUSTOM_PROMPT" ]; then
-        if [ "$SSIS_OUTPUT" = "sparksql" ]; then
-            CUSTOM_PROMPT="${SCRIPT_DIR}/ssis_to_sparksql_file_switch_prompt.yml"
+        if [ "$SSIS_OUTPUT" = "dbsql" ]; then
+            CUSTOM_PROMPT="${SCRIPT_DIR}/ssis_to_dbsql_prompt.yml"
         elif [ "$SSIS_OUTPUT" = "sdp" ] && [ "$SDP_LANGUAGE" = "sql" ]; then
             # SQL-language Lakeflow Declarative Pipeline (LDP SQL syntax, not Python @dp)
-            CUSTOM_PROMPT="${SCRIPT_DIR}/ssis_to_databricks_sdp_sql_prompt.yml"
+            CUSTOM_PROMPT="${SCRIPT_DIR}/ssis_to_sdp_sql_prompt.yml"
         else
-            CUSTOM_PROMPT="${SCRIPT_DIR}/ssis_to_databricks_sdp_prompt.yml"
+            CUSTOM_PROMPT="${SCRIPT_DIR}/ssis_to_sdp_python_prompt.yml"
         fi
     fi
     SSIS_OUTPUT="${SSIS_OUTPUT:-sdp}"
 
-    if [ "$SKIP_JOB_CREATE" = false ] && [ "$SSIS_OUTPUT" = "sparksql" ] && [ "$SKIP_SWITCH" = false ] && [ "$YES" = false ]; then
+    if [ "$SKIP_JOB_CREATE" = false ] && [ "$SSIS_OUTPUT" = "dbsql" ] && [ "$SKIP_SWITCH" = false ] && [ "$YES" = false ]; then
         read -rp "Create a SQL Warehouse Job for the converted files? (Y/n): " _job_ans
         [[ "$_job_ans" =~ ^[Nn]$ ]] && SKIP_JOB_CREATE=true
     fi
-    if [ "$WAIT_FOR_SWITCH" = false ] && [ "$SSIS_OUTPUT" = "sparksql" ] && [ "$SKIP_SWITCH" = false ] && [ "$YES" = false ]; then
+    if [ "$WAIT_FOR_SWITCH" = false ] && [ "$SSIS_OUTPUT" = "dbsql" ] && [ "$SKIP_SWITCH" = false ] && [ "$YES" = false ]; then
         read -rp "Wait for Switch LLM to complete before finishing? (y/N): " _wait_ans
         [[ "$_wait_ans" =~ ^[Yy]$ ]] && WAIT_FOR_SWITCH=true
     fi
@@ -419,12 +480,12 @@ if [ "$SKIP_SWITCH" = true ]; then
     echo "  Workspace folder:   (N/A – Switch disabled)"
     echo "  Custom prompt:      (N/A – Switch disabled)"
     echo "  Switch catalog/UC:  (N/A – Switch disabled)"
-    echo "  Medallion / DLP:    (skipped with Switch; no workspace notebooks to wire)"
+    echo "  Medallion / SDP:    (skipped with Switch; no workspace notebooks to wire)"
 else
     echo "  Workspace folder:   ${OUTPUT_WS_FOLDER}"
     echo "  Custom prompt:      ${CUSTOM_PROMPT}"
-    echo "  SSIS output:        ${SSIS_OUTPUT} (sdp = Lakeflow pipeline; sparksql = one .sql per .py + SQL Warehouse Job)"
-    if [ "$SSIS_OUTPUT" = "sparksql" ]; then
+    echo "  SSIS output:        ${SSIS_OUTPUT} (sdp = Lakeflow pipeline; dbsql = one .sql per .py + SQL Warehouse Job)"
+    if [ "$SSIS_OUTPUT" = "dbsql" ]; then
         echo "  Job creation:       $([ "$SKIP_JOB_CREATE" = true ] && echo 'skip' || echo 'yes (warehouse selection at Step 6)')"
     fi
     echo "  Catalog:            ${CATALOG}"
@@ -432,16 +493,18 @@ else
     echo "  Volume:             ${VOLUME}"
     echo "  Foundation model:   ${FOUNDATION_MODEL}"
     echo "  Switch sdp_language: ${SDP_LANGUAGE}"
-    if [ "$SINGLE_CATALOG" = true ]; then
+    if [ "$MEDALLION" = false ]; then
+        echo "  Medallion:          off (using ${CATALOG}.${SCHEMA} for all layers)"
+    elif [ "$SINGLE_CATALOG" = true ]; then
         echo "  Layers (single):    ${CATALOG}  bronze=${BRONZE_SCHEMA}  silver=${SILVER_SCHEMA}  gold=${GOLD_SCHEMA}"
     else
         echo "  Bronze:             ${BRONZE_CATALOG}.${BRONZE_SCHEMA}"
         echo "  Silver:             ${SILVER_CATALOG}.${SILVER_SCHEMA}"
         echo "  Gold:               ${GOLD_CATALOG}.${GOLD_SCHEMA}"
     fi
-    [ "$SSIS_OUTPUT" = "sparksql" ] && echo "  Switch completion:  $([ "$WAIT_FOR_SWITCH" = true ] && echo 'wait (synchronous)' || echo 'async (fires and continues)')"
+    [ "$SSIS_OUTPUT" = "dbsql" ] && echo "  Switch completion:  $([ "$WAIT_FOR_SWITCH" = true ] && echo 'wait (synchronous)' || echo 'async (fires and continues)')"
     echo "  Pipeline name:      ${PIPELINE_NAME}"
-    echo "  Pipeline compute:   $([ "$USE_SERVERLESS" = true ] && echo 'Serverless' || echo "Cluster Policy: ${CLUSTER_POLICY}")"
+    echo "  Pipeline compute:   $([ "$COMPUTE_TYPE" = "serverless" ] && echo 'Serverless' || echo "Cluster Policy: ${CLUSTER_POLICY}")"
 fi
 echo "  BladeBridge:        $([ "$SKIP_BLADEBRIDGE" = true ] && echo 'skip' || ([ "$SKIP_DET_INSTALL" = true ] && echo 'run (no install)' || echo 'install + run'))"
 echo "  Switch LLM:        $([ "$SKIP_SWITCH" = true ] && echo 'skip' || ([ "$SKIP_LLM_INSTALL" = true ] && echo 'run (no install)' || echo 'install + run'))"
@@ -471,7 +534,7 @@ rm -f "${OVERRIDES_FILE}.bak"
 
 if [ "$SKIP_DET_INSTALL" = false ]; then
     echo "Step 1a: Installing deterministic transpiler (BladeBridge)..."
-    databricks labs lakebridge install-transpile --interactive false $PROFILE_FLAG
+    (yes || true) | databricks labs lakebridge install-transpile $PROFILE_FLAG
     echo ""
 else
     echo "Step 1a: Skipping deterministic transpiler install (--skip-det-install)."
@@ -479,7 +542,7 @@ fi
 
 if [ "$SKIP_LLM_INSTALL" = false ]; then
     echo "Step 1b: Installing LLM transpiler (Switch)..."
-    databricks labs lakebridge install-transpile --include-llm-transpiler true --interactive false $PROFILE_FLAG
+    (yes || true) | databricks labs lakebridge install-transpile --include-llm-transpiler true $PROFILE_FLAG
     echo ""
 else
     echo "Step 1b: Skipping LLM transpiler install (--skip-llm-install)."
@@ -644,14 +707,13 @@ echo "  Uploaded prompt to: ${WS_PROMPT_PATH}"
 # Update switch_config.yml on workspace
 SWITCH_CONFIG_WS_PATH="/Users/${USER_EMAIL}/.lakebridge/switch/resources/switch_config.yml"
 SWITCH_CONFIG_LOCAL="${OUTPUT_FOLDER}/switch_config.yml"
-if [ "$SSIS_OUTPUT" = "sparksql" ]; then
+if [ "$SSIS_OUTPUT" = "dbsql" ]; then
     SWITCH_TARGET_TYPE=file
     SWITCH_OUTPUT_EXT="sql"
 else
     SWITCH_TARGET_TYPE=file
     SWITCH_OUTPUT_EXT="py"
 fi
-if [ -n "$SWITCH_OUTPUT_EXT" ]; then
 cat > "$SWITCH_CONFIG_LOCAL" <<SWITCHEOF
 # Switch configuration file
 # Auto-generated by ssis_switch_pipeline run.sh
@@ -671,26 +733,6 @@ sql_output_dir:
 request_params:
 sdp_language: ${SDP_LANGUAGE}
 SWITCHEOF
-else
-cat > "$SWITCH_CONFIG_LOCAL" <<SWITCHEOF
-# Switch configuration file
-# Auto-generated by ssis_switch_pipeline run.sh
-
-target_type: "${SWITCH_TARGET_TYPE}"
-source_format: "generic"
-comment_lang: "English"
-log_level: "INFO"
-token_count_threshold: 50000
-concurrency: 4
-max_fix_attempts: 0
-
-conversion_prompt_yaml: ${WS_PROMPT_PATH}
-
-sql_output_dir:
-request_params:
-sdp_language: ${SDP_LANGUAGE}
-SWITCHEOF
-fi
 
 databricks workspace import "${SWITCH_CONFIG_WS_PATH}" \
     --file "$SWITCH_CONFIG_LOCAL" \
@@ -698,7 +740,7 @@ databricks workspace import "${SWITCH_CONFIG_WS_PATH}" \
     --overwrite \
     $PROFILE_FLAG
 echo "  Updated switch_config.yml at: ${SWITCH_CONFIG_WS_PATH}"
-echo "  target_type: ${SWITCH_TARGET_TYPE} (sparksql: file+sql, sdp: file+py)"
+echo "  target_type: ${SWITCH_TARGET_TYPE} (dbsql: file+sql, sdp: file+py)"
 echo "  sdp_language: ${SDP_LANGUAGE}"
 echo ""
 
@@ -725,8 +767,8 @@ SWITCH_RUN_ID=$(sed 's/\x1b\[[0-9;]*m//g' "$_switch_log" \
 rm -f "$_switch_log"
 
 echo ""
-if [ "${SSIS_OUTPUT:-sdp}" = "sparksql" ]; then
-    echo "  LLM conversion in progress. Spark SQL artifacts are written under ${OUTPUT_WS_FOLDER} when completed."
+if [ "${SSIS_OUTPUT:-sdp}" = "dbsql" ]; then
+    echo "  LLM conversion in progress. Databricks SQL artifacts are written under ${OUTPUT_WS_FOLDER} when completed."
 else
     echo "  LLM conversion is in progress. Python .py files at: ${OUTPUT_WS_FOLDER} when completed"
 fi
@@ -773,7 +815,7 @@ if [ "$SKIP_SWITCH" = true ]; then
     [ -d "${JOBS_DIR:-}" ] && echo "  Job JSONs:          ${JOBS_DIR}"
     echo "  Lakeflow Pipeline:  (skipped; requires Switch output)"
     echo "============================================"
-elif [ "${SSIS_OUTPUT:-sdp}" = "sparksql" ]; then
+elif [ "${SSIS_OUTPUT:-sdp}" = "dbsql" ]; then
 
 JOB_WAS_CREATED=false
 JOB_ID=""
@@ -860,8 +902,7 @@ if [ "$SKIP_JOB_CREATE" = false ]; then
     JOB_SPEC_FILE="${OUTPUT_FOLDER}/job_spec.json"
     SSIS_SWITCH_INPUT_DIR="${SWITCH_INPUT_DIR}"
     export SSIS_SWITCH_INPUT_DIR OUTPUT_WS_FOLDER WAREHOUSE_ID JOB_NAME JOB_SPEC_FILE \
-           GOLD_CATALOG GOLD_SCHEMA BRONZE_CATALOG BRONZE_SCHEMA \
-           SILVER_CATALOG SILVER_SCHEMA
+           CATALOG SCHEMA
     python3 <<'PYEOF'
 import os, re, json
 
@@ -931,7 +972,11 @@ for fname in py_files:
         "task_key": key,
         "sql_task": {
             "file": {"path": f"{output_ws_folder}/{base}.sql"},
-            "warehouse_id": warehouse_id
+            "warehouse_id": warehouse_id,
+            "parameters": {
+                "catalog": "{{job.parameters.catalog}}",
+                "schema":  "{{job.parameters.schema}}"
+            }
         }
     }
     if deps:
@@ -939,14 +984,8 @@ for fname in py_files:
     tasks.append(task)
 
 parameters = [
-    {"name": "gold_catalog",   "default": os.environ.get('GOLD_CATALOG', '')},
-    {"name": "gold_schema",    "default": os.environ.get('GOLD_SCHEMA', '')},
-    {"name": "bronze_catalog", "default": os.environ.get('BRONZE_CATALOG', '')},
-    {"name": "bronze_schema",  "default": os.environ.get('BRONZE_SCHEMA', '')},
-    {"name": "silver_catalog", "default": os.environ.get('SILVER_CATALOG', '')},
-    {"name": "silver_schema",  "default": os.environ.get('SILVER_SCHEMA', '')},
-    {"name": "source_catalog", "default": os.environ.get('BRONZE_CATALOG', '')},
-    {"name": "source_schema",  "default": os.environ.get('BRONZE_SCHEMA', '')},
+    {"name": "catalog", "default": os.environ.get('CATALOG', '')},
+    {"name": "schema",  "default": os.environ.get('SCHEMA', '')},
 ]
 json.dump({"name": job_name, "parameters": parameters, "tasks": tasks}, open(job_spec_file, 'w'), indent=2)
 print(f"  {len(tasks)} task(s) in job spec", flush=True)
@@ -971,7 +1010,7 @@ fi
 fi  # end SKIP_JOB_CREATE guard
 
 echo "============================================"
-echo "  Run finished (SSIS -> Spark SQL .sql)"
+echo "  Run finished (SSIS -> Databricks SQL .sql)"
 echo "============================================"
 echo "  Artifacts:          see ${OUTPUT_WS_FOLDER} and local ${OUTPUT_FOLDER} (Switch layout)"
 echo "  BladeBridge:        ${OUTPUT_FOLDER}"
@@ -1022,7 +1061,7 @@ print(host.rstrip('/'))
     python3 << PYEOF > "$PIPELINE_SPEC"
 import json, sys
 notebooks = """${nb_list}""".strip().split('\n')
-use_serverless = "${USE_SERVERLESS}" == "true"
+use_serverless = "${COMPUTE_TYPE}" == "serverless"
 cluster_policy = "${CLUSTER_POLICY}"
 
 spec = {

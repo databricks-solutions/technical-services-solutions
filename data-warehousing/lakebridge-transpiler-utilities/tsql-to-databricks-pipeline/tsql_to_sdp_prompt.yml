@@ -5,10 +5,10 @@ system_message: |
   **HARD RULE: `# COMMAND ----------` is forbidden.** The first character of your output must be `--` or a SQL keyword.
 
   **HARD RULE: NEVER use `{{job.parameters.xxx}}` — that is SQL Warehouse Job syntax and BREAKS in a pipeline.**
-  Pipeline parameters use `${parameter_name}` (single dollar-sign curly braces): `${gold_catalog}`, `${bronze_schema}`.
+  Pipeline parameters use `${parameter_name}` (single dollar-sign curly braces): `${silver_catalog}`, `${bronze_schema}`.
 
   **HARD RULE: NEVER use `CREATE OR REPLACE VIEW` for output tables.** It is not published to Unity Catalog.
-  Use `CREATE OR REFRESH MATERIALIZED VIEW ${gold_catalog}.${gold_schema}.TableName` for any table users can query.
+  Use `CREATE OR REFRESH MATERIALIZED VIEW ${silver_catalog}.${silver_schema}.TableName` for business-entity tables (facts, dimensions). Use `${gold_catalog}.${gold_schema}.TableName` for aggregated / BI-optimized tables.
 
   # LDP SQL Statement Reference
 
@@ -20,11 +20,13 @@ system_message: |
 
   # Medallion Layers
 
-  | Layer  | Purpose                          | Parameter prefix |
-  |--------|----------------------------------|------------------|
-  | Bronze | Raw source data                  | `${bronze_catalog}.${bronze_schema}` |
-  | Silver | Cleaned / conformed staging      | `${silver_catalog}.${silver_schema}` |
-  | Gold   | Business-ready dimensions/facts  | `${gold_catalog}.${gold_schema}` |
+  Databricks medallion semantics:
+
+  | Layer  | Purpose                                                                         | Parameter prefix |
+  |--------|---------------------------------------------------------------------------------|------------------|
+  | Bronze | Raw / source. Untransformed extracts from operational systems.                  | `${bronze_catalog}.${bronze_schema}` |
+  | Silver | Business-level entities — cleaned, conformed facts and dimensions.              | `${silver_catalog}.${silver_schema}` |
+  | Gold   | Aggregated, BI-optimized objects — summary tables, marts, report-ready aggregates. | `${gold_catalog}.${gold_schema}` |
 
   Temporary views (tmp-prefixed) → reference by bare name only, no catalog/schema prefix.
   Do NOT hardcode catalog or schema names.
@@ -74,8 +76,8 @@ few_shots:
       GO
   - role: assistant
     content: |
-      -- pLoadDimProduct → DimProduct (gold layer, full-refresh materialized view)
-      CREATE OR REFRESH MATERIALIZED VIEW ${gold_catalog}.${gold_schema}.DimProduct
+      -- pLoadDimProduct → DimProduct (silver layer, full-refresh materialized view)
+      CREATE OR REFRESH MATERIALIZED VIEW ${silver_catalog}.${silver_schema}.DimProduct
       COMMENT "Product dimension with seed row, loaded from bronze Product and Category"
       AS
       SELECT -1 AS ProductId, 'N/A' AS ProductCode, 'Unknown' AS ProductName,
@@ -109,7 +111,7 @@ few_shots:
       GO
   - role: assistant
     content: |
-      -- pLoadDimCustomer → staging + DimCustomer (gold layer)
+      -- pLoadDimCustomer → staging + DimCustomer (silver layer)
       -- TODO: Original proc used TRUNCATE+INSERT staging. Converted to TEMPORARY VIEW (pipeline-scoped)
       -- and MATERIALIZED VIEW (full-refresh). If incremental merge is needed, implement outside the pipeline.
 
@@ -122,7 +124,7 @@ few_shots:
       LEFT JOIN ${bronze_catalog}.${bronze_schema}.Segment s ON c.SegmentId = s.SegmentId
       WHERE c.IsActive = 1;
 
-      CREATE OR REFRESH MATERIALIZED VIEW ${gold_catalog}.${gold_schema}.DimCustomer
+      CREATE OR REFRESH MATERIALIZED VIEW ${silver_catalog}.${silver_schema}.DimCustomer
       COMMENT "Customer dimension loaded from bronze Customer, Region, Segment"
       AS
       SELECT CustomerId, CustomerCode, Region, Segment, LoadDate
@@ -157,7 +159,7 @@ few_shots:
       GO
   - role: assistant
     content: |
-      -- pLoadFactSales → staging + FactSales (gold layer)
+      -- pLoadFactSales → staging + FactSales (silver layer)
       -- TODO: Original proc used TRUNCATE+INSERT staging and MERGE upsert.
       -- Converted to TEMPORARY VIEW + full-refresh MATERIALIZED VIEW.
       -- If incremental merge is needed, implement outside the pipeline.
@@ -171,7 +173,7 @@ few_shots:
       WHERE s.SaleDate >= date_add(current_date(), -30)
         AND s.IsVoided = 0;
 
-      CREATE OR REFRESH MATERIALIZED VIEW ${gold_catalog}.${gold_schema}.FactSales
+      CREATE OR REFRESH MATERIALIZED VIEW ${silver_catalog}.${silver_schema}.FactSales
       COMMENT "Daily sales facts loaded from bronze SalesTransaction, Customer, Product"
       AS
       SELECT SalesId, CustomerId, ProductId, Quantity, Amount, SaleDate, LoadDate

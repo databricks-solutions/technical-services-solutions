@@ -62,13 +62,20 @@ system_message: |
 
   # Layer Assignment Rules
 
-  - **Bronze** (`{bronze_catalog}.{bronze_schema}`): Source tables from external databases.
-    References like `ODS.dbo.X`, `SourceDB.dbo.Y` become `{bronze_catalog}.{bronze_schema}.X`.
-  - **Silver** (`{silver_catalog}.{silver_schema}`): Staging/temp tables.
-    References like `tmpX`, `TMPAbaseguros.dbo.X`, `dbo.tmpX` become silver-layer tables
-    or references to other `@dp.table` functions within the pipeline.
-  - **Gold** (`{gold_catalog}.{gold_schema}`): Final dimension/fact tables.
-    References like `DPolizaAuto`, `FactOrders`, `DimCustomer` become
+  Medallion semantics (Databricks standard):
+  - **Bronze** (`{bronze_catalog}.{bronze_schema}`): raw / source. Untransformed
+    tables ingested from external operational systems. Three-part references like
+    `<SourceDB>.dbo.X` (e.g., `SourceDB.dbo.Customer`, `OperationalDB.dbo.Order`)
+    become `{bronze_catalog}.{bronze_schema}.X`.
+  - **Silver** (`{silver_catalog}.{silver_schema}`): business-level entities.
+    Cleaned, conformed facts and dimensions. References like `DimCustomer`,
+    `FactOrders`, or other persistent business tables become
+    `{silver_catalog}.{silver_schema}.X`. Temporary `tmp*` staging tables and
+    other transient work tables become temporary views or pipeline-scoped
+    `@dp.temporary_view` functions, *not* silver tables.
+  - **Gold** (`{gold_catalog}.{gold_schema}`): aggregated, BI-optimized.
+    Summary tables, marts, and report-ready aggregates (e.g.,
+    `SalesSummaryDaily`, `CustomerLifetimeValue`) become
     `{gold_catalog}.{gold_schema}.X`.
 
   Always remove `dbo.` schema prefixes — not needed in Spark SQL / Unity Catalog.
@@ -79,7 +86,7 @@ system_message: |
 
   ```python
   # BladeBridge input:
-  spark.sql(f"""TRUNCATE table dbo.tmpX; INSERT INTO dbo.tmpX (...) SELECT ... FROM ODS.dbo.Y""")
+  spark.sql(f"""TRUNCATE table dbo.tmpX; INSERT INTO dbo.tmpX (...) SELECT ... FROM SourceDB.dbo.Y""")
   ```
 
   Tables with a `tmp` prefix MUST use `@dp.temporary_view()` — they are pipeline-scoped
@@ -98,14 +105,15 @@ system_message: |
       """)
   ```
 
-  Non-tmp tables use `@dp.table` with the full catalog/schema name:
+  Non-tmp persistent business tables (facts, dimensions, conformed objects) use
+  `@dp.table` with the full silver catalog/schema:
 
   ```python
   @dp.table(
-      name=f"{silver_catalog}.{silver_schema}.tableX",
-      comment="Staging table for X"
+      name=f"{silver_catalog}.{silver_schema}.dim_x",
+      comment="Conformed dimension for X"
   )
-  def table_x():
+  def dim_x():
       return spark.sql(f"""
           SELECT ...
           FROM {bronze_catalog}.{bronze_schema}.Y
@@ -117,11 +125,12 @@ system_message: |
   When the original SSIS has IF seed + INSERT staging + MERGE UPDATE + MERGE DELETE +
   INSERT new rows with surrogate keys, convert to `@dp.materialized_view()` with a
   full-refresh approach. SDP materialized views CANNOT self-reference their own output,
-  so the merge/update semantics are simplified to seed + staging UNION ALL.
+  so the merge/update semantics are simplified to seed + staging UNION ALL. Final
+  dimensions and facts live in **silver**, not gold.
 
   ```python
   @dp.materialized_view(
-      name=f"{gold_catalog}.{gold_schema}.dim_table",
+      name=f"{silver_catalog}.{silver_schema}.dim_table",
       comment="Dimension table with seed row and surrogate keys"
   )
   def dim_table():
@@ -137,23 +146,24 @@ system_message: |
               bk_col, id_col,
               COALESCE(date_col_1, 19000101) AS date_col_1,
               COALESCE(date_col_2, 19000101) AS date_col_2
-          FROM {silver_catalog}.{silver_schema}.staging_table
+          FROM {bronze_catalog}.{bronze_schema}.staging_table
       """)
   ```
 
-  ## 3. Simple SELECT (Read-Only Views)
+  ## 3. Aggregated / BI-Optimized Output (Gold)
 
-  If a query only reads and doesn't write (or feeds a downstream step), use
-  `@dp.materialized_view`:
+  Summary tables, marts, and report-ready aggregates belong in **gold**:
 
   ```python
   @dp.materialized_view(
-      name=f"{gold_catalog}.{gold_schema}.report_view",
-      comment="Materialized view for reporting"
+      name=f"{gold_catalog}.{gold_schema}.sales_summary_daily",
+      comment="Daily sales rollup for BI consumption"
   )
-  def report_view():
+  def sales_summary_daily():
       return spark.sql(f"""
-          SELECT ... FROM {silver_catalog}.{silver_schema}.source
+          SELECT order_date, SUM(amount) AS total
+          FROM {silver_catalog}.{silver_schema}.fact_orders
+          GROUP BY order_date
       """)
   ```
 
@@ -161,7 +171,7 @@ system_message: |
 
   Remove these BladeBridge-generated metadata variables — LDP handles execution tracking:
   - `StartTime`, `MachineName`, `UserName`, `ExecutionInstanceGUID`, `PackageName`
-  - `V_VPC_RutaLog` and similar log path variables
+  - log path variables (e.g. `V_LogPath`, `V_LogDir`)
   - `datetime.now()`, `socket.gethostname()`, `getpass.getuser()`, `uuid.uuid4()`
 
   Remove these imports if they become unused after metadata removal:
@@ -344,8 +354,8 @@ few_shots:
       		ELSE 'L2'
       		END AS CategoryLevel,
       		CASE WHEN C.EndDate IS NULL OR C.EndDate > GETDATE() THEN 1 ELSE 0 END As IsActive
-      FROM  ODS.dbo.ProductCategory AS C
-            LEFT JOIN ODS.dbo.ProductCategory AS PC ON PC.CategoryId = C.ParentCategoryId
+      FROM  SourceDB.dbo.ProductCategory AS C
+            LEFT JOIN SourceDB.dbo.ProductCategory AS PC ON PC.CategoryId = C.ParentCategoryId
        Where C.CreatedDate >= '2015-01-01'
        Group by C.CategoryId,
       		C.CategoryName,
@@ -408,7 +418,7 @@ few_shots:
       			ISNULL(CAT.CategoryLevel, 'ROOT') As CategoryLevel,
       			CAT.VersionId,
       			CASE WHEN CAT.IsActive = 1 THEN 1 ELSE 0 END As IsActive
-      From `ODS`.`dbo`.`Product` P
+      From `SourceDB`.`dbo`.`Product` P
       Left Join (		Select C.CategoryId, C.CategoryName, C.CategoryLevel, C.IsActive, 1 as VersionId,
       					CAST(CONVERT(VARCHAR(8), C.CreatedDate, 112) AS INT) As SkDateCreated
       				From `StagingDB`.`dbo`.`tmpProductCategories` C
@@ -487,7 +497,7 @@ few_shots:
       # Staging: tmpProductCategories
       # Original: TRUNCATE + INSERT INTO dbo.tmpProductCategories
       # Converted to @dp.temporary_view — tmp prefix, staging only used within pipeline
-      # Fixed: removed dbo. prefixes, replaced ODS.dbo.X with bronze catalog/schema
+      # Fixed: removed dbo. prefixes, replaced SourceDB.dbo.X with bronze catalog/schema
       # Fixed: GETDATE() converted to current_timestamp()
       @dp.temporary_view(
           name="tmpProductCategories"
@@ -524,7 +534,7 @@ few_shots:
       # Silver staging: tmpDimProduct
       # Original: TRUNCATE + INSERT INTO StagingDB.dbo.tmpDimProduct
       # Converted to @dp.temporary_view — tmp prefix, staging only used within pipeline
-      # Fixed: replaced ODS.dbo.X with bronze, StagingDB.dbo.X with silver references
+      # Fixed: replaced SourceDB.dbo.X with bronze, StagingDB.dbo.X with silver references
       # Fixed: CONVERT(VARCHAR(8), date, 112) to date_format(date, 'yyyyMMdd')
       # Fixed: ISNULL() to COALESCE()
       @dp.temporary_view(

@@ -16,8 +16,8 @@ system_message: |
 
   - **Temporary views** (declared with `CREATE TEMPORARY VIEW`) MUST be referenced by bare name (e.g., `FROM tmpX`) — no catalog/schema prefix.
   - **External source tables** (bronze): use `${bronze_catalog}.${bronze_schema}.TableName`.
-  - **Silver persistent staging**: use `${silver_catalog}.${silver_schema}.TableName` (non-`tmp` staging tables only).
-  - **Final tables** (gold): use `${gold_catalog}.${gold_schema}.TableName`.
+  - **Persistent business tables** (silver — facts and dimensions): use `${silver_catalog}.${silver_schema}.TableName`.
+  - **Aggregated / BI-optimized objects** (gold — summaries, marts): use `${gold_catalog}.${gold_schema}.TableName`.
 
   # Configuration Parameters
 
@@ -43,10 +43,11 @@ system_message: |
 
   # Layer Assignment Rules
 
-  - **Bronze** (`${bronze_catalog}.${bronze_schema}`): Source tables from external databases. References like `ODS.dbo.X`, `SourceDB.dbo.Y` → `${bronze_catalog}.${bronze_schema}.X`.
-  - **Temporary view** (no layer): Any `tmp`-prefixed table MUST use `CREATE TEMPORARY VIEW` — it is pipeline-scoped only, NOT a Unity Catalog object. Reference it by bare name.
-  - **Silver** (`${silver_catalog}.${silver_schema}`): Persistent staging tables (non-`tmp`). References like `StagingDB.dbo.X` → `${silver_catalog}.${silver_schema}.X`.
-  - **Gold** (`${gold_catalog}.${gold_schema}`): Final dimension/fact tables.
+  Medallion semantics (Databricks standard):
+  - **Bronze** (`${bronze_catalog}.${bronze_schema}`): raw / source. Untransformed tables from external operational systems. Three-part references like `<SourceDB>.dbo.X` (e.g., `SourceDB.dbo.Customer`) → `${bronze_catalog}.${bronze_schema}.X`.
+  - **Temporary view** (no layer): any `tmp`-prefixed table MUST use `CREATE TEMPORARY VIEW` — it is pipeline-scoped only, NOT a Unity Catalog object. Reference it by bare name.
+  - **Silver** (`${silver_catalog}.${silver_schema}`): business-level entities. Cleaned, conformed facts and dimensions (e.g., `DimCustomer`, `FactOrders`) → `${silver_catalog}.${silver_schema}.X`.
+  - **Gold** (`${gold_catalog}.${gold_schema}`): aggregated, BI-optimized objects (summaries, marts, e.g., `SalesSummaryDaily`).
 
   Always remove `dbo.` schema prefixes.
 
@@ -55,7 +56,7 @@ system_message: |
   ## 1. TRUNCATE + INSERT ... SELECT (Full Refresh Staging)
 
   ```python
-  spark.sql(f"""TRUNCATE table dbo.tmpX; INSERT INTO dbo.tmpX SELECT ... FROM ODS.dbo.Y""")
+  spark.sql(f"""TRUNCATE table dbo.tmpX; INSERT INTO dbo.tmpX SELECT ... FROM SourceDB.dbo.Y""")
   ```
 
   `tmp`-prefixed tables → `CREATE TEMPORARY VIEW` (pipeline-scoped):
@@ -66,7 +67,7 @@ system_message: |
   FROM ${bronze_catalog}.${bronze_schema}.Y;
   ```
 
-  Non-tmp staging tables → `CREATE OR REFRESH MATERIALIZED VIEW ${silver_catalog}.${silver_schema}.X AS SELECT ...`
+  Non-tmp persistent business tables (facts, dimensions) → `CREATE OR REFRESH MATERIALIZED VIEW ${silver_catalog}.${silver_schema}.X AS SELECT ...`. Pure transient/staging artifacts that aren't business entities should remain temporary views.
 
   ## 2. MERGE / Upsert / Dimension with Seed Row and Surrogate Keys
 
@@ -76,7 +77,7 @@ system_message: |
   -- TODO: Original SSIS used MERGE to update existing rows and INSERT only new ones.
   -- This version does full refresh from staging. If incremental merge is needed,
   -- implement outside the declarative pipeline.
-  CREATE OR REFRESH MATERIALIZED VIEW ${gold_catalog}.${gold_schema}.DimTable
+  CREATE OR REFRESH MATERIALIZED VIEW ${silver_catalog}.${silver_schema}.DimTable
   COMMENT "Dimension with seed row and surrogate keys"
   AS
   SELECT 1 AS SK, 'N/A' AS BK, -1 AS ID, 19000101 AS DateCol1, 99991231 AS DateCol2
@@ -100,7 +101,7 @@ system_message: |
   CREATE TEMPORARY VIEW SourceData AS
   SELECT * FROM ${bronze_catalog}.${bronze_schema}.SourceTable; -- TODO: replace with actual query from pLoadSourceData
 
-  CREATE OR REFRESH MATERIALIZED VIEW ${gold_catalog}.${gold_schema}.TargetTable AS
+  CREATE OR REFRESH MATERIALIZED VIEW ${silver_catalog}.${silver_schema}.TargetTable AS
   SELECT ... FROM SourceData;
   ```
 
@@ -134,7 +135,7 @@ system_message: |
 
   Remove BladeBridge-generated metadata variables — LDP handles execution tracking:
   - `StartTime`, `MachineName`, `UserName`, `ExecutionInstanceGUID`, `PackageName`
-  - `V_VPC_RutaLog` and similar log path variables
+  - log path variables (e.g. `V_LogPath`, `V_LogDir`)
 
   These have no equivalent in LDP SQL.
 
@@ -263,8 +264,8 @@ few_shots:
       		ELSE 'L2'
       		END AS CategoryLevel,
       		CASE WHEN C.EndDate IS NULL OR C.EndDate > GETDATE() THEN 1 ELSE 0 END As IsActive
-      FROM  ODS.dbo.ProductCategory AS C
-            LEFT JOIN ODS.dbo.ProductCategory AS PC ON PC.CategoryId = C.ParentCategoryId
+      FROM  SourceDB.dbo.ProductCategory AS C
+            LEFT JOIN SourceDB.dbo.ProductCategory AS PC ON PC.CategoryId = C.ParentCategoryId
        Where C.CreatedDate >= '2015-01-01'
        Group by C.CategoryId,
       		C.CategoryName,
@@ -327,7 +328,7 @@ few_shots:
       			ISNULL(CAT.CategoryLevel, 'ROOT') As CategoryLevel,
       			CAT.VersionId,
       			CASE WHEN CAT.IsActive = 1 THEN 1 ELSE 0 END As IsActive
-      From `ODS`.`dbo`.`Product` P
+      From `SourceDB`.`dbo`.`Product` P
       Left Join (		Select C.CategoryId, C.CategoryName, C.CategoryLevel, C.IsActive, 1 as VersionId,
       					CAST(CONVERT(VARCHAR(8), C.CreatedDate, 112) AS INT) As SkDateCreated
       				From `StagingDB`.`dbo`.`tmpProductCategories` C
@@ -394,7 +395,7 @@ few_shots:
       -- Staging: tmpProductCategories
       -- Original: TRUNCATE + INSERT INTO dbo.tmpProductCategories
       -- Converted to TEMPORARY VIEW — tmp prefix, pipeline-scoped only
-      -- Fixed: GETDATE() → current_timestamp(); dbo. removed; ODS.dbo.X → ${bronze_catalog}.${bronze_schema}.X
+      -- Fixed: GETDATE() → current_timestamp(); dbo. removed; SourceDB.dbo.X → ${bronze_catalog}.${bronze_schema}.X
       CREATE TEMPORARY VIEW tmpProductCategories AS
       SELECT C.CategoryId,
           C.CategoryName,
@@ -426,7 +427,7 @@ few_shots:
       -- Original: TRUNCATE + INSERT INTO StagingDB.dbo.tmpDimProduct
       -- Converted to TEMPORARY VIEW — tmp prefix, pipeline-scoped only
       -- Fixed: CONVERT(VARCHAR(8), date, 112) → date_format(date, 'yyyyMMdd'); ISNULL() → COALESCE()
-      -- Fixed: ODS.dbo.Product → ${bronze_catalog}.${bronze_schema}.Product; tmpProductCategories referenced by bare name
+      -- Fixed: SourceDB.dbo.Product → ${bronze_catalog}.${bronze_schema}.Product; tmpProductCategories referenced by bare name
       CREATE TEMPORARY VIEW tmpDimProduct AS
       SELECT P.ProductId AS ProductBK,
           P.ProductName,

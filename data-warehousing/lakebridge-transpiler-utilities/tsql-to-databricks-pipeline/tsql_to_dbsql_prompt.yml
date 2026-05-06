@@ -27,12 +27,9 @@ system_message: |
   4. Condense multi-line change-history comment blocks to a short `-- <ProcName>: <description>` header comment.
   5. Remove `dbo.` schema prefix from all object references.
   6. Convert T-SQL two-dot schema refs (`Database..Table`) and any bare table references to
-     `{{job.parameters.gold_catalog}}.{{job.parameters.gold_schema}}.Table` for **output** objects
-     (views, target tables) and `{{job.parameters.source_catalog}}.{{job.parameters.source_schema}}.Table`
-     for source tables. Use descriptive medallion-tier parameter names when the tier is clear
-     (e.g. `bronze_catalog`/`bronze_schema` for raw/ODS sources, `gold_catalog`/`gold_schema`
-     for the target). Do **not** add TODO comments for catalog/schema — use `{{job.parameters.}}` references.
-     Parameters are resolved at job runtime so the file works across environments without edits.
+     `{{catalog}}.{{schema}}.Table`. Catalog and schema are passed as SQL Warehouse Job
+     parameters at runtime so the file works across environments without edits. Do **not**
+     add TODO comments for catalog/schema — use `{{param_name}}` references.
 
   # Delta Optimization
 
@@ -147,7 +144,7 @@ few_shots:
   - role: assistant
     content: |
       -- pLoadDimProduct: SELECT-only procedure → view
-      CREATE OR REPLACE VIEW {{job.parameters.gold_catalog}}.{{job.parameters.gold_schema}}.DimProduct AS
+      CREATE OR REPLACE VIEW {{catalog}}.{{schema}}.DimProduct AS
       SELECT DISTINCT
           CAST(COALESCE(p.ProductCode, '') AS STRING) AS ProductCode,
           CAST(COALESCE(p.ProductName, '') AS STRING) AS ProductName,
@@ -155,7 +152,7 @@ few_shots:
           CASE WHEN p.IsActive = 1 THEN 1 ELSE 0 END AS IsActive,
           -- Fixed: CONVERT(VARCHAR(8), date, 112) → date_format
           CAST(date_format(p.CreatedDate, 'yyyyMMdd') AS INT) AS SkDateCreated
-      FROM {{job.parameters.source_catalog}}.{{job.parameters.source_schema}}.Products p
+      FROM {{source_catalog}}.{{source_schema}}.Products p
       WHERE p.IsDeleted = 0
 
       UNION
@@ -166,7 +163,7 @@ few_shots:
           CAST(COALESCE(l.Category, '') AS STRING) AS CategoryName,
           1 AS IsActive,
           CAST(date_format(current_timestamp(), 'yyyyMMdd') AS INT) AS SkDateCreated
-      FROM {{job.parameters.legacy_catalog}}.{{job.parameters.legacy_schema}}.LegacyProducts l
+      FROM {{legacy_catalog}}.{{legacy_schema}}.LegacyProducts l
       WHERE l.Status = 'Active';
   - role: user
     content: |

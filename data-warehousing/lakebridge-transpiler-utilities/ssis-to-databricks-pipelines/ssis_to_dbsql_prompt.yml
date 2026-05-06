@@ -18,18 +18,16 @@ system_message: |
 
   - No Python, no `import pyspark`, no `spark.`, no `@dp`, no notebooks, no `# COMMAND ----------`.
   - No `spark.read.table` — in SQL, use only `SELECT`/`INSERT`/`MERGE` and fully qualified
-    `{{job.parameters.catalog}}.{{job.parameters.schema}}.table` references.
-  - Do **not** hardcode catalog or schema names. Use `{{job.parameters.}}` references for all
-    catalog/schema values so they can be passed as job parameters at runtime:
-    `{{job.parameters.bronze_catalog}}`, `{{job.parameters.bronze_schema}}` for source/ODS tables;
-    `{{job.parameters.gold_catalog}}`, `{{job.parameters.gold_schema}}` for target dimension/fact tables;
-    `{{job.parameters.silver_catalog}}`, `{{job.parameters.silver_schema}}` for persistent staging.
+    `{{catalog}}.{{schema}}.table` references.
+  - Do **not** hardcode catalog or schema names. Use `{{catalog}}.{{schema}}.TableName`
+    for all output tables — `catalog` and `schema` are passed as SQL Warehouse Job parameters
+    at runtime so the file works across environments without edits.
     Temporary views (session-scoped) use no catalog prefix — bare name only.
-  - **`{{job.parameters.}}` IS the placeholder mechanism.** When generating stub SQL for unknown
+  - **`{{param_name}}` IS the placeholder mechanism.** When generating stub SQL for unknown
     stored-procedure outputs or unresolvable sources, still use
-    `{{job.parameters.gold_catalog}}.{{job.parameters.gold_schema}}.TableName`.
-    Never use bare patterns like `gold_catalog.gold_schema`, `catalog.schema`,
-    `target_catalog.target_schema`, or any other invented placeholder names.
+    `{{catalog}}.{{schema}}.TableName`.
+    Never use bare patterns like `catalog.schema`, `target_catalog.target_schema`,
+    or any other invented placeholder names.
 
   # Extraction
 
@@ -37,9 +35,8 @@ system_message: |
      `{var}`-style Python interpolations with a comment and the intended literal or placeholder
      `/* TODO: {var} */` when unknown.
   2. Order statements so dependencies run first: temp/staging, then final writes.
-  3. Prefer **Spark SQL** / Databricks SQL syntax. Strip `dbo.`; map medallion names to
-     `catalog.schema.object` (use `bronze` / `silver` / `gold` naming in comments if catalogs are
-     unknown).
+  3. Prefer **Spark SQL** / Databricks SQL syntax. Strip `dbo.`; map all table references to
+     `{{catalog}}.{{schema}}.object`.
 
   # SSIS / BladeBridge patterns (T-SQL to Spark SQL)
 
@@ -57,7 +54,7 @@ system_message: |
   - Replace `OPTIMIZE ... ZORDER BY (...)` → `ALTER TABLE {{...}}.Table CLUSTER BY (col1, col2); OPTIMIZE {{...}}.Table;`
     (**Liquid Clustering** supersedes ZORDER — **never emit the word ZORDER anywhere in output,
     not even in comments**).
-  - For post-load maintenance stubs: `-- TODO: ALTER TABLE {{job.parameters.gold_catalog}}.{{job.parameters.gold_schema}}.Table CLUSTER BY (frequently_filtered_cols);`
+  - For post-load maintenance stubs: `-- TODO: ALTER TABLE {{catalog}}.{{schema}}.Table CLUSTER BY (frequently_filtered_cols);`
   - CREATE/DROP INDEX, UPDATE STATISTICS, ANALYZE TABLE, pDropIndexes, pDropPrimaryKeys,
     pDropAlternateKeys → omit entirely; emit one-line comment per group:
     `-- Index/statistics management omitted: use Liquid Clustering (ALTER TABLE ... CLUSTER BY) for Delta.`
@@ -119,8 +116,8 @@ few_shots:
       		ELSE 'L2'
       		END AS CategoryLevel,
       		CASE WHEN C.EndDate IS NULL OR C.EndDate > GETDATE() THEN 1 ELSE 0 END As IsActive
-      FROM  ODS.dbo.ProductCategory AS C
-            LEFT JOIN ODS.dbo.ProductCategory AS PC ON PC.CategoryId = C.ParentCategoryId
+      FROM  SourceDB.dbo.ProductCategory AS C
+            LEFT JOIN SourceDB.dbo.ProductCategory AS PC ON PC.CategoryId = C.ParentCategoryId
        Where C.CreatedDate >= '2015-01-01'
        Group by C.CategoryId,
       		C.CategoryName,
@@ -154,7 +151,7 @@ few_shots:
       			ISNULL(CAT.CategoryLevel, 'ROOT') As CategoryLevel,
       			CAT.VersionId,
       			CASE WHEN CAT.IsActive = 1 THEN 1 ELSE 0 END As IsActive
-      From `ODS`.`dbo`.`Product` P
+      From `SourceDB`.`dbo`.`Product` P
       Left Join (		Select C.CategoryId, C.CategoryName, C.CategoryLevel, C.IsActive, 1 as VersionId,
       					CAST(CONVERT(VARCHAR(8), C.CreatedDate, 112) AS INT) As SkDateCreated
       				From `StagingDB`.`dbo`.`tmpProductCategories` C
@@ -198,7 +195,7 @@ few_shots:
       -- Removed: metadata variables, unused imports
 
       -- Staging: tmpProductCategories (session-scoped, not a catalog object)
-      -- Fixed: GETDATE() → current_timestamp(); dbo. removed; ODS.dbo.X → bronze catalog reference
+      -- Fixed: GETDATE() → current_timestamp(); dbo. removed; SourceDB.dbo.X → {{catalog}}.{{schema}} reference
       CREATE OR REPLACE TEMPORARY VIEW tmpProductCategories AS
       SELECT C.CategoryId,
           C.CategoryName,
@@ -211,8 +208,8 @@ few_shots:
           CASE WHEN C.EndDate IS NULL OR C.EndDate > current_timestamp()
               THEN 1 ELSE 0
           END AS IsActive
-      FROM {{job.parameters.bronze_catalog}}.{{job.parameters.bronze_schema}}.ProductCategory AS C
-      LEFT JOIN {{job.parameters.bronze_catalog}}.{{job.parameters.bronze_schema}}.ProductCategory AS PC
+      FROM {{catalog}}.{{schema}}.ProductCategory AS C
+      LEFT JOIN {{catalog}}.{{schema}}.ProductCategory AS PC
           ON PC.CategoryId = C.ParentCategoryId
       WHERE C.CreatedDate >= '2015-01-01'
       GROUP BY C.CategoryId, C.CategoryName, C.ParentCategoryId,
@@ -239,7 +236,7 @@ few_shots:
           COALESCE(CAT.CategoryLevel, 'ROOT') AS CategoryLevel,
           CAT.VersionId,
           CASE WHEN CAT.IsActive = 1 THEN 1 ELSE 0 END AS IsActive
-      FROM {{job.parameters.bronze_catalog}}.{{job.parameters.bronze_schema}}.Product P
+      FROM {{catalog}}.{{schema}}.Product P
       LEFT JOIN (
           SELECT C.CategoryId, C.CategoryName, C.CategoryLevel, C.IsActive, 1 AS VersionId,
               CAST(date_format(C.CreatedDate, 'yyyyMMdd') AS INT) AS SkDateCreated
@@ -254,10 +251,10 @@ few_shots:
       -- Gold dimension: DimProduct — full refresh (seed row + staging data)
       -- TODO: Original SSIS used MERGE to update existing rows and INSERT only new ones.
       -- This version does full refresh. If incremental merge is needed, replace the TRUNCATE+INSERT
-      -- below with a Delta MERGE INTO {{job.parameters.gold_catalog}}.{{job.parameters.gold_schema}}.DimProduct USING tmpDimProduct ON (...).
-      TRUNCATE TABLE {{job.parameters.gold_catalog}}.{{job.parameters.gold_schema}}.DimProduct;
+      -- below with a Delta MERGE INTO {{catalog}}.{{schema}}.DimProduct USING tmpDimProduct ON (...).
+      TRUNCATE TABLE {{catalog}}.{{schema}}.DimProduct;
 
-      INSERT INTO {{job.parameters.gold_catalog}}.{{job.parameters.gold_schema}}.DimProduct
+      INSERT INTO {{catalog}}.{{schema}}.DimProduct
           (ProductSK, ProductBK, ProductName, SkDateCreated, SkDateModified,
            SkDateStartValidity, SkDateEndValidity, SkDateEndValidity_Original,
            CategoryLevel, VersionId, IsActive)
@@ -322,19 +319,19 @@ few_shots:
       -- Index/statistics management omitted: use Liquid Clustering (ALTER TABLE ... CLUSTER BY) for Delta.
 
       -- Clear dimension table
-      TRUNCATE TABLE {{job.parameters.gold_catalog}}.{{job.parameters.gold_schema}}.DimGeography;
+      TRUNCATE TABLE {{catalog}}.{{schema}}.DimGeography;
 
       -- Seed row (originally EXECUTE pLoadZeroRecord 'DimGeography')
       -- TODO: replace column list and default values with actual DimGeography schema
-      INSERT INTO {{job.parameters.gold_catalog}}.{{job.parameters.gold_schema}}.DimGeography
+      INSERT INTO {{catalog}}.{{schema}}.DimGeography
       SELECT 0, '', '', '', '', '', '', '', '', '';
 
       -- Load dimension data (originally EXECUTE pLoadDimGeography)
       -- TODO: inline the SELECT logic from pLoadDimGeography stored procedure
       CREATE OR REPLACE TEMPORARY VIEW DimGeographySource AS
-      SELECT * FROM {{job.parameters.bronze_catalog}}.{{job.parameters.bronze_schema}}.DimGeographySource;
+      SELECT * FROM {{catalog}}.{{schema}}.DimGeographySource;
 
-      INSERT INTO {{job.parameters.gold_catalog}}.{{job.parameters.gold_schema}}.DimGeography
+      INSERT INTO {{catalog}}.{{schema}}.DimGeography
       SELECT * FROM DimGeographySource;
 
-      -- TODO: ALTER TABLE {{job.parameters.gold_catalog}}.{{job.parameters.gold_schema}}.DimGeography CLUSTER BY (frequently_filtered_cols);
+      -- TODO: ALTER TABLE {{catalog}}.{{schema}}.DimGeography CLUSTER BY (frequently_filtered_cols);

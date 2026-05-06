@@ -4,6 +4,8 @@ Scripts and config samples to help you move **SSIS**, **IBM DataStage**, **Infor
 
 **Prerequisite:** [Lakebridge](https://databrickslabs.github.io/lakebridge) must be installed (`databricks labs install lakebridge`), with the Databricks CLI configured for your workspace. For Python, Java, networking, and profile setup, follow the [installation guide](https://databrickslabs.github.io/lakebridge/docs/installation/). You do **not** need to run `databricks labs lakebridge install-transpile` yourself first: each pipeline script installs or refreshes the **BladeBridge** and **Switch** transpilers when you confirm the first-run prompts (or pass the skip flags on later runs once tools are already installed).
 
+**Prerequisite (shell):** Runnable pipelines are **Bash** scripts (`run.sh`). Run them from a **Bash-capable environment**: a **Databricks cluster web terminal**, **Linux or macOS terminal**, or **Git Bash** on Windows. Windows Command Prompt and PowerShell cannot execute `run.sh` directly; use Git Bash, WSL, or invoke `bash run.sh` / `bash run.txt` from an installed Bash.
+
 These scripts are example automation for efficient Lakebridge usage and are intended as reference. Do not run them in production without custom tuning for your environment.
 
 **Switch prompts:** Each runnable pipeline includes default `*.yml` prompt files for the LLM pass. Treat them as templates and **tune them for your workload** (legacy patterns, naming, and quality bars vary by source and team).

@@ -4,6 +4,8 @@ End-to-end helper script: **SQL Server Integration Services** packages (`.dtsx` 
 
 **Prerequisite:** [Lakebridge](https://databrickslabs.github.io/lakebridge) (`databricks labs install lakebridge`) and a configured Databricks CLI profile. Environment setup (Python, Java, workspace access) is in the [installation guide](https://databrickslabs.github.io/lakebridge/docs/installation/). This pipeline **installs the transpilers** (BladeBridge and Switch) on first run when you accept the install prompts; afterward use skip flags to avoid reinstalling.
 
+**Prerequisite (shell):** `run.sh` is a **Bash** script. Run it from a **Bash-capable environment**: a **Databricks cluster web terminal**, **Linux or macOS terminal**, or **Git Bash** on Windows. Windows Command Prompt and PowerShell do not run `run.sh` directly; use Git Bash, WSL, or `bash run.sh` / `bash run.txt`.
+
 Use these scripts as a starting point. Tune paths, overrides, and **Switch prompts for your workload** (package idioms and SQL dialect edges differ by estate), then validate in your workspace before production.
 
 ## Files

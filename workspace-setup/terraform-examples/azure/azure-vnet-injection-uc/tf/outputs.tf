@@ -66,7 +66,7 @@ output "external_location_name" {
 }
 
 output "catalog_name" {
-  description = "Name of the default Unity Catalog catalog"
+  description = "Name of the user-defined Unity Catalog catalog"
   value       = databricks_catalog.uc_quickstart_sandbox.name
 }
 

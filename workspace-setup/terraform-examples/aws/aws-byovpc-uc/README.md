@@ -1,11 +1,11 @@
-# AWS BYOVPC with Default Catalog Workspace Setup Guide
+# AWS BYOVPC with User-Defined Catalog Workspace Setup Guide
 
-This Terraform example deploys a Databricks workspace on AWS using the "Bring Your Own VPC" (BYOVPC) pattern with Unity Catalog and a default catalog backed by an external location. It provisions the full networking stack (VPC, subnets, NAT Gateway, VPC endpoints, security groups), a cross-account IAM role, an S3 root storage bucket, a Databricks workspace, and configures Unity Catalog with a storage credential, external location, and default catalog backed by a dedicated S3 bucket.
+This Terraform example deploys a Databricks workspace on AWS using the "Bring Your Own VPC" (BYOVPC) pattern with Unity Catalog and a user-defined catalog backed by an external location. It provisions the full networking stack (VPC, subnets, NAT Gateway, VPC endpoints, security groups), a cross-account IAM role, an S3 root storage bucket, a Databricks workspace, and configures Unity Catalog with a storage credential, external location, and user-defined catalog backed by a dedicated S3 bucket.
 
 It is important to note that this deployment creates a new VPC from scratch and currently does not support using an existing VPC.
 
 ### Important
-The difference between this deployment option and the standard option for aws-byovpc is the inclusion of a default catalog and external location. The requirements and authentication procedures remain the same.
+The difference between this deployment option and the standard option for aws-byovpc is the inclusion of a user-defined catalog and external location. The requirements and authentication procedures remain the same.
 
 ## Requirements
 
@@ -15,6 +15,7 @@ The difference between this deployment option and the standard option for aws-by
 - Databricks account created (E2 account)
 - Databricks account admin access
 - AWS permissions to create VPC, IAM, S3, and Security Group resources
+- When using an existing metastore (i.e. `metastore_id` is set), the identity used by Terraform (typically the Databricks **service principal** configured via `DATABRICKS_CLIENT_ID` / `DATABRICKS_CLIENT_SECRET`) must be able to create external locations on that metastore (for example `CREATE EXTERNAL LOCATION` on the metastore, or equivalent metastore-level permissions your organization grants). Metastores created by this template configure admin principals as part of this flow; attaching to an existing metastore often requires an account admin to grant this explicitly.
 
 ## Before you begin
 
@@ -74,7 +75,7 @@ The code provisions:
 8. **Unity Catalog metastore** -- Either creates a new metastore (when `metastore_id` is empty) or uses an existing one. The metastore is assigned to the workspace.
 9. **Unity Catalog IAM role and S3 bucket** -- A dedicated IAM role and S3 bucket for the Unity Catalog external location, with appropriate trust and access policies.
 10. **Storage credential and external location** -- A Unity Catalog storage credential backed by the IAM role, and an external location pointing to the catalog S3 bucket.
-11. **Default catalog** -- A Unity Catalog catalog backed by the external location's storage.
+11. **User-defined catalog** -- A Unity Catalog catalog backed by the external location's storage.
 
 ### Variables
 
@@ -100,6 +101,11 @@ Copy `terraform.tfvars.example` to `terraform.tfvars` in the `tf/` directory and
 | `aws_account_id` | **(Required)** AWS account ID where resources are deployed (used to construct IAM role ARNs for Unity Catalog). |
 | `metastore_id` | **(Optional)** Existing Unity Catalog metastore ID. Leave empty to create a new one. Default: `""`. |
 | `metastore_name` | **(Optional)** Name for the Unity Catalog metastore. Required when `metastore_id` is empty. Default: `""`. |
+| `catalog_name` | **(Optional)** Unity Catalog catalog name. Default `""` uses `prefix`. |
+| `external_location_name` | **(Optional)** Unity Catalog external location name. Default `""` uses `{resource_prefix}-external-location`. |
+| `storage_credential_name` | **(Optional)** Unity Catalog storage credential name. Default `""` uses `{resource_prefix}-storage-credential`. |
+
+**Note:** Those three variables default to `""` in `variables.tf`. They cannot default to `prefix` or `resource_prefix` there because Terraform does not allow a variable `default` to reference another variable; fallbacks are applied in `locals` in `unity_catalog.tf`.
 
 ## Deploy
 
@@ -179,7 +185,7 @@ tf/
 ├── credential.tf               # IAM cross-account role and policies
 ├── root_s3_bucket.tf           # S3 bucket for workspace root storage
 ├── metastore.tf                # Unity Catalog metastore
-├── unity_catalog.tf            # Storage credential, external location, and default catalog
+├── unity_catalog.tf            # Storage credential, external location, and user-defined catalog
 ```
 
 | File | Purpose |
@@ -194,8 +200,8 @@ tf/
 | **credential.tf** | Cross-account IAM role and policy for Databricks workspace provisioning. |
 | **root_s3_bucket.tf** | S3 bucket for workspace root storage (DBFS) with Databricks bucket policy. |
 | **metastore.tf** | Unity Catalog metastore (create new or use existing) and workspace assignment. |
-| **unity_catalog.tf** | Unity Catalog IAM role, S3 bucket, storage credential, external location, and default catalog. |
-| **outputs.tf** | Workspace URL/ID; VPC ID; subnet IDs; NAT gateway IDs; security group ID; S3 bucket names; metastore ID; credentials and network config IDs. |
+| **unity_catalog.tf** | Unity Catalog IAM role, S3 bucket, storage credential, external location, and user-defined catalog. |
+| **outputs.tf** | Workspace URL/ID; VPC ID; subnet IDs; NAT gateway IDs; security group ID; S3 bucket names; metastore ID; Unity Catalog catalog, external location, and storage credential names; credentials and network config IDs. |
 
 **Note:** There is no `main.tf` file in this project. Instead, resources are organized into descriptive, purpose-specific files.
 

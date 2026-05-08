@@ -36,3 +36,20 @@ This notebook demonstrates how to query Unity Catalog **system tables** (`system
 This notebook scans all tables in a Unity Catalog schema, identifies columns **without** comments, generates descriptive comments using an LLM via `ai_query`, and applies them via `ALTER TABLE` or `ALTER VIEW`.
 
 **Existing comments are never overwritten.** Streaming tables and materialized views are detected and skipped — their comments should be managed in the pipeline definition.
+
+# Genie Space Conversation Duration Logger.ipynb
+
+This notebook **incrementally** captures Genie space conversations and logs per-message latency with a three-stage breakdown so timing data is preserved beyond `system.query.history` retention (1 year).
+
+**Stage breakdown** (`total_duration = pre_execution + query_execution + post_execution`):
+- **pre_execution** — AI generation, intent classification, SQL planning (before SQL hits the warehouse)
+- **query_execution** — actual SQL execution time on the warehouse (from `system.query.history`)
+- **post_execution** — result processing + LLM summarization after SQL completes
+
+**How it works:**
+1. Fetches all conversations & messages from the Genie REST API (parallelized, 8 workers)
+2. Joins `system.query.history` for SQL timing breakdown
+3. Joins `system.access.audit` to determine `conversation_mode` (`chat` / `agent`); NULLs default to `'chat'` since Deep Research always routes through the logged `createConversation` action
+4. **MERGE**s results into a Delta table keyed on `(space_id, conversation_id, message_id)` — idempotent upsert
+
+> **Scheduling recommendation:** run regularly (e.g. daily) so timing data is captured before `system.query.history` retention expires.

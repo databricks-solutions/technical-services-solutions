@@ -39,7 +39,7 @@ It includes:
 2. Audit-log query patterns for policy changes.
 3. Usage classification logic for serverless consumption.
 
-It intentionally does **not** include central policy provisioning workflows from the source design document (Step 1).
+
 
 ## Prerequisites
 
@@ -55,7 +55,7 @@ If you run the API-based policy extraction cells:
 
 ## Quick Start
 
-1. Import one notebook into your Databricks workspace.
+1. Import notebook into your Databricks workspace.
 2. Set widget values for:
    - `uc_catalog`
    - `uc_schema`

@@ -91,12 +91,12 @@ Before proceeding, ensure your VNet meets the following requirements:
 
 If you want Terraform to automatically load values for variables from a file, the file must be named either `terraform.tfvars`, `terraform.tfvars.json`, or end with `.auto.tfvars` or `.auto.tfvars.json`. If your file has a custom name (like `random_name.tfvars`), you must provide it explicitly using the `-var-file` flag when running Terraform commands.
 
-You can use the `terraform.tfvars.example` file as a base for your variables. Leter renaming this file to `terraform.tfvars` will automatically load the values for the variables.
+You can use the `terraform.tfvars.example` file as a base for your variables. Later renaming this file to `terraform.tfvars` will automatically load the values for the variables.
 
 ### List of variables
 
 - tenant_id
-    - You Azure tenant ID
+    - Your Azure Tenant ID
 - azure_subscription_id
     - Your Azure Subscription ID
 - resource_group_name
@@ -130,7 +130,7 @@ You can use the `terraform.tfvars.example` file as a base for your variables. Le
 - subnet_private_cidr
     - The CIDR address of the second subnet
 - managed_resource_group_name
-    - The name of the managed resource group
+    - The name of the managed resource group. This is an optional field; if no name is provided, Azure will generate one automatically.
 
 
 ## Deploy
@@ -156,7 +156,7 @@ After successful deployment:
 terraform output workspace_url
 
 # Get the workspace ID
-terraform output workspace_id
+terraform output databricks_workspace_id
 ```
 
 Navigate to the workspace URL and log in with your Databricks credentials.

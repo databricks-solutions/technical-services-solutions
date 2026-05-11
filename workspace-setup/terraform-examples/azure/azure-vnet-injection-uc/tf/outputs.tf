@@ -12,6 +12,11 @@ output "workspace_url" {
   value       = "https://${azurerm_databricks_workspace.this.workspace_url}/"
 }
 
+output "cluster_id" {
+  description = "ID of the UC-compatible single-node cluster"
+  value       = databricks_cluster.uc_single_node.id
+}
+
 # =============================================================================
 # Network Outputs
 # =============================================================================

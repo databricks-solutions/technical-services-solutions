@@ -181,13 +181,13 @@ aws-serverless-ncc/
     ├── variables.tf             # All input variable definitions
     ├── outputs.tf               # All output values
     ├── terraform.tfvars.example # Configuration template
-    └── main.tf                  # Provider blocks + all resources, organized in sections:
-                                 #   1. Providers
-                                 #   2. Workspace + admin
-                                 #   3. NCC + binding + optional generic endpoint rule
-                                 #   4. Metastore + assignment + admin grants
-                                 #   5. S3 NCC private endpoint rule + bucket policy + enable PATCH
-                                 #   6. UC IAM + storage credential + external location + grants
+    ├── providers.tf             # 1. databricks.account, databricks.workspace, aws provider blocks
+    ├── workspace.tf             # 2. Workspace lookup/create + admin assignment
+    ├── network.tf               # 3. NCC + binding + optional generic non-S3 endpoint rule
+    ├── metastore.tf             # 4. Metastore lookup/create + assignment + admin grants
+    ├── s3_endpoint.tf           # 5. S3 NCC private endpoint rule + bucket policy + enable PATCH
+    ├── credential.tf            # 6a. UC IAM role + storage credential + grants
+    └── external_location.tf    # 6b. UC external location + grants
 ```
 
 ## How the NCC + bucket policy + enable flow works

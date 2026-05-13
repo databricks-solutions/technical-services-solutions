@@ -1,8 +1,8 @@
 resource "aws_security_group" "databricks" {
-  count = var.vpc_id == "" ? 1 : 0
+  count       = length(var.security_group_ids) == 0 ? 1 : 0
   name        = var.new_security_group_name != "" ? var.new_security_group_name : "${var.resource_prefix}-databricks-sg"
   description = "Dedicated security group for Databricks workspace"
-  vpc_id      = module.vpc[0].vpc_id
+  vpc_id      = var.vpc_id == "" ? module.vpc[0].vpc_id : var.vpc_id
 
   dynamic "egress" {
     for_each = var.sg_egress_ports

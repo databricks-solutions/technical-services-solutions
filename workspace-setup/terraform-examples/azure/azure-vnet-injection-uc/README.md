@@ -207,6 +207,9 @@ Type `yes` when prompted. Destruction can take several minutes.
 | Subnet or delegation errors | CIDR too small or delegation conflict | Ensure `cidr` encompasses both subnets. Set `subnet_public_cidr` and `subnet_private_cidr` to non-overlapping CIDRs within the VNet (e.g. /24 each within a /20 VNet). |
 | Resource group name conflict | `vnet_resource_group_name` is the same as `resource_group_name` | These must be different values. Terraform creates two separate resource groups; using the same name causes a conflict on the second create. |
 | NAT Gateway or outbound connectivity issues | Cluster nodes cannot reach the control plane | Verify the NAT Gateway is associated to both subnets and has a public IP. Check that NSG rules allow outbound traffic on port 443. |
+| `cannot create cluster policy: Policy named 'Personal Compute' does not exist` on first apply | Resource propagation lag — the Personal Compute policy exists in the workspace but hasn't fully propagated by the time the cluster resource is created. This is a known intermittent Terraform behavior when resources depend on recently provisioned cloud state. | Re-run `terraform apply`. The second apply typically succeeds once the policy has propagated. No changes to the configuration are needed. |
+
+> **Note:** Terraform occasionally encounters transient errors during first-time deployments — particularly when cloud resources take a moment to fully propagate after being created. If you hit an unexpected error on `terraform apply`, a second run will often resolve it without any changes to the configuration.
 
 ## File Structure
 

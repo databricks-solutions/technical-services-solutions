@@ -18,7 +18,7 @@
 # MAGIC Columns present in `column_thresholds` are skipped — Lakebridge compares those
 # MAGIC numerically using the threshold bounds, not via aggregate rules.
 # MAGIC
-# MAGIC **Depends on:** `_read_snowflake()` defined in `snowflake_transformation_query_generator`
+# MAGIC **Depends on:** `_remote_query()` defined in `snowflake_transformation_query_generator`
 # MAGIC (already `%run`-imported before this notebook is imported).
 
 # COMMAND ----------
@@ -46,20 +46,23 @@ def get_aggregates(
     source_database,
     source_schema,
     source_table,
-    secret_scope,
+    uc_connection_name,
     column_mapping=None,
     column_thresholds=None,
 ) -> list:
     """Return a list of Aggregate objects derived from Snowflake INFORMATION_SCHEMA."""
+    # NOTE: source-side ORDER BY may be invalid when remote_query wraps the
+    # pushed-down query in a derived table. Sort on the Databricks side instead.
     query = (
-        f"SELECT COLUMN_NAME, DATA_TYPE "
+        f"SELECT COLUMN_NAME, DATA_TYPE, ORDINAL_POSITION "
         f"FROM {source_database}.INFORMATION_SCHEMA.COLUMNS "
         f"WHERE TABLE_SCHEMA = UPPER('{source_schema}') "
         f"AND TABLE_NAME = UPPER('{source_table}') "
-        f"AND TABLE_CATALOG = UPPER('{source_database}') "
-        f"ORDER BY ORDINAL_POSITION"
+        f"AND TABLE_CATALOG = UPPER('{source_database}')"
     )
-    df = _read_snowflake(secret_scope, query)
+    df = _remote_query(uc_connection_name, query)
+    ord_field = "ORDINAL_POSITION" if "ORDINAL_POSITION" in df.columns else "ordinal_position"
+    df = df.orderBy(ord_field)
 
     col_name_field = "COLUMN_NAME" if "COLUMN_NAME" in df.columns else "column_name"
     data_type_field = "DATA_TYPE" if "DATA_TYPE" in df.columns else "data_type"

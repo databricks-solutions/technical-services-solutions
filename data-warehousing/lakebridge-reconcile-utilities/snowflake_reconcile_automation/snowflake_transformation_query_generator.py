@@ -2,8 +2,8 @@
 # MAGIC %md
 # MAGIC ## Snowflake ↔ Databricks Transformation Query Generator
 # MAGIC
-# MAGIC Lakebridge reconciliation compares **source** (Snowflake via the Snowflake Spark connector)
-# MAGIC against **target** (Databricks Delta) by converting both sides to a common string
+# MAGIC Lakebridge reconciliation compares **source** (Snowflake via a Unity Catalog Connection +
+# MAGIC `remote_query()`) against **target** (Databricks Delta) by converting both sides to a common string
 # MAGIC representation, then checking equality. The transformations below are necessary because each
 # MAGIC platform renders the same logical value differently in its native types.
 # MAGIC
@@ -30,9 +30,7 @@
 # MAGIC ### Note on Unicode
 # MAGIC
 # MAGIC Snowflake stores text as UTF-8 natively and Lakebridge applies `sha256_partial` on both sides
-# MAGIC for the Snowflake path, so Unicode columns compare cleanly without the encoding-mismatch
-# MAGIC pitfalls that affect the T-SQL path (see upstream issue
-# MAGIC `databrickslabs/lakebridge#1619`).
+# MAGIC for the Snowflake path, so Unicode columns compare cleanly.
 
 # COMMAND ----------
 
@@ -41,7 +39,6 @@ from databricks.labs.lakebridge.reconcile.recon_config import (
     ColumnMapping,
     Transformation,
     ColumnThresholds,
-    JdbcReaderOptions,
     Filters,
     Aggregate,
 )
@@ -49,55 +46,15 @@ from databricks.labs.lakebridge.reconcile.recon_config import (
 # COMMAND ----------
 
 
-def _get_secret_or_none(secret_scope, key):
-    try:
-        return dbutils.secrets.get(scope=secret_scope, key=key)
-    except Exception:
-        return None
+def _remote_query(uc_connection_name, query):
+    """Run a SQL query against the source Snowflake account via a Unity Catalog Connection.
 
-
-def _pem_to_spark_option(pem_text, pem_password=None):
-    # The Snowflake Spark connector's `pem_private_key` option expects the
-    # base64 body of a PKCS#8 PEM with the BEGIN/END markers stripped and all
-    # newlines removed. Passing the raw PEM content causes "Input PEM private
-    # key is invalid". Mirrors Lakebridge's SnowflakeDataSource._get_private_key.
-    from cryptography.hazmat.backends import default_backend
-    from cryptography.hazmat.primitives import serialization
-    pwd_bytes = pem_password.encode("utf-8") if pem_password else None
-    p_key = serialization.load_pem_private_key(pem_text.encode("utf-8"), pwd_bytes, backend=default_backend())
-    pkb = p_key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption(),
-    ).decode("utf-8")
-    return "".join(pkb.strip().split("\n")[1:-1])
-
-
-def _snowflake_options(secret_scope):
-    opts = {
-        "sfUrl": dbutils.secrets.get(scope=secret_scope, key="sfUrl"),
-        "sfUser": dbutils.secrets.get(scope=secret_scope, key="sfUser"),
-        "sfDatabase": dbutils.secrets.get(scope=secret_scope, key="sfDatabase"),
-        "sfSchema": dbutils.secrets.get(scope=secret_scope, key="sfSchema"),
-        "sfWarehouse": dbutils.secrets.get(scope=secret_scope, key="sfWarehouse"),
-        "sfRole": dbutils.secrets.get(scope=secret_scope, key="sfRole"),
-    }
-    # PEM keypair preferred; fall back to sfPassword if the key is absent.
-    pem_key = _get_secret_or_none(secret_scope, "pem_private_key")
-    if pem_key:
-        pem_pwd = _get_secret_or_none(secret_scope, "pem_private_key_password")
-        opts["pem_private_key"] = _pem_to_spark_option(pem_key, pem_pwd)
-    else:
-        opts["sfPassword"] = dbutils.secrets.get(scope=secret_scope, key="sfPassword")
-    return opts
-
-
-def _read_snowflake(secret_scope, query):
-    return (
-        spark.read.format("snowflake")
-        .options(**_snowflake_options(secret_scope))
-        .option("query", query)
-        .load()
+    Uses the Databricks Lakehouse Federation `remote_query()` table-valued function.
+    Caller must pass a UC Connection created with `CREATE CONNECTION ... TYPE snowflake`.
+    """
+    safe = query.replace("'", "''")
+    return spark.sql(
+        f"SELECT * FROM remote_query('{uc_connection_name}', query => '{safe}')"
     )
 
 
@@ -108,7 +65,7 @@ def get_transformations(
     source_database,
     source_schema,
     source_table,
-    secret_scope,
+    uc_connection_name,
     column_mapping=None,
     column_thresholds=None,
 ):
@@ -129,7 +86,7 @@ def get_transformations(
         f"AND TABLE_CATALOG = UPPER('{source_database}') "
         f"ORDER BY ORDINAL_POSITION"
     )
-    df = _read_snowflake(secret_scope, query)
+    df = _remote_query(uc_connection_name, query)
 
     # Types that cannot be meaningfully reconciled across platforms.
     # GEOGRAPHY/GEOMETRY produce platform-specific WKT/GeoJSON representations.

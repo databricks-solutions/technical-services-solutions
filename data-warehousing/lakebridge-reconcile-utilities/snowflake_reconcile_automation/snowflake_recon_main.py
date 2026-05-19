@@ -23,9 +23,9 @@
 # MAGIC   Detailed mismatch data is written under the same metadata catalog/schema by Lakebridge
 # MAGIC   (e.g. `details` and `metrics` tables; exact names are defined by the library).
 # MAGIC
-# MAGIC **Snowflake-specific note:** Unlike the SQL Server path, Lakebridge applies `sha256_partial` on
-# MAGIC both sides for Snowflake, so the Unicode hash-encoding issue (#1619) does not apply here —
-# MAGIC `column_status` is a reliable indicator.
+# MAGIC **Snowflake-specific note:** Lakebridge applies `sha256_partial` on both sides for Snowflake,
+# MAGIC so Unicode columns compare cleanly without the encoding-mismatch pitfalls that have historically
+# MAGIC affected other dialects. `column_status` is a reliable indicator.
 
 # COMMAND ----------
 
@@ -41,14 +41,19 @@ from datetime import datetime
 import json
 import traceback
 
-from databricks.labs.lakebridge.config import TableRecon, ReconcileConfig, DatabaseConfig, ReconcileMetadataConfig
+from databricks.labs.lakebridge.config import (
+    TableRecon,
+    ReconcileConfig,
+    SourceConnectionConfig,
+    TargetConnectionConfig,
+    ReconcileMetadataConfig,
+)
 from databricks.labs.lakebridge.reconcile.recon_config import (
     Table,
     Aggregate,
     ColumnMapping,
     ColumnThresholds,
     Transformation,
-    JdbcReaderOptions,
     Filters,
 )
 from databricks.labs.lakebridge.reconcile.trigger_recon_service import TriggerReconService
@@ -77,7 +82,7 @@ def get_recon_results(
     column_mapping,
     column_thresholds,
     label,
-    secret_scope,
+    uc_connection_name,
     lakebridge_catalog,
     lakebridge_schema,
     source_system,
@@ -102,14 +107,16 @@ def get_recon_results(
     )
 
     reconcile_config = ReconcileConfig(
-        data_source=source_system,
         report_type=report_type,
-        secret_scope=secret_scope,
-        database_config=DatabaseConfig(
-            source_catalog=source_catalog,
-            source_schema=source_schema,
-            target_catalog=target_catalog,
-            target_schema=target_schema,
+        source=SourceConnectionConfig(
+            dialect=source_system,
+            catalog=source_catalog,
+            schema=source_schema,
+            uc_connection_name=uc_connection_name,
+        ),
+        target=TargetConnectionConfig(
+            catalog=target_catalog,
+            schema=target_schema,
         ),
         metadata_config=ReconcileMetadataConfig(
             catalog=lakebridge_catalog,
@@ -144,7 +151,7 @@ def get_recon_results(
         source_catalog,
         source_schema,
         source_table,
-        secret_scope,
+        uc_connection_name,
         column_mapping=column_mapping_parsed,
         column_thresholds=column_thresholds_parsed,
     )
@@ -166,7 +173,7 @@ def get_recon_results(
                 source_catalog,
                 source_schema,
                 source_table,
-                secret_scope,
+                uc_connection_name,
                 column_mapping=column_mapping_parsed,
                 column_thresholds=column_thresholds_parsed,
             )
@@ -193,14 +200,16 @@ def get_recon_results(
             return
         try:
             reconcile_config_agg = ReconcileConfig(
-                data_source=source_system,
                 report_type="aggregate",
-                secret_scope=secret_scope,
-                database_config=DatabaseConfig(
-                    source_catalog=source_catalog,
-                    source_schema=source_schema,
-                    target_catalog=target_catalog,
-                    target_schema=target_schema,
+                source=SourceConnectionConfig(
+                    dialect=source_system,
+                    catalog=source_catalog,
+                    schema=source_schema,
+                    uc_connection_name=uc_connection_name,
+                ),
+                target=TargetConnectionConfig(
+                    catalog=target_catalog,
+                    schema=target_schema,
                 ),
                 metadata_config=ReconcileMetadataConfig(
                     catalog=lakebridge_catalog,

@@ -2,9 +2,10 @@
 # MAGIC %md
 # MAGIC # Snowflake Auto-Discovery
 # MAGIC
-# MAGIC **What it does:** Connects to a Snowflake account via JDBC, discovers base tables and their
-# MAGIC primary keys in the specified schema, and MERGEs rows into the configurable Lakebridge metadata
-# MAGIC config table (default `table_configs`) that drives the reconciliation pipeline.
+# MAGIC **What it does:** Connects to a Snowflake account via a Unity Catalog Connection
+# MAGIC (`remote_query()`), discovers base tables and their primary keys in the specified schema, and
+# MAGIC MERGEs rows into the configurable Lakebridge metadata config table (default `table_configs`)
+# MAGIC that drives the reconciliation pipeline.
 # MAGIC
 # MAGIC **Why it's important:** This is the **first notebook** you run when setting up reconciliation for a
 # MAGIC new Snowflake database. Without it, the downstream notebooks have no idea which tables to compare
@@ -25,7 +26,7 @@
 # MAGIC `column_mapping`, `column_thresholds`) before invoking `snowflake_recon_wrapper`.
 # MAGIC
 # MAGIC **Parameters:**
-# MAGIC - `secret_scope` — Databricks secret scope with Snowflake Spark connector credentials
+# MAGIC - `uc_connection_name` — Unity Catalog Connection name pointing at the Snowflake source (created via `CREATE CONNECTION ... TYPE snowflake`)
 # MAGIC - `source_database` / `source_schema` — Snowflake database and schema to introspect
 # MAGIC - `target_catalog` / `target_schema` — Databricks target catalog/schema where the reconciled copies live
 # MAGIC - `lakebridge_catalog` / `lakebridge_schema` — Unity Catalog location for reconciliation metadata tables
@@ -36,15 +37,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install -q snowflake-connector-python
-
-# COMMAND ----------
-
-dbutils.library.restartPython()
-
-# COMMAND ----------
-
-dbutils.widgets.text("secret_scope", "", "Secret Scope")
+dbutils.widgets.text("uc_connection_name", "", "UC Connection Name (Snowflake)")
 dbutils.widgets.text("source_database", "", "Snowflake Database (catalog)")
 dbutils.widgets.text("source_schema", "PUBLIC", "Snowflake Schema")
 dbutils.widgets.text("target_catalog", "", "Databricks Target Catalog")
@@ -61,7 +54,7 @@ dbutils.widgets.text(
     "Optional comma-separated table names (non-empty overrides table_filter)",
 )
 
-secret_scope = dbutils.widgets.get("secret_scope")
+uc_connection_name = dbutils.widgets.get("uc_connection_name")
 source_database = dbutils.widgets.get("source_database")
 source_schema = dbutils.widgets.get("source_schema")
 target_catalog = dbutils.widgets.get("target_catalog")
@@ -85,57 +78,11 @@ specific_table_list = [t.strip() for t in specific_tables_raw.split(",") if t.st
 # COMMAND ----------
 
 
-def _get_secret_or_none(key):
-    try:
-        return dbutils.secrets.get(scope=secret_scope, key=key)
-    except Exception:
-        return None
-
-
-def _pem_to_spark_option(pem_text, pem_password=None):
-    # The Snowflake Spark connector's `pem_private_key` option expects the
-    # base64 body of a PKCS#8 PEM with the BEGIN/END markers stripped and all
-    # newlines removed. Passing the raw PEM file content causes "Input PEM
-    # private key is invalid". Lakebridge's own SnowflakeDataSource does the
-    # same transformation — we mirror it here.
-    from cryptography.hazmat.backends import default_backend
-    from cryptography.hazmat.primitives import serialization
-    pwd_bytes = pem_password.encode("utf-8") if pem_password else None
-    p_key = serialization.load_pem_private_key(pem_text.encode("utf-8"), pwd_bytes, backend=default_backend())
-    pkb = p_key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption(),
-    ).decode("utf-8")
-    return "".join(pkb.strip().split("\n")[1:-1])
-
-
-def _snowflake_options():
-    opts = {
-        "sfUrl": dbutils.secrets.get(scope=secret_scope, key="sfUrl"),
-        "sfUser": dbutils.secrets.get(scope=secret_scope, key="sfUser"),
-        "sfDatabase": dbutils.secrets.get(scope=secret_scope, key="sfDatabase"),
-        "sfSchema": dbutils.secrets.get(scope=secret_scope, key="sfSchema"),
-        "sfWarehouse": dbutils.secrets.get(scope=secret_scope, key="sfWarehouse"),
-        "sfRole": dbutils.secrets.get(scope=secret_scope, key="sfRole"),
-    }
-    # Prefer PEM keypair auth (Snowflake's recommended service-account method);
-    # fall back to sfPassword if pem_private_key is not in the secret scope.
-    pem_key = _get_secret_or_none("pem_private_key")
-    if pem_key:
-        pem_pwd = _get_secret_or_none("pem_private_key_password")
-        opts["pem_private_key"] = _pem_to_spark_option(pem_key, pem_pwd)
-    else:
-        opts["sfPassword"] = dbutils.secrets.get(scope=secret_scope, key="sfPassword")
-    return opts
-
-
-def _read_snowflake(query):
-    return (
-        spark.read.format("snowflake")
-        .options(**_snowflake_options())
-        .option("query", query)
-        .load()
+def _remote_query(query):
+    """Run a SQL query against the source Snowflake account via the configured UC Connection."""
+    safe = query.replace("'", "''")
+    return spark.sql(
+        f"SELECT * FROM remote_query('{uc_connection_name}', query => '{safe}')"
     )
 
 
@@ -165,7 +112,7 @@ if specific_table_list:
 else:
     tables_query = _tables_base + f"AND TABLE_NAME LIKE UPPER('{table_filter}') "
 
-tables_df = _read_snowflake(tables_query)
+tables_df = _remote_query(tables_query)
 # Snowflake returns column names in upper case by default
 table_col = "TABLE_NAME" if "TABLE_NAME" in tables_df.columns else "table_name"
 discovered_from_jdbc = [row[table_col] for row in tables_df.collect()]
@@ -193,89 +140,46 @@ print(f"Discovered {len(discovered_tables)} tables in {source_database}.{source_
 
 # Discover primary keys for each table and build config rows.
 # Snowflake's INFORMATION_SCHEMA does not expose PK columns directly, so use
-# `SHOW PRIMARY KEYS IN TABLE`. The Spark connector's preactions + RESULT_SCAN
-# pattern is fragile (internal bookkeeping queries can shift LAST_QUERY_ID()),
-# so use snowflake-connector-python for a single-session SHOW + fetch.
-
-import snowflake.connector
-from urllib.parse import urlparse
-
-
-def _snowflake_account():
-    host = urlparse(dbutils.secrets.get(scope=secret_scope, key="sfUrl")).hostname or ""
-    return host.split(".snowflakecomputing.com")[0]
-
-
-def _snowflake_py_conn():
-    kwargs = {
-        "user": dbutils.secrets.get(scope=secret_scope, key="sfUser"),
-        "account": _snowflake_account(),
-        "warehouse": dbutils.secrets.get(scope=secret_scope, key="sfWarehouse"),
-        "database": dbutils.secrets.get(scope=secret_scope, key="sfDatabase"),
-        "role": dbutils.secrets.get(scope=secret_scope, key="sfRole"),
-    }
-    # PEM keypair preferred; password fallback. The Python connector expects a
-    # DER-encoded private key in the `private_key` kwarg, so load + serialize
-    # the PEM we stored in the secret scope.
-    pem_key_str = _get_secret_or_none("pem_private_key")
-    if pem_key_str:
-        from cryptography.hazmat.primitives import serialization
-        pem_pwd_str = _get_secret_or_none("pem_private_key_password")
-        pwd_bytes = pem_pwd_str.encode("utf-8") if pem_pwd_str else None
-        p_key = serialization.load_pem_private_key(
-            pem_key_str.encode("utf-8"),
-            password=pwd_bytes,
-        )
-        kwargs["private_key"] = p_key.private_bytes(
-            encoding=serialization.Encoding.DER,
-            format=serialization.PrivateFormat.PKCS8,
-            encryption_algorithm=serialization.NoEncryption(),
-        )
-    else:
-        kwargs["password"] = dbutils.secrets.get(scope=secret_scope, key="sfPassword")
-    return snowflake.connector.connect(**kwargs)
-
+# `SHOW PRIMARY KEYS IN TABLE` routed through the UC Connection's remote_query().
+# SHOW returns columns: created_on, database_name, schema_name, table_name,
+# column_name, key_sequence, constraint_name, rely, comment.
 
 config_rows = []
-_pk_conn = _snowflake_py_conn()
-try:
-    _cur = _pk_conn.cursor()
-    for table_name in discovered_tables:
-        try:
-            _cur.execute(
-                f'SHOW PRIMARY KEYS IN TABLE '
-                f'"{source_database}"."{source_schema}"."{table_name}"'
-            )
-            rows = _cur.fetchall()
-            # SHOW PRIMARY KEYS columns: created_on, database_name, schema_name,
-            # table_name, column_name (4), key_sequence (5), constraint_name,
-            # rely, comment
-            pk_columns = [r[4] for r in sorted(rows, key=lambda r: r[5])]
-        except Exception as e:
-            print(f"  Warning: could not read PKs for {table_name}: {e}")
-            pk_columns = []
-
-        config_rows.append(
-            {
-                "label": label,
-                "source_catalog": source_database,
-                "source_schema": source_schema,
-                "source_table": table_name,
-                "databricks_catalog": target_catalog,
-                "databricks_schema": target_schema,
-                "databricks_table": table_name.lower(),
-                "primary_key": pk_columns if pk_columns else None,
-                "source_filters": None,
-                "databricks_filters": None,
-                "select_columns": None,
-                "drop_columns": None,
-                "column_mapping": None,
-                "column_thresholds": None,
-                "aggregates": None,
-            }
+for table_name in discovered_tables:
+    try:
+        pk_df = _remote_query(
+            f'SHOW PRIMARY KEYS IN TABLE '
+            f'"{source_database}"."{source_schema}"."{table_name}"'
         )
-finally:
-    _pk_conn.close()
+        pk_rows = pk_df.collect()
+        # Snowflake column names from SHOW come back capitalized like "column_name"; tolerate either case.
+        cols_lower = {c.lower(): c for c in pk_df.columns}
+        col_field = cols_lower.get("column_name")
+        seq_field = cols_lower.get("key_sequence")
+        pk_columns = [r[col_field] for r in sorted(pk_rows, key=lambda r: r[seq_field])]
+    except Exception as e:
+        print(f"  Warning: could not read PKs for {table_name}: {e}")
+        pk_columns = []
+
+    config_rows.append(
+        {
+            "label": label,
+            "source_catalog": source_database,
+            "source_schema": source_schema,
+            "source_table": table_name,
+            "databricks_catalog": target_catalog,
+            "databricks_schema": target_schema,
+            "databricks_table": table_name.lower(),
+            "primary_key": pk_columns if pk_columns else None,
+            "source_filters": None,
+            "databricks_filters": None,
+            "select_columns": None,
+            "drop_columns": None,
+            "column_mapping": None,
+            "column_thresholds": None,
+            "aggregates": None,
+        }
+    )
 
 print(f"Built {len(config_rows)} config rows")
 for r in config_rows:

@@ -2,8 +2,9 @@
 # MAGIC %md
 # MAGIC ## SQL Server ↔ Databricks Transformation Query Generator
 # MAGIC
-# MAGIC Lakebridge reconciliation compares **source** (SQL Server via JDBC) against **target** (Databricks Delta)
-# MAGIC by converting both sides to a common string representation, then checking equality. The transformations
+# MAGIC Lakebridge reconciliation compares **source** (SQL Server via UC Connection + `remote_query()`)
+# MAGIC against **target** (Databricks Delta) by converting both sides to a common string representation,
+# MAGIC then checking equality. The transformations
 # MAGIC below are necessary because each platform renders the same logical value differently in its native types.
 # MAGIC
 # MAGIC ### Why each cast is needed
@@ -36,40 +37,32 @@ from databricks.labs.lakebridge.reconcile.recon_config import (
     ColumnMapping,
     Transformation,
     ColumnThresholds,
-    JdbcReaderOptions,
     Filters,
     Aggregate,
 )
+from pyspark.sql.functions import col
 
 # COMMAND ----------
 
 
-def _build_jdbc_url(secret_scope):
-    host = dbutils.secrets.get(scope=secret_scope, key="host")
-    port = dbutils.secrets.get(scope=secret_scope, key="port")
-    database = dbutils.secrets.get(scope=secret_scope, key="database")
-    encrypt = dbutils.secrets.get(scope=secret_scope, key="encrypt")
-    trust_cert = dbutils.secrets.get(scope=secret_scope, key="trustServerCertificate")
-    return (
-        f"jdbc:sqlserver://{host}:{port};"
-        f"databaseName={database};"
-        f"encrypt={encrypt};"
-        f"trustServerCertificate={trust_cert};"
-    )
+def _read_remote_table(uc_connection_name, database, dbtable):
+    """Read a SQL Server table via a Unity Catalog Connection.
 
+    Uses the Databricks Lakehouse Federation `remote_query()` table-valued function
+    with the `dbtable` option (not `query =>`). Reason: string literals embedded
+    inside `query =>` are stripped during JDBC pushdown rewrite — the SQL Server
+    engine receives the literals unquoted, breaking any predicate with a string.
+    `dbtable` returns the full table; callers filter on the Spark side via
+    `.where(...)` and the predicates push down through standard JDBC pushdown.
 
-def _read_jdbc(secret_scope, query):
-    jdbc_url = _build_jdbc_url(secret_scope)
-    user = dbutils.secrets.get(scope=secret_scope, key="user")
-    password = dbutils.secrets.get(scope=secret_scope, key="password")
-    return (
-        spark.read.format("jdbc")
-        .option("url", jdbc_url)
-        .option("driver", "com.microsoft.sqlserver.jdbc.SQLServerDriver")
-        .option("query", query)
-        .option("user", user)
-        .option("password", password)
-        .load()
+    Caller must pass a UC Connection created with `CREATE CONNECTION ... TYPE sqlserver`.
+    The `database` option is required for SQL Server connections whose default catalog
+    is not the target database (the connection itself is typically scoped to `master`).
+    """
+    return spark.sql(
+        f"SELECT * FROM remote_query('{uc_connection_name}', "
+        f"database => '{database}', "
+        f"dbtable => '{dbtable}')"
     )
 
 
@@ -80,7 +73,7 @@ def get_transformations(
     source_database,
     source_schema,
     source_table,
-    secret_scope,
+    uc_connection_name,
     column_mapping=None,
     column_thresholds=None,
 ):
@@ -90,14 +83,15 @@ def get_transformations(
     The target-side expressions use Databricks SQL / Spark SQL equivalents.
     """
 
-    query = (
-        f"SELECT COLUMN_NAME, DATA_TYPE "
-        f"FROM INFORMATION_SCHEMA.COLUMNS "
-        f"WHERE TABLE_SCHEMA = '{source_schema}' "
-        f"AND TABLE_NAME = '{source_table}' "
-        f"AND TABLE_CATALOG = '{source_database}'"
+    df = (
+        _read_remote_table(uc_connection_name, source_database, "INFORMATION_SCHEMA.COLUMNS")
+        .where(
+            (col("TABLE_SCHEMA") == source_schema)
+            & (col("TABLE_NAME") == source_table)
+            & (col("TABLE_CATALOG") == source_database)
+        )
+        .select("COLUMN_NAME", "DATA_TYPE")
     )
-    df = _read_jdbc(secret_scope, query)
 
     # Types that cannot be meaningfully reconciled across platforms.
     # timestamp/rowversion is a system-generated binary counter, not a real timestamp.

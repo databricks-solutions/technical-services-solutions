@@ -28,7 +28,7 @@ dbutils.library.restartPython()
 # MAGIC 4. **sql_server_transformation_query_generator** → imported transitively via recon_main; builds type-aware column transformations
 # MAGIC
 # MAGIC **Parameters:**
-# MAGIC - `secret_scope` — Databricks secret scope with SQL Server JDBC credentials
+# MAGIC - `uc_connection_name` — Unity Catalog Connection name pointing at the SQL Server source (created via `CREATE CONNECTION ... TYPE sqlserver`)
 # MAGIC - `lakebridge_catalog` / `lakebridge_schema` — Unity Catalog location for reconciliation metadata tables
 # MAGIC - `lakebridge_config_table` / `table_recon_summary` — Delta table names (must match auto_discover / DDL)
 # MAGIC - `label` — Comma-separated labels (required filter on config rows)
@@ -47,7 +47,7 @@ dbutils.library.restartPython()
 # value must be "mssql" for the SQL Server connector.
 source_system = "mssql"
 
-dbutils.widgets.text("secret_scope", "", "Secret Scope")
+dbutils.widgets.text("uc_connection_name", "", "UC Connection Name (SQL Server)")
 dbutils.widgets.text("lakebridge_catalog", "", "Lakebridge Metadata Catalog")
 dbutils.widgets.text("lakebridge_schema", "reconcile", "Lakebridge Metadata Schema")
 dbutils.widgets.text("lakebridge_config_table", "table_configs", "Config Table Name")
@@ -78,7 +78,7 @@ dbutils.widgets.text(
     "filter_target_schema", "", "Optional: filter config rows by databricks_schema"
 )
 
-secret_scope = dbutils.widgets.get("secret_scope")
+uc_connection_name = dbutils.widgets.get("uc_connection_name")
 lakebridge_catalog = dbutils.widgets.get("lakebridge_catalog").lower()
 lakebridge_schema = dbutils.widgets.get("lakebridge_schema").lower()
 lakebridge_config_table = dbutils.widgets.get("lakebridge_config_table").lower()
@@ -179,7 +179,7 @@ def get_args_dict(pipeline) -> dict:
         "column_mapping": pipeline["column_mapping"],
         "column_thresholds": pipeline["column_thresholds"],
         "label": pipeline["label"],
-        "secret_scope": secret_scope,
+        "uc_connection_name": uc_connection_name,
         "lakebridge_catalog": lakebridge_catalog,
         "lakebridge_schema": lakebridge_schema,
         "source_system": source_system,

@@ -2,7 +2,7 @@
 # MAGIC %md
 # MAGIC ## SQL Server Aggregate Rule Generator
 # MAGIC
-# MAGIC Queries `INFORMATION_SCHEMA.COLUMNS` on SQL Server (via JDBC) and builds
+# MAGIC Queries `INFORMATION_SCHEMA.COLUMNS` on SQL Server (via UC Connection + `remote_query()`) and builds
 # MAGIC `Aggregate` rule objects for each column, keyed by data type:
 # MAGIC
 # MAGIC | Type family | Aggregates generated |
@@ -18,12 +18,13 @@
 # MAGIC Columns present in `column_thresholds` are skipped — Lakebridge compares those
 # MAGIC numerically using the threshold bounds, not via aggregate rules.
 # MAGIC
-# MAGIC **Depends on:** `_read_jdbc()` defined in `sql_server_transformation_query_generator`
+# MAGIC **Depends on:** `_remote_query()` defined in `sql_server_transformation_query_generator`
 # MAGIC (already `%run`-imported before this notebook is imported).
 
 # COMMAND ----------
 
 from databricks.labs.lakebridge.reconcile.recon_config import Aggregate
+from pyspark.sql.functions import col
 
 # COMMAND ----------
 
@@ -50,20 +51,24 @@ def get_aggregates(
     source_database,
     source_schema,
     source_table,
-    secret_scope,
+    uc_connection_name,
     column_mapping=None,
     column_thresholds=None,
 ) -> list:
     """Return a list of Aggregate objects derived from SQL Server INFORMATION_SCHEMA."""
-    query = (
-        f"SELECT COLUMN_NAME, DATA_TYPE "
-        f"FROM INFORMATION_SCHEMA.COLUMNS "
-        f"WHERE TABLE_SCHEMA = '{source_schema}' "
-        f"AND TABLE_NAME = '{source_table}' "
-        f"AND TABLE_CATALOG = '{source_database}' "
-        f"ORDER BY ORDINAL_POSITION"
+    # Read whole INFORMATION_SCHEMA.COLUMNS via `dbtable` and filter on Databricks
+    # side. We cannot embed string literals in a `query =>` argument because
+    # remote_query() strips them during JDBC pushdown rewrite.
+    df = (
+        _read_remote_table(uc_connection_name, source_database, "INFORMATION_SCHEMA.COLUMNS")
+        .where(
+            (col("TABLE_SCHEMA") == source_schema)
+            & (col("TABLE_NAME") == source_table)
+            & (col("TABLE_CATALOG") == source_database)
+        )
+        .select("COLUMN_NAME", "DATA_TYPE", "ORDINAL_POSITION")
+        .orderBy("ORDINAL_POSITION")
     )
-    df = _read_jdbc(secret_scope, query)
 
     _col_map = {m["source_name"]: m["target_name"] for m in column_mapping} if column_mapping else {}
     _threshold_cols = {t["column_name"] for t in column_thresholds} if column_thresholds else set()

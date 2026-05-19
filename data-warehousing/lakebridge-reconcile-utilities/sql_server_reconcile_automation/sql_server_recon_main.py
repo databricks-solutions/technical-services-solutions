@@ -37,14 +37,19 @@ from datetime import datetime
 import json
 import traceback
 
-from databricks.labs.lakebridge.config import TableRecon, ReconcileConfig, DatabaseConfig, ReconcileMetadataConfig
+from databricks.labs.lakebridge.config import (
+    TableRecon,
+    ReconcileConfig,
+    SourceConnectionConfig,
+    TargetConnectionConfig,
+    ReconcileMetadataConfig,
+)
 from databricks.labs.lakebridge.reconcile.recon_config import (
     Table,
     Aggregate,
     ColumnMapping,
     ColumnThresholds,
     Transformation,
-    JdbcReaderOptions,
     Filters,
 )
 from databricks.labs.lakebridge.reconcile.trigger_recon_service import TriggerReconService
@@ -73,7 +78,7 @@ def get_recon_results(
     column_mapping,
     column_thresholds,
     label,
-    secret_scope,
+    uc_connection_name,
     lakebridge_catalog,
     lakebridge_schema,
     source_system,
@@ -98,14 +103,16 @@ def get_recon_results(
     )
 
     reconcile_config = ReconcileConfig(
-        data_source=source_system,
         report_type=report_type,
-        secret_scope=secret_scope,
-        database_config=DatabaseConfig(
-            source_catalog=source_catalog,
-            source_schema=source_schema,
-            target_catalog=target_catalog,
-            target_schema=target_schema,
+        source=SourceConnectionConfig(
+            dialect=source_system,
+            catalog=source_catalog,
+            schema=source_schema,
+            uc_connection_name=uc_connection_name,
+        ),
+        target=TargetConnectionConfig(
+            catalog=target_catalog,
+            schema=target_schema,
         ),
         metadata_config=ReconcileMetadataConfig(
             catalog=lakebridge_catalog,
@@ -140,7 +147,7 @@ def get_recon_results(
         source_catalog,
         source_schema,
         source_table,
-        secret_scope,
+        uc_connection_name,
         column_mapping=column_mapping_parsed,
         column_thresholds=column_thresholds_parsed,
     )
@@ -162,7 +169,7 @@ def get_recon_results(
                 source_catalog,
                 source_schema,
                 source_table,
-                secret_scope,
+                uc_connection_name,
                 column_mapping=column_mapping_parsed,
                 column_thresholds=column_thresholds_parsed,
             )
@@ -189,14 +196,16 @@ def get_recon_results(
             return
         try:
             reconcile_config_agg = ReconcileConfig(
-                data_source=source_system,
                 report_type="aggregate",
-                secret_scope=secret_scope,
-                database_config=DatabaseConfig(
-                    source_catalog=source_catalog,
-                    source_schema=source_schema,
-                    target_catalog=target_catalog,
-                    target_schema=target_schema,
+                source=SourceConnectionConfig(
+                    dialect=source_system,
+                    catalog=source_catalog,
+                    schema=source_schema,
+                    uc_connection_name=uc_connection_name,
+                ),
+                target=TargetConnectionConfig(
+                    catalog=target_catalog,
+                    schema=target_schema,
                 ),
                 metadata_config=ReconcileMetadataConfig(
                     catalog=lakebridge_catalog,
@@ -215,10 +224,6 @@ def get_recon_results(
         result = TriggerReconService.trigger_recon(ws, spark, table_recon, reconcile_config)
         recon_id = result.recon_id
         _run_aggregate_recon()
-        # NOTE: column_status may be False for tables with non-ASCII data due to
-        # Lakebridge hash encoding bug (github.com/databrickslabs/lakebridge/issues/1619).
-        # The hash comparison fails but all individual column comparisons pass.
-        # row_status is the reliable indicator until the upstream fix is merged.
         for r in result.results:
             row_status = r.status.row
             column_status = r.status.column

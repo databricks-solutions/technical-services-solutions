@@ -2,9 +2,10 @@
 # MAGIC %md
 # MAGIC # SQL Server Auto-Discovery
 # MAGIC
-# MAGIC **What it does:** Connects to a SQL Server instance via JDBC, discovers base tables and their
-# MAGIC primary keys in the specified schema, and MERGEs rows into the configurable Lakebridge metadata
-# MAGIC config table (default `table_configs`) that drives the reconciliation pipeline.
+# MAGIC **What it does:** Connects to a SQL Server instance via a Unity Catalog Connection
+# MAGIC (`remote_query()`), discovers base tables and their primary keys in the specified schema, and
+# MAGIC MERGEs rows into the configurable Lakebridge metadata config table (default `table_configs`)
+# MAGIC that drives the reconciliation pipeline.
 # MAGIC
 # MAGIC **Why it's important:** This is the **first notebook** you run when setting up reconciliation for a
 # MAGIC new SQL Server database. Without it, the downstream notebooks have no idea which tables to compare
@@ -25,7 +26,7 @@
 # MAGIC `column_mapping`, `column_thresholds`) before invoking `sql_server_recon_wrapper`.
 # MAGIC
 # MAGIC **Parameters:**
-# MAGIC - `secret_scope` — Databricks secret scope with SQL Server JDBC credentials
+# MAGIC - `uc_connection_name` — Unity Catalog Connection name pointing at the SQL Server source (created via `CREATE CONNECTION ... TYPE sqlserver`)
 # MAGIC - `source_database` / `source_schema` — SQL Server database and schema to introspect
 # MAGIC - `target_catalog` / `target_schema` — Databricks target catalog/schema where the reconciled copies live
 # MAGIC - `lakebridge_catalog` / `lakebridge_schema` — Unity Catalog location for reconciliation metadata tables
@@ -36,7 +37,7 @@
 
 # COMMAND ----------
 
-dbutils.widgets.text("secret_scope", "", "Secret Scope")
+dbutils.widgets.text("uc_connection_name", "", "UC Connection Name (SQL Server)")
 dbutils.widgets.text("source_database", "", "SQL Server Database (catalog)")
 dbutils.widgets.text("source_schema", "dbo", "SQL Server Schema")
 dbutils.widgets.text("target_catalog", "", "Databricks Target Catalog")
@@ -53,7 +54,7 @@ dbutils.widgets.text(
     "Optional comma-separated table names (non-empty overrides table_filter)",
 )
 
-secret_scope = dbutils.widgets.get("secret_scope")
+uc_connection_name = dbutils.widgets.get("uc_connection_name")
 source_database = dbutils.widgets.get("source_database")
 source_schema = dbutils.widgets.get("source_schema")
 target_catalog = dbutils.widgets.get("target_catalog")
@@ -77,59 +78,45 @@ specific_table_list = [t.strip() for t in specific_tables_raw.split(",") if t.st
 # COMMAND ----------
 
 
-def _build_jdbc_url():
-    host = dbutils.secrets.get(scope=secret_scope, key="host")
-    port = dbutils.secrets.get(scope=secret_scope, key="port")
-    database = dbutils.secrets.get(scope=secret_scope, key="database")
-    encrypt = dbutils.secrets.get(scope=secret_scope, key="encrypt")
-    trust_cert = dbutils.secrets.get(scope=secret_scope, key="trustServerCertificate")
-    return (
-        f"jdbc:sqlserver://{host}:{port};"
-        f"databaseName={database};"
-        f"encrypt={encrypt};"
-        f"trustServerCertificate={trust_cert};"
+def _read_remote_table(dbtable):
+    """Read a SQL Server table via the configured UC Connection.
+
+    Uses `dbtable` (not `query =>`) because remote_query() strips embedded
+    string literals during JDBC pushdown rewrite. Callers filter the resulting
+    DataFrame with `.where(...)` and Spark JDBC pushdown handles predicates.
+    """
+    return spark.sql(
+        f"SELECT * FROM remote_query('{uc_connection_name}', "
+        f"database => '{source_database}', "
+        f"dbtable => '{dbtable}')"
     )
-
-
-def _read_jdbc(query):
-    jdbc_url = _build_jdbc_url()
-    user = dbutils.secrets.get(scope=secret_scope, key="user")
-    password = dbutils.secrets.get(scope=secret_scope, key="password")
-    return (
-        spark.read.format("jdbc")
-        .option("url", jdbc_url)
-        .option("driver", "com.microsoft.sqlserver.jdbc.SQLServerDriver")
-        .option("query", query)
-        .option("user", user)
-        .option("password", password)
-        .load()
-    )
-
-
-def _sqlserver_string_literal(value: str) -> str:
-    return "'" + value.replace("'", "''") + "'"
 
 
 # COMMAND ----------
 
-# Discover all base tables in the schema (specific_tables IN list overrides table_filter LIKE)
+# Discover all base tables in the schema (specific_tables IN list overrides table_filter LIKE).
+# Read INFORMATION_SCHEMA.TABLES via dbtable, then filter on the Databricks side —
+# string literals embedded in remote_query's `query =>` are stripped during JDBC
+# pushdown rewrite, breaking any predicate with a string value.
 
-_tables_base = (
-    f"SELECT TABLE_NAME "
-    f"FROM INFORMATION_SCHEMA.TABLES "
-    f"WHERE TABLE_SCHEMA = '{source_schema}' "
-    f"AND TABLE_CATALOG = '{source_database}' "
-    f"AND TABLE_TYPE = 'BASE TABLE' "
+from pyspark.sql.functions import col, lower
+
+tables_df = (
+    _read_remote_table("INFORMATION_SCHEMA.TABLES")
+    .where(
+        (col("TABLE_SCHEMA") == source_schema)
+        & (col("TABLE_CATALOG") == source_database)
+        & (col("TABLE_TYPE") == "BASE TABLE")
+    )
 )
 
 if specific_table_list:
-    in_clause = ",".join(_sqlserver_string_literal(n) for n in specific_table_list)
-    tables_query = _tables_base + f"AND TABLE_NAME IN ({in_clause}) "
-else:
-    tables_query = _tables_base + f"AND TABLE_NAME LIKE '{table_filter}' "
+    lower_names = [n.lower() for n in specific_table_list]
+    tables_df = tables_df.where(lower(col("TABLE_NAME")).isin(lower_names))
+elif table_filter != "%":
+    tables_df = tables_df.where(col("TABLE_NAME").like(table_filter))
 
-tables_df = _read_jdbc(tables_query)
-discovered_from_jdbc = [row.TABLE_NAME for row in tables_df.collect()]
+discovered_from_jdbc = [row.TABLE_NAME for row in tables_df.select("TABLE_NAME").collect()]
 by_lower = {}
 for name in discovered_from_jdbc:
     by_lower.setdefault(name.lower(), name)
@@ -154,30 +141,46 @@ print(f"Discovered {len(discovered_tables)} tables in [{source_database}].[{sour
 
 # Discover primary keys for each table and build config rows
 
-pk_query_template = """
-SELECT KCU.COLUMN_NAME
-FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS TC
-JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE KCU
-  ON TC.CONSTRAINT_NAME = KCU.CONSTRAINT_NAME
-  AND TC.TABLE_SCHEMA = KCU.TABLE_SCHEMA
-  AND TC.TABLE_NAME = KCU.TABLE_NAME
-WHERE TC.CONSTRAINT_TYPE = 'PRIMARY KEY'
-  AND KCU.TABLE_SCHEMA = '{schema}'
-  AND KCU.TABLE_NAME = '{table}'
-  AND KCU.TABLE_CATALOG = '{database}'
-"""
+# Read INFORMATION_SCHEMA.TABLE_CONSTRAINTS + KEY_COLUMN_USAGE via dbtable and
+# join on the Databricks side; same reason as above (no embedded string literals).
+_tc_df = (
+    _read_remote_table("INFORMATION_SCHEMA.TABLE_CONSTRAINTS")
+    .where(
+        (col("CONSTRAINT_TYPE") == "PRIMARY KEY")
+        & (col("TABLE_SCHEMA") == source_schema)
+        & (col("TABLE_CATALOG") == source_database)
+    )
+    .select("CONSTRAINT_NAME", "TABLE_NAME")
+)
+_kcu_df = (
+    _read_remote_table("INFORMATION_SCHEMA.KEY_COLUMN_USAGE")
+    .where(
+        (col("TABLE_SCHEMA") == source_schema)
+        & (col("TABLE_CATALOG") == source_database)
+    )
+    .select(
+        col("CONSTRAINT_NAME").alias("KCU_CONSTRAINT_NAME"),
+        col("TABLE_NAME").alias("KCU_TABLE_NAME"),
+        col("COLUMN_NAME"),
+        col("ORDINAL_POSITION").alias("KEY_POSITION"),
+    )
+)
+_pk_join = (
+    _tc_df.join(
+        _kcu_df,
+        (_tc_df.CONSTRAINT_NAME == _kcu_df.KCU_CONSTRAINT_NAME)
+        & (_tc_df.TABLE_NAME == _kcu_df.KCU_TABLE_NAME),
+    )
+    .select("TABLE_NAME", "COLUMN_NAME", "KEY_POSITION")
+    .orderBy("TABLE_NAME", "KEY_POSITION")
+).collect()
+_pks_by_table = {}
+for row in _pk_join:
+    _pks_by_table.setdefault(row.TABLE_NAME, []).append(row.COLUMN_NAME)
 
 config_rows = []
 for table_name in discovered_tables:
-    pk_query = pk_query_template.format(
-        schema=source_schema, table=table_name, database=source_database
-    )
-    try:
-        pk_df = _read_jdbc(pk_query)
-        pk_columns = [row.COLUMN_NAME for row in pk_df.collect()]
-    except Exception as e:
-        print(f"  Warning: could not read PKs for {table_name}: {e}")
-        pk_columns = []
+    pk_columns = _pks_by_table.get(table_name, [])
 
     config_rows.append(
         {

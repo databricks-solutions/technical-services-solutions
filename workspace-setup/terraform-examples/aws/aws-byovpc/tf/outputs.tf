@@ -46,9 +46,9 @@ output "nat_gateway_ids" {
   value       = var.vpc_id == "" ? module.vpc[0].natgw_ids : []
 }
 
-output "security_group_id" {
-  description = "ID of the security group used for the workspace"
-  value       = length(var.security_group_ids) > 0 ? var.security_group_ids[0] : (var.vpc_id == "" ? module.vpc[0].default_security_group_id : "")
+output "security_group_ids" {
+  description = "IDs of the security groups used for the workspace"
+  value       = length(var.security_group_ids) > 0 ? var.security_group_ids : aws_security_group.databricks[*].id
 }
 
 # =============================================================================

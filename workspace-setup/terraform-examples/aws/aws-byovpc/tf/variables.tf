@@ -119,6 +119,12 @@ variable "sg_egress_ports" {
   default     = [443, 3306, 2443, 8443, 8444, 8445, 8446, 8447, 8448, 8449, 8450, 8451]
 }
 
+variable "new_security_group_name" {
+  description = "Name for the new security group. Required when new_security_group is true."
+  type        = string
+  default     = ""
+}
+
 # =============================================================================
 # Unity Catalog Metastore Configuration
 # =============================================================================

@@ -125,13 +125,22 @@ security_group_ids   = []
 ```hcl
 vpc_id             = "vpc-xxxxxxxxx"
 subnet_ids         = ["subnet-xxxxxxxxx", "subnet-yyyyyyyyy"]
-security_group_ids = ["sg-xxxxxxxxx"]
+security_group_ids = ["sg-xxxxxxxxx"]  # leave empty to auto-create, or provide existing SG IDs
 ```
 
 **Requirements for existing VPC:**
 - At least 2 private subnets in different AZs
 - Subnets must have outbound internet connectivity (NAT Gateway or similar)
 - Security group must allow required Databricks ports
+
+### Security Group Configuration
+
+Leave `security_group_ids` empty to automatically create a dedicated security group in the target VPC (works for both new and existing VPCs). Optionally, customize the name via `new_security_group_name` (defaults to `<resource_prefix>-databricks-sg`).
+
+```hcl
+security_group_ids      = []
+new_security_group_name = "my-databricks-sg"  # optional
+```
 
 ### Unity Catalog Options
 

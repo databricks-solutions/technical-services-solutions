@@ -1,7 +1,7 @@
 resource "null_resource" "previous" {}
 
 resource "time_sleep" "wait_30_seconds" {
-  depends_on      = [null_resource.previous]
+  depends_on      = [aws_iam_role.cross_account_role, aws_iam_role_policy.this]
   create_duration = "30s"
 }
 

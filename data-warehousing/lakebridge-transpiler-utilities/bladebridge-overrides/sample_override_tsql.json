@@ -1,0 +1,7 @@
+{
+  "inherit_from": ["mssql2sparksql.json"],
+  "config_variables": {
+    "USER_NAME": "<username>",
+    "EMAIL_ADDRESS": "<username>"
+  }
+}

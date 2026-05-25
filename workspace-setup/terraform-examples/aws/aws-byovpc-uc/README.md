@@ -166,7 +166,7 @@ Type `yes` when prompted. Destruction can take several minutes.
 | `terraform plan` fails on permissions | Insufficient AWS IAM permissions | Ensure the identity has permissions to create VPC, IAM, S3, and Security Group resources. |
 | Subnet CIDR errors | CIDRs overlap or don't fit in VPC range | Ensure `private_subnets_cidr`, `public_subnets_cidr`, and `intra_subnet_cidr` are non-overlapping and within `vpc_cidr_range`. |
 | NAT Gateway or outbound connectivity issues | Cluster nodes cannot reach the control plane | Verify the NAT Gateway exists and has a public IP. Check that security group rules allow outbound traffic on required ports. |
-| Cannot delete catalog on destroy | Catalog is not empty | Ensure `force_destroy = true` is set on the `databricks_catalog` and `databricks_external_location` resources, then run `terraform apply -target=databricks_catalog.uc_quickstart` before destroying. |
+| Cannot delete catalog on destroy | Catalog still has schemas, tables, or volumes | This template already sets `force_destroy = true` on `databricks_catalog.uc_quickstart` and `databricks_external_location`, so a normal `terraform destroy` should remove them. If destroy fails, empty or drop objects in that catalog in the workspace, then run `terraform destroy` again. 
 
 ## File Structure
 
@@ -199,7 +199,7 @@ tf/
 | **security_group.tf** | Default security group egress rules for Databricks-required ports, internal TCP/UDP egress, and self-ingress. |
 | **credential.tf** | Cross-account IAM role and policy for Databricks workspace provisioning. |
 | **root_s3_bucket.tf** | S3 bucket for workspace root storage (DBFS) with Databricks bucket policy. |
-| **metastore.tf** | Unity Catalog metastore (create new or use existing) and workspace assignment. |
+| **metastore.tf** | Unity Catalog metastore (create new or use existing), region check for existing metastores, and workspace assignment. |
 | **unity_catalog.tf** | Unity Catalog IAM role, S3 bucket, storage credential, external location, and user-defined catalog. |
 | **outputs.tf** | Workspace URL/ID; VPC ID; subnet IDs; NAT gateway IDs; security group ID; S3 bucket names; metastore ID; Unity Catalog catalog, external location, and storage credential names; credentials and network config IDs. |
 

@@ -102,9 +102,8 @@ resource "databricks_external_location" "uc_external_location" {
   depends_on      = [time_sleep.wait_60_seconds]
 }
 resource "databricks_catalog" "uc_quickstart" {
-  provider = databricks.workspace
-  name     = local.uc_catalog_name
-  # storage_root = "${var.storage_root}"
+  provider      = databricks.workspace
+  name          = local.uc_catalog_name
   storage_root  = databricks_external_location.uc_external_location.url
   comment       = "this catalog is managed by terraform"
   force_destroy = true

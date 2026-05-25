@@ -30,7 +30,7 @@ variable "pricing_tier" {
   default     = "PREMIUM"
   validation {
     condition     = contains(["ENTERPRISE", "PREMIUM"], var.pricing_tier)
-    error_message = "resource_prefix must be either 'ENTERPRISE' or 'PREMIUM'."
+    error_message = "pricing_tier must be either 'ENTERPRISE' or 'PREMIUM'."
   }
 }
 
@@ -123,9 +123,13 @@ variable "metastore_id" {
 }
 
 variable "metastore_name" {
-  description = "Name for the Unity Catalog metastore (only used if creating new metastore)"
+  description = "Name for the Unity Catalog metastore. Required only when metastore_id is empty (new metastore)."
   type        = string
   default     = ""
+  validation {
+    condition     = var.metastore_id != "" || var.metastore_name != ""
+    error_message = "metastore_name is required when creating a new metastore (metastore_id is empty)."
+  }
 }
 # =============================================================================
 # User Defined Catalog

@@ -73,6 +73,24 @@ def _find_column(df: pd.DataFrame, patterns: List[str]) -> Optional[str]:
     return None
 
 
+def _cell_str(val: Any) -> str:
+    """Return a stripped string for a DataFrame cell, treating NaN/None as empty.
+
+    Plain ``str(np.nan)`` yields the literal ``"nan"``, which is truthy and
+    silently breaks downstream emptiness checks (e.g. the Connection-empty
+    branch in ``_classify_object_type``). This helper keeps NaN cells indistinguishable
+    from genuinely empty strings.
+    """
+    if val is None:
+        return ""
+    try:
+        if pd.isna(val):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return str(val).strip()
+
+
 def _source_target_indicator_to_relationship(indicator: Any) -> Optional[str]:
     """Map INFA Source/Target Indicator to graph relationship."""
     if pd.isna(indicator):
@@ -283,11 +301,11 @@ def _parse_mappings_objects_list(
         if is_lineage_pseudo_table_name(obj_name):
             continue
 
-        connection = str(row[connection_idx]).strip() if connection_idx is not None else ""
-        workflow = str(row[workflow_idx]).strip() if workflow_idx is not None else ""
-        session = str(row[session_idx]).strip() if session_idx is not None else ""
-        folder = str(row[folder_idx]).strip() if folder_idx is not None else ""
-        instance = str(row[instance_idx]).strip() if instance_idx is not None else ""
+        connection = _cell_str(row[connection_idx]) if connection_idx is not None else ""
+        workflow = _cell_str(row[workflow_idx]) if workflow_idx is not None else ""
+        session = _cell_str(row[session_idx]) if session_idx is not None else ""
+        folder = _cell_str(row[folder_idx]) if folder_idx is not None else ""
+        instance = _cell_str(row[instance_idx]) if instance_idx is not None else ""
 
         # Classify object type via System Types (authoritative) or heuristics (fallback)
         system_type = None
@@ -332,6 +350,30 @@ def _parse_mappings_objects_list(
                 "name": obj_name,
                 "connection": connection,
             }
+        else:
+            # A single logical flat file can appear as multiple MOL rows (Source
+            # Definition + Source Qualifier) sharing one Object Name. Only the
+            # SQ row carries the FLATFILE System Type, so we must let a later
+            # FLAT_FILE classification upgrade an earlier TABLE_OR_VIEW node.
+            existing = nodes[obj_id]
+            existing_type = existing.get("type")
+            if (
+                obj_type == NodeTypeHelper.FLAT_FILE
+                and existing_type == NodeTypeHelper.TABLE_OR_VIEW
+            ):
+                existing["type"] = NodeTypeHelper.FLAT_FILE
+            elif (
+                obj_type == NodeTypeHelper.FLAT_FILE
+                and existing_type
+                not in (NodeTypeHelper.FLAT_FILE, NodeTypeHelper.TABLE_OR_VIEW)
+            ):
+                log.warning(
+                    "Conflicting classification for %s: kept %s, ignored "
+                    "FLAT_FILE (mapping=%s, instance=%s)",
+                    obj_id, existing_type, mapping_name, instance,
+                )
+            if connection and not existing.get("connection"):
+                existing["connection"] = connection
 
         relationship = "READS_FROM"  # default
         if indicator_idx is not None:
@@ -408,22 +450,13 @@ def _parse_workflow_links(
     condition_idx = col_list.index(condition_col) if condition_col else None
 
     for row in df.itertuples(index=False):
-        from_task = row[from_idx]
-        to_task = row[to_idx]
-        if pd.isna(from_task) or pd.isna(to_task):
-            continue
-        from_task = str(from_task).strip()
-        to_task = str(to_task).strip()
+        from_task = _cell_str(row[from_idx])
+        to_task = _cell_str(row[to_idx])
         if not from_task or not to_task:
             continue
 
-        workflow = ""
-        if workflow_idx is not None and not pd.isna(row[workflow_idx]):
-            workflow = str(row[workflow_idx]).strip()
-
-        condition = ""
-        if condition_idx is not None and not pd.isna(row[condition_idx]):
-            condition = str(row[condition_idx]).strip()
+        workflow = _cell_str(row[workflow_idx]) if workflow_idx is not None else ""
+        condition = _cell_str(row[condition_idx]) if condition_idx is not None else ""
 
         for task_name in (from_task, to_task):
             if task_name not in nodes:
@@ -487,27 +520,29 @@ def _parse_item_node_info(
     subjob_ref_idx = col_list.index(subjob_ref_col) if subjob_ref_col else None
 
     for row in df.itertuples(index=False):
-        item = row[item_idx]
-        node_name = row[node_name_idx]
-        if pd.isna(item) or pd.isna(node_name):
-            continue
-        item = str(item).strip()
-        node_name = str(node_name).strip()
+        item = _cell_str(row[item_idx])
+        node_name = _cell_str(row[node_name_idx])
         if not item or not node_name:
             continue
 
         entry: Dict[str, Any] = {"node_name": node_name}
-        if orig_type_idx is not None and not pd.isna(row[orig_type_idx]):
-            entry["node_type"] = str(row[orig_type_idx]).strip()
-        if conformed_idx is not None and not pd.isna(row[conformed_idx]):
-            entry["conformed_type"] = str(row[conformed_idx]).strip()
+        if orig_type_idx is not None:
+            val = _cell_str(row[orig_type_idx])
+            if val:
+                entry["node_type"] = val
+        if conformed_idx is not None:
+            val = _cell_str(row[conformed_idx])
+            if val:
+                entry["conformed_type"] = val
         if order_idx is not None and not pd.isna(row[order_idx]):
             try:
                 entry["order"] = int(row[order_idx])
             except (ValueError, TypeError):
                 pass
-        if subjob_ref_idx is not None and not pd.isna(row[subjob_ref_idx]):
-            entry["subjob_ref"] = str(row[subjob_ref_idx]).strip()
+        if subjob_ref_idx is not None:
+            val = _cell_str(row[subjob_ref_idx])
+            if val:
+                entry["subjob_ref"] = val
 
         result.setdefault(item, []).append(entry)
 
@@ -547,19 +582,22 @@ def _parse_database_connections(df: pd.DataFrame) -> Dict[str, Dict[str, Any]]:
     count_idx = col_list.index(count_col) if count_col else None
 
     for row in df.itertuples(index=False):
-        conn_name = row[name_idx]
-        if pd.isna(conn_name):
-            continue
-        conn_name = str(conn_name).strip()
+        conn_name = _cell_str(row[name_idx])
         if not conn_name:
             continue
         entry: Dict[str, Any] = {}
-        if type_idx is not None and not pd.isna(row[type_idx]):
-            entry["connection_type"] = str(row[type_idx]).strip()
-        if ref_type_idx is not None and not pd.isna(row[ref_type_idx]):
-            entry["ref_type"] = str(row[ref_type_idx]).strip()
-        if variable_idx is not None and not pd.isna(row[variable_idx]):
-            entry["variable"] = str(row[variable_idx]).strip()
+        if type_idx is not None:
+            val = _cell_str(row[type_idx])
+            if val:
+                entry["connection_type"] = val
+        if ref_type_idx is not None:
+            val = _cell_str(row[ref_type_idx])
+            if val:
+                entry["ref_type"] = val
+        if variable_idx is not None:
+            val = _cell_str(row[variable_idx])
+            if val:
+                entry["variable"] = val
         if count_idx is not None and not pd.isna(row[count_idx]):
             try:
                 entry["count"] = int(row[count_idx])
@@ -609,26 +647,22 @@ def _parse_subjob_info(
     child_type_idx = col_list.index(child_type_col) if child_type_col else None
 
     for row in df.itertuples(index=False):
-        parent_item = row[parent_item_idx]
-        child_item = row[child_item_idx]
-        if pd.isna(parent_item) or pd.isna(child_item):
-            continue
-        parent_item = str(parent_item).strip()
-        child_item = str(child_item).strip()
+        parent_item = _cell_str(row[parent_item_idx])
+        child_item = _cell_str(row[child_item_idx])
         if not parent_item or not child_item:
             continue
 
-        # Resolve parent type
-        parent_type = NodeTypeHelper.WORKFLOW  # default
+        parent_type = NodeTypeHelper.WORKFLOW
         if parent_type_idx is not None:
-            raw = str(row[parent_type_idx]).strip().lower()
-            parent_type = _SUBJOB_TYPE_MAP.get(raw, NodeTypeHelper.WORKFLOW)
+            raw = _cell_str(row[parent_type_idx]).lower()
+            if raw:
+                parent_type = _SUBJOB_TYPE_MAP.get(raw, NodeTypeHelper.WORKFLOW)
 
-        # Resolve child type
-        child_type = NodeTypeHelper.SESSION  # default
+        child_type = NodeTypeHelper.SESSION
         if child_type_idx is not None:
-            raw = str(row[child_type_idx]).strip().lower()
-            child_type = _SUBJOB_TYPE_MAP.get(raw, NodeTypeHelper.SESSION)
+            raw = _cell_str(row[child_type_idx]).lower()
+            if raw:
+                child_type = _SUBJOB_TYPE_MAP.get(raw, NodeTypeHelper.SESSION)
 
         # Ensure parent node exists
         if parent_item not in nodes:

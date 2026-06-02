@@ -55,7 +55,7 @@ security_group_ids = []
 # new_security_group_name = "my-databricks-sg"
 
 # Egress ports for Databricks connectivity
-sg_egress_ports = [443, 3306, 2443, 8443, 8444, 8445, 8446, 8447, 8448, 8449, 8450, 8451]
+sg_egress_ports = [443, 3306, 2443, 5432, 8443, 8444, 8445, 8446, 8447, 8448, 8449, 8450, 8451]
 
 # =============================================================================
 # Unity Catalog Metastore Configuration

@@ -97,3 +97,19 @@ After the script finishes, validate the workspace is correctly using the injecte
 - Ensure the new VNet and subnets have the correct delegations (`Microsoft.Databricks/workspaces`) before running `update_databricks_vnet.ps1`, or use the optional VNet creation script to create a compliant network first.
 - The script uses the current Azure CLI session. Run `az login` first if running locally.
 - Microsoft documents that **Terraform is not supported** for this workspace network update path; this script uses ARM export and `az deployment group create` instead.
+
+## Related Content
+
+- [Update workspace network configuration (Microsoft Learn)](https://learn.microsoft.com/en-us/azure/databricks/security/network/classic/update-workspaces) — the official documentation this project automates, including the managed-VNet-to-VNet-injection steps and the supported `apiVersion`.
+- [Video walkthrough: Update your workspace network configuration to use VNet injection](https://www.youtube.com/watch?v=q_JYv7j2FRs) — a step-by-step demonstration of the workspace network update process.
+- [Configure a workspace with VNet injection (Microsoft Learn)](https://learn.microsoft.com/en-us/azure/databricks/security/network/classic/vnet-inject) — background on VNet injection requirements (subnets, delegation, NSGs).
+- [Azure Databricks: Upgrade Managed Workspace to VNet Injected Workspace (Community)](https://community.databricks.com/t5/product-platform-updates/azure-databricks-upgrade-managed-workspace-to-vnet-injected/ba-p/130655) — Azure Portal UI alternative to the ARM-template approach.
+
+## Disclaimer
+
+⚠️ **Please Note**:
+- These scripts are provided **as-is** for guidance and educational purposes.
+- They are **not official Databricks tools** or supported products.
+- This project **does not have official Databricks support** — Databricks support channels do not cover these community-contributed examples.
+- Content represents implementation examples and best-practice guidance; always refer to the [official Microsoft documentation](https://learn.microsoft.com/en-us/azure/databricks/security/network/classic/update-workspaces) as the source of truth.
+- Users should thoroughly test and validate all code in their specific environments before running against production workspaces.

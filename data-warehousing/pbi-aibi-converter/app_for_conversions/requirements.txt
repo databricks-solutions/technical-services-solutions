@@ -1,0 +1,15 @@
+# Pinned dependencies. Floor-only specifiers (`>=`) are NOT enough for a
+# Databricks App: the runtime resolves the latest matching version on
+# every deploy, so a breaking minor upstream release would silently
+# brick the app overnight. Use `~=` for "compatible release" pinning
+# (PEP 440) — allows safe patch upgrades, blocks minor jumps.
+#
+# `streamlit` is provided by the Databricks Apps runtime but is pinned
+# here for local-dev parity. `st.context.headers` semantics have shifted
+# across minors in the past — bump deliberately, never automatically.
+
+databricks-sdk~=0.40.0
+fpdf2~=2.8.0
+openai~=1.50
+sqlglot~=26.0
+streamlit~=1.39

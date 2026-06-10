@@ -1,0 +1,32 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+
+# IDE and editor
+.cursor/
+.vscode/
+.idea/
+
+# Databricks local state
+.databricks-resources.json
+.databricks/
+
+# AI Dev Kit local install
+.ai-dev-kit/
+repo/
+
+# macOS
+.DS_Store

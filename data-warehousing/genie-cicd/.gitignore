@@ -1,0 +1,32 @@
+# Local config with real workspace values
+databricks.yml
+
+# Databricks bundle state and cache
+.databricks/
+
+# GitHub workflows (not ready for CI yet)
+.github/
+
+# Internal notes
+fix.txt
+
+# Extra docs (kept locally, not in official repo)
+QUICKGUIDE.md
+CONTRIBUTING.md
+SETUP.md
+src/DOCUMENTATION.md
+
+# Auto-generated prod JSON (environment-specific)
+genie_definition/genie_space_prod.json
+
+# OS files
+.DS_Store
+**/.DS_Store
+
+# Editor settings
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+.venv/

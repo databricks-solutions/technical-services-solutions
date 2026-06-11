@@ -19,30 +19,59 @@ resource "databricks_mws_ncc_private_endpoint_rule" "s3" {
   enabled                        = false
 
   lifecycle {
-    ignore_changes = [enabled]
+    # `enabled`: owned by null_resource.enable_s3_rule (see below).
+    # `account_id`: server-populated; provider versions disagree about whether
+    #   to store it, causing phantom drift on upgrade. Ignoring it stops TF
+    #   from sending an empty PATCH that the API rejects with
+    #   "Update mask must be specified".
+    ignore_changes = [enabled, account_id]
+    # Fail before creating the rule (and burning the 5-minute VPC endpoint
+    # wait) if the bucket is in a different region than the workspace.
+    # Cross-region gives a cryptic 307 later in apply.
+    precondition {
+      # Passes if the bucket region matches OR the bucket can't be found.
+      # The NOT_FOUND escape hatch is needed for `terraform destroy` after a
+      # user has already deleted the bucket out-of-band — without it, destroy
+      # would be blocked by a stale precondition on a resource that's about
+      # to be destroyed anyway. If the bucket is genuinely missing during
+      # apply, the downstream aws_s3_bucket_policy resource will fail with a
+      # clear "NoSuchBucket" error.
+      condition     = data.external.bucket_region.result["region"] == "NOT_FOUND" || data.external.bucket_region.result["region"] == var.region
+      error_message = "Bucket '${var.external_location_bucket_name}' is in region '${data.external.bucket_region.result["region"]}' but the workspace is in '${var.region}'. They must match — Databricks requires the external-location bucket to be in the same region as the workspace. Either recreate the bucket in '${var.region}', or set var.region to match the bucket."
+    }
   }
 }
 
-# Wait 90s for AWS to provision the underlying VPC endpoint. The Databricks
-# API returns the rule before AWS has finished provisioning, so the rule's
-# vpc_endpoint_id attribute is null in the immediate response. Re-reading
-# the NCC after this wait surfaces the populated vpc_endpoint_id.
-resource "time_sleep" "wait_for_vpc_endpoint" {
-  depends_on      = [databricks_mws_ncc_private_endpoint_rule.s3]
-  create_duration = "90s"
-
+# Poll until AWS has provisioned the underlying VPC endpoint and the rule's
+# vpc_endpoint_id is populated. The Databricks API returns the rule before
+# AWS has finished provisioning, so vpc_endpoint_id is null in the create
+# response. A flat sleep was unreliable (sometimes >90s was needed), so we
+# poll the rule every 10s for up to 5 minutes.
+resource "null_resource" "wait_for_vpc_endpoint" {
   triggers = {
     rule_id = databricks_mws_ncc_private_endpoint_rule.s3.rule_id
   }
+
+  provisioner "local-exec" {
+    command = "bash ${path.module}/scripts/wait-for-vpc-endpoint.sh"
+    environment = {
+      NCC_ID                = databricks_mws_network_connectivity_config.ncc.network_connectivity_config_id
+      RULE_ID               = databricks_mws_ncc_private_endpoint_rule.s3.rule_id
+      DATABRICKS_HOST       = "https://accounts.cloud.databricks.com"
+      DATABRICKS_ACCOUNT_ID = var.databricks_account_id
+    }
+  }
+
+  depends_on = [databricks_mws_ncc_private_endpoint_rule.s3]
 }
 
-# Re-read the NCC after the wait to fetch the populated vpc_endpoint_id from
-# its egress_config.
+# Re-read the NCC after the poll completes to fetch the populated
+# vpc_endpoint_id from its egress_config.
 data "databricks_mws_network_connectivity_config" "ncc_refreshed" {
   provider = databricks.account
   name     = databricks_mws_network_connectivity_config.ncc.name
 
-  depends_on = [time_sleep.wait_for_vpc_endpoint]
+  depends_on = [null_resource.wait_for_vpc_endpoint]
 }
 
 locals {
@@ -77,6 +106,27 @@ locals {
     databricks_mws_ncc_private_endpoint_rule.s3.vpc_endpoint_id,
     one(local.matching_vpc_endpoint_ids)
   )
+}
+
+# Look up the target bucket's region so we can fail fast (with a clear
+# message) if it doesn't match var.region. A cross-region bucket gives a
+# cryptic 307 redirect later in the apply, which this precondition prevents.
+#
+# Implementation: data.aws_s3_bucket is region-bound (it returns "empty
+# result" for a bucket in a different region), so we use the AWS CLI via
+# data "external" instead. The CLI handles cross-region S3 lookups natively
+# via GetBucketLocation. Requires `aws` and `jq` on PATH — same prereqs as
+# the rest of this config.
+#
+# LocationConstraint is null for us-east-1 buckets (S3's "default" region),
+# so we coalesce to "us-east-1".
+data "external" "bucket_region" {
+  # set -o pipefail makes the pipeline fail (and the || fallback fire) when
+  # the AWS CLI errors. Without it, jq exits 0 on empty input, the `||` never
+  # triggers, TF receives empty stdout, and the data source errors with
+  # "unexpected end of JSON input" — which surfaces during destroy if the
+  # bucket got deleted out-of-band before the destroy ran.
+  program = ["bash", "-c", "set -o pipefail; aws s3api get-bucket-location --bucket ${var.external_location_bucket_name} --output json 2>/dev/null | jq '{region: (.LocationConstraint // \"us-east-1\")}' || echo '{\"region\": \"NOT_FOUND\"}'"]
 }
 
 # If merging with an existing bucket policy is requested, read it. Used as
@@ -128,101 +178,36 @@ resource "aws_s3_bucket_policy" "allow_databricks_s3_vpce" {
   policy = data.aws_iam_policy_document.allow_databricks_s3_vpce.json
 }
 
-# Enable the rule via the Databricks REST API.
+# Enable the rule via the Databricks API.
 #
-# Why this is a null_resource and not a Terraform resource attribute: the
-# Databricks API ignores enabled=true at create time for S3 rules. The field
-# can only be PATCHed AFTER connection_state has reached ESTABLISHED — which
-# only happens after the bucket policy is in place and AWS auto-approves the
-# connection (typically 1–5 min).
+# Why a null_resource (and not a TF resource attribute): the Databricks API
+# ignores enabled=true at create time for S3 rules. The field can only be
+# updated AFTER connection_state has reached ESTABLISHED — which only
+# happens after the bucket policy is in place and AWS auto-approves the
+# connection (typically 1–5 min). The TF provider supports the update but
+# does not natively poll for ESTABLISHED.
 #
-# Requires curl and jq on PATH. Reads DATABRICKS_CLIENT_ID and
-# DATABRICKS_CLIENT_SECRET from the inherited shell environment.
+# Logic lives in tf/scripts/enable-s3-rule.sh. Requires `databricks` CLI
+# (>= 0.297), `jq`, and DATABRICKS_CLIENT_ID / DATABRICKS_CLIENT_SECRET
+# exported in the shell that runs terraform.
 resource "null_resource" "enable_s3_rule" {
   triggers = {
     rule_id = databricks_mws_ncc_private_endpoint_rule.s3.rule_id
   }
 
   provisioner "local-exec" {
-    interpreter = ["bash", "-c"]
+    command = "bash ${path.module}/scripts/enable-s3-rule.sh"
     environment = {
-      ACCOUNT_ID = var.databricks_account_id
-      NCC_ID     = databricks_mws_network_connectivity_config.ncc.network_connectivity_config_id
-      RULE_ID    = databricks_mws_ncc_private_endpoint_rule.s3.rule_id
+      NCC_ID                = databricks_mws_network_connectivity_config.ncc.network_connectivity_config_id
+      RULE_ID               = databricks_mws_ncc_private_endpoint_rule.s3.rule_id
+      DATABRICKS_HOST       = "https://accounts.cloud.databricks.com"
+      DATABRICKS_ACCOUNT_ID = var.databricks_account_id
     }
-    command = <<-EOT
-      set -uo pipefail
-
-      if [ -z "$${DATABRICKS_CLIENT_ID:-}" ] || [ -z "$${DATABRICKS_CLIENT_SECRET:-}" ]; then
-        echo "[enable_s3_rule] DATABRICKS_CLIENT_ID and DATABRICKS_CLIENT_SECRET must be exported in your shell" >&2
-        exit 1
-      fi
-
-      TOKEN=$(curl -s -X POST -u "$DATABRICKS_CLIENT_ID:$DATABRICKS_CLIENT_SECRET" \
-        "https://accounts.cloud.databricks.com/oidc/accounts/$ACCOUNT_ID/v1/token" \
-        -d 'grant_type=client_credentials&scope=all-apis' | jq -r '.access_token // empty')
-
-      if [ -z "$TOKEN" ]; then
-        echo "[enable_s3_rule] Failed to get OAuth token" >&2
-        exit 1
-      fi
-
-      RULE_URL="https://accounts.cloud.databricks.com/api/2.0/accounts/$ACCOUNT_ID/network-connectivity-configs/$NCC_ID/private-endpoint-rules/$RULE_ID"
-
-      # Wait for connection_state=ESTABLISHED. The Databricks API rejects
-      # PATCH enabled=true until the underlying VPC endpoint connection is
-      # approved by AWS (1–5 min after bucket policy is in place). Poll up
-      # to 10 minutes total.
-      STATE="UNKNOWN"
-      for i in $(seq 1 60); do
-        STATE=$(curl -s -H "Authorization: Bearer $TOKEN" "$RULE_URL" | jq -r '.connection_state // "UNKNOWN"')
-        echo "[enable_s3_rule] connection_state=$STATE (attempt $i/60)" >&2
-        if [ "$STATE" = "ESTABLISHED" ]; then
-          break
-        fi
-        if [ "$STATE" = "REJECTED" ] || [ "$STATE" = "DISCONNECTED" ] || [ "$STATE" = "EXPIRED" ]; then
-          echo "[enable_s3_rule] connection_state=$STATE is terminal, cannot enable rule" >&2
-          exit 1
-        fi
-        sleep 10
-      done
-
-      if [ "$STATE" != "ESTABLISHED" ]; then
-        echo "[enable_s3_rule] connection_state did not reach ESTABLISHED after ~10 minutes (last: $STATE)" >&2
-        exit 1
-      fi
-
-      # PATCH enabled=true. Retry on transient network errors.
-      TMP=$(mktemp)
-      for attempt in 1 2 3 4 5; do
-        echo "[enable_s3_rule] PATCH attempt $attempt" >&2
-        HTTP=$(curl -s -o "$TMP" -w '%%{http_code}' -X PATCH \
-          -H "Authorization: Bearer $TOKEN" \
-          -H "Content-Type: application/json" \
-          "$RULE_URL?update_mask=enabled" \
-          -d '{"enabled": true}')
-        CURL_RC=$?
-        BODY=$(cat "$TMP" 2>/dev/null || echo "")
-        echo "[enable_s3_rule] curl_rc=$CURL_RC http=$HTTP body=$BODY" >&2
-        if [ "$CURL_RC" = "0" ] && [ "$HTTP" = "200" ]; then
-          ENABLED=$(echo "$BODY" | jq -r '.enabled // false')
-          if [ "$ENABLED" = "true" ]; then
-            echo "[enable_s3_rule] rule enabled successfully" >&2
-            rm -f "$TMP"
-            exit 0
-          fi
-        fi
-        sleep 5
-      done
-
-      rm -f "$TMP"
-      echo "[enable_s3_rule] failed to enable rule after 5 attempts" >&2
-      exit 1
-    EOT
   }
 
   depends_on = [
     aws_s3_bucket_policy.allow_databricks_s3_vpce,
-    time_sleep.wait_for_vpc_endpoint,
+    null_resource.wait_for_vpc_endpoint,
   ]
 }
+

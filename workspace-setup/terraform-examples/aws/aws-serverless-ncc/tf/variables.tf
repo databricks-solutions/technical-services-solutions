@@ -78,8 +78,8 @@ variable "domain_names" {
 
 variable "use_existing_metastore" {
   type        = bool
-  description = "If true, use an existing metastore. If false, create a new one."
-  default     = true
+  description = "If true, use an existing metastore (looked up by id, name, or region in that priority). If false, create a new one. Note: a Databricks account is limited to one metastore per region, so set this to true if your account already has one in this region."
+  default     = false
 }
 
 variable "existing_metastore_id" {

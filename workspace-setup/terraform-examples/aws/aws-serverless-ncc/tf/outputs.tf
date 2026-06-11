@@ -28,19 +28,8 @@ output "metastore_id" {
   value       = local.resolved_metastore_id
 }
 output "s3_private_endpoint_rule_id" {
-  value = databricks_mws_ncc_private_endpoint_rule.s3.rule_id
-}
-
-output "s3_vpc_endpoint_id" {
-  value = databricks_mws_ncc_private_endpoint_rule.s3.vpc_endpoint_id
-}
-
-output "s3_private_endpoint_connection_state" {
-  value = databricks_mws_ncc_private_endpoint_rule.s3.connection_state
-}
-
-output "s3_private_endpoint_enabled" {
-  value = databricks_mws_ncc_private_endpoint_rule.s3.enabled
+  description = "NCC private endpoint rule ID. A successful apply means the rule is ESTABLISHED + enabled — null_resource.enable_s3_rule fails the apply otherwise. To verify state on-demand, query the API: see README troubleshooting section."
+  value       = databricks_mws_ncc_private_endpoint_rule.s3.rule_id
 }
 
 output "storage_credential_name" {

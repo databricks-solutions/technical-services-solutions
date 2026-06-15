@@ -1,0 +1,41 @@
+name: Release dabs-migrator
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'core-platform/cicd/dabs-migrator/**'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute next version
+        id: version
+        run: |
+          latest=$(git tag --list 'dabs-migrator-v*' --sort=-version:refname | head -n1)
+          if [ -z "$latest" ]; then
+            next="dabs-migrator-v1.0"
+          else
+            major=$(echo "$latest" | sed 's/^dabs-migrator-v\([0-9]*\)\.0$/\1/')
+            next="dabs-migrator-v$((major + 1)).0"
+          fi
+          echo "tag=$next" >> "$GITHUB_OUTPUT"
+
+      - name: Create zip archive
+        run: zip -r "${{ github.workspace }}/dabs-migrator-${{ steps.version.outputs.tag }}.zip" .
+        working-directory: ./core-platform/cicd/dabs-migrator/dabs-migrator
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          files: dabs-migrator-${{ steps.version.outputs.tag }}.zip

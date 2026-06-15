@@ -1,0 +1,47 @@
+# Bundle entrypoint. Keep this file thin — delegate resource definitions to resources/**/*.yml.
+# Docs: https://docs.databricks.com/aws/en/dev-tools/bundles/settings
+
+bundle:
+  name: {{ project_name }}
+
+include:
+  - resources/**/*.yml
+
+variables:
+  catalog:
+    description: Default catalog
+    default: "dev"
+
+  schema:
+    description: Default schema
+    default: "my_project_bronze"
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://<dev-workspace-host>.cloud.databricks.com
+
+  staging:
+    mode: production
+    workspace:
+      host: ${var.workspace_host}
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      workspace_host: https://<staging-workspace-host>.cloud.databricks.com
+    run_as:
+      service_principal_name: ${var.staging_sp_app_id}
+
+  prod:
+    mode: production
+    workspace:
+      host: ${var.workspace_host}
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      workspace_host: https://<prod-workspace-host>.cloud.databricks.com
+    run_as:
+      service_principal_name: ${var.prod_sp_app_id}
+    permissions:
+      - level: CAN_VIEW
+        group_name: users

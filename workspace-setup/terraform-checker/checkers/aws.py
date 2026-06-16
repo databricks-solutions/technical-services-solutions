@@ -10,6 +10,7 @@ import json
 import logging
 from typing import Optional, List, Dict, Any, Callable, Tuple
 
+from utils.denial import is_access_denied, is_throttling
 from .base import (
     BaseChecker,
     CheckCategory,
@@ -1257,7 +1258,36 @@ class AWSChecker(BaseChecker):
                         status=CheckStatus.WARNING,
                         message="No region, using us-east-1"
                     ))
-            
+
+            # STS regional endpoint activation. Cross-account AssumeRole and the
+            # STS interface VPC endpoint both hit STS in the workspace region;
+            # opt-in regions start DEACTIVATED and any region can be turned off,
+            # which fails the deploy at AssumeRole (RegionDisabledException).
+            try:
+                regional_sts = self._get_session().client(
+                    "sts", region_name=self.region,
+                    endpoint_url=f"https://sts.{self.region}.amazonaws.com",
+                )
+                regional_sts.get_caller_identity()
+                category.add_result(CheckResult(
+                    name="STS Regional Endpoint", status=CheckStatus.OK,
+                    message=f"Activated in {self.region}",
+                ))
+            except Exception as e:
+                err = str(e)
+                if "RegionDisabledException" in err or "not activated" in err:
+                    category.add_result(CheckResult(
+                        name="STS Regional Endpoint", status=CheckStatus.NOT_OK,
+                        message=f"STS is NOT activated in {self.region} - cross-account AssumeRole and the STS VPC endpoint will FAIL",
+                        remediation="Activate STS for this region: AWS Console -> IAM -> Account settings -> Security Token Service (STS).",
+                        doc_link="https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_temp_enable-regions.html",
+                    ))
+                else:
+                    category.add_result(CheckResult(
+                        name="STS Regional Endpoint", status=CheckStatus.WARNING,
+                        message=f"Could not verify STS activation in {self.region}: {err[:80]}",
+                    ))
+
             # Test IAM simulation capability
             try:
                 iam = self._get_client("iam")
@@ -2272,81 +2302,65 @@ class AWSChecker(BaseChecker):
                 "vcpu": ("ec2", "L-1216C47A", "On-Demand Standard vCPUs"),
             }
             
+            defaults = {"vpc": 5, "eip": 5, "igw": 5, "natgw": 5, "sg": 2500, "vcpu": 256}
             limits = {}
+            assumed = {}  # key -> True if the real limit couldn't be read
+            denied_any = False
             for key, (service, code, name) in quota_codes.items():
                 try:
                     response = sq.get_service_quota(ServiceCode=service, QuotaCode=code)
                     limits[key] = int(response.get("Quota", {}).get("Value", 0))
-                except Exception:
-                    defaults = {"vpc": 5, "eip": 5, "igw": 5, "natgw": 5, "sg": 2500, "vcpu": 256}
+                    assumed[key] = False
+                except Exception as e:
                     limits[key] = defaults.get(key, 5)
-            
-            # VPCs
-            vpcs = ec2.describe_vpcs()
-            vpc_count = len(vpcs.get("Vpcs", []))
-            vpc_limit = limits.get("vpc", 5)
-            pct = (vpc_count / vpc_limit * 100) if vpc_limit > 0 else 0
-            
-            if pct >= 100:
-                status = CheckStatus.NOT_OK
-                msg = f"{vpc_count}/{vpc_limit} - AT LIMIT! Request increase before deployment"
-            elif pct >= 80:
-                status = CheckStatus.WARNING
-                msg = f"{vpc_count}/{vpc_limit} ({pct:.0f}%) - approaching limit"
-            else:
-                status = CheckStatus.OK
-                msg = f"{vpc_count}/{vpc_limit} ({pct:.0f}%)"
-            
-            category.add_result(CheckResult(name="  VPCs", status=status, message=msg))
-            
-            # Elastic IPs
-            eips = ec2.describe_addresses()
-            eip_count = len(eips.get("Addresses", []))
-            eip_limit = limits.get("eip", 5)
-            pct = (eip_count / eip_limit * 100) if eip_limit > 0 else 0
-            
-            if pct >= 100:
-                status = CheckStatus.NOT_OK
-                msg = f"{eip_count}/{eip_limit} - AT LIMIT!"
-            elif pct >= 80:
-                status = CheckStatus.WARNING
-                msg = f"{eip_count}/{eip_limit} ({pct:.0f}%) - approaching limit"
-            else:
-                status = CheckStatus.OK
-                msg = f"{eip_count}/{eip_limit} ({pct:.0f}%)"
-            
-            category.add_result(CheckResult(name="  Elastic IPs", status=status, message=msg))
-            
-            # NAT Gateways
+                    assumed[key] = True
+                    denied_any = denied_any or is_access_denied(e)
+
+            if any(assumed.values()):
+                category.add_result(CheckResult(
+                    name="  ⚠️  Quota limits not readable",
+                    status=CheckStatus.WARNING, assumed=True,
+                    message=("Some/all quota limits could not be read"
+                             + (" (servicequotas:GetServiceQuota denied)" if denied_any else "")
+                             + " - values marked ASSUMED are AWS defaults, NOT your real limits"),
+                    remediation="Grant servicequotas:GetServiceQuota to read your real limits.",
+                ))
+
+            def usage_result(name, count, key):
+                limit = limits[key]
+                if assumed[key]:
+                    return CheckResult(
+                        name=name, status=CheckStatus.WARNING, assumed=True,
+                        message=f"{count} in use / ASSUMED DEFAULT {limit} (real limit unknown - cannot confirm headroom)",
+                        remediation="Grant servicequotas:GetServiceQuota to verify the real limit.",
+                    )
+                pct = (count / limit * 100) if limit > 0 else 0
+                if pct >= 100:
+                    return CheckResult(name=name, status=CheckStatus.NOT_OK,
+                                       message=f"{count}/{limit} - AT LIMIT! Request an increase before deployment")
+                if pct >= 80:
+                    return CheckResult(name=name, status=CheckStatus.WARNING,
+                                       message=f"{count}/{limit} ({pct:.0f}%) - approaching limit")
+                return CheckResult(name=name, status=CheckStatus.OK, message=f"{count}/{limit} ({pct:.0f}%)")
+
+            category.add_result(usage_result("  VPCs", len(ec2.describe_vpcs().get("Vpcs", [])), "vpc"))
+            category.add_result(usage_result("  Elastic IPs", len(ec2.describe_addresses().get("Addresses", [])), "eip"))
             nats = ec2.describe_nat_gateways(Filters=[{"Name": "state", "Values": ["available"]}])
-            nat_count = len(nats.get("NatGateways", []))
-            nat_limit = limits.get("natgw", 5)
-            pct = (nat_count / nat_limit * 100) if nat_limit > 0 else 0
-            
-            if pct >= 100:
-                status = CheckStatus.NOT_OK
-            elif pct >= 80:
-                status = CheckStatus.WARNING
-            else:
-                status = CheckStatus.OK
-            
-            category.add_result(CheckResult(name="  NAT Gateways", status=status, message=f"{nat_count}/{nat_limit} ({pct:.0f}%)"))
-            
-            # vCPU quota
-            vcpu_limit = limits.get("vcpu", 256)
-            category.add_result(CheckResult(
-                name="  EC2 On-Demand vCPUs",
-                status=CheckStatus.OK,
-                message=f"Limit: {vcpu_limit} vCPUs"
-            ))
-            
-            # Security Groups
-            sg_limit = limits.get("sg", 2500)
-            category.add_result(CheckResult(
-                name="  Security Groups per VPC",
-                status=CheckStatus.OK,
-                message=f"Limit: {sg_limit}"
-            ))
+            category.add_result(usage_result("  NAT Gateways", len(nats.get("NatGateways", [])), "natgw"))
+
+            for nm, key, unit in [("  EC2 On-Demand vCPUs", "vcpu", "vCPUs"),
+                                  ("  Security Groups per VPC", "sg", "")]:
+                if assumed[key]:
+                    category.add_result(CheckResult(
+                        name=nm, status=CheckStatus.WARNING, assumed=True,
+                        message=f"ASSUMED DEFAULT {limits[key]} {unit} (real limit unknown)",
+                        remediation="Grant servicequotas:GetServiceQuota to verify the real limit.",
+                    ))
+                else:
+                    category.add_result(CheckResult(
+                        name=nm, status=CheckStatus.OK,
+                        message=f"Limit: {limits[key]} {unit} (current usage not measured)",
+                    ))
                 
         except Exception as e:
             category.add_result(CheckResult(
@@ -2497,6 +2511,73 @@ class AWSChecker(BaseChecker):
                 ))
         return category
     
+    def check_kms(self) -> CheckCategory:
+        """Check permissions to create Customer-Managed Keys (CMK).
+
+        The Databricks Security Reference Architecture (SRA) ALWAYS creates KMS
+        keys (workspace storage + managed services, plus a per-workspace Unity
+        Catalog key). KMS CreateKey has no DryRun, and a real KMS key cannot be
+        deleted immediately (7-day minimum), so we verify via IAM policy
+        simulation rather than by creating one. If simulation is unavailable we
+        say so honestly instead of silently passing.
+        """
+        category = CheckCategory(name="STEP 5: CMK / KMS (Customer-Managed Keys)")
+
+        # Core actions an SRA CMK deploy needs (cmk.tf: CreateKey/Alias/PutKeyPolicy
+        # /CreateGrant + destroy path). CreateKey/CreateAlias are not DryRun-able.
+        kms_actions = [
+            "kms:CreateKey", "kms:CreateAlias", "kms:PutKeyPolicy",
+            "kms:CreateGrant", "kms:DescribeKey", "kms:GetKeyPolicy",
+            "kms:TagResource", "kms:ScheduleKeyDeletion", "kms:DeleteAlias",
+        ]
+
+        category.add_result(CheckResult(
+            name="── CMK readiness ──",
+            status=CheckStatus.OK,
+            message="Required when using customer-managed keys (always-on in the Databricks SRA)",
+        ))
+
+        if not self._can_simulate:
+            category.add_result(CheckResult(
+                name="  KMS permissions",
+                status=CheckStatus.WARNING,
+                message=(
+                    "Could not verify (IAM simulation unavailable, and KMS CreateKey "
+                    "has no DryRun). If deploying with CMK, ensure these are granted: "
+                    + ", ".join(kms_actions)
+                ),
+                remediation=(
+                    "Grant the listed kms:* actions to the deploying principal, or "
+                    "skip CMK if your deployment does not use customer-managed keys."
+                ),
+            ))
+            return category
+
+    def check_account_api_scope_note(self) -> CheckCategory:
+        """Explicitly record what this pre-check does NOT validate, so a green
+        run is never mistaken for 'terraform apply will succeed'."""
+        category = CheckCategory(name="NOT VALIDATED BY THIS PRE-CHECK (read this)")
+        category.add_result(CheckResult(
+            name="Databricks account-console registration",
+            status=CheckStatus.SKIPPED,
+            message=(
+                "databricks_mws_* (credentials, storage, networks, workspaces, "
+                "vpc_endpoint, customer_managed_keys, private_access_settings, NCC) "
+                "need a Databricks account-admin token - not covered here"
+            ),
+            remediation="Confirm account-admin access + per-region NCC quota in the Databricks account console.",
+        ))
+        category.add_result(CheckResult(
+            name="IAM/bucket policy CONTENT",
+            status=CheckStatus.SKIPPED,
+            message=(
+                "We prove you CAN create the role/bucket policy, not that the trust "
+                "principal (414351767826) + ExternalId = your Databricks account ID are correct"
+            ),
+        ))
+        return category
+
+
     def run_all_checks(self) -> CheckReport:
         """Run all AWS checks for Databricks deployment.
         
@@ -2534,10 +2615,17 @@ class AWSChecker(BaseChecker):
                 for r in delete_results:
                     storage_cat.add_result(r)
             
+            # CMK/KMS — always-on in the SRA; previously unchecked, so a deploy
+            # that needs CMK could pass here and then abort at the first KMS key.
+            self._report.add_category(self.check_kms())
+
             self._report.add_category(self.check_quotas())
-            
+
             self._report.add_category(self._compute_deployment_compatibility())
-            
+
+            # Be explicit about what a cloud-credential pre-check cannot prove.
+            self._report.add_category(self.check_account_api_scope_note())
+
             self._cleanup_test_resources()
         else:
             for name in ["STORAGE CONFIGURATION", "NETWORK CONFIGURATION",

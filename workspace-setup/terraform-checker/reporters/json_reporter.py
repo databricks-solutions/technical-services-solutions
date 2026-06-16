@@ -1,5 +1,5 @@
 """
-JSON Reporter for Databricks Terraform Pre-Check.
+JSON Reporter for Databricks Permission Pre-Check.
 
 Produces machine-readable JSON output for CI/CD pipelines.
 """
@@ -24,26 +24,14 @@ class JsonReporter:
         self.pretty = pretty
     
     def _result_to_dict(self, result: CheckResult) -> Dict[str, Any]:
-        """Convert a CheckResult to a dictionary."""
-        return {
-            "name": result.name,
-            "status": result.status.value,
-            "message": result.message,
-            "details": result.details,
-        }
-    
+        """Lossless — includes remediation, doc_link and the assumed flag."""
+        return result.to_dict()
+
     def _category_to_dict(self, category: CheckCategory) -> Dict[str, Any]:
-        """Convert a CheckCategory to a dictionary."""
-        return {
-            "name": category.name,
-            "results": [self._result_to_dict(r) for r in category.results],
-            "summary": {
-                "ok": category.ok_count,
-                "warning": category.warning_count,
-                "not_ok": category.not_ok_count,
-                "skipped": category.skipped_count,
-            }
-        }
+        """Convert a CheckCategory to a dictionary (+ tri-state area_state)."""
+        d = category.to_dict()
+        d["area_state"] = category.area_state
+        return d
     
     def generate(self, report: CheckReport) -> str:
         """
@@ -55,24 +43,37 @@ class JsonReporter:
         Returns:
             JSON string
         """
-        # Collect all failed checks
+        # Collect failed / warning / skipped checks (lossless: include
+        # remediation + assumed so CI/audit consumers can act on them).
         failed_checks = []
         warning_checks = []
-        
+        skipped_checks = []
+
+        def _entry(category, result):
+            return {
+                "category": category.name,
+                "check": result.name,
+                "message": result.message,
+                "remediation": result.remediation,
+                "doc_link": result.doc_link,
+                "assumed": result.assumed,
+            }
+
         for category in report.categories:
             for result in category.results:
                 if result.status == CheckStatus.NOT_OK:
-                    failed_checks.append({
-                        "category": category.name,
-                        "check": result.name,
-                        "message": result.message,
-                    })
+                    failed_checks.append(_entry(category, result))
                 elif result.status == CheckStatus.WARNING:
-                    warning_checks.append({
-                        "category": category.name,
-                        "check": result.name,
-                        "message": result.message,
-                    })
+                    warning_checks.append(_entry(category, result))
+                elif result.status == CheckStatus.SKIPPED:
+                    skipped_checks.append(_entry(category, result))
+
+        # Dedicated sections for the matrix + the explicit "not validated" note.
+        def _section(name_fragment):
+            cat = next((c for c in report.categories if name_fragment in c.name), None)
+            return self._category_to_dict(cat) if cat else None
+        compatibility = _section("DEPLOYMENT COMPATIBILITY")
+        not_validated = _section("NOT VALIDATED")
         
         # Determine overall status
         if report.total_not_ok > 0:
@@ -82,28 +83,20 @@ class JsonReporter:
         else:
             overall_status = "PASSED"
         
-        deployment_compatibility = {}
-        for category in report.categories:
-            if category.name == "DEPLOYMENT COMPATIBILITY":
-                for result in category.results:
-                    mode_name = result.name.strip()
-                    deployment_compatibility[mode_name] = {
-                        "supported": result.status == CheckStatus.OK,
-                        "message": result.message,
-                    }
-        
         output = {
             "version": "1.1",
             "timestamp": datetime.now().isoformat(),
             "cloud": report.cloud,
             "region": report.region,
             "account_info": report.account_info,
+            "subscription_id": report.subscription_id,
+            "project_id": report.project_id,
             "status": overall_status,
             "summary": {
                 "total_checks": (
-                    report.total_ok + 
-                    report.total_warning + 
-                    report.total_not_ok + 
+                    report.total_ok +
+                    report.total_warning +
+                    report.total_not_ok +
                     report.total_skipped
                 ),
                 "passed": report.total_ok,
@@ -111,9 +104,11 @@ class JsonReporter:
                 "failed": report.total_not_ok,
                 "skipped": report.total_skipped,
             },
-            "deployment_compatibility": deployment_compatibility,
             "failed_checks": failed_checks,
             "warning_checks": warning_checks,
+            "skipped_checks": skipped_checks,
+            "deployment_compatibility": compatibility,
+            "not_validated": not_validated,
             "categories": [
                 self._category_to_dict(c) for c in report.categories
             ],

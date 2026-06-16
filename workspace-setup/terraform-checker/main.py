@@ -446,6 +446,11 @@ def run_gcp_checks(
     is_flag=True,
     help="Suppress banner and progress output (only show results)"
 )
+@click.option(
+    "--strict",
+    is_flag=True,
+    help="Exit non-zero on warnings / NOT-VERIFIED items too (for strict CI gating)"
+)
 @click.version_option(
     version="1.2.0",
     prog_name="Databricks Terraform Pre-Check"
@@ -474,6 +479,7 @@ def main(
     log_file: Optional[str],
     config: Optional[str],
     quiet: bool,
+    strict: bool,
 ):
     """
     Databricks Terraform Pre-Check Tool
@@ -613,9 +619,13 @@ def main(
     total_not_ok = sum(r.total_not_ok for r in reports)
     total_warning = sum(r.total_warning for r in reports)
     
-    # Determine exit code
+    # Determine exit code. Blockers always fail (2). In --strict, unresolved
+    # warnings / NOT-VERIFIED items also fail (distinct code) so CI can gate on an
+    # incomplete run; default keeps warnings = 0.
     if total_not_ok > 0:
         exit_code = ExitCode.PERMISSION_DENIED
+    elif strict and total_warning > 0:
+        exit_code = ExitCode.GENERAL_ERROR
     else:
         exit_code = ExitCode.SUCCESS
     

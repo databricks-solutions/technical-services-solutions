@@ -67,6 +67,95 @@ python main.py --all
 python main.py --cloud aws --output report.txt
 ```
 
+### Opções adicionais
+
+```bash
+# Verificar todas as clouds detectadas
+python main.py --all
+
+# Modo read-only (sem criação de recursos)
+python main.py --cloud aws --region us-east-1 --verify-only
+
+# Dry-run (mostra o que seria testado, sem criar nada)
+python main.py --cloud aws --region us-east-1 --dry-run
+
+# Limpar recursos de teste órfãos
+python main.py --cleanup-orphans --cloud aws --region us-east-1
+
+# Relatório Markdown amigável ao cliente (veredito em linguagem clara + remediação)
+python main.py --cloud aws --region us-east-1 --format markdown --output report.md
+
+# Gating estrito de CI: sai com código != 0 também em warnings / NOT-VERIFIED
+python main.py --cloud aws --region us-east-1 --strict --json --quiet
+
+# Escopar a validação de rede BYO a um VPC e/ou security group (AWS)
+python main.py --cloud aws --region us-east-1 --vpc-id vpc-xxxxxxxx --sg-id sg-xxxxxxxx
+
+# Validar o conteúdo de TRUST da role cross-account (AWS)
+python main.py --cloud aws --region us-east-1 --databricks-account-id <uuid-da-conta-databricks>
+
+# Validar uma VNet existente para VNet injection, incl. cross-subscription (Azure)
+python main.py --cloud azure --subscription-id <id> --vnet-id "<resource-group>/<nome-da-vnet>"
+
+# Logging de debug
+python main.py --cloud aws --region us-east-1 --log-level debug --log-file debug.log
+```
+
+### Validação direcionada / BYO-network
+
+| Flag | Cloud | O que valida |
+|------|-------|--------------|
+| `--vpc-id` | AWS | Escopa as checagens de rede a um VPC: contagem de subnets privadas, distribuição em AZs, tamanho da subnet (/17–/26) e NAT/egress para deployments sem PrivateLink. |
+| `--sg-id` | AWS | Valida as regras de um security group existente (ingress/egress intra-SG de todo o tráfego + egress para o control plane). |
+| `--databricks-account-id` | AWS | Valida o *conteúdo* do trust da role cross-account (principal de assinatura da Databricks `414351767826` + sua conta como ExternalId), não apenas que você consegue criar a role. |
+| `--vnet-id` | Azure | Valida uma VNet existente para VNet injection: subnets delegadas à Databricks, associação de NSG e tamanho da subnet. Aceita id ARM completo ou `<rg>/<nome-da-vnet>`. |
+
+### Formatos de saída
+
+```bash
+--format text        # padrão: relatório rico no terminal
+--format markdown    # relatório amigável ao cliente (veredito, itens de ação, links de docs)
+--format json        # legível por máquina, para CI/CD
+--json               # atalho para --format json
+```
+
+As linhas de progresso/status vão para o **stderr**, então o `--json` no **stdout** é JSON puro e parseável, e um relatório Markdown redirecionado não vem com ruído de progresso — seguro para pipe direto em CI (`... --json --quiet > report.json`).
+
+### Modo verify-only
+
+A flag `--verify-only` roda checagens de permissão read-only sem criar nenhum recurso temporário. Útil quando:
+
+- A criação de recursos exige aprovação da sua organização
+- Você quer uma validação rápida de credenciais e recursos existentes
+- Você está num ambiente restrito onde a criação de recursos é bloqueada
+
+**Limitações do modo verify-only:**
+- Não verifica completamente permissões de escrita (ex.: criar bucket, criar VNet)
+- Usa simulação de política IAM quando disponível, que pode não refletir todas as condições
+- Algumas checagens aparecem como "WARNING" em vez de pass/fail definitivo
+
+## Matriz de Compatibilidade de Deployment
+
+Desde a v1.2.0, a ferramenta roda **todas as checagens automaticamente** e produz uma matriz de compatibilidade ao final de cada relatório. Não é preciso a flag `--mode` — o relatório diz quais tipos de deployment suas permissões atuais suportam.
+
+Cada tipo de deployment é reportado com um de quatro estados honestos:
+
+| Estado | Significado |
+|--------|-------------|
+| **SUPPORTED** | Todas as áreas que o modo precisa foram verificadas e estão OK. |
+| **NOT SUPPORTED** | Uma área necessária tem um bloqueador real (permissão faltando / falha ao criar). O detalhe lista qual área. |
+| **REVIEW** | As permissões foram verificadas, mas uma área necessária tem um aviso acionável (ex.: subnet pequena demais, sem NAT/egress) — não é bloqueador, mas vale revisar antes do deploy. |
+| **NOT VERIFIED** | Não foi possível confirmar uma área necessária (simulação IAM indisponível — ex.: sob SSO — `--verify-only`, ou nenhum recurso alvo informado). A ferramenta nunca reporta isso silenciosamente como SUPPORTED. |
+
+```
+║  Standard               SUPPORTED                                    ║
+║  PrivateLink            NOT SUPPORTED (missing perms)                ║
+║  Unity Catalog          REVIEW (advisories, no blockers)            ║
+║  Full                   NOT VERIFIED                                 ║
+```
+
+A linha de detalhe de cada modo sempre nomeia o motivo **real** (qual área, e se foi bloqueador, aviso ou apenas não-verificável) em vez de uma mensagem genérica.
+
 ## Verificações Específicas para Databricks
 
 ### AWS
@@ -97,8 +186,8 @@ python main.py --cloud aws --output report.txt
 | Categoria | Verificações |
 |-----------|--------------|
 | **Credenciais** | Service Account, Project state, Project number |
-| **APIs** | compute, storage, iam, cloudresourcemanager, cloudkms, logging |
-| **IAM** | testIamPermissions, Admin roles, Service Account permissions |
+| **APIs** | compute, storage, iam, iamcredentials, serviceusage, container, deploymentmanager, cloudkms, dns (conjunto SRA completo) |
+| **IAM** | testIamPermissions dirigido pelo conjunto de permissões SRA completo, subconjuntos deploy-blocking, impersonation (actAs), PSC/DNS |
 | **Rede** | Custom VPC, Subnets, Private Google Access, Firewall rules, Cloud NAT |
 | **Private Connectivity** | Private Google Access per subnet, Private Service Connect, Cloud NAT |
 | **Storage** | GCS buckets, Uniform bucket-level access |
@@ -189,18 +278,23 @@ Credenciais são detectadas de:
 ## Integração com CI/CD
 
 ```yaml
-# GitHub Actions example
+# Exemplo GitHub Actions
 - name: Databricks Pre-Check
   run: |
-    python main.py --cloud aws --region us-east-1 --output pre-check-report.txt
-    cat pre-check-report.txt
-    
+    # o stdout é JSON puro (o progresso vai para stderr); --strict faz o job
+    # falhar também em warnings / NOT-VERIFIED, não só em bloqueadores.
+    python main.py --cloud aws --region us-east-1 --strict --json --quiet > pre-check.json
+
 - name: Upload Report
-  uses: actions/upload-artifact@v3
+  if: always()
+  uses: actions/upload-artifact@v4
   with:
     name: pre-check-report
-    path: pre-check-report.txt
+    path: pre-check.json
 ```
+
+**Códigos de saída:** `0` = passou · `2` = bloqueadores encontrados (permissões negadas) ·
+`1` = passou, mas sob `--strict` houve warnings / itens NOT-VERIFIED.
 
 ## Permissões Necessárias
 

@@ -149,7 +149,44 @@ python main.py --cloud aws --region us-east-1 --log-level debug --log-file debug
 
 # Clean up any orphaned test resources
 python main.py --cleanup-orphans --cloud aws --region us-east-1
+
+# Customer-friendly Markdown report (plain-language verdict + remediation)
+python main.py --cloud aws --region us-east-1 --format markdown --output report.md
+
+# Strict CI gating: exit non-zero on warnings / NOT-VERIFIED items too
+python main.py --cloud aws --region us-east-1 --strict --json --quiet
+
+# Scope BYO-network validation to a specific VPC and/or security group (AWS)
+python main.py --cloud aws --region us-east-1 --vpc-id vpc-xxxxxxxx --sg-id sg-xxxxxxxx
+
+# Validate the cross-account role TRUST content (AWS)
+python main.py --cloud aws --region us-east-1 --databricks-account-id <databricks-account-uuid>
+
+# Validate an existing VNet for VNet injection, incl. cross-subscription (Azure)
+python main.py --cloud azure --subscription-id <id> --vnet-id "<resource-group>/<vnet-name>"
 ```
+
+### Targeted / BYO-network validation
+
+| Flag | Cloud | What it checks |
+|------|-------|----------------|
+| `--vpc-id` | AWS | Scopes network checks to one VPC: private-subnet count, AZ spread, subnet size (/17–/26), and NAT/egress for non-PrivateLink deployments. |
+| `--sg-id` | AWS | Validates an existing security group's rules (intra-SG all-traffic ingress/egress + control-plane egress). |
+| `--databricks-account-id` | AWS | Validates the cross-account role *trust* content (Databricks signing principal `414351767826` + your account as ExternalId), not just that you can create the role. |
+| `--vnet-id` | Azure | Validates an existing VNet for VNet injection: Databricks-delegated subnets, NSG association, and subnet sizing. Accepts a full ARM id or `<rg>/<vnet-name>`. |
+
+### Output formats
+
+```bash
+--format text        # default: rich terminal report
+--format markdown    # customer-friendly report (verdict, action items, docs links)
+--format json        # machine-readable, for CI/CD
+--json               # shortcut for --format json
+```
+
+Progress/status lines are written to **stderr**, so `--json` on **stdout** is pure,
+parseable JSON and a redirected Markdown report has no progress noise prepended —
+safe to pipe directly in CI (`... --json --quiet > report.json`).
 
 ### Verify-Only Mode
 
@@ -183,14 +220,25 @@ Example output:
 ╚══════════════════════════════════════════════════════════════════════╝
 ```
 
-If some permissions are missing, the matrix highlights exactly which deployment types are affected:
+Each deployment type is reported with one of four honest states:
+
+| State | Meaning |
+|-------|---------|
+| **SUPPORTED** | Every area the mode needs was verified and is clean. |
+| **NOT SUPPORTED** | A required area has a hard blocker (missing permission / failed create). The detail lists which area. |
+| **REVIEW** | Permissions were verified, but a required area has an actionable advisory (e.g. an undersized subnet, no NAT egress) — not a blocker, worth a look before deploying. |
+| **NOT VERIFIED** | Could not confirm a required area (IAM simulation unavailable — e.g. under SSO — `--verify-only`, or no target resource passed). The tool never silently reports these as SUPPORTED. |
 
 ```
 ║  Standard               SUPPORTED                                    ║
-║  PrivateLink            MISSING PERMISSIONS                          ║
-║  Unity Catalog          SUPPORTED                                    ║
-║  Full                   MISSING PERMISSIONS                          ║
+║  PrivateLink            NOT SUPPORTED (missing perms)                ║
+║  Unity Catalog          REVIEW (advisories, no blockers)            ║
+║  Full                   NOT VERIFIED                                 ║
 ```
+
+The per-mode detail line always names the **actual** reason (which area, and
+whether it was a blocker, an advisory, or simply unverifiable) rather than a
+generic catch-all.
 
 ## AWS Deployment Types
 
@@ -417,15 +465,20 @@ aws iam list-roles --query "Roles[?starts_with(RoleName, 'dbx-precheck-temp')]"
 # GitHub Actions example
 - name: Databricks Pre-Check
   run: |
-    python main.py --cloud aws --region us-east-1 --output pre-check-report.txt
-    cat pre-check-report.txt
-    
+    # stdout is pure JSON (progress goes to stderr); --strict fails the job on
+    # warnings / NOT-VERIFIED items too, not just hard blockers.
+    python main.py --cloud aws --region us-east-1 --strict --json --quiet > pre-check.json
+
 - name: Upload Report
-  uses: actions/upload-artifact@v3
+  if: always()
+  uses: actions/upload-artifact@v4
   with:
     name: pre-check-report
-    path: pre-check-report.txt
+    path: pre-check.json
 ```
+
+**Exit codes:** `0` = passed · `2` = blockers found (permissions denied) ·
+`1` = passed but, under `--strict`, there were warnings / NOT-VERIFIED items.
 
 ## Required Permissions
 

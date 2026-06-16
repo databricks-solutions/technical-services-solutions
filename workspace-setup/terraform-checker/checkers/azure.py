@@ -5,6 +5,7 @@ import time
 import logging
 from typing import Optional, List, Dict, Any
 
+from utils.denial import is_access_denied, is_deploy_blocking
 from .base import (
     BaseChecker,
     CheckCategory,
@@ -63,6 +64,7 @@ class AzureChecker(BaseChecker):
         client_id: str = None,
         client_secret: str = None,
         verify_only: bool = False,
+        vnet_id: str = None,
     ):
         super().__init__(region)
         self.subscription_id = subscription_id
@@ -71,6 +73,8 @@ class AzureChecker(BaseChecker):
         self.client_id = client_id
         self.client_secret = client_secret
         self.verify_only = verify_only
+        # Optional: validate an existing VNet for VNet injection (read-only).
+        self.vnet_id = vnet_id
         self._credential = None
         self._subscription_info = None
         self._test_id = str(uuid.uuid4())[:8]
@@ -185,11 +189,12 @@ class AzureChecker(BaseChecker):
             
         except Exception as e:
             error = str(e)
-            if "AuthorizationFailed" in error or "does not have authorization" in error:
+            if is_deploy_blocking(error):
                 results.append(CheckResult(
                     name="  Microsoft.Resources/resourceGroups/write",
                     status=CheckStatus.NOT_OK,
-                    message=f"DENIED: {error[:100]}"
+                    message=f"BLOCKED: {error[:120]}",
+                    remediation="Resolve the RBAC denial / Azure Policy / quota that blocks resource-group creation.",
                 ))
             else:
                 results.append(CheckResult(
@@ -1315,6 +1320,111 @@ class AzureChecker(BaseChecker):
                     message=f"SUPPORTED - {description}"))
         return category
     
+    @staticmethod
+    def _parse_vnet_id(vnet_id: str):
+        """Return (subscription, resource_group, vnet_name) from a full ARM id or
+        'rg/name'. subscription is None when not embedded in the input."""
+        if "/subscriptions/" in vnet_id:
+            parts = vnet_id.strip("/").split("/")
+            sub = parts[parts.index("subscriptions") + 1]
+            rg = parts[parts.index("resourceGroups") + 1]
+            name = parts[parts.index("virtualNetworks") + 1]
+            return sub, rg, name
+        if "/" in vnet_id:
+            rg, name = vnet_id.split("/", 1)
+            return None, rg, name
+        return None, None, vnet_id
+
+    def check_vnet(self) -> CheckCategory:
+        """Validate an EXISTING VNet for Databricks VNet injection (read-only).
+
+        Databricks needs two subnets (host + container) delegated to
+        Microsoft.Databricks/workspaces, each with an NSG, sized at least /26.
+        """
+        category = CheckCategory(name="VNET INJECTION READINESS (provided --vnet-id)")
+        sub, rg, name = self._parse_vnet_id(self.vnet_id)
+        if not rg:
+            category.add_result(CheckResult(
+                name="  --vnet-id", status=CheckStatus.WARNING,
+                message="Pass a full VNet resource id or '<resource-group>/<vnet-name>'",
+            ))
+            return category
+        try:
+            # If the VNet's ARM id names a different subscription than the one we
+            # auto-detected, bind the client to the VNet's subscription so we read
+            # the right place (otherwise this looked like ResourceGroupNotFound).
+            if sub and sub != self.subscription_id:
+                from azure.mgmt.network import NetworkManagementClient
+                net = NetworkManagementClient(self._get_credential(), sub)
+                category.add_result(CheckResult(
+                    name="  Subscription", status=CheckStatus.OK,
+                    message=f"Using the VNet's subscription {sub} (from the resource id)",
+                ))
+            else:
+                net = self._get_network_client()
+            subnets = list(net.subnets.list(rg, name))
+        except Exception as e:
+            err = str(e)
+            category.add_result(CheckResult(
+                name=f"  {name}",
+                status=CheckStatus.NOT_OK if is_access_denied(err) else CheckStatus.WARNING,
+                message=f"Could not read VNet {rg}/{name}: {err[:80]}",
+            ))
+            return category
+
+        DELEG = "Microsoft.Databricks/workspaces"
+        delegated = [s for s in subnets
+                     if any((d.service_name or "") == DELEG for d in (s.delegations or []))]
+        category.add_result(CheckResult(
+            name=f"  {name}", status=CheckStatus.OK,
+            message=f"{len(subnets)} subnet(s); {len(delegated)} delegated to Databricks",
+        ))
+
+        # Need at least 2 delegated subnets (host + container)
+        if len(delegated) >= 2:
+            category.add_result(CheckResult(
+                name="  Databricks-delegated subnets",
+                status=CheckStatus.OK,
+                message=f"{len(delegated)} found: {', '.join(s.name for s in delegated[:4])}",
+            ))
+        else:
+            category.add_result(CheckResult(
+                name="  Databricks-delegated subnets",
+                status=CheckStatus.NOT_OK,
+                message=f"Found {len(delegated)} - VNet injection needs 2 subnets delegated to {DELEG}",
+                remediation="Delegate two subnets (host + container) to Microsoft.Databricks/workspaces.",
+                doc_link="https://learn.microsoft.com/azure/databricks/security/network/classic/vnet-inject",
+            ))
+
+        # Each delegated subnet should have an NSG + adequate size (≥ /26)
+        for s in delegated:
+            has_nsg = bool(getattr(s, "network_security_group", None))
+            category.add_result(CheckResult(
+                name=f"  NSG on {s.name}",
+                status=CheckStatus.OK if has_nsg else CheckStatus.WARNING,
+                message="Associated" if has_nsg else "No NSG associated (Databricks requires one)",
+                remediation=None if has_nsg else f"Associate a network security group with subnet {s.name}.",
+            ))
+            prefix = getattr(s, "address_prefix", None) or ""
+            try:
+                mask = int(prefix.split("/")[1])
+                if mask > 26:
+                    category.add_result(CheckResult(
+                        name=f"  Size of {s.name}",
+                        status=CheckStatus.WARNING,
+                        message=f"{prefix} is smaller than /26 - too few IPs for cluster nodes",
+                        remediation="Use /26 or larger (≈ /24 recommended) for Databricks subnets.",
+                    ))
+                else:
+                    category.add_result(CheckResult(
+                        name=f"  Size of {s.name}",
+                        status=CheckStatus.OK,
+                        message=f"{prefix}",
+                    ))
+            except (IndexError, ValueError):
+                pass
+        return category
+
     def run_all_checks(self) -> CheckReport:
         """Run all Azure checks for Databricks deployment.
         
@@ -1360,6 +1470,9 @@ class AzureChecker(BaseChecker):
         
         # Resource Providers
         providers_cat = self.check_resource_providers()
+        # Validate an existing VNet (read-only), if one was provided.
+        if self.vnet_id:
+            self._report.add_category(self.check_vnet())
         self._check_results_by_area["providers"] = providers_cat.area_state
         self._report.add_category(providers_cat)
         

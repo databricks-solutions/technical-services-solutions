@@ -260,6 +260,7 @@ def run_azure_checks(
     subscription_id: Optional[str],
     resource_group: Optional[str],
     verify_only: bool = False,
+    vnet_id: Optional[str] = None,
 ) -> Optional[CheckReport]:
     """Run Azure checks and return the report."""
     click.echo(click.style("\n▶ Running Azure checks (all deployment types)...", fg="yellow"))
@@ -274,6 +275,7 @@ def run_azure_checks(
             subscription_id=subscription_id,
             resource_group=resource_group,
             verify_only=verify_only,
+            vnet_id=vnet_id,
         )
         report = checker.run_all_checks()
         
@@ -377,6 +379,10 @@ def run_gcp_checks(
     "--resource-group",
     help="Azure resource group name"
 )
+@click.option(
+    "--vnet-id",
+    help="Azure: validate an existing VNet for VNet injection (delegation/NSG/size). Full resource id or '<rg>/<vnet-name>'"
+)
 # GCP-specific options
 @click.option(
     "--project",
@@ -455,6 +461,7 @@ def main(
     databricks_account_id: Optional[str],
     subscription_id: Optional[str],
     resource_group: Optional[str],
+    vnet_id: Optional[str],
     project: Optional[str],
     credentials_file: Optional[str],
     verbose: bool,
@@ -573,7 +580,7 @@ def main(
                 aws_checker = checker
         
         if available.get("azure"):
-            report = run_azure_checks(region, subscription_id, resource_group, verify_only)
+            report = run_azure_checks(region, subscription_id, resource_group, verify_only, vnet_id)
             if report:
                 reports.append(report)
         
@@ -588,7 +595,7 @@ def main(
                 reports.append(report)
                 aws_checker = checker
         elif cloud == "azure":
-            report = run_azure_checks(region, subscription_id, resource_group, verify_only)
+            report = run_azure_checks(region, subscription_id, resource_group, verify_only, vnet_id)
             if report:
                 reports.append(report)
         elif cloud == "gcp":

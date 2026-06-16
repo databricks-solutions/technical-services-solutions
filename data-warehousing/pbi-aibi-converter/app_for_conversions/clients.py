@@ -14,6 +14,10 @@ from databricks.sdk import WorkspaceClient
 from databricks.sdk.core import Config
 
 MODEL = os.getenv("LLM_MODEL", "databricks-claude-opus-4-6")
+# Max output tokens per completion. Some serving endpoints (e.g. Qwen) cap this
+# at 8192 and reject larger requests with HTTP 400. Override via env if the
+# configured model supports a higher ceiling.
+MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "8192"))
 KNOWLEDGE_DIR = Path(__file__).parent / "knowledge"
 STATIC_DIR = Path(__file__).parent / "static"
 GRID_COLUMNS = 6

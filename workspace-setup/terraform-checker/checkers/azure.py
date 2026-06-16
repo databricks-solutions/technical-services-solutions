@@ -1274,62 +1274,45 @@ class AzureChecker(BaseChecker):
         return category
     
     def _compute_deployment_compatibility(self) -> CheckCategory:
-        """Compute which deployment types are supported based on check results."""
+        """Compute which Azure deployment types are supported.
+
+        Tri-state per area (PASS/FAIL/NOT_TESTED). SUPPORTED only when every
+        required area is PASS; FAIL -> NOT SUPPORTED; otherwise NOT VERIFIED
+        (e.g. --verify-only, or an area that couldn't be confirmed).
+        """
         category = CheckCategory(name="DEPLOYMENT COMPATIBILITY")
-        
-        providers_ok = self._check_results_by_area.get("providers", True)
-        rg_ok = self._check_results_by_area.get("resource_group", True)
-        network_ok = self._check_results_by_area.get("network", True)
-        storage_ok = self._check_results_by_area.get("storage", True)
-        connector_ok = self._check_results_by_area.get("access_connector", True)
-        privatelink_ok = self._check_results_by_area.get("privatelink", True)
-        workspace_ok = self._check_results_by_area.get("workspace", True)
-        
-        base_ok = providers_ok and rg_ok and workspace_ok
-        
+        st = self._check_results_by_area  # area -> "PASS"|"FAIL"|"NOT_TESTED"
+
         modes = [
-            ("Standard", base_ok,
-             "Databricks-managed VNet + DBFS storage"),
-            ("VNet Injection", base_ok and network_ok,
-             "Customer-managed VNet with subnet delegation"),
-            ("Unity Catalog", base_ok and storage_ok and connector_ok,
-             "With ADLS Gen2 + Access Connector"),
-            ("PrivateLink", base_ok and network_ok and privatelink_ok,
-             "Private Endpoints + NAT Gateway (SCC)"),
-            ("Full", base_ok and network_ok and storage_ok and connector_ok and privatelink_ok,
-             "VNet Injection + Unity Catalog + Private Link"),
+            ("Standard", ["providers", "resource_group", "workspace"], "Databricks-managed VNet + DBFS storage"),
+            ("VNet Injection", ["providers", "resource_group", "workspace", "network"], "Customer-managed VNet with subnet delegation"),
+            ("Unity Catalog", ["providers", "resource_group", "workspace", "storage", "access_connector"], "With ADLS Gen2 + Access Connector"),
+            ("PrivateLink", ["providers", "resource_group", "workspace", "network", "privatelink"], "Private Endpoints + NAT Gateway (SCC)"),
+            ("Full", ["providers", "resource_group", "workspace", "network", "storage", "access_connector", "privatelink"], "VNet Injection + Unity Catalog + Private Link"),
         ]
-        
-        for mode_name, supported, description in modes:
-            if supported:
+        label = {"providers": "resource providers", "resource_group": "resource group",
+                 "workspace": "workspace permissions", "network": "network (VNet/NSG)",
+                 "storage": "storage (ADLS Gen2)", "access_connector": "Access Connector",
+                 "privatelink": "Private Link (NAT/endpoints)"}
+
+        for mode_name, areas, description in modes:
+            states = {x: st.get(x, "NOT_TESTED") for x in areas}
+            failed = [label[x] for x, s in states.items() if s == "FAIL"]
+            not_tested = [label[x] for x, s in states.items() if s == "NOT_TESTED"]
+            if failed:
                 category.add_result(CheckResult(
-                    name=f"  {mode_name}",
-                    status=CheckStatus.OK,
-                    message=f"SUPPORTED - {description}"
-                ))
+                    name=f"  {mode_name}", status=CheckStatus.NOT_OK,
+                    message=f"NOT SUPPORTED - missing: {', '.join(failed)}",
+                    remediation=f"Grant the permissions flagged above for: {', '.join(failed)}."))
+            elif not_tested:
+                category.add_result(CheckResult(
+                    name=f"  {mode_name}", status=CheckStatus.WARNING,
+                    message=f"NOT VERIFIED - could not confirm: {', '.join(not_tested)} (e.g. --verify-only, or read-only role)",
+                    remediation="Re-run without --verify-only with a role that can create resources to confirm."))
             else:
-                missing = []
-                if not providers_ok:
-                    missing.append("resource providers")
-                if not rg_ok:
-                    missing.append("resource group")
-                if not workspace_ok:
-                    missing.append("workspace permissions")
-                if mode_name in ("VNet Injection", "PrivateLink", "Full") and not network_ok:
-                    missing.append("network (VNet/NSG)")
-                if mode_name in ("Unity Catalog", "Full") and not storage_ok:
-                    missing.append("storage (ADLS Gen2)")
-                if mode_name in ("Unity Catalog", "Full") and not connector_ok:
-                    missing.append("Access Connector")
-                if mode_name in ("PrivateLink", "Full") and not privatelink_ok:
-                    missing.append("Private Link (NAT/endpoints)")
-                
                 category.add_result(CheckResult(
-                    name=f"  {mode_name}",
-                    status=CheckStatus.WARNING,
-                    message=f"MISSING PERMISSIONS - Fix: {', '.join(missing)}"
-                ))
-        
+                    name=f"  {mode_name}", status=CheckStatus.OK,
+                    message=f"SUPPORTED - {description}"))
         return category
     
     def run_all_checks(self) -> CheckReport:
@@ -1377,7 +1360,7 @@ class AzureChecker(BaseChecker):
         
         # Resource Providers
         providers_cat = self.check_resource_providers()
-        self._check_results_by_area["providers"] = (providers_cat.not_ok_count == 0)
+        self._check_results_by_area["providers"] = providers_cat.area_state
         self._report.add_category(providers_cat)
         
         # Resource Group + all resource tests
@@ -1387,12 +1370,17 @@ class AzureChecker(BaseChecker):
         
         if self.verify_only:
             self._run_verify_only_checks(resource_client)
+            # Read-only mode cannot confirm create/write permissions, so the
+            # create-dependent areas are NOT_TESTED (not "supported"). This makes
+            # the compatibility matrix honest in --verify-only.
+            for _a in ("resource_group", "network", "storage", "access_connector", "privatelink"):
+                self._check_results_by_area[_a] = "NOT_TESTED"
         else:
             rg_created = self._run_full_checks(resource_client, test_rg)
         
         # Databricks workspace permissions
         workspace_cat = self.check_databricks_permissions()
-        self._check_results_by_area["workspace"] = (workspace_cat.not_ok_count == 0)
+        self._check_results_by_area["workspace"] = workspace_cat.area_state
         self._report.add_category(workspace_cat)
         
         # Quotas
@@ -1470,7 +1458,7 @@ class AzureChecker(BaseChecker):
             message="Cannot verify write permission without resource creation"
         ))
         
-        self._check_results_by_area["resource_group"] = (rg_category.not_ok_count == 0)
+        self._check_results_by_area["resource_group"] = rg_category.area_state
         self._report.add_category(rg_category)
         
         # Network (read-only)
@@ -1517,7 +1505,7 @@ class AzureChecker(BaseChecker):
             message="Cannot verify write permissions without resource creation"
         ))
         
-        self._check_results_by_area["network"] = (network_category.not_ok_count == 0)
+        self._check_results_by_area["network"] = network_category.area_state
         self._report.add_category(network_category)
         
         # Storage (read-only)
@@ -1551,7 +1539,7 @@ class AzureChecker(BaseChecker):
             message="Cannot verify write permissions without resource creation"
         ))
         
-        self._check_results_by_area["storage"] = (storage_category.not_ok_count == 0)
+        self._check_results_by_area["storage"] = storage_category.area_state
         self._report.add_category(storage_category)
         
         # Access Connector (read-only)
@@ -1589,7 +1577,7 @@ class AzureChecker(BaseChecker):
             message="Cannot verify without resource creation"
         ))
         
-        self._check_results_by_area["access_connector"] = (connector_category.not_ok_count == 0)
+        self._check_results_by_area["access_connector"] = connector_category.area_state
         self._report.add_category(connector_category)
         
         # Private Link (read-only)
@@ -1634,7 +1622,7 @@ class AzureChecker(BaseChecker):
             message="Cannot verify write permissions without resource creation"
         ))
         
-        self._check_results_by_area["privatelink"] = (pl_category.not_ok_count == 0)
+        self._check_results_by_area["privatelink"] = pl_category.area_state
         self._report.add_category(pl_category)
     
     def _run_full_checks(self, resource_client, test_rg: str) -> bool:
@@ -1680,7 +1668,7 @@ class AzureChecker(BaseChecker):
                     message=f"Error: {error[:80]}"
                 ))
         
-        self._check_results_by_area["resource_group"] = (rg_category.not_ok_count == 0)
+        self._check_results_by_area["resource_group"] = rg_category.area_state
         self._report.add_category(rg_category)
         
         if not rg_created:
@@ -1692,7 +1680,7 @@ class AzureChecker(BaseChecker):
                     status=CheckStatus.SKIPPED,
                     message="Skipped - Resource Group creation failed"
                 ))
-                self._check_results_by_area[check_name] = False
+                self._check_results_by_area[check_name] = "FAIL"
                 self._report.add_category(category)
             return False
         
@@ -1708,7 +1696,7 @@ class AzureChecker(BaseChecker):
         for result in network_results:
             network_category.add_result(result)
         
-        self._check_results_by_area["network"] = (network_category.not_ok_count == 0)
+        self._check_results_by_area["network"] = network_category.area_state
         self._report.add_category(network_category)
         
         # Storage Configuration (ADLS Gen2)
@@ -1723,7 +1711,7 @@ class AzureChecker(BaseChecker):
         for result in storage_results:
             storage_category.add_result(result)
         
-        self._check_results_by_area["storage"] = (storage_category.not_ok_count == 0)
+        self._check_results_by_area["storage"] = storage_category.area_state
         self._report.add_category(storage_category)
         
         # Unity Catalog (Access Connector)
@@ -1743,12 +1731,12 @@ class AzureChecker(BaseChecker):
         for result in connector_results:
             connector_category.add_result(result)
         
-        self._check_results_by_area["access_connector"] = (connector_category.not_ok_count == 0)
+        self._check_results_by_area["access_connector"] = connector_category.area_state
         self._report.add_category(connector_category)
         
         # Private Link + SCC
         pl_category = self.check_privatelink_permissions(test_rg)
-        self._check_results_by_area["privatelink"] = (pl_category.not_ok_count == 0)
+        self._check_results_by_area["privatelink"] = pl_category.area_state
         self._report.add_category(pl_category)
         
         return True

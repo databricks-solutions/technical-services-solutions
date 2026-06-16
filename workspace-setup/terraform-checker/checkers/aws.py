@@ -52,14 +52,21 @@ class AWSChecker(BaseChecker):
     """
     
     def __init__(
-        self, 
-        region: str = None, 
+        self,
+        region: str = None,
         profile: str = None,
         verify_only: bool = False,
+        vpc_id: str = None,
+        sg_id: str = None,
+        databricks_account_id: str = None,
     ):
         super().__init__(region)
         self.profile = profile
         self.verify_only = verify_only
+        # Optional BYO-network scoping / validation targets.
+        self.vpc_id = vpc_id
+        self.sg_id = sg_id
+        self.databricks_account_id = databricks_account_id
         self._session = None
         self._account_id = None
         self._arn = None
@@ -479,14 +486,31 @@ class AWSChecker(BaseChecker):
         s3 = self._get_client("s3")
         bucket = self._temp_bucket_name
         
-        # Clean up any leftover objects before deleting the bucket
+        # The bucket has versioning enabled + a (deny) bucket policy from the
+        # permission test, so a plain delete fails. Remove the policy, then ALL
+        # object versions + delete markers (not just current objects), then delete.
         try:
-            resp = s3.list_objects_v2(Bucket=bucket)
-            for obj in resp.get("Contents", []):
-                s3.delete_object(Bucket=bucket, Key=obj["Key"])
+            s3.delete_bucket_policy(Bucket=bucket)
         except Exception:
             pass
-        
+        try:
+            paginator = s3.get_paginator("list_object_versions")
+            for page in paginator.paginate(Bucket=bucket):
+                to_delete = [
+                    {"Key": o["Key"], "VersionId": o["VersionId"]}
+                    for o in (page.get("Versions", []) + page.get("DeleteMarkers", []))
+                ]
+                for i in range(0, len(to_delete), 1000):
+                    s3.delete_objects(Bucket=bucket, Delete={"Objects": to_delete[i:i + 1000]})
+        except Exception:
+            # Fall back to non-versioned listing if version listing isn't available.
+            try:
+                resp = s3.list_objects_v2(Bucket=bucket)
+                for obj in resp.get("Contents", []):
+                    s3.delete_object(Bucket=bucket, Key=obj["Key"])
+            except Exception:
+                pass
+
         try:
             s3.delete_bucket(Bucket=bucket)
             results.append(CheckResult(
@@ -496,7 +520,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  s3:DeleteBucket",
                     status=CheckStatus.NOT_OK,
@@ -529,14 +553,42 @@ class AWSChecker(BaseChecker):
             message=role_name
         ))
         
-        # Trust policy for Databricks
+        # Trust policy. With --databricks-account-id we build the representative
+        # trust (real Databricks signing principal + ExternalId = your account id)
+        # and validate the id; otherwise a self-trust placeholder + a note that the
+        # trust CONTENT was not validated.
+        DATABRICKS_SIGNING_ACCOUNT = "414351767826"
+        import re as _re
+        acct = self.databricks_account_id
+        if acct and _re.fullmatch(r"[0-9a-fA-F-]{36}", acct):
+            principal_arn = f"arn:aws:iam::{DATABRICKS_SIGNING_ACCOUNT}:root"
+            external_id = acct
+            results.append(CheckResult(
+                name="  Cross-account trust content", status=CheckStatus.OK,
+                message=f"Building trust for Databricks principal {DATABRICKS_SIGNING_ACCOUNT} + ExternalId {acct}",
+            ))
+        elif acct:
+            principal_arn = f"arn:aws:iam::{self._account_id}:root"
+            external_id = "precheck-test"
+            results.append(CheckResult(
+                name="  Cross-account trust content", status=CheckStatus.NOT_OK,
+                message=f"--databricks-account-id '{acct}' is not a valid Databricks account UUID",
+                remediation="Pass your Databricks account id (a UUID from the account console).",
+            ))
+        else:
+            principal_arn = f"arn:aws:iam::{self._account_id}:root"
+            external_id = "precheck-test"
+            results.append(CheckResult(
+                name="  Cross-account trust content", status=CheckStatus.WARNING,
+                message="Trust CONTENT not validated - pass --databricks-account-id to verify the role trusts Databricks (414351767826) + your account ExternalId",
+            ))
         trust_policy = json.dumps({
             "Version": "2012-10-17",
             "Statement": [{
                 "Effect": "Allow",
-                "Principal": {"AWS": f"arn:aws:iam::{self._account_id}:root"},
+                "Principal": {"AWS": principal_arn},
                 "Action": "sts:AssumeRole",
-                "Condition": {"StringEquals": {"sts:ExternalId": "precheck-test"}}
+                "Condition": {"StringEquals": {"sts:ExternalId": external_id}}
             }]
         })
         
@@ -1603,12 +1655,36 @@ class AWSChecker(BaseChecker):
         ))
         
         try:
-            subnets = ec2.describe_subnets()
+            if self.vpc_id:
+                # Validate the VPC exists in this region before scoping to it.
+                try:
+                    ec2.describe_vpcs(VpcIds=[self.vpc_id])
+                    category.add_result(CheckResult(
+                        name="  Target VPC", status=CheckStatus.OK,
+                        message=f"Scoping network checks to {self.vpc_id}",
+                    ))
+                except Exception as e:
+                    network_ok = False
+                    category.add_result(CheckResult(
+                        name="  Target VPC", status=CheckStatus.NOT_OK,
+                        message=f"VPC {self.vpc_id} not found in region {self.region} ({str(e)[:60]})",
+                        remediation="Check the --vpc-id value and that --region matches the VPC's region.",
+                    ))
+                    self._check_results_by_area["network"] = category.area_state
+                    return category
+                subnets = ec2.describe_subnets(Filters=[{"Name": "vpc-id", "Values": [self.vpc_id]}])
+            else:
+                subnets = ec2.describe_subnets()
+                category.add_result(CheckResult(
+                    name="  Scope", status=CheckStatus.WARNING,
+                    message="No --vpc-id given: counting subnets ACCOUNT-WIDE, not the target VPC. Pass --vpc-id for an accurate check.",
+                ))
             subnet_list = subnets.get("Subnets", [])
-            
-            private = sum(1 for s in subnet_list if not s.get("MapPublicIpOnLaunch", False))
+
+            private_subnets = [s for s in subnet_list if not s.get("MapPublicIpOnLaunch", False)]
+            private = len(private_subnets)
             public = len(subnet_list) - private
-            
+
             if private >= 2:
                 category.add_result(CheckResult(
                     name="  Private Subnets",
@@ -1621,14 +1697,14 @@ class AWSChecker(BaseChecker):
                     status=CheckStatus.WARNING,
                     message=f"Only {private} found - need 2+ for Databricks"
                 ))
-            
+
             category.add_result(CheckResult(
                 name="  Public Subnets",
                 status=CheckStatus.OK,
                 message=f"{public} available"
             ))
-            
-            azs = set(s["AvailabilityZone"] for s in subnet_list if not s.get("MapPublicIpOnLaunch", False))
+
+            azs = set(s["AvailabilityZone"] for s in private_subnets)
             if len(azs) >= 2:
                 category.add_result(CheckResult(
                     name="  AZ Distribution",
@@ -1641,7 +1717,55 @@ class AWSChecker(BaseChecker):
                     status=CheckStatus.WARNING,
                     message=f"Private subnets only in 1 AZ - recommend 2+ for HA"
                 ))
-                
+
+            # Subnet SIZE: Databricks workspace subnets must be /17–/26.
+            too_small = []
+            for s in private_subnets:
+                cidr = s.get("CidrBlock", "")
+                try:
+                    prefix = int(cidr.split("/")[1])
+                except (IndexError, ValueError):
+                    continue
+                if prefix > 26:
+                    too_small.append(f"{s.get('SubnetId')} ({cidr}, {s.get('AvailableIpAddressCount')} free)")
+            if private_subnets and too_small:
+                category.add_result(CheckResult(
+                    name="  Subnet Size", status=CheckStatus.WARNING,
+                    message=f"{len(too_small)} private subnet(s) smaller than /26 (Databricks needs /17–/26): " + "; ".join(too_small[:3]),
+                    remediation="Use private subnets sized /17–/26 (≈ /24 recommended) so clusters have enough node IPs.",
+                ))
+            elif private_subnets:
+                sizes = sorted({s.get("CidrBlock", "").split("/")[-1] for s in private_subnets})
+                category.add_result(CheckResult(
+                    name="  Subnet Size", status=CheckStatus.OK,
+                    message=f"Private subnets within /17–/26 (/{', /'.join(sizes)})",
+                ))
+
+            # Outbound egress (only matters WITHOUT PrivateLink): the data plane
+            # needs a NAT/egress path to reach the control plane.
+            try:
+                nat_filters = [{"Name": "state", "Values": ["available"]}]
+                if self.vpc_id:
+                    nat_filters.append({"Name": "vpc-id", "Values": [self.vpc_id]})
+                nats = ec2.describe_nat_gateways(Filter=nat_filters).get("NatGateways", [])
+                scope = self.vpc_id or "the account"
+                if nats:
+                    category.add_result(CheckResult(
+                        name="  Outbound egress (if no PrivateLink)", status=CheckStatus.OK,
+                        message=f"{len(nats)} NAT gateway(s) in {scope}",
+                    ))
+                else:
+                    category.add_result(CheckResult(
+                        name="  Outbound egress (if no PrivateLink)", status=CheckStatus.WARNING,
+                        message=f"No NAT gateway found in {scope}. Without PrivateLink the data plane needs an egress path (NAT + 0.0.0.0/0 route, or firewall/proxy).",
+                        remediation="Add a NAT gateway + default route to the private subnets, or use PrivateLink / a firewall egress.",
+                    ))
+            except Exception as e:
+                category.add_result(CheckResult(
+                    name="  Outbound egress (if no PrivateLink)", status=CheckStatus.WARNING,
+                    message=f"Could not verify egress: {str(e)[:80]}",
+                ))
+
         except Exception as e:
             network_ok = False
             category.add_result(CheckResult(
@@ -1708,7 +1832,7 @@ class AWSChecker(BaseChecker):
             ))
             
             # Use real resource creation to test SG permissions
-            sg_results = self._test_security_group_permissions()
+            sg_results = self._test_security_group_permissions(vpc_id=self.vpc_id)
             for result in sg_results:
                 category.add_result(result)
         
@@ -2578,6 +2702,96 @@ class AWSChecker(BaseChecker):
         return category
 
 
+    @staticmethod
+    def _egress_covers_port(rules: list, port: int) -> bool:
+        """True if any rule allows TCP `port` (or all-traffic)."""
+        for r in rules:
+            proto = r.get("IpProtocol")
+            if proto == "-1":
+                return True
+            if proto == "tcp":
+                fp, tp = r.get("FromPort"), r.get("ToPort")
+                if fp is not None and tp is not None and fp <= port <= tp:
+                    return True
+        return False
+
+    @staticmethod
+    def _has_self_all_traffic(rules: list, sg_id: str) -> bool:
+        """True if a rule allows broad intra-SG traffic (self-referencing)."""
+        for r in rules:
+            if sg_id not in [g.get("GroupId") for g in r.get("UserIdGroupPairs", [])]:
+                continue
+            proto = r.get("IpProtocol")
+            if proto == "-1":
+                return True
+            if proto in ("tcp", "udp") and r.get("FromPort") == 0 and r.get("ToPort") == 65535:
+                return True
+        return False
+
+    def check_security_group_rules(self) -> CheckCategory:
+        """Validate the rules of an EXISTING security group (--sg-id).
+
+        Databricks workspace SGs need intra-SG (self) all-traffic for internode
+        communication, plus egress to the control plane (443/3306/6666). A
+        PrivateLink/SRA SG instead scopes those ports to the VPC CIDR and omits
+        self-all — so missing self-all is a WARNING (mode-dependent), missing
+        egress ports is a stronger signal.
+        """
+        category = CheckCategory(name="SECURITY GROUP RULES (provided SG)")
+        ec2 = self._get_client("ec2")
+        try:
+            sg = ec2.describe_security_groups(GroupIds=[self.sg_id])["SecurityGroups"][0]
+        except Exception as e:
+            category.add_result(CheckResult(
+                name=f"  {self.sg_id}",
+                status=CheckStatus.NOT_OK if is_access_denied(e) else CheckStatus.WARNING,
+                message=f"Could not read SG: {str(e)[:80]}",
+            ))
+            return category
+
+        ingress = sg.get("IpPermissions", [])
+        egress = sg.get("IpPermissionsEgress", [])
+        category.add_result(CheckResult(
+            name=f"  {self.sg_id}", status=CheckStatus.OK,
+            message=f"{sg.get('GroupName', '')} in {sg.get('VpcId', '')}",
+        ))
+
+        # Cross-check the SG lives in the target VPC, if one was given.
+        if self.vpc_id and sg.get("VpcId") and sg["VpcId"] != self.vpc_id:
+            category.add_result(CheckResult(
+                name="  SG / VPC mismatch",
+                status=CheckStatus.NOT_OK,
+                message=f"SG {self.sg_id} is in {sg['VpcId']} but --vpc-id is {self.vpc_id}",
+                remediation="Pass a security group that belongs to the target VPC.",
+            ))
+
+        # Intra-SG self all-traffic (internode communication)
+        in_self = self._has_self_all_traffic(ingress, self.sg_id)
+        eg_self = self._has_self_all_traffic(egress, self.sg_id)
+        category.add_result(CheckResult(
+            name="  Intra-SG ingress (self, all traffic)",
+            status=CheckStatus.OK if in_self else CheckStatus.WARNING,
+            message="Present" if in_self else "Missing - classic workspaces need all TCP+UDP from self (PrivateLink SGs may scope to CIDR instead)",
+            remediation=None if in_self else "Add an inbound rule: all TCP + all UDP, source = this same security group.",
+        ))
+        category.add_result(CheckResult(
+            name="  Intra-SG egress (self, all traffic)",
+            status=CheckStatus.OK if eg_self else CheckStatus.WARNING,
+            message="Present" if eg_self else "Missing - classic workspaces need all TCP+UDP to self",
+            remediation=None if eg_self else "Add an outbound rule: all TCP + all UDP, destination = this same security group.",
+        ))
+
+        # Egress to the Databricks control plane
+        for port, label in [(443, "HTTPS"), (3306, "Legacy metastore"), (6666, "Secure Cluster Connectivity")]:
+            ok = self._egress_covers_port(egress, port)
+            category.add_result(CheckResult(
+                name=f"  Egress tcp/{port} ({label})",
+                status=CheckStatus.OK if ok else CheckStatus.WARNING,
+                message="Allowed" if ok else f"No egress rule covers tcp/{port}",
+                remediation=None if ok else f"Add outbound TCP {port} (to 0.0.0.0/0, the workspace VPC CIDR, or self).",
+            ))
+        return category
+
     def run_all_checks(self) -> CheckReport:
         """Run all AWS checks for Databricks deployment.
         
@@ -2600,21 +2814,26 @@ class AWSChecker(BaseChecker):
         )
         
         if credentials_ok:
+          # try/finally guarantees temp resources are cleaned up even if a check
+          # raises mid-run (otherwise an exception leaks the bucket/role/SG).
+          try:
             storage_cat = self.check_storage_configuration()
             self._check_results_by_area["storage"] = storage_cat.area_state
             self._report.add_category(storage_cat)
-            
+
             self._report.add_category(self.check_network_configuration())
+            if self.sg_id:
+                self._report.add_category(self.check_security_group_rules())
             self._report.add_category(self.check_cross_account_role())
             self._report.add_category(self.check_privatelink())
             self._report.add_category(self.check_unity_catalog())
-            
+
             # Delete temp bucket after Unity Catalog used it
             delete_results = self._delete_temp_bucket()
             if delete_results:
                 for r in delete_results:
                     storage_cat.add_result(r)
-            
+
             # CMK/KMS — always-on in the SRA; previously unchecked, so a deploy
             # that needs CMK could pass here and then abort at the first KMS key.
             self._report.add_category(self.check_kms())
@@ -2625,7 +2844,7 @@ class AWSChecker(BaseChecker):
 
             # Be explicit about what a cloud-credential pre-check cannot prove.
             self._report.add_category(self.check_account_api_scope_note())
-
+          finally:
             self._cleanup_test_resources()
         else:
             for name in ["STORAGE CONFIGURATION", "NETWORK CONFIGURATION",

@@ -210,12 +210,15 @@ To cleanup orphans:      python main.py --cleanup-orphans --cloud aws
 
 
 def run_aws_checks(
-    region: Optional[str], 
+    region: Optional[str],
     profile: Optional[str],
     verify_only: bool = False,
+    vpc_id: Optional[str] = None,
+    sg_id: Optional[str] = None,
+    databricks_account_id: Optional[str] = None,
 ) -> tuple:
     """Run AWS checks and return the report and checker instance.
-    
+
     Runs all permission checks and reports which deployment types are supported.
     """
     click.echo(click.style(f"\n▶ Running AWS checks (all deployment types)...", fg="yellow"))
@@ -223,12 +226,15 @@ def run_aws_checks(
         click.echo(click.style("   VERIFY-ONLY mode: Read-only checks (no resource creation)", fg="cyan"))
     else:
         click.echo(click.style("   Testing with REAL temporary resources (create → verify → delete)", fg="cyan"))
-    
+
     try:
         checker = AWSChecker(
-            region=region, 
+            region=region,
             profile=profile,
             verify_only=verify_only,
+            vpc_id=vpc_id,
+            sg_id=sg_id,
+            databricks_account_id=databricks_account_id,
         )
         report = checker.run_all_checks()
         
@@ -350,6 +356,18 @@ def run_gcp_checks(
     "--profile",
     help="AWS profile name (from ~/.aws/credentials)"
 )
+@click.option(
+    "--vpc-id",
+    help="AWS: scope BYO-network checks to a specific VPC (subnets/AZ/size/egress)"
+)
+@click.option(
+    "--sg-id",
+    help="AWS: validate an existing security group's rules (intra-SG + control-plane egress)"
+)
+@click.option(
+    "--databricks-account-id",
+    help="Your Databricks account UUID — validates the cross-account role trust content"
+)
 # Azure-specific options
 @click.option(
     "--subscription-id",
@@ -432,6 +450,9 @@ def main(
     region: Optional[str],
     output: Optional[str],
     profile: Optional[str],
+    vpc_id: Optional[str],
+    sg_id: Optional[str],
+    databricks_account_id: Optional[str],
     subscription_id: Optional[str],
     resource_group: Optional[str],
     project: Optional[str],
@@ -546,7 +567,7 @@ def main(
         available = CredentialLoader.detect_available_clouds()
         
         if available.get("aws"):
-            report, checker = run_aws_checks(region, profile, verify_only)
+            report, checker = run_aws_checks(region, profile, verify_only, vpc_id, sg_id, databricks_account_id)
             if report:
                 reports.append(report)
                 aws_checker = checker
@@ -562,7 +583,7 @@ def main(
                 reports.append(report)
     else:
         if cloud == "aws":
-            report, checker = run_aws_checks(region, profile, verify_only)
+            report, checker = run_aws_checks(region, profile, verify_only, vpc_id, sg_id, databricks_account_id)
             if report:
                 reports.append(report)
                 aws_checker = checker

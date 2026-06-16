@@ -40,10 +40,26 @@ def print_banner():
     click.echo(click.style(banner, fg="cyan"))
 
 
-def cleanup_orphaned_resources(cloud: Optional[str], region: Optional[str], profile: Optional[str]):
+def _progress(message: str, *, fg: Optional[str] = None, bold: bool = False) -> None:
+    """Emit human progress/status to STDERR so STDOUT stays a pure report.
+
+    This keeps `--json` output parseable and the Markdown report clean when
+    stdout is piped to a file or a CI step, while a human running interactively
+    still sees the progress (stderr also goes to the terminal).
+    """
+    text = click.style(message, fg=fg, bold=bold) if (fg or bold) else message
+    click.echo(text, err=True)
+
+
+def cleanup_orphaned_resources(
+    cloud: Optional[str],
+    region: Optional[str],
+    profile: Optional[str],
+    subscription_id: Optional[str] = None,
+):
     """Find and delete any orphaned test resources."""
     prefix = "dbx-precheck-temp"
-    
+
     if cloud == "aws" or cloud is None:
         try:
             import boto3
@@ -155,6 +171,139 @@ def cleanup_orphaned_resources(cloud: Optional[str], region: Optional[str], prof
         except Exception as e:
             click.echo(click.style(f"Error: {e}", fg="red"))
 
+    if cloud == "azure" or cloud is None:
+        cleanup_azure_orphans(subscription_id, region)
+
+    if cloud == "gcp":
+        click.echo(click.style(
+            "\nℹ️  GCP checks are read-only - they never create resources, "
+            "so there is nothing to clean up.", fg="cyan"
+        ))
+
+
+def cleanup_azure_orphans(subscription_id: Optional[str], region: Optional[str]):
+    """Find and delete orphaned Azure test resource groups (prefix dbxprecheck-*).
+
+    Read-first: lists matching resource groups and asks for confirmation before
+    deleting. Deleting the resource group cascades to all contained resources.
+    """
+    azure_prefix = "dbxprecheck"
+    try:
+        from azure.identity import DefaultAzureCredential
+        from azure.mgmt.resource import ResourceManagementClient
+
+        credential = DefaultAzureCredential()
+
+        # Resolve subscription if not provided (use the first enabled one).
+        # SubscriptionClient isn't shipped by every SDK build, so import it
+        # lazily and require --subscription-id when it's unavailable.
+        sub_id = subscription_id
+        if not sub_id:
+            SubscriptionClient = None
+            for module_path in ("azure.mgmt.resource", "azure.mgmt.subscription"):
+                try:
+                    mod = __import__(module_path, fromlist=["SubscriptionClient"])
+                except ImportError:
+                    continue
+                SubscriptionClient = getattr(mod, "SubscriptionClient", None)
+                if SubscriptionClient is not None:
+                    break
+            if SubscriptionClient is None:
+                click.echo(click.style(
+                    "   Pass --subscription-id to sweep Azure orphans "
+                    "(could not enumerate subscriptions on this SDK build)", fg="yellow"))
+                return
+            sub_client = SubscriptionClient(credential)
+            subs = [s for s in sub_client.subscriptions.list() if s.state == "Enabled"]
+            if not subs:
+                click.echo(click.style("   Could not determine an Azure subscription", fg="yellow"))
+                return
+            sub_id = subs[0].subscription_id
+            click.echo(f"   Using Azure subscription: {subs[0].display_name} ({sub_id})")
+
+        client = ResourceManagementClient(credential, sub_id)
+        orphan_rgs = [
+            rg for rg in client.resource_groups.list()
+            if rg.name and rg.name.startswith(azure_prefix)
+        ]
+
+        if not orphan_rgs:
+            click.echo(click.style("\n✓ No orphaned Azure test resource groups found!", fg="green"))
+            return
+
+        click.echo(click.style(
+            f"\n📁 Found {len(orphan_rgs)} orphaned Azure resource group(s):", fg="yellow"
+        ))
+        for rg in orphan_rgs:
+            click.echo(f"   - {rg.name} ({rg.location})")
+
+        if not click.confirm("\nDelete these resource groups (and everything inside them)?"):
+            click.echo("Aborted - nothing deleted.")
+            return
+
+        for rg in orphan_rgs:
+            try:
+                client.resource_groups.begin_delete(rg.name)
+                click.echo(click.style(f"     ✓ Deleting {rg.name} (async, cascades)", fg="green"))
+            except Exception as e:
+                click.echo(click.style(f"     ✗ Error deleting {rg.name}: {str(e)[:60]}", fg="red"))
+
+    except ImportError:
+        click.echo(click.style(
+            "\nAzure SDK not installed - cannot sweep Azure orphans "
+            "(pip install azure-identity azure-mgmt-resource)", fg="yellow"
+        ))
+    except Exception as e:
+        click.echo(click.style(f"\nCould not sweep Azure orphans: {str(e)[:80]}", fg="red"))
+
+
+def show_azure_dry_run_plan():
+    """Show what Azure would create/delete without doing it."""
+    click.echo("""
+┌─────────────────────────────────────────────────────────────────────┐
+│                 DRY-RUN: AZURE TEST PLAN                              │
+├─────────────────────────────────────────────────────────────────────┤
+│  Azure proves permissions by creating REAL temporary resources and    │
+│  then deleting them. The following WOULD be created (prefix            │
+│  "dbxprecheck-*"), then removed (Resource Group delete cascades):      │
+│                                                                       │
+│    • Resource Group        dbxprecheck-rg-<uuid>                      │
+│    • VNet + Subnet + NSG    (VNet-injection readiness)               │
+│    • Storage Account (ADLS) (Unity Catalog metastore)                │
+│    • Access Connector       (Unity Catalog)                          │
+│    • NAT Gateway            (PrivateLink / egress)                    │
+│                                                                       │
+│  NOTE: NAT Gateway / Public IP incur small charges for the few        │
+│  seconds they exist. Cleanup deletes the Resource Group, which        │
+│  cascades to every contained resource.                                │
+└─────────────────────────────────────────────────────────────────────┘
+
+To run the actual tests: Remove the --dry-run flag
+""")
+
+
+def show_gcp_dry_run_plan():
+    """Show what GCP would check. GCP is fully read-only."""
+    click.echo("""
+┌─────────────────────────────────────────────────────────────────────┐
+│                 DRY-RUN: GCP TEST PLAN                                │
+├─────────────────────────────────────────────────────────────────────┤
+│  GCP checks are 100% READ-ONLY - NOTHING is ever created, even in a   │
+│  normal (non-dry-run) run. It uses projects.testIamPermissions and    │
+│  read-only describe/list calls to verify:                             │
+│                                                                       │
+│    • Service Account credentials & project state                      │
+│    • Required APIs enabled (compute, storage, iam, kms, ...)          │
+│    • IAM permissions for the deployment                               │
+│    • Network / Private Google Access / Cloud NAT readiness            │
+│    • Quotas (CPUs, networks, subnetworks)                             │
+│                                                                       │
+│  A normal GCP run is already safe to execute unattended.              │
+└─────────────────────────────────────────────────────────────────────┘
+
+To run the actual checks: Remove the --dry-run flag
+""")
+
 
 def show_dry_run_plan():
     """Show what would be tested without creating anything."""
@@ -221,11 +370,11 @@ def run_aws_checks(
 
     Runs all permission checks and reports which deployment types are supported.
     """
-    click.echo(click.style(f"\n▶ Running AWS checks (all deployment types)...", fg="yellow"))
+    _progress("\n▶ Running AWS checks (all deployment types)...", fg="yellow")
     if verify_only:
-        click.echo(click.style("   VERIFY-ONLY mode: Read-only checks (no resource creation)", fg="cyan"))
+        _progress("   VERIFY-ONLY mode: Read-only checks (no resource creation)", fg="cyan")
     else:
-        click.echo(click.style("   Testing with REAL temporary resources (create → verify → delete)", fg="cyan"))
+        _progress("   Testing with REAL temporary resources (create → verify → delete)", fg="cyan")
 
     try:
         checker = AWSChecker(
@@ -237,21 +386,21 @@ def run_aws_checks(
             databricks_account_id=databricks_account_id,
         )
         report = checker.run_all_checks()
-        
+
         if report.total_not_ok > 0:
-            click.echo(click.style("  ✗ AWS checks completed with errors", fg="red"))
+            _progress("  ✗ AWS checks completed with errors", fg="red")
         elif report.total_warning > 0:
-            click.echo(click.style("  ⚠ AWS checks completed with warnings", fg="yellow"))
+            _progress("  ⚠ AWS checks completed with warnings", fg="yellow")
         else:
-            click.echo(click.style("  ✓ AWS checks passed", fg="green"))
-        
+            _progress("  ✓ AWS checks passed", fg="green")
+
         return report, checker
     except ImportError as e:
-        click.echo(click.style(f"  ✗ AWS SDK not installed: {e}", fg="red"))
-        click.echo("    Install with: pip install boto3")
+        _progress(f"  ✗ AWS SDK not installed: {e}", fg="red")
+        _progress("    Install with: pip install boto3")
         return None, None
     except Exception as e:
-        click.echo(click.style(f"  ✗ AWS check failed: {e}", fg="red"))
+        _progress(f"  ✗ AWS check failed: {e}", fg="red")
         return None, None
 
 
@@ -263,12 +412,12 @@ def run_azure_checks(
     vnet_id: Optional[str] = None,
 ) -> Optional[CheckReport]:
     """Run Azure checks and return the report."""
-    click.echo(click.style("\n▶ Running Azure checks (all deployment types)...", fg="yellow"))
+    _progress("\n▶ Running Azure checks (all deployment types)...", fg="yellow")
     if verify_only:
-        click.echo(click.style("   VERIFY-ONLY mode: Read-only checks (no resource creation)", fg="cyan"))
+        _progress("   VERIFY-ONLY mode: Read-only checks (no resource creation)", fg="cyan")
     else:
-        click.echo(click.style("   Testing with REAL temporary resources (create → verify → delete)", fg="cyan"))
-    
+        _progress("   Testing with REAL temporary resources (create → verify → delete)", fg="cyan")
+
     try:
         checker = AzureChecker(
             region=region,
@@ -278,21 +427,21 @@ def run_azure_checks(
             vnet_id=vnet_id,
         )
         report = checker.run_all_checks()
-        
+
         if report.total_not_ok > 0:
-            click.echo(click.style("  ✗ Azure checks completed with errors", fg="red"))
+            _progress("  ✗ Azure checks completed with errors", fg="red")
         elif report.total_warning > 0:
-            click.echo(click.style("  ⚠ Azure checks completed with warnings", fg="yellow"))
+            _progress("  ⚠ Azure checks completed with warnings", fg="yellow")
         else:
-            click.echo(click.style("  ✓ Azure checks passed", fg="green"))
-        
+            _progress("  ✓ Azure checks passed", fg="green")
+
         return report
     except ImportError as e:
-        click.echo(click.style(f"  ✗ Azure SDK not installed: {e}", fg="red"))
-        click.echo("    Install with: pip install azure-identity azure-mgmt-resource azure-mgmt-network azure-mgmt-storage")
+        _progress(f"  ✗ Azure SDK not installed: {e}", fg="red")
+        _progress("    Install with: pip install azure-identity azure-mgmt-resource azure-mgmt-network azure-mgmt-storage")
         return None
     except Exception as e:
-        click.echo(click.style(f"  ✗ Azure check failed: {e}", fg="red"))
+        _progress(f"  ✗ Azure check failed: {e}", fg="red")
         return None
 
 
@@ -303,10 +452,10 @@ def run_gcp_checks(
     verify_only: bool = False,
 ) -> Optional[CheckReport]:
     """Run GCP checks and return the report."""
-    click.echo(click.style("\n▶ Running GCP checks...", fg="yellow"))
+    _progress("\n▶ Running GCP checks...", fg="yellow")
     if verify_only:
-        click.echo(click.style("   VERIFY-ONLY mode: Read-only checks (no resource creation)", fg="cyan"))
-    
+        _progress("   VERIFY-ONLY mode: Read-only checks (no resource creation)", fg="cyan")
+
     try:
         checker = GCPChecker(
             region=region,
@@ -315,21 +464,21 @@ def run_gcp_checks(
             verify_only=verify_only,
         )
         report = checker.run_all_checks()
-        
+
         if report.total_not_ok > 0:
-            click.echo(click.style("  ✗ GCP checks completed with errors", fg="red"))
+            _progress("  ✗ GCP checks completed with errors", fg="red")
         elif report.total_warning > 0:
-            click.echo(click.style("  ⚠ GCP checks completed with warnings", fg="yellow"))
+            _progress("  ⚠ GCP checks completed with warnings", fg="yellow")
         else:
-            click.echo(click.style("  ✓ GCP checks passed", fg="green"))
-        
+            _progress("  ✓ GCP checks passed", fg="green")
+
         return report
     except ImportError as e:
-        click.echo(click.style(f"  ✗ GCP SDK not installed: {e}", fg="red"))
-        click.echo("    Install with: pip install google-cloud-storage google-api-python-client google-auth")
+        _progress(f"  ✗ GCP SDK not installed: {e}", fg="red")
+        _progress("    Install with: pip install google-cloud-storage google-api-python-client google-auth")
         return None
     except Exception as e:
-        click.echo(click.style(f"  ✗ GCP check failed: {e}", fg="red"))
+        _progress(f"  ✗ GCP check failed: {e}", fg="red")
         return None
 
 
@@ -532,23 +681,29 @@ def main(
     # Handle cleanup-orphans mode
     if cleanup_orphans:
         click.echo(click.style("\n🧹 Searching for orphaned test resources...", fg="yellow"))
-        cleanup_orphaned_resources(cloud, region, profile)
+        cleanup_orphaned_resources(cloud, region, profile, subscription_id)
         sys.exit(0)
-    
-    # Handle dry-run mode
+
+    # Handle dry-run mode (cloud-aware: each cloud has a different test surface)
     if dry_run:
         click.echo(click.style("\n🔍 DRY-RUN MODE - No resources will be created", fg="cyan", bold=True))
-        show_dry_run_plan()
+        dry_run_cloud = cloud or "aws"
+        if dry_run_cloud == "azure":
+            show_azure_dry_run_plan()
+        elif dry_run_cloud == "gcp":
+            show_gcp_dry_run_plan()
+        else:
+            show_dry_run_plan()
         sys.exit(0)
     
     # Handle verify-only mode
     if verify_only:
-        click.echo(click.style("\n🔒 VERIFY-ONLY MODE - Read-only checks (no resource creation)", fg="cyan", bold=True))
-        click.echo("   This mode checks credentials, quotas, and existing resources without creating anything.")
-        click.echo("   Some permission checks may be limited. Use full mode for comprehensive validation.")
-        click.echo()
-    
-    click.echo(click.style("Checking all deployment types (Standard, PrivateLink, Unity Catalog, Full)", fg="cyan"))
+        _progress("\n🔒 VERIFY-ONLY MODE - Read-only checks (no resource creation)", fg="cyan", bold=True)
+        _progress("   This mode checks credentials, quotas, and existing resources without creating anything.")
+        _progress("   Some permission checks may be limited. Use full mode for comprehensive validation.")
+        _progress("")
+
+    _progress("Checking all deployment types (Standard, PrivateLink, Unity Catalog, Full)", fg="cyan")
     
     if not cloud and not check_all:
         click.echo("\nNo cloud specified. Detecting available credentials...")
@@ -564,14 +719,14 @@ def main(
             click.echo("  GCP:   Set GOOGLE_APPLICATION_CREDENTIALS or run 'gcloud auth application-default login'")
             sys.exit(1)
         
-        click.echo(f"\nDetected credentials for: {', '.join(c.upper() for c in available_clouds)}")
-        
+        _progress(f"\nDetected credentials for: {', '.join(c.upper() for c in available_clouds)}")
+
         if len(available_clouds) == 1:
             cloud = available_clouds[0]
-            click.echo(f"Automatically selecting {cloud.upper()}")
+            _progress(f"Automatically selecting {cloud.upper()}")
         else:
             check_all = True
-            click.echo("Running checks for all detected clouds...")
+            _progress("Running checks for all detected clouds...")
     
     reports: List[CheckReport] = []
     aws_checker = None

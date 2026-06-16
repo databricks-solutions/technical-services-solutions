@@ -80,23 +80,33 @@ class CheckCategory:
 
     @property
     def area_state(self) -> str:
-        """Tri-state health of this area for the deployment compatibility matrix.
+        """Health of this area for the deployment compatibility matrix.
 
-        PASS only when something was actually verified and nothing is failing or
-        unverified. A WARNING that carries a remediation (an actionable gap) or an
-        assumed/guessed value counts as NOT_TESTED — never silently "supported".
+        Returns one of:
+          - "FAIL"       a blocking permission/config failure was found.
+          - "NOT_TESTED" couldn't confirm — nothing was actually verified, or a
+                         value was assumed/guessed (e.g. IAM simulation
+                         unavailable, --verify-only, or no target resource).
+                         Never silently "supported".
+          - "REVIEW"     verified, but an actionable advisory remains (a WARNING
+                         that carries remediation). No blocker — worth a look.
+          - "PASS"       verified and clean.
+
         Benign informational warnings (no remediation) don't disqualify a PASS.
-
-        Returns one of: "PASS", "FAIL", "NOT_TESTED".
+        The order matters: a genuinely unverifiable area (assumed) is NOT_TESTED
+        even if it also carries an advisory, so we never overstate confidence.
         """
         if self.not_ok_count > 0:
             return "FAIL"
-        actionable_or_assumed = any(
-            r.assumed or (r.status == CheckStatus.WARNING and (r.remediation or "").strip())
-            for r in self.results
-        )
-        if self.ok_count == 0 or actionable_or_assumed:
+        # Genuinely unverifiable: nothing confirmed, or a value was assumed/guessed.
+        if self.ok_count == 0 or any(r.assumed for r in self.results):
             return "NOT_TESTED"
+        # Verified, but an actionable advisory (WARNING + remediation) remains.
+        if any(
+            r.status == CheckStatus.WARNING and (r.remediation or "").strip()
+            for r in self.results
+        ):
+            return "REVIEW"
         return "PASS"
 
     def to_dict(self) -> Dict[str, Any]:

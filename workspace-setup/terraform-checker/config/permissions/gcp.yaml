@@ -12,23 +12,38 @@
 
 required_apis:
   - api: compute.googleapis.com
-    description: "Compute Engine API for VMs and networking"
-    
+    description: "Compute Engine: VPC, subnets, firewalls, routers, addresses, forwarding rules"
+
   - api: storage.googleapis.com
-    description: "Cloud Storage API for GCS buckets"
-    
+    description: "Cloud Storage API for UC metastore + external GCS buckets"
+
   - api: iam.googleapis.com
-    description: "IAM API for service accounts and permissions"
-    
+    description: "IAM API for custom roles and service accounts"
+
+  - api: iamcredentials.googleapis.com
+    description: "SA impersonation: getAccessToken / getOpenIdToken"
+
   - api: cloudresourcemanager.googleapis.com
-    description: "Resource Manager API for project management"
-    
+    description: "Resource Manager API for project get / IAM policy"
+
+  - api: serviceusage.googleapis.com
+    description: "Service Usage API to enable other APIs"
+
+  - api: container.googleapis.com
+    description: "GKE — Databricks classic data plane runs on GKE in the customer project"
+
+  - api: deploymentmanager.googleapis.com
+    description: "Databricks provisions workspace project resources via Deployment Manager"
+
   - api: cloudkms.googleapis.com
-    description: "Cloud KMS API for encryption keys"
-    
+    description: "Cloud KMS API for CMEK keyrings/keys (only when use_cmek=true)"
+
+  - api: dns.googleapis.com
+    description: "Private DNS zone + A-records for PSC (only when use_psc + create_dns_zone)"
+
   - api: logging.googleapis.com
     description: "Cloud Logging API for audit logs"
-    
+
   - api: servicenetworking.googleapis.com
     description: "Service Networking API for Private Google Access"
 

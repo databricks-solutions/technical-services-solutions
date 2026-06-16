@@ -111,9 +111,27 @@ class AzureChecker(BaseChecker):
         return self._credential
     
     def _get_subscription_client(self):
-        """Get subscription client."""
-        from azure.mgmt.resource import SubscriptionClient
-        return SubscriptionClient(self._get_credential())
+        """Get a subscription client, or None if this SDK build doesn't ship one.
+
+        `SubscriptionClient` has moved across azure-mgmt-resource /
+        azure-mgmt-subscription versions and is absent from recent
+        azure-mgmt-resource builds. When it isn't importable we return None and
+        the caller validates the subscription via the resource client instead, so
+        a missing helper class never fails the whole Azure run.
+        """
+        for module_path in (
+            "azure.mgmt.resource",
+            "azure.mgmt.subscription",
+            "azure.mgmt.resource.subscriptions",
+        ):
+            try:
+                mod = __import__(module_path, fromlist=["SubscriptionClient"])
+            except ImportError:
+                continue
+            cls = getattr(mod, "SubscriptionClient", None)
+            if cls is not None:
+                return cls(self._get_credential())
+        return None
     
     def _get_resource_client(self):
         """Get resource management client."""
@@ -233,7 +251,7 @@ class AzureChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AuthorizationFailed" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  🗑️  Microsoft.Resources/resourceGroups/delete",
                     status=CheckStatus.NOT_OK,
@@ -293,7 +311,7 @@ class AzureChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AuthorizationFailed" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  Microsoft.Network/networkSecurityGroups/write",
                     status=CheckStatus.NOT_OK,
@@ -356,7 +374,7 @@ class AzureChecker(BaseChecker):
             
         except Exception as e:
             error = str(e)
-            if "AuthorizationFailed" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  Microsoft.Network/virtualNetworks/write",
                     status=CheckStatus.NOT_OK,
@@ -472,7 +490,7 @@ class AzureChecker(BaseChecker):
             
         except Exception as e:
             error = str(e)
-            if "AuthorizationFailed" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  Microsoft.Storage/storageAccounts/write",
                     status=CheckStatus.NOT_OK,
@@ -496,7 +514,7 @@ class AzureChecker(BaseChecker):
                     message="VERIFIED - Can access storage keys"
                 ))
             except Exception as e:
-                if "AuthorizationFailed" in str(e):
+                if is_access_denied(e):
                     results.append(CheckResult(
                         name="  Microsoft.Storage/storageAccounts/listKeys",
                         status=CheckStatus.NOT_OK,
@@ -581,7 +599,7 @@ class AzureChecker(BaseChecker):
             
         except Exception as e:
             error = str(e)
-            if "AuthorizationFailed" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  Microsoft.Databricks/accessConnectors/write",
                     status=CheckStatus.NOT_OK,
@@ -703,32 +721,41 @@ class AzureChecker(BaseChecker):
             sub_client = self._get_subscription_client()
             
             if self.subscription_id:
-                try:
-                    sub = sub_client.subscriptions.get(self.subscription_id)
+                # Prefer the rich path (display name + state) when a subscription
+                # client is available; otherwise validate access via the resource
+                # client, which is always present.
+                sub = None
+                if sub_client is not None:
+                    try:
+                        sub = sub_client.subscriptions.get(self.subscription_id)
+                    except Exception:
+                        sub = None
+
+                if sub is not None:
                     self._subscription_info = {
                         "id": sub.subscription_id,
                         "name": sub.display_name,
                         "state": str(sub.state),
                     }
-                    
+
                     category.add_result(CheckResult(
                         name="Azure Credentials",
                         status=CheckStatus.OK,
                         message="Authenticated successfully"
                     ))
-                    
+
                     category.add_result(CheckResult(
                         name="Subscription",
                         status=CheckStatus.OK,
                         message=f"{sub.display_name}"
                     ))
-                    
+
                     category.add_result(CheckResult(
                         name="Subscription ID",
                         status=CheckStatus.OK,
                         message=sub.subscription_id
                     ))
-                    
+
                     if str(sub.state) != "SubscriptionState.ENABLED":
                         category.add_result(CheckResult(
                             name="Subscription State",
@@ -741,13 +768,39 @@ class AzureChecker(BaseChecker):
                             status=CheckStatus.OK,
                             message="Enabled"
                         ))
-                        
-                except Exception as e:
-                    category.add_result(CheckResult(
-                        name="Subscription Access",
-                        status=CheckStatus.NOT_OK,
-                        message=f"Cannot access subscription: {str(e)[:50]}"
-                    ))
+                else:
+                    # Fallback: confirm the subscription is reachable with a single
+                    # read-only call through the resource client.
+                    try:
+                        resource_client = self._get_resource_client()
+                        next(iter(resource_client.resource_groups.list()), None)
+                        self._subscription_info = {
+                            "id": self.subscription_id, "name": None, "state": None,
+                        }
+                        category.add_result(CheckResult(
+                            name="Azure Credentials",
+                            status=CheckStatus.OK,
+                            message="Authenticated successfully"
+                        ))
+                        category.add_result(CheckResult(
+                            name="Subscription ID",
+                            status=CheckStatus.OK,
+                            message=self.subscription_id
+                        ))
+                    except Exception as e:
+                        category.add_result(CheckResult(
+                            name="Subscription Access",
+                            status=CheckStatus.NOT_OK,
+                            message=f"Cannot access subscription: {str(e)[:50]}"
+                        ))
+            elif sub_client is None:
+                # No subscription id and no way to enumerate subscriptions.
+                category.add_result(CheckResult(
+                    name="Subscription Access",
+                    status=CheckStatus.NOT_OK,
+                    message="Pass --subscription-id (could not enumerate subscriptions on this SDK build)",
+                    remediation="Re-run with --subscription-id <id> (find it via: az account show --query id -o tsv).",
+                ))
             else:
                 # Auto-detect subscription from az login
                 subs = list(sub_client.subscriptions.list())
@@ -1138,7 +1191,7 @@ class AzureChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AuthorizationFailed" in error:
+            if is_access_denied(error):
                 category.add_result(CheckResult(
                     name="  Microsoft.Network/publicIPAddresses/write",
                     status=CheckStatus.NOT_OK,
@@ -1187,7 +1240,7 @@ class AzureChecker(BaseChecker):
                 ))
             except Exception as e:
                 error = str(e)
-                if "AuthorizationFailed" in error:
+                if is_access_denied(error):
                     category.add_result(CheckResult(
                         name="  Microsoft.Network/natGateways/write",
                         status=CheckStatus.NOT_OK,
@@ -1281,12 +1334,13 @@ class AzureChecker(BaseChecker):
     def _compute_deployment_compatibility(self) -> CheckCategory:
         """Compute which Azure deployment types are supported.
 
-        Tri-state per area (PASS/FAIL/NOT_TESTED). SUPPORTED only when every
-        required area is PASS; FAIL -> NOT SUPPORTED; otherwise NOT VERIFIED
-        (e.g. --verify-only, or an area that couldn't be confirmed).
+        Per-area state (PASS/FAIL/REVIEW/NOT_TESTED). A mode is NOT SUPPORTED if
+        any required area FAILED; NOT VERIFIED if an area couldn't be confirmed
+        (--verify-only / read-only role); REVIEW if every area is confirmed but
+        one carries an actionable advisory (no blocker); SUPPORTED otherwise.
         """
         category = CheckCategory(name="DEPLOYMENT COMPATIBILITY")
-        st = self._check_results_by_area  # area -> "PASS"|"FAIL"|"NOT_TESTED"
+        st = self._check_results_by_area  # area -> "PASS"|"FAIL"|"REVIEW"|"NOT_TESTED"
 
         modes = [
             ("Standard", ["providers", "resource_group", "workspace"], "Databricks-managed VNet + DBFS storage"),
@@ -1304,6 +1358,7 @@ class AzureChecker(BaseChecker):
             states = {x: st.get(x, "NOT_TESTED") for x in areas}
             failed = [label[x] for x, s in states.items() if s == "FAIL"]
             not_tested = [label[x] for x, s in states.items() if s == "NOT_TESTED"]
+            review = [label[x] for x, s in states.items() if s == "REVIEW"]
             if failed:
                 category.add_result(CheckResult(
                     name=f"  {mode_name}", status=CheckStatus.NOT_OK,
@@ -1312,8 +1367,13 @@ class AzureChecker(BaseChecker):
             elif not_tested:
                 category.add_result(CheckResult(
                     name=f"  {mode_name}", status=CheckStatus.WARNING,
-                    message=f"NOT VERIFIED - could not confirm: {', '.join(not_tested)} (e.g. --verify-only, or read-only role)",
+                    message=f"NOT VERIFIED - could not confirm: {', '.join(not_tested)} (--verify-only, or read-only role)",
                     remediation="Re-run without --verify-only with a role that can create resources to confirm."))
+            elif review:
+                category.add_result(CheckResult(
+                    name=f"  {mode_name}", status=CheckStatus.WARNING,
+                    message=f"REVIEW - permissions verified; advisories to review in: {', '.join(review)} (no blockers). See the items flagged above.",
+                    remediation=f"Review the flagged {', '.join(review)} item(s) above before deploying; none is a hard blocker."))
             else:
                 category.add_result(CheckResult(
                     name=f"  {mode_name}", status=CheckStatus.OK,
@@ -1502,22 +1562,19 @@ class AzureChecker(BaseChecker):
         # Deployment compatibility matrix
         self._report.add_category(self._compute_deployment_compatibility())
         
-        # Cleanup
+        # Cleanup. The RG was registered in _cleanup_tasks on creation, so
+        # _cleanup_test_resources() below issues the delete (and would also run
+        # if a check above had raised). Deletion is async — we request it, not
+        # confirm. Every created resource lives inside the RG, so deleting the RG
+        # cascades to all of them.
         if rg_created and not self.verify_only:
             cleanup_category = CheckCategory(name="CLEANUP")
-            try:
-                resource_client.resource_groups.begin_delete(test_rg)
-                cleanup_category.add_result(CheckResult(
-                    name="  🗑️  Deleting Resource Group (and all contents)",
-                    status=CheckStatus.OK,
-                    message=f"✓ DELETING: {test_rg} (async - all temp resources)"
-                ))
-            except Exception as e:
-                cleanup_category.add_result(CheckResult(
-                    name="  🗑️  Resource Group Cleanup",
-                    status=CheckStatus.WARNING,
-                    message=f"Manual cleanup needed: {test_rg}"
-                ))
+            cleanup_category.add_result(CheckResult(
+                name="  🗑️  Resource Group deletion",
+                status=CheckStatus.OK,
+                message=f"DELETE REQUESTED: {test_rg} (async, cascades to all temp resources). "
+                        f"Run --cleanup-orphans --cloud azure to confirm nothing was left behind.",
+            ))
             self._report.add_category(cleanup_category)
         elif self.verify_only:
             cleanup_category = CheckCategory(name="CLEANUP")
@@ -1552,23 +1609,16 @@ class AzureChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AuthorizationFailed" in error:
-                rg_category.add_result(CheckResult(
-                    name="  Microsoft.Resources/resourceGroups/read",
-                    status=CheckStatus.NOT_OK,
-                    message=f"DENIED: {error[:80]}"
-                ))
-            else:
-                rg_category.add_result(CheckResult(
-                    name="  Microsoft.Resources/resourceGroups/read",
-                    status=CheckStatus.WARNING,
-                    message=f"Error: {error[:80]}"
-                ))
-        
+            rg_category.add_result(CheckResult(
+                name="  Microsoft.Resources/resourceGroups/read",
+                status=CheckStatus.NOT_OK if is_access_denied(error) else CheckStatus.WARNING,
+                message=f"{'DENIED' if is_access_denied(error) else 'Error'}: {error[:80]}"
+            ))
+
         rg_category.add_result(CheckResult(
             name="  Microsoft.Resources/resourceGroups/write",
             status=CheckStatus.WARNING,
-            message="Cannot verify write permission without resource creation"
+            message="Cannot verify write permission in --verify-only (no resource creation)"
         ))
         
         self._check_results_by_area["resource_group"] = rg_category.area_state
@@ -1592,10 +1642,11 @@ class AzureChecker(BaseChecker):
                 message=f"VERIFIED - Found {len(vnets)} VNet(s)"
             ))
         except Exception as e:
+            err = str(e)
             network_category.add_result(CheckResult(
                 name="  Microsoft.Network/virtualNetworks/read",
-                status=CheckStatus.NOT_OK,
-                message=f"DENIED: {str(e)[:80]}"
+                status=CheckStatus.NOT_OK if is_access_denied(err) else CheckStatus.WARNING,
+                message=f"{'DENIED' if is_access_denied(err) else 'Error'}: {err[:80]}"
             ))
         
         try:
@@ -1606,10 +1657,11 @@ class AzureChecker(BaseChecker):
                 message=f"VERIFIED - Found {len(nsgs)} NSG(s)"
             ))
         except Exception as e:
+            err = str(e)
             network_category.add_result(CheckResult(
                 name="  Microsoft.Network/networkSecurityGroups/read",
-                status=CheckStatus.NOT_OK,
-                message=f"DENIED: {str(e)[:80]}"
+                status=CheckStatus.NOT_OK if is_access_denied(err) else CheckStatus.WARNING,
+                message=f"{'DENIED' if is_access_denied(err) else 'Error'}: {err[:80]}"
             ))
         
         network_category.add_result(CheckResult(
@@ -1640,10 +1692,11 @@ class AzureChecker(BaseChecker):
                 message=f"VERIFIED - Found {len(accounts)} account(s), {adls_count} with ADLS Gen2"
             ))
         except Exception as e:
+            err = str(e)
             storage_category.add_result(CheckResult(
                 name="  Microsoft.Storage/storageAccounts/read",
-                status=CheckStatus.NOT_OK,
-                message=f"DENIED: {str(e)[:80]}"
+                status=CheckStatus.NOT_OK if is_access_denied(err) else CheckStatus.WARNING,
+                message=f"{'DENIED' if is_access_denied(err) else 'Error'}: {err[:80]}"
             ))
         
         storage_category.add_result(CheckResult(
@@ -1709,10 +1762,11 @@ class AzureChecker(BaseChecker):
                 message=f"VERIFIED - Found {len(nats)} NAT Gateway(s)"
             ))
         except Exception as e:
+            err = str(e)
             pl_category.add_result(CheckResult(
                 name="  Microsoft.Network/natGateways/read",
-                status=CheckStatus.NOT_OK,
-                message=f"DENIED: {str(e)[:80]}"
+                status=CheckStatus.NOT_OK if is_access_denied(err) else CheckStatus.WARNING,
+                message=f"{'DENIED' if is_access_denied(err) else 'Error'}: {err[:80]}"
             ))
         
         try:
@@ -1723,10 +1777,11 @@ class AzureChecker(BaseChecker):
                 message=f"VERIFIED - Found {len(pips)} Public IP(s)"
             ))
         except Exception as e:
+            err = str(e)
             pl_category.add_result(CheckResult(
                 name="  Microsoft.Network/publicIPAddresses/read",
-                status=CheckStatus.NOT_OK,
-                message=f"DENIED: {str(e)[:80]}"
+                status=CheckStatus.NOT_OK if is_access_denied(err) else CheckStatus.WARNING,
+                message=f"{'DENIED' if is_access_denied(err) else 'Error'}: {err[:80]}"
             ))
         
         pl_category.add_result(CheckResult(
@@ -1761,6 +1816,12 @@ class AzureChecker(BaseChecker):
                 {"location": self.region or "eastus", "tags": {"PreCheck": "Temporary"}}
             )
             rg_created = True
+            # Register RG deletion immediately so a mid-run exception can't leak
+            # it (deleting the RG cascades to every contained test resource).
+            self._cleanup_tasks.append((
+                lambda: resource_client.resource_groups.begin_delete(test_rg),
+                test_rg,
+            ))
             rg_category.add_result(CheckResult(
                 name="  Microsoft.Resources/resourceGroups/write",
                 status=CheckStatus.OK,
@@ -1768,11 +1829,14 @@ class AzureChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AuthorizationFailed" in error:
+            if is_deploy_blocking(error):
+                # Auth denial, Azure Policy disallow, or quota — all block the
+                # real deploy, so this is NOT_OK (not a soft warning).
                 rg_category.add_result(CheckResult(
                     name="  Microsoft.Resources/resourceGroups/write",
                     status=CheckStatus.NOT_OK,
-                    message=f"DENIED: {error[:80]}"
+                    message=f"BLOCKED: {error[:120]}",
+                    remediation="Resolve the RBAC denial / Azure Policy / quota that blocks resource-group creation.",
                 ))
             else:
                 rg_category.add_result(CheckResult(
@@ -1780,20 +1844,27 @@ class AzureChecker(BaseChecker):
                     status=CheckStatus.WARNING,
                     message=f"Error: {error[:80]}"
                 ))
-        
+
         self._check_results_by_area["resource_group"] = rg_category.area_state
         self._report.add_category(rg_category)
         
         if not rg_created:
-            for check_name in ["NETWORK CONFIGURATION", "STORAGE CONFIGURATION (ADLS Gen2)",
-                              "UNITY CATALOG (Access Connector)", "PRIVATE LINK + SCC"]:
+            # RG create failed -> downstream create-dependent areas can't possibly
+            # work. Mark each by its matrix area key (not the display name) so the
+            # compatibility matrix correctly reports these as FAIL.
+            for check_name, area in [
+                ("NETWORK CONFIGURATION", "network"),
+                ("STORAGE CONFIGURATION (ADLS Gen2)", "storage"),
+                ("UNITY CATALOG (Access Connector)", "access_connector"),
+                ("PRIVATE LINK + SCC", "privatelink"),
+            ]:
                 category = CheckCategory(name=check_name)
                 category.add_result(CheckResult(
                     name="All checks",
                     status=CheckStatus.SKIPPED,
                     message="Skipped - Resource Group creation failed"
                 ))
-                self._check_results_by_area[check_name] = "FAIL"
+                self._check_results_by_area[area] = "FAIL"
                 self._report.add_category(category)
             return False
         

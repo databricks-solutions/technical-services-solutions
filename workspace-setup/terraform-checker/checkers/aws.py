@@ -119,12 +119,47 @@ class AWSChecker(BaseChecker):
     # REAL RESOURCE TESTING (Create & Delete)
     # This is how we verify permissions without iam:SimulatePrincipalPolicy
     # =========================================================================
-    
+
+    def _verify_only_probe(self, label: str, actions: List[str]) -> List[CheckResult]:
+        """Read-only permission probe used in --verify-only mode (creates nothing).
+
+        Uses IAM policy simulation when available; otherwise reports honestly that
+        full verification needs a create-test (run without --verify-only).
+        """
+        results = [CheckResult(
+            name=f"── {label} (verify-only, read-only) ──",
+            status=CheckStatus.OK,
+            message="No resources created",
+        )]
+        if self._can_simulate:
+            sim = self._simulate_actions(actions)
+            for a in actions:
+                s, m = sim.get(a, ("error", "not evaluated"))
+                st = CheckStatus.OK if s == "allowed" else (
+                    CheckStatus.NOT_OK if s == "denied" else CheckStatus.WARNING)
+                results.append(CheckResult(name=f"  {a}", status=st, message=m))
+        else:
+            results.append(CheckResult(
+                name=f"  {label} permissions",
+                status=CheckStatus.WARNING,
+                message=(
+                    "Cannot fully verify in --verify-only without IAM simulation. "
+                    "Re-run without --verify-only for a create-test, or ensure: "
+                    + ", ".join(actions)
+                ),
+            ))
+        return results
+
     def _test_s3_bucket_permissions(self) -> List[CheckResult]:
         """
         Test S3 permissions by creating a real bucket and testing operations.
         Returns list of CheckResults for each operation tested.
         """
+        if self.verify_only:
+            return self._verify_only_probe("S3 Root Bucket", [
+                "s3:ListAllMyBuckets", "s3:CreateBucket", "s3:PutBucketPolicy",
+                "s3:PutBucketVersioning", "s3:PutEncryptionConfiguration", "s3:DeleteBucket",
+            ])
         results = []
         s3 = self._get_client("s3")
         bucket_name = f"{TEST_RESOURCE_PREFIX}-{self._account_id}-{self._test_id}"
@@ -147,21 +182,28 @@ class AWSChecker(BaseChecker):
                     CreateBucketConfiguration={'LocationConstraint': self.region}
                 )
             bucket_created = True
+            self._temp_bucket_name = bucket_name
             results.append(CheckResult(
                 name="  s3:CreateBucket",
                 status=CheckStatus.OK,
                 message=f"✓ CREATED: {bucket_name}"
             ))
-            
-            # Schedule cleanup
+
+            # Register cleanup at creation time so a mid-run exception can't leak
+            # the bucket. The bucket is kept alive for the Unity Catalog object
+            # test and torn down by _delete_temp_bucket() in run_all_checks; that
+            # versioned-bucket teardown is also the right fallback for the
+            # finally-block cleanup (a plain delete_bucket would fail on the
+            # versioned + deny-policy test bucket). _delete_temp_bucket() no-ops
+            # once the bucket has already been deleted.
             self._cleanup_tasks.append((
-                lambda: s3.delete_bucket(Bucket=bucket_name),
+                self._delete_temp_bucket,
                 bucket_name
             ))
-            
+
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  s3:CreateBucket",
                     status=CheckStatus.NOT_OK,
@@ -198,7 +240,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  s3:PutBucketVersioning",
                     status=CheckStatus.NOT_OK,
@@ -229,7 +271,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  s3:PutBucketPublicAccessBlock",
                     status=CheckStatus.NOT_OK,
@@ -261,7 +303,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  s3:PutEncryptionConfiguration",
                     status=CheckStatus.NOT_OK,
@@ -308,7 +350,7 @@ class AWSChecker(BaseChecker):
                 
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  s3:PutBucketPolicy",
                     status=CheckStatus.NOT_OK,
@@ -334,7 +376,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  s3:PutBucketTagging",
                     status=CheckStatus.NOT_OK,
@@ -370,7 +412,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  s3:PutObject",
                     status=CheckStatus.NOT_OK,
@@ -393,7 +435,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  s3:GetObject",
                     status=CheckStatus.NOT_OK,
@@ -416,7 +458,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  s3:DeleteObject",
                     status=CheckStatus.NOT_OK,
@@ -439,7 +481,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  s3:ListBucket",
                     status=CheckStatus.NOT_OK,
@@ -462,7 +504,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  s3:GetBucketLocation",
                     status=CheckStatus.NOT_OK,
@@ -541,6 +583,11 @@ class AWSChecker(BaseChecker):
         Test IAM role permissions by creating a real role and testing operations.
         Returns list of CheckResults for each operation tested.
         """
+        if self.verify_only:
+            return self._verify_only_probe("Cross-account IAM Role", [
+                "iam:ListRoles", "iam:CreateRole", "iam:GetRole",
+                "iam:TagRole", "iam:PutRolePolicy", "iam:DeleteRole",
+            ])
         results = []
         iam = self._get_client("iam")
         role_name = self._get_test_resource_name("role")
@@ -601,6 +648,10 @@ class AWSChecker(BaseChecker):
                 Tags=[{'Key': 'PreCheck', 'Value': 'Temporary'}]
             )
             role_created = True
+            # Register for cleanup so a mid-run exception can't leak the role.
+            self._cleanup_tasks.append((
+                lambda: iam.delete_role(RoleName=role_name), role_name,
+            ))
             results.append(CheckResult(
                 name="  iam:CreateRole",
                 status=CheckStatus.OK,
@@ -609,7 +660,7 @@ class AWSChecker(BaseChecker):
             
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  iam:CreateRole",
                     status=CheckStatus.NOT_OK,
@@ -642,7 +693,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  iam:GetRole",
                     status=CheckStatus.NOT_OK,
@@ -662,7 +713,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  iam:TagRole",
                     status=CheckStatus.NOT_OK,
@@ -682,7 +733,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  iam:UpdateAssumeRolePolicy",
                     status=CheckStatus.NOT_OK,
@@ -725,7 +776,7 @@ class AWSChecker(BaseChecker):
                 
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  iam:PutRolePolicy",
                     status=CheckStatus.NOT_OK,
@@ -758,7 +809,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  iam:DeleteRole",
                     status=CheckStatus.NOT_OK,
@@ -778,6 +829,11 @@ class AWSChecker(BaseChecker):
         Test IAM policy permissions by creating a real policy and testing operations.
         Returns list of CheckResults for each operation tested.
         """
+        if self.verify_only:
+            return self._verify_only_probe("Cross-account IAM Policy", [
+                "iam:CreatePolicy", "iam:GetPolicy",
+                "iam:CreatePolicyVersion", "iam:DeletePolicy",
+            ])
         results = []
         iam = self._get_client("iam")
         policy_name = self._get_test_resource_name("policy")
@@ -810,6 +866,9 @@ class AWSChecker(BaseChecker):
                 Tags=[{'Key': 'PreCheck', 'Value': 'Temporary'}]
             )
             policy_arn = response['Policy']['Arn']
+            self._cleanup_tasks.append((
+                lambda: iam.delete_policy(PolicyArn=policy_arn), policy_name,
+            ))
             results.append(CheckResult(
                 name="  iam:CreatePolicy",
                 status=CheckStatus.OK,
@@ -818,7 +877,7 @@ class AWSChecker(BaseChecker):
             
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  iam:CreatePolicy",
                     status=CheckStatus.NOT_OK,
@@ -852,7 +911,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  iam:GetPolicy",
                     status=CheckStatus.NOT_OK,
@@ -873,7 +932,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  iam:CreatePolicyVersion",
                     status=CheckStatus.NOT_OK,
@@ -905,7 +964,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  iam:DeletePolicy",
                     status=CheckStatus.NOT_OK,
@@ -925,6 +984,12 @@ class AWSChecker(BaseChecker):
         Test Security Group permissions by creating a real SG and testing operations.
         Returns list of CheckResults for each operation tested.
         """
+        if self.verify_only:
+            return self._verify_only_probe("Security Group", [
+                "ec2:DescribeSecurityGroups", "ec2:CreateSecurityGroup",
+                "ec2:AuthorizeSecurityGroupIngress", "ec2:AuthorizeSecurityGroupEgress",
+                "ec2:DeleteSecurityGroup",
+            ])
         results = []
         ec2 = self._get_client("ec2")
         sg_name = self._get_test_resource_name("sg")
@@ -976,6 +1041,9 @@ class AWSChecker(BaseChecker):
                 }]
             )
             sg_id = response['GroupId']
+            self._cleanup_tasks.append((
+                lambda: ec2.delete_security_group(GroupId=sg_id), sg_id,
+            ))
             results.append(CheckResult(
                 name="  ec2:CreateSecurityGroup",
                 status=CheckStatus.OK,
@@ -984,7 +1052,7 @@ class AWSChecker(BaseChecker):
             
         except Exception as e:
             error = str(e)
-            if "UnauthorizedOperation" in error or "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  ec2:CreateSecurityGroup",
                     status=CheckStatus.NOT_OK,
@@ -1033,7 +1101,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "UnauthorizedOperation" in error or "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  ec2:AuthorizeSecurityGroupIngress",
                     status=CheckStatus.NOT_OK,
@@ -1070,7 +1138,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "UnauthorizedOperation" in error or "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  ec2:AuthorizeSecurityGroupEgress",
                     status=CheckStatus.NOT_OK,
@@ -1107,7 +1175,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "UnauthorizedOperation" in error or "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  ec2:RevokeSecurityGroupIngress",
                     status=CheckStatus.NOT_OK,
@@ -1124,7 +1192,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "UnauthorizedOperation" in error or "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  ec2:DeleteSecurityGroup",
                     status=CheckStatus.NOT_OK,
@@ -1161,16 +1229,29 @@ class AWSChecker(BaseChecker):
                 batch = actions[i:i + batch_size]
                 
                 try:
-                    response = iam.simulate_principal_policy(
-                        PolicySourceArn=self._user_arn,
-                        ActionNames=batch,
-                        ResourceArns=[resource] if resource else ["*"]
-                    )
-                    
+                    # Retry on transient throttling (otherwise a rate-limit
+                    # would smear every action in the batch to "error"/WARNING).
+                    response = None
+                    for attempt in range(4):
+                        try:
+                            response = iam.simulate_principal_policy(
+                                PolicySourceArn=self._user_arn,
+                                ActionNames=batch,
+                                ResourceArns=[resource] if resource else ["*"]
+                            )
+                            break
+                        except Exception as se:
+                            if is_throttling(se) and attempt < 3:
+                                time.sleep(0.5 * (2 ** attempt))
+                                continue
+                            raise
+                    if response is None:
+                        raise RuntimeError("simulate_principal_policy returned no response")
+
                     for result in response.get("EvaluationResults", []):
                         action = result["EvalActionName"]
                         decision = result["EvalDecision"]
-                        
+
                         if decision == "allowed":
                             results[action] = ("allowed", "Permission granted")
                         else:
@@ -1181,17 +1262,22 @@ class AWSChecker(BaseChecker):
                             else:
                                 reason = "Implicitly denied (no matching Allow statement)"
                             results[action] = ("denied", reason)
-                        
+
                 except Exception as e:
-                    error_msg = str(e)
+                    # If the principal can't even self-simulate (denied), that's a
+                    # real signal, not a benign error.
+                    kind = "denied" if is_access_denied(e) else "error"
+                    error_msg = ("Cannot self-verify: iam:SimulatePrincipalPolicy denied"
+                                 if kind == "denied" else str(e))
                     for action in batch:
-                        results[action] = ("error", error_msg)
-                        
+                        results[action] = (kind, error_msg)
+
         except Exception as e:
+            kind = "denied" if is_access_denied(e) else "error"
             error_msg = str(e)
             for action in actions:
-                results[action] = ("error", error_msg)
-        
+                results[action] = (kind, error_msg)
+
         return results
     
     def _test_dryrun(
@@ -1622,7 +1708,7 @@ class AWSChecker(BaseChecker):
                         message="Allowed - Can check VPC DNS settings"
                     ))
             except Exception as e:
-                if "AccessDenied" in str(e):
+                if is_access_denied(e):
                     network_ok = False
                     category.add_result(CheckResult(
                         name="  ec2:DescribeVpcAttribute",
@@ -1718,28 +1804,46 @@ class AWSChecker(BaseChecker):
                     message=f"Private subnets only in 1 AZ - recommend 2+ for HA"
                 ))
 
-            # Subnet SIZE: Databricks workspace subnets must be /17–/26.
+            # Subnet SIZE: Databricks requires workspace subnets to be /17–/26.
+            # Too-small subnets (>/26) starve clusters of node IPs; below /17 is
+            # also out of range (>/26 is the common failure).
             too_small = []
+            tiny = []  # below /17 is not allowed either
             for s in private_subnets:
                 cidr = s.get("CidrBlock", "")
+                free = s.get("AvailableIpAddressCount")
                 try:
                     prefix = int(cidr.split("/")[1])
                 except (IndexError, ValueError):
                     continue
-                if prefix > 26:
-                    too_small.append(f"{s.get('SubnetId')} ({cidr}, {s.get('AvailableIpAddressCount')} free)")
-            if private_subnets and too_small:
-                category.add_result(CheckResult(
-                    name="  Subnet Size", status=CheckStatus.WARNING,
-                    message=f"{len(too_small)} private subnet(s) smaller than /26 (Databricks needs /17–/26): " + "; ".join(too_small[:3]),
-                    remediation="Use private subnets sized /17–/26 (≈ /24 recommended) so clusters have enough node IPs.",
-                ))
-            elif private_subnets:
-                sizes = sorted({s.get("CidrBlock", "").split("/")[-1] for s in private_subnets})
-                category.add_result(CheckResult(
-                    name="  Subnet Size", status=CheckStatus.OK,
-                    message=f"Private subnets within /17–/26 (/{', /'.join(sizes)})",
-                ))
+                if prefix > 26:  # smaller than /26
+                    too_small.append(f"{s.get('SubnetId')} ({cidr}, {free} free IPs)")
+                elif prefix < 17:
+                    tiny.append(f"{s.get('SubnetId')} ({cidr})")
+            if private_subnets:
+                if too_small:
+                    category.add_result(CheckResult(
+                        name="  Subnet Size", status=CheckStatus.WARNING,
+                        message=f"{len(too_small)} private subnet(s) smaller than /26 (Databricks needs /17–/26): "
+                                + "; ".join(too_small[:3]),
+                        remediation="Use private subnets sized /17–/26 (≈ /24 recommended) so clusters have enough node IPs.",
+                        doc_link="https://docs.databricks.com/aws/en/admin/workspace/create-workspace#requirements",
+                    ))
+                elif tiny:
+                    category.add_result(CheckResult(
+                        name="  Subnet Size", status=CheckStatus.WARNING,
+                        message=f"{len(tiny)} private subnet(s) larger than /17 (Databricks needs /17–/26): "
+                                + "; ".join(tiny[:3]),
+                        remediation="Use private subnets sized /17–/26 (≈ /24 recommended).",
+                        doc_link="https://docs.databricks.com/aws/en/admin/workspace/create-workspace#requirements",
+                    ))
+                else:
+                    sizes = sorted({s.get("CidrBlock", "").split("/")[-1] for s in private_subnets})
+                    min_free = min((s.get("AvailableIpAddressCount", 0) for s in private_subnets), default=0)
+                    category.add_result(CheckResult(
+                        name="  Subnet Size", status=CheckStatus.OK,
+                        message=f"Private subnets within /17–/26 (/{', /'.join(sizes)}); min free IPs in a subnet: {min_free}",
+                    ))
 
             # Outbound egress (only matters WITHOUT PrivateLink): the data plane
             # needs a NAT/egress path to reach the control plane.
@@ -1902,8 +2006,29 @@ class AWSChecker(BaseChecker):
             )
             if status == CheckStatus.NOT_OK:
                 privatelink_ok = False
-            category.add_result(CheckResult(name="  ec2:CreateVpcEndpoint", status=status, message=msg))
-        
+            category.add_result(CheckResult(name="  ec2:CreateVpcEndpoint (S3 Gateway)", status=status, message=msg))
+
+            # Interface endpoints the SRA creates (STS, Kinesis Streams). These
+            # need CreateVpcEndpoint with the Interface type (+ ENI + SG attach).
+            for svc_label, svc_name in [
+                ("STS", f"com.amazonaws.{self.region}.sts"),
+                ("Kinesis Streams", f"com.amazonaws.{self.region}.kinesis-streams"),
+            ]:
+                status, msg = self._test_dryrun(
+                    f"ec2:CreateVpcEndpoint ({svc_label})",
+                    lambda s=svc_name: ec2.create_vpc_endpoint(
+                        VpcId="vpc-test",
+                        ServiceName=s,
+                        VpcEndpointType="Interface",
+                        DryRun=True,
+                    ),
+                )
+                if status == CheckStatus.NOT_OK:
+                    privatelink_ok = False
+                category.add_result(CheckResult(
+                    name=f"  ec2:CreateVpcEndpoint ({svc_label})", status=status, message=msg
+                ))
+
         try:
             endpoints = ec2.describe_vpc_endpoints()
             endpoint_list = endpoints.get("VpcEndpoints", [])
@@ -1916,7 +2041,18 @@ class AWSChecker(BaseChecker):
                 status=CheckStatus.OK,
                 message=f"{gateway} Gateway, {interface} Interface endpoints"
             ))
-            
+
+            category.add_result(CheckResult(
+                name="  Databricks PrivateLink services",
+                status=CheckStatus.WARNING,
+                message=(
+                    "Cannot pre-verify the Databricks vpce-svc endpoints "
+                    "(workspace/general-access + SCC relay) - confirm your region "
+                    "is supported in the Databricks PrivateLink docs"
+                ),
+                doc_link="https://docs.databricks.com/aws/en/security/network/classic/privatelink",
+            ))
+
             s3_gw = [e for e in endpoint_list if "s3" in e.get("ServiceName", "").lower() and e["VpcEndpointType"] == "Gateway"]
             if s3_gw:
                 category.add_result(CheckResult(
@@ -2595,13 +2731,17 @@ class AWSChecker(BaseChecker):
     def _compute_deployment_compatibility(self) -> CheckCategory:
         """Compute which deployment types are supported.
 
-        Tri-state per area (PASS/FAIL/NOT_TESTED). A mode is SUPPORTED only when
-        every area it needs is PASS. Any required area FAILED -> NOT SUPPORTED;
-        none failed but something couldn't be confirmed -> NOT VERIFIED (never
-        silently "supported").
+        Per-area state (PASS/FAIL/REVIEW/NOT_TESTED). A mode is:
+          - NOT SUPPORTED  if any required area FAILED (a blocker);
+          - NOT VERIFIED   if (no fail but) a required area couldn't be confirmed
+                           (IAM simulation unavailable / --verify-only / no target);
+          - REVIEW         if (no fail, all confirmed) a required area has an
+                           actionable advisory — no blocker, worth a look;
+          - SUPPORTED      if every required area is clean.
+        The message names the ACTUAL reason and areas, never a generic catch-all.
         """
         category = CheckCategory(name="DEPLOYMENT COMPATIBILITY")
-        st = self._check_results_by_area  # area -> "PASS"|"FAIL"|"NOT_TESTED"
+        st = self._check_results_by_area  # area -> "PASS"|"FAIL"|"REVIEW"|"NOT_TESTED"
 
         modes = [
             ("Standard", ["storage", "network", "cross_account"], "Basic workspace (VPC, S3, IAM)"),
@@ -2616,6 +2756,7 @@ class AWSChecker(BaseChecker):
             states = {a: st.get(a, "NOT_TESTED") for a in areas}
             failed = [label[a] for a, s in states.items() if s == "FAIL"]
             not_tested = [label[a] for a, s in states.items() if s == "NOT_TESTED"]
+            review = [label[a] for a, s in states.items() if s == "REVIEW"]
             if failed:
                 category.add_result(CheckResult(
                     name=f"  {mode_name}", status=CheckStatus.NOT_OK,
@@ -2625,8 +2766,14 @@ class AWSChecker(BaseChecker):
             elif not_tested:
                 category.add_result(CheckResult(
                     name=f"  {mode_name}", status=CheckStatus.WARNING,
-                    message=f"NOT VERIFIED - could not confirm: {', '.join(not_tested)} (e.g. IAM simulation unavailable, --verify-only, or no target resource)",
+                    message=f"NOT VERIFIED - could not confirm: {', '.join(not_tested)} (IAM simulation unavailable, --verify-only, or no target resource)",
                     remediation="Re-run without --verify-only, grant iam:SimulatePrincipalPolicy, or pass the relevant target to confirm.",
+                ))
+            elif review:
+                category.add_result(CheckResult(
+                    name=f"  {mode_name}", status=CheckStatus.WARNING,
+                    message=f"REVIEW - permissions verified; advisories to review in: {', '.join(review)} (no blockers). See the items flagged above.",
+                    remediation=f"Review the flagged {', '.join(review)} item(s) above before deploying; none is a hard blocker.",
                 ))
             else:
                 category.add_result(CheckResult(
@@ -2676,6 +2823,28 @@ class AWSChecker(BaseChecker):
                 ),
             ))
             return category
+
+        results = self._simulate_actions(kms_actions)
+        denied = [a for a, (s, _m) in results.items() if s == "denied"]
+        for action in kms_actions:
+            status_msg = results.get(action, ("skip", "not evaluated"))
+            s, m = status_msg
+            if s == "allowed":
+                category.add_result(CheckResult(name=f"  {action}", status=CheckStatus.OK, message="Allowed"))
+            elif s == "denied":
+                category.add_result(CheckResult(
+                    name=f"  {action}", status=CheckStatus.NOT_OK, message=f"DENIED: {m}",
+                    remediation="Add this kms action to the deploying principal's policy.",
+                ))
+            else:
+                category.add_result(CheckResult(name=f"  {action}", status=CheckStatus.WARNING, message=m))
+
+        if not denied:
+            category.add_result(CheckResult(
+                name="  CMK summary", status=CheckStatus.OK,
+                message=f"All {len(kms_actions)} KMS actions allowed",
+            ))
+        return category
 
     def check_account_api_scope_note(self) -> CheckCategory:
         """Explicitly record what this pre-check does NOT validate, so a green

@@ -186,6 +186,8 @@ class TxtReporter:
                 indicator = "SUPPORTED"
             elif result.status == CheckStatus.NOT_OK:
                 indicator = "NOT SUPPORTED (missing perms)"
+            elif (result.message or "").startswith("REVIEW"):
+                indicator = "REVIEW (advisories, no blockers)"
             else:
                 indicator = "NOT VERIFIED"
             line = f"  {mode_name:<20} {indicator}"

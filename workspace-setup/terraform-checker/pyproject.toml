@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "databricks-terraform-precheck"
-version = "1.0.0"
+version = "1.2.0"
 description = "Pre-flight checker for Databricks Terraform deployments"
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
 requires-python = ">=3.10"
 authors = [
     {name = "Databricks Field Engineering"}
@@ -17,7 +17,6 @@ classifiers = [
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Intended Audience :: System Administrators",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -30,23 +29,23 @@ classifiers = [
 keywords = ["databricks", "terraform", "aws", "azure", "gcp", "permissions", "precheck"]
 
 dependencies = [
-    "boto3>=1.34.0",
-    "azure-identity>=1.15.0",
-    "azure-mgmt-resource>=23.0.0",
-    "azure-mgmt-network>=25.0.0",
-    "azure-mgmt-storage>=21.0.0",
-    "azure-mgmt-keyvault>=10.0.0",
-    "azure-mgmt-authorization>=4.0.0",
-    "azure-mgmt-privatedns>=1.0.0",
-    "azure-mgmt-compute>=30.0.0",
-    "google-cloud-storage>=2.14.0",
-    "google-cloud-compute>=1.14.0",
-    "google-cloud-resource-manager>=1.12.0",
-    "google-cloud-kms>=2.21.0",
-    "google-api-python-client>=2.111.0",
-    "click>=8.1.0",
-    "rich>=13.7.0",
-    "pyyaml>=6.0.0",
+    "boto3>=1.34.0,<2.0.0",
+    "azure-identity>=1.15.0,<2.0.0",
+    "azure-mgmt-resource>=23.0.0,<24.0.0",
+    "azure-mgmt-network>=25.0.0,<26.0.0",
+    "azure-mgmt-storage>=21.0.0,<22.0.0",
+    "azure-mgmt-keyvault>=10.0.0,<11.0.0",
+    "azure-mgmt-authorization>=4.0.0,<5.0.0",
+    "azure-mgmt-privatedns>=1.0.0,<2.0.0",
+    "azure-mgmt-compute>=30.0.0,<31.0.0",
+    "google-cloud-storage>=2.14.0,<3.0.0",
+    "google-cloud-compute>=1.14.0,<2.0.0",
+    "google-cloud-resource-manager>=1.12.0,<2.0.0",
+    "google-cloud-kms>=2.21.0,<3.0.0",
+    "google-api-python-client>=2.111.0,<3.0.0",
+    "click>=8.1.0,<9.0.0",
+    "rich>=13.7.0,<14.0.0",
+    "pyyaml>=6.0.0,<7.0.0",
 ]
 
 [project.optional-dependencies]
@@ -62,7 +61,20 @@ dev = [
 ]
 
 [project.scripts]
-dbx-precheck = "main:cli"
+dbx-precheck = "main:main"
+
+# Flat layout with top-level modules (main.py, cli.py) plus packages.
+# Auto-discovery fails here ("Multiple top-level packages"), so declare
+# explicitly. This is what makes `pip install .` / the dbx-precheck binary work.
+[tool.setuptools]
+py-modules = ["main", "cli"]
+
+[tool.setuptools.packages.find]
+include = ["checkers*", "reporters*", "utils*", "config*"]
+exclude = ["tests*", "venv*"]
+
+[tool.setuptools.package-data]
+config = ["permissions/*.yaml"]
 
 [project.urls]
 "Homepage" = "https://github.com/databricks/terraform-precheck"

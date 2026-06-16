@@ -184,10 +184,13 @@ class TxtReporter:
             mode_name = result.name.strip()
             if result.status == CheckStatus.OK:
                 indicator = "SUPPORTED"
-                line = f"  {mode_name:<20} {indicator}"
+            elif result.status == CheckStatus.NOT_OK:
+                indicator = "NOT SUPPORTED (missing perms)"
+            elif (result.message or "").startswith("REVIEW"):
+                indicator = "REVIEW (advisories, no blockers)"
             else:
-                indicator = "MISSING PERMISSIONS"
-                line = f"  {mode_name:<20} {indicator}"
+                indicator = "NOT VERIFIED"
+            line = f"  {mode_name:<20} {indicator}"
             lines.append("║" + line.ljust(w - 2) + "║")
         
         lines.append("╚" + "═" * (w - 2) + "╝")

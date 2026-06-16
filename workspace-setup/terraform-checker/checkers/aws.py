@@ -10,6 +10,7 @@ import json
 import logging
 from typing import Optional, List, Dict, Any, Callable, Tuple
 
+from utils.denial import is_access_denied, is_throttling
 from .base import (
     BaseChecker,
     CheckCategory,
@@ -51,14 +52,21 @@ class AWSChecker(BaseChecker):
     """
     
     def __init__(
-        self, 
-        region: str = None, 
+        self,
+        region: str = None,
         profile: str = None,
         verify_only: bool = False,
+        vpc_id: str = None,
+        sg_id: str = None,
+        databricks_account_id: str = None,
     ):
         super().__init__(region)
         self.profile = profile
         self.verify_only = verify_only
+        # Optional BYO-network scoping / validation targets.
+        self.vpc_id = vpc_id
+        self.sg_id = sg_id
+        self.databricks_account_id = databricks_account_id
         self._session = None
         self._account_id = None
         self._arn = None
@@ -111,12 +119,47 @@ class AWSChecker(BaseChecker):
     # REAL RESOURCE TESTING (Create & Delete)
     # This is how we verify permissions without iam:SimulatePrincipalPolicy
     # =========================================================================
-    
+
+    def _verify_only_probe(self, label: str, actions: List[str]) -> List[CheckResult]:
+        """Read-only permission probe used in --verify-only mode (creates nothing).
+
+        Uses IAM policy simulation when available; otherwise reports honestly that
+        full verification needs a create-test (run without --verify-only).
+        """
+        results = [CheckResult(
+            name=f"── {label} (verify-only, read-only) ──",
+            status=CheckStatus.OK,
+            message="No resources created",
+        )]
+        if self._can_simulate:
+            sim = self._simulate_actions(actions)
+            for a in actions:
+                s, m = sim.get(a, ("error", "not evaluated"))
+                st = CheckStatus.OK if s == "allowed" else (
+                    CheckStatus.NOT_OK if s == "denied" else CheckStatus.WARNING)
+                results.append(CheckResult(name=f"  {a}", status=st, message=m))
+        else:
+            results.append(CheckResult(
+                name=f"  {label} permissions",
+                status=CheckStatus.WARNING,
+                message=(
+                    "Cannot fully verify in --verify-only without IAM simulation. "
+                    "Re-run without --verify-only for a create-test, or ensure: "
+                    + ", ".join(actions)
+                ),
+            ))
+        return results
+
     def _test_s3_bucket_permissions(self) -> List[CheckResult]:
         """
         Test S3 permissions by creating a real bucket and testing operations.
         Returns list of CheckResults for each operation tested.
         """
+        if self.verify_only:
+            return self._verify_only_probe("S3 Root Bucket", [
+                "s3:ListAllMyBuckets", "s3:CreateBucket", "s3:PutBucketPolicy",
+                "s3:PutBucketVersioning", "s3:PutEncryptionConfiguration", "s3:DeleteBucket",
+            ])
         results = []
         s3 = self._get_client("s3")
         bucket_name = f"{TEST_RESOURCE_PREFIX}-{self._account_id}-{self._test_id}"
@@ -139,21 +182,28 @@ class AWSChecker(BaseChecker):
                     CreateBucketConfiguration={'LocationConstraint': self.region}
                 )
             bucket_created = True
+            self._temp_bucket_name = bucket_name
             results.append(CheckResult(
                 name="  s3:CreateBucket",
                 status=CheckStatus.OK,
                 message=f"✓ CREATED: {bucket_name}"
             ))
-            
-            # Schedule cleanup
+
+            # Register cleanup at creation time so a mid-run exception can't leak
+            # the bucket. The bucket is kept alive for the Unity Catalog object
+            # test and torn down by _delete_temp_bucket() in run_all_checks; that
+            # versioned-bucket teardown is also the right fallback for the
+            # finally-block cleanup (a plain delete_bucket would fail on the
+            # versioned + deny-policy test bucket). _delete_temp_bucket() no-ops
+            # once the bucket has already been deleted.
             self._cleanup_tasks.append((
-                lambda: s3.delete_bucket(Bucket=bucket_name),
+                self._delete_temp_bucket,
                 bucket_name
             ))
-            
+
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  s3:CreateBucket",
                     status=CheckStatus.NOT_OK,
@@ -190,7 +240,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  s3:PutBucketVersioning",
                     status=CheckStatus.NOT_OK,
@@ -221,7 +271,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  s3:PutBucketPublicAccessBlock",
                     status=CheckStatus.NOT_OK,
@@ -253,7 +303,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  s3:PutEncryptionConfiguration",
                     status=CheckStatus.NOT_OK,
@@ -300,7 +350,7 @@ class AWSChecker(BaseChecker):
                 
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  s3:PutBucketPolicy",
                     status=CheckStatus.NOT_OK,
@@ -326,7 +376,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  s3:PutBucketTagging",
                     status=CheckStatus.NOT_OK,
@@ -362,7 +412,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  s3:PutObject",
                     status=CheckStatus.NOT_OK,
@@ -385,7 +435,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  s3:GetObject",
                     status=CheckStatus.NOT_OK,
@@ -408,7 +458,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  s3:DeleteObject",
                     status=CheckStatus.NOT_OK,
@@ -431,7 +481,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  s3:ListBucket",
                     status=CheckStatus.NOT_OK,
@@ -454,7 +504,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  s3:GetBucketLocation",
                     status=CheckStatus.NOT_OK,
@@ -478,14 +528,31 @@ class AWSChecker(BaseChecker):
         s3 = self._get_client("s3")
         bucket = self._temp_bucket_name
         
-        # Clean up any leftover objects before deleting the bucket
+        # The bucket has versioning enabled + a (deny) bucket policy from the
+        # permission test, so a plain delete fails. Remove the policy, then ALL
+        # object versions + delete markers (not just current objects), then delete.
         try:
-            resp = s3.list_objects_v2(Bucket=bucket)
-            for obj in resp.get("Contents", []):
-                s3.delete_object(Bucket=bucket, Key=obj["Key"])
+            s3.delete_bucket_policy(Bucket=bucket)
         except Exception:
             pass
-        
+        try:
+            paginator = s3.get_paginator("list_object_versions")
+            for page in paginator.paginate(Bucket=bucket):
+                to_delete = [
+                    {"Key": o["Key"], "VersionId": o["VersionId"]}
+                    for o in (page.get("Versions", []) + page.get("DeleteMarkers", []))
+                ]
+                for i in range(0, len(to_delete), 1000):
+                    s3.delete_objects(Bucket=bucket, Delete={"Objects": to_delete[i:i + 1000]})
+        except Exception:
+            # Fall back to non-versioned listing if version listing isn't available.
+            try:
+                resp = s3.list_objects_v2(Bucket=bucket)
+                for obj in resp.get("Contents", []):
+                    s3.delete_object(Bucket=bucket, Key=obj["Key"])
+            except Exception:
+                pass
+
         try:
             s3.delete_bucket(Bucket=bucket)
             results.append(CheckResult(
@@ -495,7 +562,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  s3:DeleteBucket",
                     status=CheckStatus.NOT_OK,
@@ -516,6 +583,11 @@ class AWSChecker(BaseChecker):
         Test IAM role permissions by creating a real role and testing operations.
         Returns list of CheckResults for each operation tested.
         """
+        if self.verify_only:
+            return self._verify_only_probe("Cross-account IAM Role", [
+                "iam:ListRoles", "iam:CreateRole", "iam:GetRole",
+                "iam:TagRole", "iam:PutRolePolicy", "iam:DeleteRole",
+            ])
         results = []
         iam = self._get_client("iam")
         role_name = self._get_test_resource_name("role")
@@ -528,14 +600,42 @@ class AWSChecker(BaseChecker):
             message=role_name
         ))
         
-        # Trust policy for Databricks
+        # Trust policy. With --databricks-account-id we build the representative
+        # trust (real Databricks signing principal + ExternalId = your account id)
+        # and validate the id; otherwise a self-trust placeholder + a note that the
+        # trust CONTENT was not validated.
+        DATABRICKS_SIGNING_ACCOUNT = "414351767826"
+        import re as _re
+        acct = self.databricks_account_id
+        if acct and _re.fullmatch(r"[0-9a-fA-F-]{36}", acct):
+            principal_arn = f"arn:aws:iam::{DATABRICKS_SIGNING_ACCOUNT}:root"
+            external_id = acct
+            results.append(CheckResult(
+                name="  Cross-account trust content", status=CheckStatus.OK,
+                message=f"Building trust for Databricks principal {DATABRICKS_SIGNING_ACCOUNT} + ExternalId {acct}",
+            ))
+        elif acct:
+            principal_arn = f"arn:aws:iam::{self._account_id}:root"
+            external_id = "precheck-test"
+            results.append(CheckResult(
+                name="  Cross-account trust content", status=CheckStatus.NOT_OK,
+                message=f"--databricks-account-id '{acct}' is not a valid Databricks account UUID",
+                remediation="Pass your Databricks account id (a UUID from the account console).",
+            ))
+        else:
+            principal_arn = f"arn:aws:iam::{self._account_id}:root"
+            external_id = "precheck-test"
+            results.append(CheckResult(
+                name="  Cross-account trust content", status=CheckStatus.WARNING,
+                message="Trust CONTENT not validated - pass --databricks-account-id to verify the role trusts Databricks (414351767826) + your account ExternalId",
+            ))
         trust_policy = json.dumps({
             "Version": "2012-10-17",
             "Statement": [{
                 "Effect": "Allow",
-                "Principal": {"AWS": f"arn:aws:iam::{self._account_id}:root"},
+                "Principal": {"AWS": principal_arn},
                 "Action": "sts:AssumeRole",
-                "Condition": {"StringEquals": {"sts:ExternalId": "precheck-test"}}
+                "Condition": {"StringEquals": {"sts:ExternalId": external_id}}
             }]
         })
         
@@ -548,6 +648,10 @@ class AWSChecker(BaseChecker):
                 Tags=[{'Key': 'PreCheck', 'Value': 'Temporary'}]
             )
             role_created = True
+            # Register for cleanup so a mid-run exception can't leak the role.
+            self._cleanup_tasks.append((
+                lambda: iam.delete_role(RoleName=role_name), role_name,
+            ))
             results.append(CheckResult(
                 name="  iam:CreateRole",
                 status=CheckStatus.OK,
@@ -556,7 +660,7 @@ class AWSChecker(BaseChecker):
             
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  iam:CreateRole",
                     status=CheckStatus.NOT_OK,
@@ -589,7 +693,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  iam:GetRole",
                     status=CheckStatus.NOT_OK,
@@ -609,7 +713,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  iam:TagRole",
                     status=CheckStatus.NOT_OK,
@@ -629,7 +733,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  iam:UpdateAssumeRolePolicy",
                     status=CheckStatus.NOT_OK,
@@ -672,7 +776,7 @@ class AWSChecker(BaseChecker):
                 
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  iam:PutRolePolicy",
                     status=CheckStatus.NOT_OK,
@@ -705,7 +809,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  iam:DeleteRole",
                     status=CheckStatus.NOT_OK,
@@ -725,6 +829,11 @@ class AWSChecker(BaseChecker):
         Test IAM policy permissions by creating a real policy and testing operations.
         Returns list of CheckResults for each operation tested.
         """
+        if self.verify_only:
+            return self._verify_only_probe("Cross-account IAM Policy", [
+                "iam:CreatePolicy", "iam:GetPolicy",
+                "iam:CreatePolicyVersion", "iam:DeletePolicy",
+            ])
         results = []
         iam = self._get_client("iam")
         policy_name = self._get_test_resource_name("policy")
@@ -757,6 +866,9 @@ class AWSChecker(BaseChecker):
                 Tags=[{'Key': 'PreCheck', 'Value': 'Temporary'}]
             )
             policy_arn = response['Policy']['Arn']
+            self._cleanup_tasks.append((
+                lambda: iam.delete_policy(PolicyArn=policy_arn), policy_name,
+            ))
             results.append(CheckResult(
                 name="  iam:CreatePolicy",
                 status=CheckStatus.OK,
@@ -765,7 +877,7 @@ class AWSChecker(BaseChecker):
             
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  iam:CreatePolicy",
                     status=CheckStatus.NOT_OK,
@@ -799,7 +911,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  iam:GetPolicy",
                     status=CheckStatus.NOT_OK,
@@ -820,7 +932,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  iam:CreatePolicyVersion",
                     status=CheckStatus.NOT_OK,
@@ -852,7 +964,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  iam:DeletePolicy",
                     status=CheckStatus.NOT_OK,
@@ -872,6 +984,12 @@ class AWSChecker(BaseChecker):
         Test Security Group permissions by creating a real SG and testing operations.
         Returns list of CheckResults for each operation tested.
         """
+        if self.verify_only:
+            return self._verify_only_probe("Security Group", [
+                "ec2:DescribeSecurityGroups", "ec2:CreateSecurityGroup",
+                "ec2:AuthorizeSecurityGroupIngress", "ec2:AuthorizeSecurityGroupEgress",
+                "ec2:DeleteSecurityGroup",
+            ])
         results = []
         ec2 = self._get_client("ec2")
         sg_name = self._get_test_resource_name("sg")
@@ -923,6 +1041,9 @@ class AWSChecker(BaseChecker):
                 }]
             )
             sg_id = response['GroupId']
+            self._cleanup_tasks.append((
+                lambda: ec2.delete_security_group(GroupId=sg_id), sg_id,
+            ))
             results.append(CheckResult(
                 name="  ec2:CreateSecurityGroup",
                 status=CheckStatus.OK,
@@ -931,7 +1052,7 @@ class AWSChecker(BaseChecker):
             
         except Exception as e:
             error = str(e)
-            if "UnauthorizedOperation" in error or "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  ec2:CreateSecurityGroup",
                     status=CheckStatus.NOT_OK,
@@ -980,7 +1101,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "UnauthorizedOperation" in error or "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  ec2:AuthorizeSecurityGroupIngress",
                     status=CheckStatus.NOT_OK,
@@ -1017,7 +1138,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "UnauthorizedOperation" in error or "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  ec2:AuthorizeSecurityGroupEgress",
                     status=CheckStatus.NOT_OK,
@@ -1054,7 +1175,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "UnauthorizedOperation" in error or "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  ec2:RevokeSecurityGroupIngress",
                     status=CheckStatus.NOT_OK,
@@ -1071,7 +1192,7 @@ class AWSChecker(BaseChecker):
             ))
         except Exception as e:
             error = str(e)
-            if "UnauthorizedOperation" in error or "AccessDenied" in error or "is not authorized" in error:
+            if is_access_denied(error):
                 results.append(CheckResult(
                     name="  ec2:DeleteSecurityGroup",
                     status=CheckStatus.NOT_OK,
@@ -1108,16 +1229,29 @@ class AWSChecker(BaseChecker):
                 batch = actions[i:i + batch_size]
                 
                 try:
-                    response = iam.simulate_principal_policy(
-                        PolicySourceArn=self._user_arn,
-                        ActionNames=batch,
-                        ResourceArns=[resource] if resource else ["*"]
-                    )
-                    
+                    # Retry on transient throttling (otherwise a rate-limit
+                    # would smear every action in the batch to "error"/WARNING).
+                    response = None
+                    for attempt in range(4):
+                        try:
+                            response = iam.simulate_principal_policy(
+                                PolicySourceArn=self._user_arn,
+                                ActionNames=batch,
+                                ResourceArns=[resource] if resource else ["*"]
+                            )
+                            break
+                        except Exception as se:
+                            if is_throttling(se) and attempt < 3:
+                                time.sleep(0.5 * (2 ** attempt))
+                                continue
+                            raise
+                    if response is None:
+                        raise RuntimeError("simulate_principal_policy returned no response")
+
                     for result in response.get("EvaluationResults", []):
                         action = result["EvalActionName"]
                         decision = result["EvalDecision"]
-                        
+
                         if decision == "allowed":
                             results[action] = ("allowed", "Permission granted")
                         else:
@@ -1128,17 +1262,22 @@ class AWSChecker(BaseChecker):
                             else:
                                 reason = "Implicitly denied (no matching Allow statement)"
                             results[action] = ("denied", reason)
-                        
+
                 except Exception as e:
-                    error_msg = str(e)
+                    # If the principal can't even self-simulate (denied), that's a
+                    # real signal, not a benign error.
+                    kind = "denied" if is_access_denied(e) else "error"
+                    error_msg = ("Cannot self-verify: iam:SimulatePrincipalPolicy denied"
+                                 if kind == "denied" else str(e))
                     for action in batch:
-                        results[action] = ("error", error_msg)
-                        
+                        results[action] = (kind, error_msg)
+
         except Exception as e:
+            kind = "denied" if is_access_denied(e) else "error"
             error_msg = str(e)
             for action in actions:
-                results[action] = ("error", error_msg)
-        
+                results[action] = (kind, error_msg)
+
         return results
     
     def _test_dryrun(
@@ -1257,7 +1396,36 @@ class AWSChecker(BaseChecker):
                         status=CheckStatus.WARNING,
                         message="No region, using us-east-1"
                     ))
-            
+
+            # STS regional endpoint activation. Cross-account AssumeRole and the
+            # STS interface VPC endpoint both hit STS in the workspace region;
+            # opt-in regions start DEACTIVATED and any region can be turned off,
+            # which fails the deploy at AssumeRole (RegionDisabledException).
+            try:
+                regional_sts = self._get_session().client(
+                    "sts", region_name=self.region,
+                    endpoint_url=f"https://sts.{self.region}.amazonaws.com",
+                )
+                regional_sts.get_caller_identity()
+                category.add_result(CheckResult(
+                    name="STS Regional Endpoint", status=CheckStatus.OK,
+                    message=f"Activated in {self.region}",
+                ))
+            except Exception as e:
+                err = str(e)
+                if "RegionDisabledException" in err or "not activated" in err:
+                    category.add_result(CheckResult(
+                        name="STS Regional Endpoint", status=CheckStatus.NOT_OK,
+                        message=f"STS is NOT activated in {self.region} - cross-account AssumeRole and the STS VPC endpoint will FAIL",
+                        remediation="Activate STS for this region: AWS Console -> IAM -> Account settings -> Security Token Service (STS).",
+                        doc_link="https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_temp_enable-regions.html",
+                    ))
+                else:
+                    category.add_result(CheckResult(
+                        name="STS Regional Endpoint", status=CheckStatus.WARNING,
+                        message=f"Could not verify STS activation in {self.region}: {err[:80]}",
+                    ))
+
             # Test IAM simulation capability
             try:
                 iam = self._get_client("iam")
@@ -1540,7 +1708,7 @@ class AWSChecker(BaseChecker):
                         message="Allowed - Can check VPC DNS settings"
                     ))
             except Exception as e:
-                if "AccessDenied" in str(e):
+                if is_access_denied(e):
                     network_ok = False
                     category.add_result(CheckResult(
                         name="  ec2:DescribeVpcAttribute",
@@ -1573,12 +1741,36 @@ class AWSChecker(BaseChecker):
         ))
         
         try:
-            subnets = ec2.describe_subnets()
+            if self.vpc_id:
+                # Validate the VPC exists in this region before scoping to it.
+                try:
+                    ec2.describe_vpcs(VpcIds=[self.vpc_id])
+                    category.add_result(CheckResult(
+                        name="  Target VPC", status=CheckStatus.OK,
+                        message=f"Scoping network checks to {self.vpc_id}",
+                    ))
+                except Exception as e:
+                    network_ok = False
+                    category.add_result(CheckResult(
+                        name="  Target VPC", status=CheckStatus.NOT_OK,
+                        message=f"VPC {self.vpc_id} not found in region {self.region} ({str(e)[:60]})",
+                        remediation="Check the --vpc-id value and that --region matches the VPC's region.",
+                    ))
+                    self._check_results_by_area["network"] = category.area_state
+                    return category
+                subnets = ec2.describe_subnets(Filters=[{"Name": "vpc-id", "Values": [self.vpc_id]}])
+            else:
+                subnets = ec2.describe_subnets()
+                category.add_result(CheckResult(
+                    name="  Scope", status=CheckStatus.WARNING,
+                    message="No --vpc-id given: counting subnets ACCOUNT-WIDE, not the target VPC. Pass --vpc-id for an accurate check.",
+                ))
             subnet_list = subnets.get("Subnets", [])
-            
-            private = sum(1 for s in subnet_list if not s.get("MapPublicIpOnLaunch", False))
+
+            private_subnets = [s for s in subnet_list if not s.get("MapPublicIpOnLaunch", False)]
+            private = len(private_subnets)
             public = len(subnet_list) - private
-            
+
             if private >= 2:
                 category.add_result(CheckResult(
                     name="  Private Subnets",
@@ -1591,14 +1783,14 @@ class AWSChecker(BaseChecker):
                     status=CheckStatus.WARNING,
                     message=f"Only {private} found - need 2+ for Databricks"
                 ))
-            
+
             category.add_result(CheckResult(
                 name="  Public Subnets",
                 status=CheckStatus.OK,
                 message=f"{public} available"
             ))
-            
-            azs = set(s["AvailabilityZone"] for s in subnet_list if not s.get("MapPublicIpOnLaunch", False))
+
+            azs = set(s["AvailabilityZone"] for s in private_subnets)
             if len(azs) >= 2:
                 category.add_result(CheckResult(
                     name="  AZ Distribution",
@@ -1611,7 +1803,73 @@ class AWSChecker(BaseChecker):
                     status=CheckStatus.WARNING,
                     message=f"Private subnets only in 1 AZ - recommend 2+ for HA"
                 ))
-                
+
+            # Subnet SIZE: Databricks requires workspace subnets to be /17–/26.
+            # Too-small subnets (>/26) starve clusters of node IPs; below /17 is
+            # also out of range (>/26 is the common failure).
+            too_small = []
+            tiny = []  # below /17 is not allowed either
+            for s in private_subnets:
+                cidr = s.get("CidrBlock", "")
+                free = s.get("AvailableIpAddressCount")
+                try:
+                    prefix = int(cidr.split("/")[1])
+                except (IndexError, ValueError):
+                    continue
+                if prefix > 26:  # smaller than /26
+                    too_small.append(f"{s.get('SubnetId')} ({cidr}, {free} free IPs)")
+                elif prefix < 17:
+                    tiny.append(f"{s.get('SubnetId')} ({cidr})")
+            if private_subnets:
+                if too_small:
+                    category.add_result(CheckResult(
+                        name="  Subnet Size", status=CheckStatus.WARNING,
+                        message=f"{len(too_small)} private subnet(s) smaller than /26 (Databricks needs /17–/26): "
+                                + "; ".join(too_small[:3]),
+                        remediation="Use private subnets sized /17–/26 (≈ /24 recommended) so clusters have enough node IPs.",
+                        doc_link="https://docs.databricks.com/aws/en/admin/workspace/create-workspace#requirements",
+                    ))
+                elif tiny:
+                    category.add_result(CheckResult(
+                        name="  Subnet Size", status=CheckStatus.WARNING,
+                        message=f"{len(tiny)} private subnet(s) larger than /17 (Databricks needs /17–/26): "
+                                + "; ".join(tiny[:3]),
+                        remediation="Use private subnets sized /17–/26 (≈ /24 recommended).",
+                        doc_link="https://docs.databricks.com/aws/en/admin/workspace/create-workspace#requirements",
+                    ))
+                else:
+                    sizes = sorted({s.get("CidrBlock", "").split("/")[-1] for s in private_subnets})
+                    min_free = min((s.get("AvailableIpAddressCount", 0) for s in private_subnets), default=0)
+                    category.add_result(CheckResult(
+                        name="  Subnet Size", status=CheckStatus.OK,
+                        message=f"Private subnets within /17–/26 (/{', /'.join(sizes)}); min free IPs in a subnet: {min_free}",
+                    ))
+
+            # Outbound egress (only matters WITHOUT PrivateLink): the data plane
+            # needs a NAT/egress path to reach the control plane.
+            try:
+                nat_filters = [{"Name": "state", "Values": ["available"]}]
+                if self.vpc_id:
+                    nat_filters.append({"Name": "vpc-id", "Values": [self.vpc_id]})
+                nats = ec2.describe_nat_gateways(Filter=nat_filters).get("NatGateways", [])
+                scope = self.vpc_id or "the account"
+                if nats:
+                    category.add_result(CheckResult(
+                        name="  Outbound egress (if no PrivateLink)", status=CheckStatus.OK,
+                        message=f"{len(nats)} NAT gateway(s) in {scope}",
+                    ))
+                else:
+                    category.add_result(CheckResult(
+                        name="  Outbound egress (if no PrivateLink)", status=CheckStatus.WARNING,
+                        message=f"No NAT gateway found in {scope}. Without PrivateLink the data plane needs an egress path (NAT + 0.0.0.0/0 route, or firewall/proxy).",
+                        remediation="Add a NAT gateway + default route to the private subnets, or use PrivateLink / a firewall egress.",
+                    ))
+            except Exception as e:
+                category.add_result(CheckResult(
+                    name="  Outbound egress (if no PrivateLink)", status=CheckStatus.WARNING,
+                    message=f"Could not verify egress: {str(e)[:80]}",
+                ))
+
         except Exception as e:
             network_ok = False
             category.add_result(CheckResult(
@@ -1678,11 +1936,11 @@ class AWSChecker(BaseChecker):
             ))
             
             # Use real resource creation to test SG permissions
-            sg_results = self._test_security_group_permissions()
+            sg_results = self._test_security_group_permissions(vpc_id=self.vpc_id)
             for result in sg_results:
                 category.add_result(result)
         
-        self._check_results_by_area["network"] = network_ok
+        self._check_results_by_area["network"] = category.area_state
         
         return category
     
@@ -1748,8 +2006,29 @@ class AWSChecker(BaseChecker):
             )
             if status == CheckStatus.NOT_OK:
                 privatelink_ok = False
-            category.add_result(CheckResult(name="  ec2:CreateVpcEndpoint", status=status, message=msg))
-        
+            category.add_result(CheckResult(name="  ec2:CreateVpcEndpoint (S3 Gateway)", status=status, message=msg))
+
+            # Interface endpoints the SRA creates (STS, Kinesis Streams). These
+            # need CreateVpcEndpoint with the Interface type (+ ENI + SG attach).
+            for svc_label, svc_name in [
+                ("STS", f"com.amazonaws.{self.region}.sts"),
+                ("Kinesis Streams", f"com.amazonaws.{self.region}.kinesis-streams"),
+            ]:
+                status, msg = self._test_dryrun(
+                    f"ec2:CreateVpcEndpoint ({svc_label})",
+                    lambda s=svc_name: ec2.create_vpc_endpoint(
+                        VpcId="vpc-test",
+                        ServiceName=s,
+                        VpcEndpointType="Interface",
+                        DryRun=True,
+                    ),
+                )
+                if status == CheckStatus.NOT_OK:
+                    privatelink_ok = False
+                category.add_result(CheckResult(
+                    name=f"  ec2:CreateVpcEndpoint ({svc_label})", status=status, message=msg
+                ))
+
         try:
             endpoints = ec2.describe_vpc_endpoints()
             endpoint_list = endpoints.get("VpcEndpoints", [])
@@ -1762,7 +2041,18 @@ class AWSChecker(BaseChecker):
                 status=CheckStatus.OK,
                 message=f"{gateway} Gateway, {interface} Interface endpoints"
             ))
-            
+
+            category.add_result(CheckResult(
+                name="  Databricks PrivateLink services",
+                status=CheckStatus.WARNING,
+                message=(
+                    "Cannot pre-verify the Databricks vpce-svc endpoints "
+                    "(workspace/general-access + SCC relay) - confirm your region "
+                    "is supported in the Databricks PrivateLink docs"
+                ),
+                doc_link="https://docs.databricks.com/aws/en/security/network/classic/privatelink",
+            ))
+
             s3_gw = [e for e in endpoint_list if "s3" in e.get("ServiceName", "").lower() and e["VpcEndpointType"] == "Gateway"]
             if s3_gw:
                 category.add_result(CheckResult(
@@ -1798,7 +2088,7 @@ class AWSChecker(BaseChecker):
                 message=f"Cannot list: {str(e)[:40]}"
             ))
         
-        self._check_results_by_area["privatelink"] = privatelink_ok
+        self._check_results_by_area["privatelink"] = category.area_state
         
         return category
     
@@ -2121,7 +2411,7 @@ class AWSChecker(BaseChecker):
                 message=f"{msg} (optional)"
             ))
         
-        self._check_results_by_area["cross_account"] = (category.not_ok_count == 0)
+        self._check_results_by_area["cross_account"] = category.area_state
         
         return category
     
@@ -2246,7 +2536,7 @@ class AWSChecker(BaseChecker):
                 message="Cannot test SNS/SQS permissions without simulation"
             ))
         
-        self._check_results_by_area["unity_catalog"] = (category.not_ok_count == 0)
+        self._check_results_by_area["unity_catalog"] = category.area_state
         
         return category
     
@@ -2272,81 +2562,65 @@ class AWSChecker(BaseChecker):
                 "vcpu": ("ec2", "L-1216C47A", "On-Demand Standard vCPUs"),
             }
             
+            defaults = {"vpc": 5, "eip": 5, "igw": 5, "natgw": 5, "sg": 2500, "vcpu": 256}
             limits = {}
+            assumed = {}  # key -> True if the real limit couldn't be read
+            denied_any = False
             for key, (service, code, name) in quota_codes.items():
                 try:
                     response = sq.get_service_quota(ServiceCode=service, QuotaCode=code)
                     limits[key] = int(response.get("Quota", {}).get("Value", 0))
-                except Exception:
-                    defaults = {"vpc": 5, "eip": 5, "igw": 5, "natgw": 5, "sg": 2500, "vcpu": 256}
+                    assumed[key] = False
+                except Exception as e:
                     limits[key] = defaults.get(key, 5)
-            
-            # VPCs
-            vpcs = ec2.describe_vpcs()
-            vpc_count = len(vpcs.get("Vpcs", []))
-            vpc_limit = limits.get("vpc", 5)
-            pct = (vpc_count / vpc_limit * 100) if vpc_limit > 0 else 0
-            
-            if pct >= 100:
-                status = CheckStatus.NOT_OK
-                msg = f"{vpc_count}/{vpc_limit} - AT LIMIT! Request increase before deployment"
-            elif pct >= 80:
-                status = CheckStatus.WARNING
-                msg = f"{vpc_count}/{vpc_limit} ({pct:.0f}%) - approaching limit"
-            else:
-                status = CheckStatus.OK
-                msg = f"{vpc_count}/{vpc_limit} ({pct:.0f}%)"
-            
-            category.add_result(CheckResult(name="  VPCs", status=status, message=msg))
-            
-            # Elastic IPs
-            eips = ec2.describe_addresses()
-            eip_count = len(eips.get("Addresses", []))
-            eip_limit = limits.get("eip", 5)
-            pct = (eip_count / eip_limit * 100) if eip_limit > 0 else 0
-            
-            if pct >= 100:
-                status = CheckStatus.NOT_OK
-                msg = f"{eip_count}/{eip_limit} - AT LIMIT!"
-            elif pct >= 80:
-                status = CheckStatus.WARNING
-                msg = f"{eip_count}/{eip_limit} ({pct:.0f}%) - approaching limit"
-            else:
-                status = CheckStatus.OK
-                msg = f"{eip_count}/{eip_limit} ({pct:.0f}%)"
-            
-            category.add_result(CheckResult(name="  Elastic IPs", status=status, message=msg))
-            
-            # NAT Gateways
+                    assumed[key] = True
+                    denied_any = denied_any or is_access_denied(e)
+
+            if any(assumed.values()):
+                category.add_result(CheckResult(
+                    name="  ⚠️  Quota limits not readable",
+                    status=CheckStatus.WARNING, assumed=True,
+                    message=("Some/all quota limits could not be read"
+                             + (" (servicequotas:GetServiceQuota denied)" if denied_any else "")
+                             + " - values marked ASSUMED are AWS defaults, NOT your real limits"),
+                    remediation="Grant servicequotas:GetServiceQuota to read your real limits.",
+                ))
+
+            def usage_result(name, count, key):
+                limit = limits[key]
+                if assumed[key]:
+                    return CheckResult(
+                        name=name, status=CheckStatus.WARNING, assumed=True,
+                        message=f"{count} in use / ASSUMED DEFAULT {limit} (real limit unknown - cannot confirm headroom)",
+                        remediation="Grant servicequotas:GetServiceQuota to verify the real limit.",
+                    )
+                pct = (count / limit * 100) if limit > 0 else 0
+                if pct >= 100:
+                    return CheckResult(name=name, status=CheckStatus.NOT_OK,
+                                       message=f"{count}/{limit} - AT LIMIT! Request an increase before deployment")
+                if pct >= 80:
+                    return CheckResult(name=name, status=CheckStatus.WARNING,
+                                       message=f"{count}/{limit} ({pct:.0f}%) - approaching limit")
+                return CheckResult(name=name, status=CheckStatus.OK, message=f"{count}/{limit} ({pct:.0f}%)")
+
+            category.add_result(usage_result("  VPCs", len(ec2.describe_vpcs().get("Vpcs", [])), "vpc"))
+            category.add_result(usage_result("  Elastic IPs", len(ec2.describe_addresses().get("Addresses", [])), "eip"))
             nats = ec2.describe_nat_gateways(Filters=[{"Name": "state", "Values": ["available"]}])
-            nat_count = len(nats.get("NatGateways", []))
-            nat_limit = limits.get("natgw", 5)
-            pct = (nat_count / nat_limit * 100) if nat_limit > 0 else 0
-            
-            if pct >= 100:
-                status = CheckStatus.NOT_OK
-            elif pct >= 80:
-                status = CheckStatus.WARNING
-            else:
-                status = CheckStatus.OK
-            
-            category.add_result(CheckResult(name="  NAT Gateways", status=status, message=f"{nat_count}/{nat_limit} ({pct:.0f}%)"))
-            
-            # vCPU quota
-            vcpu_limit = limits.get("vcpu", 256)
-            category.add_result(CheckResult(
-                name="  EC2 On-Demand vCPUs",
-                status=CheckStatus.OK,
-                message=f"Limit: {vcpu_limit} vCPUs"
-            ))
-            
-            # Security Groups
-            sg_limit = limits.get("sg", 2500)
-            category.add_result(CheckResult(
-                name="  Security Groups per VPC",
-                status=CheckStatus.OK,
-                message=f"Limit: {sg_limit}"
-            ))
+            category.add_result(usage_result("  NAT Gateways", len(nats.get("NatGateways", [])), "natgw"))
+
+            for nm, key, unit in [("  EC2 On-Demand vCPUs", "vcpu", "vCPUs"),
+                                  ("  Security Groups per VPC", "sg", "")]:
+                if assumed[key]:
+                    category.add_result(CheckResult(
+                        name=nm, status=CheckStatus.WARNING, assumed=True,
+                        message=f"ASSUMED DEFAULT {limits[key]} {unit} (real limit unknown)",
+                        remediation="Grant servicequotas:GetServiceQuota to verify the real limit.",
+                    ))
+                else:
+                    category.add_result(CheckResult(
+                        name=nm, status=CheckStatus.OK,
+                        message=f"Limit: {limits[key]} {unit} (current usage not measured)",
+                    ))
                 
         except Exception as e:
             category.add_result(CheckResult(
@@ -2455,56 +2729,238 @@ class AWSChecker(BaseChecker):
     # =========================================================================
     
     def _compute_deployment_compatibility(self) -> CheckCategory:
-        """Compute which deployment types are supported based on check results."""
+        """Compute which deployment types are supported.
+
+        Per-area state (PASS/FAIL/REVIEW/NOT_TESTED). A mode is:
+          - NOT SUPPORTED  if any required area FAILED (a blocker);
+          - NOT VERIFIED   if (no fail but) a required area couldn't be confirmed
+                           (IAM simulation unavailable / --verify-only / no target);
+          - REVIEW         if (no fail, all confirmed) a required area has an
+                           actionable advisory — no blocker, worth a look;
+          - SUPPORTED      if every required area is clean.
+        The message names the ACTUAL reason and areas, never a generic catch-all.
+        """
         category = CheckCategory(name="DEPLOYMENT COMPATIBILITY")
-        
-        storage_ok = self._check_results_by_area.get("storage", True)
-        network_ok = self._check_results_by_area.get("network", True)
-        cross_account_ok = self._check_results_by_area.get("cross_account", True)
-        privatelink_ok = self._check_results_by_area.get("privatelink", True)
-        unity_ok = self._check_results_by_area.get("unity_catalog", True)
-        
-        base_ok = storage_ok and network_ok and cross_account_ok
-        
+        st = self._check_results_by_area  # area -> "PASS"|"FAIL"|"REVIEW"|"NOT_TESTED"
+
         modes = [
-            ("Standard", base_ok,
-             "Basic workspace (VPC, S3, IAM)"),
-            ("PrivateLink", base_ok and privatelink_ok,
-             "With VPC Endpoints for private connectivity"),
-            ("Unity Catalog", base_ok and unity_ok,
-             "With Unity Catalog storage credentials"),
-            ("Full", base_ok and privatelink_ok and unity_ok,
-             "All features (PrivateLink + Unity Catalog + CMK)"),
+            ("Standard", ["storage", "network", "cross_account"], "Basic workspace (VPC, S3, IAM)"),
+            ("PrivateLink", ["storage", "network", "cross_account", "privatelink"], "With VPC Endpoints for private connectivity"),
+            ("Unity Catalog", ["storage", "network", "cross_account", "unity_catalog"], "With Unity Catalog storage credentials"),
+            ("Full", ["storage", "network", "cross_account", "privatelink", "unity_catalog"], "PrivateLink + Unity Catalog"),
         ]
-        
-        for mode_name, supported, description in modes:
-            if supported:
+        label = {"storage": "storage", "network": "network", "cross_account": "cross-account role",
+                 "privatelink": "VPC endpoints", "unity_catalog": "Unity Catalog"}
+
+        for mode_name, areas, description in modes:
+            states = {a: st.get(a, "NOT_TESTED") for a in areas}
+            failed = [label[a] for a, s in states.items() if s == "FAIL"]
+            not_tested = [label[a] for a, s in states.items() if s == "NOT_TESTED"]
+            review = [label[a] for a, s in states.items() if s == "REVIEW"]
+            if failed:
                 category.add_result(CheckResult(
-                    name=f"  {mode_name}",
-                    status=CheckStatus.OK,
-                    message=f"SUPPORTED - {description}"
+                    name=f"  {mode_name}", status=CheckStatus.NOT_OK,
+                    message=f"NOT SUPPORTED - missing: {', '.join(failed)}",
+                    remediation=f"Grant the permissions flagged above for: {', '.join(failed)}.",
+                ))
+            elif not_tested:
+                category.add_result(CheckResult(
+                    name=f"  {mode_name}", status=CheckStatus.WARNING,
+                    message=f"NOT VERIFIED - could not confirm: {', '.join(not_tested)} (IAM simulation unavailable, --verify-only, or no target resource)",
+                    remediation="Re-run without --verify-only, grant iam:SimulatePrincipalPolicy, or pass the relevant target to confirm.",
+                ))
+            elif review:
+                category.add_result(CheckResult(
+                    name=f"  {mode_name}", status=CheckStatus.WARNING,
+                    message=f"REVIEW - permissions verified; advisories to review in: {', '.join(review)} (no blockers). See the items flagged above.",
+                    remediation=f"Review the flagged {', '.join(review)} item(s) above before deploying; none is a hard blocker.",
                 ))
             else:
-                missing = []
-                if not storage_ok:
-                    missing.append("storage")
-                if not network_ok:
-                    missing.append("network")
-                if not cross_account_ok:
-                    missing.append("cross-account role")
-                if mode_name in ("PrivateLink", "Full") and not privatelink_ok:
-                    missing.append("VPC endpoints")
-                if mode_name in ("Unity Catalog", "Full") and not unity_ok:
-                    missing.append("Unity Catalog")
-                
                 category.add_result(CheckResult(
-                    name=f"  {mode_name}",
-                    status=CheckStatus.WARNING,
-                    message=f"MISSING PERMISSIONS - Fix: {', '.join(missing)}"
+                    name=f"  {mode_name}", status=CheckStatus.OK,
+                    message=f"SUPPORTED - {description}",
                 ))
-        
         return category
     
+    def check_kms(self) -> CheckCategory:
+        """Check permissions to create Customer-Managed Keys (CMK).
+
+        The Databricks Security Reference Architecture (SRA) ALWAYS creates KMS
+        keys (workspace storage + managed services, plus a per-workspace Unity
+        Catalog key). KMS CreateKey has no DryRun, and a real KMS key cannot be
+        deleted immediately (7-day minimum), so we verify via IAM policy
+        simulation rather than by creating one. If simulation is unavailable we
+        say so honestly instead of silently passing.
+        """
+        category = CheckCategory(name="STEP 5: CMK / KMS (Customer-Managed Keys)")
+
+        # Core actions an SRA CMK deploy needs (cmk.tf: CreateKey/Alias/PutKeyPolicy
+        # /CreateGrant + destroy path). CreateKey/CreateAlias are not DryRun-able.
+        kms_actions = [
+            "kms:CreateKey", "kms:CreateAlias", "kms:PutKeyPolicy",
+            "kms:CreateGrant", "kms:DescribeKey", "kms:GetKeyPolicy",
+            "kms:TagResource", "kms:ScheduleKeyDeletion", "kms:DeleteAlias",
+        ]
+
+        category.add_result(CheckResult(
+            name="── CMK readiness ──",
+            status=CheckStatus.OK,
+            message="Required when using customer-managed keys (always-on in the Databricks SRA)",
+        ))
+
+        if not self._can_simulate:
+            category.add_result(CheckResult(
+                name="  KMS permissions",
+                status=CheckStatus.WARNING,
+                message=(
+                    "Could not verify (IAM simulation unavailable, and KMS CreateKey "
+                    "has no DryRun). If deploying with CMK, ensure these are granted: "
+                    + ", ".join(kms_actions)
+                ),
+                remediation=(
+                    "Grant the listed kms:* actions to the deploying principal, or "
+                    "skip CMK if your deployment does not use customer-managed keys."
+                ),
+            ))
+            return category
+
+        results = self._simulate_actions(kms_actions)
+        denied = [a for a, (s, _m) in results.items() if s == "denied"]
+        for action in kms_actions:
+            status_msg = results.get(action, ("skip", "not evaluated"))
+            s, m = status_msg
+            if s == "allowed":
+                category.add_result(CheckResult(name=f"  {action}", status=CheckStatus.OK, message="Allowed"))
+            elif s == "denied":
+                category.add_result(CheckResult(
+                    name=f"  {action}", status=CheckStatus.NOT_OK, message=f"DENIED: {m}",
+                    remediation="Add this kms action to the deploying principal's policy.",
+                ))
+            else:
+                category.add_result(CheckResult(name=f"  {action}", status=CheckStatus.WARNING, message=m))
+
+        if not denied:
+            category.add_result(CheckResult(
+                name="  CMK summary", status=CheckStatus.OK,
+                message=f"All {len(kms_actions)} KMS actions allowed",
+            ))
+        return category
+
+    def check_account_api_scope_note(self) -> CheckCategory:
+        """Explicitly record what this pre-check does NOT validate, so a green
+        run is never mistaken for 'terraform apply will succeed'."""
+        category = CheckCategory(name="NOT VALIDATED BY THIS PRE-CHECK (read this)")
+        category.add_result(CheckResult(
+            name="Databricks account-console registration",
+            status=CheckStatus.SKIPPED,
+            message=(
+                "databricks_mws_* (credentials, storage, networks, workspaces, "
+                "vpc_endpoint, customer_managed_keys, private_access_settings, NCC) "
+                "need a Databricks account-admin token - not covered here"
+            ),
+            remediation="Confirm account-admin access + per-region NCC quota in the Databricks account console.",
+        ))
+        category.add_result(CheckResult(
+            name="IAM/bucket policy CONTENT",
+            status=CheckStatus.SKIPPED,
+            message=(
+                "We prove you CAN create the role/bucket policy, not that the trust "
+                "principal (414351767826) + ExternalId = your Databricks account ID are correct"
+            ),
+        ))
+        return category
+
+
+    @staticmethod
+    def _egress_covers_port(rules: list, port: int) -> bool:
+        """True if any rule allows TCP `port` (or all-traffic)."""
+        for r in rules:
+            proto = r.get("IpProtocol")
+            if proto == "-1":
+                return True
+            if proto == "tcp":
+                fp, tp = r.get("FromPort"), r.get("ToPort")
+                if fp is not None and tp is not None and fp <= port <= tp:
+                    return True
+        return False
+
+    @staticmethod
+    def _has_self_all_traffic(rules: list, sg_id: str) -> bool:
+        """True if a rule allows broad intra-SG traffic (self-referencing)."""
+        for r in rules:
+            if sg_id not in [g.get("GroupId") for g in r.get("UserIdGroupPairs", [])]:
+                continue
+            proto = r.get("IpProtocol")
+            if proto == "-1":
+                return True
+            if proto in ("tcp", "udp") and r.get("FromPort") == 0 and r.get("ToPort") == 65535:
+                return True
+        return False
+
+    def check_security_group_rules(self) -> CheckCategory:
+        """Validate the rules of an EXISTING security group (--sg-id).
+
+        Databricks workspace SGs need intra-SG (self) all-traffic for internode
+        communication, plus egress to the control plane (443/3306/6666). A
+        PrivateLink/SRA SG instead scopes those ports to the VPC CIDR and omits
+        self-all — so missing self-all is a WARNING (mode-dependent), missing
+        egress ports is a stronger signal.
+        """
+        category = CheckCategory(name="SECURITY GROUP RULES (provided SG)")
+        ec2 = self._get_client("ec2")
+        try:
+            sg = ec2.describe_security_groups(GroupIds=[self.sg_id])["SecurityGroups"][0]
+        except Exception as e:
+            category.add_result(CheckResult(
+                name=f"  {self.sg_id}",
+                status=CheckStatus.NOT_OK if is_access_denied(e) else CheckStatus.WARNING,
+                message=f"Could not read SG: {str(e)[:80]}",
+            ))
+            return category
+
+        ingress = sg.get("IpPermissions", [])
+        egress = sg.get("IpPermissionsEgress", [])
+        category.add_result(CheckResult(
+            name=f"  {self.sg_id}", status=CheckStatus.OK,
+            message=f"{sg.get('GroupName', '')} in {sg.get('VpcId', '')}",
+        ))
+
+        # Cross-check the SG lives in the target VPC, if one was given.
+        if self.vpc_id and sg.get("VpcId") and sg["VpcId"] != self.vpc_id:
+            category.add_result(CheckResult(
+                name="  SG / VPC mismatch",
+                status=CheckStatus.NOT_OK,
+                message=f"SG {self.sg_id} is in {sg['VpcId']} but --vpc-id is {self.vpc_id}",
+                remediation="Pass a security group that belongs to the target VPC.",
+            ))
+
+        # Intra-SG self all-traffic (internode communication)
+        in_self = self._has_self_all_traffic(ingress, self.sg_id)
+        eg_self = self._has_self_all_traffic(egress, self.sg_id)
+        category.add_result(CheckResult(
+            name="  Intra-SG ingress (self, all traffic)",
+            status=CheckStatus.OK if in_self else CheckStatus.WARNING,
+            message="Present" if in_self else "Missing - classic workspaces need all TCP+UDP from self (PrivateLink SGs may scope to CIDR instead)",
+            remediation=None if in_self else "Add an inbound rule: all TCP + all UDP, source = this same security group.",
+        ))
+        category.add_result(CheckResult(
+            name="  Intra-SG egress (self, all traffic)",
+            status=CheckStatus.OK if eg_self else CheckStatus.WARNING,
+            message="Present" if eg_self else "Missing - classic workspaces need all TCP+UDP to self",
+            remediation=None if eg_self else "Add an outbound rule: all TCP + all UDP, destination = this same security group.",
+        ))
+
+        # Egress to the Databricks control plane
+        for port, label in [(443, "HTTPS"), (3306, "Legacy metastore"), (6666, "Secure Cluster Connectivity")]:
+            ok = self._egress_covers_port(egress, port)
+            category.add_result(CheckResult(
+                name=f"  Egress tcp/{port} ({label})",
+                status=CheckStatus.OK if ok else CheckStatus.WARNING,
+                message="Allowed" if ok else f"No egress rule covers tcp/{port}",
+                remediation=None if ok else f"Add outbound TCP {port} (to 0.0.0.0/0, the workspace VPC CIDR, or self).",
+            ))
+        return category
+
     def run_all_checks(self) -> CheckReport:
         """Run all AWS checks for Databricks deployment.
         
@@ -2527,25 +2983,37 @@ class AWSChecker(BaseChecker):
         )
         
         if credentials_ok:
+          # try/finally guarantees temp resources are cleaned up even if a check
+          # raises mid-run (otherwise an exception leaks the bucket/role/SG).
+          try:
             storage_cat = self.check_storage_configuration()
-            self._check_results_by_area["storage"] = (storage_cat.not_ok_count == 0)
+            self._check_results_by_area["storage"] = storage_cat.area_state
             self._report.add_category(storage_cat)
-            
+
             self._report.add_category(self.check_network_configuration())
+            if self.sg_id:
+                self._report.add_category(self.check_security_group_rules())
             self._report.add_category(self.check_cross_account_role())
             self._report.add_category(self.check_privatelink())
             self._report.add_category(self.check_unity_catalog())
-            
+
             # Delete temp bucket after Unity Catalog used it
             delete_results = self._delete_temp_bucket()
             if delete_results:
                 for r in delete_results:
                     storage_cat.add_result(r)
-            
+
+            # CMK/KMS — always-on in the SRA; previously unchecked, so a deploy
+            # that needs CMK could pass here and then abort at the first KMS key.
+            self._report.add_category(self.check_kms())
+
             self._report.add_category(self.check_quotas())
-            
+
             self._report.add_category(self._compute_deployment_compatibility())
-            
+
+            # Be explicit about what a cloud-credential pre-check cannot prove.
+            self._report.add_category(self.check_account_api_scope_note())
+          finally:
             self._cleanup_test_resources()
         else:
             for name in ["STORAGE CONFIGURATION", "NETWORK CONFIGURATION",

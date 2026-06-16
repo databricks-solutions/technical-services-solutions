@@ -5,6 +5,85 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-06-16
+
+### Added
+
+- **Mode-agnostic checking** — the tool now runs every permission area
+  unconditionally and reports a **Deployment Compatibility matrix** (tri-state:
+  SUPPORTED / NOT SUPPORTED / NOT VERIFIED) for Standard, PrivateLink, Unity
+  Catalog, Full, and Azure VNet Injection — instead of requiring the user to
+  pick a mode up front.
+- **`--verify-only`** read-only mode (no resource creation) for environments
+  where resource creation requires approval.
+- **CMK / KMS check** (`check_kms`) — verifies the KMS permissions that are
+  always-on in the Databricks SRA.
+- **STS regional endpoint check** — flags a blocker if STS is deactivated for
+  the workspace region.
+- **`--vpc-id`** — scopes BYO-network validation to a specific VPC
+  (subnets / AZ / size / egress + NAT for non-PrivateLink deployments).
+- **`--sg-id`** — validates an existing security group's rules.
+- **`--vnet-id`** (Azure) — validates an existing VNet for VNet injection
+  (delegation / NSG / sizing), including cross-subscription targets.
+- **`--databricks-account-id`** — validates the cross-account role trust
+  content (Databricks signing principal + ExternalId).
+- **Interface VPC endpoint probes** (STS, Kinesis) in addition to the S3
+  gateway endpoint, matching what the SRA actually creates.
+- **`--strict`** — exit non-zero on warnings / NOT-VERIFIED items too, for
+  strict CI gating.
+- **Customer-friendly Markdown report** (`--format markdown`) with a
+  plain-language verdict, remediation, and a collapsible detail section.
+- **"NOT VALIDATED" section** — explicitly states what a cloud-credential
+  pre-check cannot prove (`databricks_mws_*` registration, policy content).
+- **`REVIEW` compatibility state** — the matrix now distinguishes "verified, but
+  has an actionable advisory (no blocker)" from "could not confirm" (NOT
+  VERIFIED), and the per-mode detail names the ACTUAL area/reason instead of a
+  generic catch-all.
+- **GCP rewritten** to drive checks from the full SRA permission set
+  (`testIamPermissions`, deploy-blocking subsets, API-enablement, impersonation,
+  PSC/DNS), replacing the previous best-effort listing heuristics.
+- **Object-level Unity Catalog S3 verification** — when IAM simulation is
+  unavailable, the reused temporary bucket is exercised with real
+  PutObject/GetObject/DeleteObject/ListBucket/GetBucketLocation calls.
+
+### Changed
+
+- **Databricks-managed VPC sunset (AWS, 2025)** — removed
+  `--vpc-type` / `VPCType.DATABRICKS_MANAGED`; only customer-managed VPC
+  options remain for new deployments.
+- Removed the up-front `--mode` flag (superseded by the compatibility matrix).
+- Dependencies **pinned with upper bounds** (supply-chain hardening for a
+  high-privilege tool) and modern SPDX license metadata.
+- Added an explicit `setuptools` packaging block so `pip install .` and the
+  `dbx-precheck` console script work on the flat layout.
+
+### Fixed
+
+- **Broken packaged entry point** (`main:cli` → `main:main`).
+- **Broken `check_kms`** — previously returned nothing (no results) when IAM
+  simulation was available, so a run could pass without ever testing KMS.
+- **Fail-open denial handling** — every denial now routes through
+  `is_access_denied()` (SCP / explicit-deny / `UnauthorizedOperation` no longer
+  misread as benign), replacing raw `"AccessDenied" in str(error)` matching.
+- **IAM `SimulatePrincipalPolicy` throttling** — retries with exponential
+  backoff instead of smearing a whole batch to an error/warning.
+- **Fail-closed cleanup** — every created resource (bucket, role, policy,
+  security group; Azure resource group) is registered for teardown at creation,
+  so a mid-run exception cannot leak resources; versioned temp-bucket teardown.
+- **Azure `--cleanup-orphans`** is no longer a no-op that printed success.
+- **Azure SDK compatibility** — recent `azure-mgmt-resource` builds no longer
+  ship `SubscriptionClient`; the checker (and the orphan sweep) used to crash on
+  import and skip every Azure check. It now degrades gracefully, validating the
+  subscription through the resource client when given `--subscription-id`.
+- **Lossless JSON report** for CI / audit consumers — progress/status messages
+  now go to stderr, so `--json` stdout is pure parseable JSON and the Markdown
+  report has no progress lines prepended.
+
+### Testing
+
+- Expanded to **161 unit tests** — added AWS-check, denial-classification,
+  Markdown-reporter, CLI-smoke, and GCP-check suites.
+
 ## [1.0.0] - 2025-01-05
 
 ### Added

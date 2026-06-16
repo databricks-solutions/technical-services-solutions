@@ -8,6 +8,7 @@ from typing import Callable, Any, Optional, Tuple
 from functools import wraps
 
 from checkers.base import CheckResult, CheckStatus
+from utils.denial import is_access_denied
 
 
 class CloudAuthError(Exception):
@@ -198,6 +199,10 @@ def handle_cloud_error(
             message=f"CONFIG: {message}"
         )
     
+    if is_access_denied(error):
+        return CheckResult(name=action_name, status=CheckStatus.NOT_OK,
+                           message=f"DENIED: {str(error)[:120]}")
+
     return CheckResult(
         name=action_name,
         status=CheckStatus.WARNING,

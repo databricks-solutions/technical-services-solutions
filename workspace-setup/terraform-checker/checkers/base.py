@@ -27,13 +27,14 @@ class CheckResult:
     details: Optional[str] = None
     remediation: Optional[str] = None  # How to fix the issue
     doc_link: Optional[str] = None  # Link to documentation
-    
+    assumed: bool = False  # True if based on a guessed/default value, not a real reading
+
     def __str__(self) -> str:
         result = f"{self.name}: {self.status.value}"
         if self.message:
             result += f" - {self.message}"
         return result
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -43,6 +44,7 @@ class CheckResult:
             "details": self.details,
             "remediation": self.remediation,
             "doc_link": self.doc_link,
+            "assumed": self.assumed,
         }
 
 
@@ -75,7 +77,38 @@ class CheckCategory:
     @property
     def skipped_count(self) -> int:
         return sum(1 for r in self.results if r.status == CheckStatus.SKIPPED)
-    
+
+    @property
+    def area_state(self) -> str:
+        """Health of this area for the deployment compatibility matrix.
+
+        Returns one of:
+          - "FAIL"       a blocking permission/config failure was found.
+          - "NOT_TESTED" couldn't confirm — nothing was actually verified, or a
+                         value was assumed/guessed (e.g. IAM simulation
+                         unavailable, --verify-only, or no target resource).
+                         Never silently "supported".
+          - "REVIEW"     verified, but an actionable advisory remains (a WARNING
+                         that carries remediation). No blocker — worth a look.
+          - "PASS"       verified and clean.
+
+        Benign informational warnings (no remediation) don't disqualify a PASS.
+        The order matters: a genuinely unverifiable area (assumed) is NOT_TESTED
+        even if it also carries an advisory, so we never overstate confidence.
+        """
+        if self.not_ok_count > 0:
+            return "FAIL"
+        # Genuinely unverifiable: nothing confirmed, or a value was assumed/guessed.
+        if self.ok_count == 0 or any(r.assumed for r in self.results):
+            return "NOT_TESTED"
+        # Verified, but an actionable advisory (WARNING + remediation) remains.
+        if any(
+            r.status == CheckStatus.WARNING and (r.remediation or "").strip()
+            for r in self.results
+        ):
+            return "REVIEW"
+        return "PASS"
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {

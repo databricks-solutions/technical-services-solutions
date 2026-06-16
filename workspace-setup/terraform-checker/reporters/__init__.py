@@ -2,6 +2,6 @@
 
 from .txt_reporter import TxtReporter
 from .json_reporter import JsonReporter
+from .markdown_reporter import MarkdownReporter
 
-__all__ = ["TxtReporter", "JsonReporter"]
-
+__all__ = ["TxtReporter", "JsonReporter", "MarkdownReporter"]

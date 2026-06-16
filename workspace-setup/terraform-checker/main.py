@@ -18,7 +18,7 @@ import click
 
 from checkers import AWSChecker, AzureChecker, GCPChecker
 from checkers.base import CheckReport
-from reporters import TxtReporter, JsonReporter
+from reporters import TxtReporter, JsonReporter, MarkdownReporter
 from utils import CredentialLoader, ExitCode, load_config, setup_logging
 
 
@@ -391,9 +391,15 @@ def run_gcp_checks(
 )
 # New options for production use
 @click.option(
+    "--format", "output_format",
+    type=click.Choice(["text", "markdown", "md", "json"], case_sensitive=False),
+    default="text",
+    help="Report format: text (default), markdown (customer-friendly), json (CI/CD)"
+)
+@click.option(
     "--json", "json_output",
     is_flag=True,
-    help="Output results in JSON format (for CI/CD pipelines)"
+    help="Shortcut for --format json (machine-readable, for CI/CD pipelines)"
 )
 @click.option(
     "--log-level",
@@ -434,6 +440,7 @@ def main(
     dry_run: bool,
     verify_only: bool,
     cleanup_orphans: bool,
+    output_format: str,
     json_output: bool,
     log_level: str,
     log_file: Optional[str],
@@ -584,8 +591,29 @@ def main(
     else:
         exit_code = ExitCode.SUCCESS
     
-    # JSON output mode
+    # Normalize the requested output format (--json is a shortcut for --format json).
+    fmt = output_format.lower()
     if json_output:
+        fmt = "json"
+    elif fmt == "md":
+        fmt = "markdown"
+
+    # Markdown output mode (customer-friendly report)
+    if fmt == "markdown":
+        md_reporter = MarkdownReporter()
+        if len(reports) == 1:
+            md_content = md_reporter.generate(reports[0])
+        else:
+            md_content = md_reporter.generate_all_clouds(reports)
+        click.echo(md_content)
+        if output:
+            with open(output, 'w') as f:
+                f.write(md_content)
+            logger.info("Markdown report saved to %s", output)
+        sys.exit(exit_code)
+
+    # JSON output mode
+    if fmt == "json":
         json_reporter = JsonReporter(pretty=True)
         if len(reports) == 1:
             json_content = json_reporter.generate(reports[0])

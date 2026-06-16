@@ -27,13 +27,14 @@ class CheckResult:
     details: Optional[str] = None
     remediation: Optional[str] = None  # How to fix the issue
     doc_link: Optional[str] = None  # Link to documentation
-    
+    assumed: bool = False  # True if based on a guessed/default value, not a real reading
+
     def __str__(self) -> str:
         result = f"{self.name}: {self.status.value}"
         if self.message:
             result += f" - {self.message}"
         return result
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -43,6 +44,7 @@ class CheckResult:
             "details": self.details,
             "remediation": self.remediation,
             "doc_link": self.doc_link,
+            "assumed": self.assumed,
         }
 
 
@@ -75,7 +77,28 @@ class CheckCategory:
     @property
     def skipped_count(self) -> int:
         return sum(1 for r in self.results if r.status == CheckStatus.SKIPPED)
-    
+
+    @property
+    def area_state(self) -> str:
+        """Tri-state health of this area for the deployment compatibility matrix.
+
+        PASS only when something was actually verified and nothing is failing or
+        unverified. A WARNING that carries a remediation (an actionable gap) or an
+        assumed/guessed value counts as NOT_TESTED — never silently "supported".
+        Benign informational warnings (no remediation) don't disqualify a PASS.
+
+        Returns one of: "PASS", "FAIL", "NOT_TESTED".
+        """
+        if self.not_ok_count > 0:
+            return "FAIL"
+        actionable_or_assumed = any(
+            r.assumed or (r.status == CheckStatus.WARNING and (r.remediation or "").strip())
+            for r in self.results
+        )
+        if self.ok_count == 0 or actionable_or_assumed:
+            return "NOT_TESTED"
+        return "PASS"
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {

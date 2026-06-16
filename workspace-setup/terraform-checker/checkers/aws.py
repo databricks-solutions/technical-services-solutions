@@ -1682,7 +1682,7 @@ class AWSChecker(BaseChecker):
             for result in sg_results:
                 category.add_result(result)
         
-        self._check_results_by_area["network"] = network_ok
+        self._check_results_by_area["network"] = category.area_state
         
         return category
     
@@ -1798,7 +1798,7 @@ class AWSChecker(BaseChecker):
                 message=f"Cannot list: {str(e)[:40]}"
             ))
         
-        self._check_results_by_area["privatelink"] = privatelink_ok
+        self._check_results_by_area["privatelink"] = category.area_state
         
         return category
     
@@ -2121,7 +2121,7 @@ class AWSChecker(BaseChecker):
                 message=f"{msg} (optional)"
             ))
         
-        self._check_results_by_area["cross_account"] = (category.not_ok_count == 0)
+        self._check_results_by_area["cross_account"] = category.area_state
         
         return category
     
@@ -2246,7 +2246,7 @@ class AWSChecker(BaseChecker):
                 message="Cannot test SNS/SQS permissions without simulation"
             ))
         
-        self._check_results_by_area["unity_catalog"] = (category.not_ok_count == 0)
+        self._check_results_by_area["unity_catalog"] = category.area_state
         
         return category
     
@@ -2455,54 +2455,46 @@ class AWSChecker(BaseChecker):
     # =========================================================================
     
     def _compute_deployment_compatibility(self) -> CheckCategory:
-        """Compute which deployment types are supported based on check results."""
+        """Compute which deployment types are supported.
+
+        Tri-state per area (PASS/FAIL/NOT_TESTED). A mode is SUPPORTED only when
+        every area it needs is PASS. Any required area FAILED -> NOT SUPPORTED;
+        none failed but something couldn't be confirmed -> NOT VERIFIED (never
+        silently "supported").
+        """
         category = CheckCategory(name="DEPLOYMENT COMPATIBILITY")
-        
-        storage_ok = self._check_results_by_area.get("storage", True)
-        network_ok = self._check_results_by_area.get("network", True)
-        cross_account_ok = self._check_results_by_area.get("cross_account", True)
-        privatelink_ok = self._check_results_by_area.get("privatelink", True)
-        unity_ok = self._check_results_by_area.get("unity_catalog", True)
-        
-        base_ok = storage_ok and network_ok and cross_account_ok
-        
+        st = self._check_results_by_area  # area -> "PASS"|"FAIL"|"NOT_TESTED"
+
         modes = [
-            ("Standard", base_ok,
-             "Basic workspace (VPC, S3, IAM)"),
-            ("PrivateLink", base_ok and privatelink_ok,
-             "With VPC Endpoints for private connectivity"),
-            ("Unity Catalog", base_ok and unity_ok,
-             "With Unity Catalog storage credentials"),
-            ("Full", base_ok and privatelink_ok and unity_ok,
-             "All features (PrivateLink + Unity Catalog + CMK)"),
+            ("Standard", ["storage", "network", "cross_account"], "Basic workspace (VPC, S3, IAM)"),
+            ("PrivateLink", ["storage", "network", "cross_account", "privatelink"], "With VPC Endpoints for private connectivity"),
+            ("Unity Catalog", ["storage", "network", "cross_account", "unity_catalog"], "With Unity Catalog storage credentials"),
+            ("Full", ["storage", "network", "cross_account", "privatelink", "unity_catalog"], "PrivateLink + Unity Catalog"),
         ]
-        
-        for mode_name, supported, description in modes:
-            if supported:
+        label = {"storage": "storage", "network": "network", "cross_account": "cross-account role",
+                 "privatelink": "VPC endpoints", "unity_catalog": "Unity Catalog"}
+
+        for mode_name, areas, description in modes:
+            states = {a: st.get(a, "NOT_TESTED") for a in areas}
+            failed = [label[a] for a, s in states.items() if s == "FAIL"]
+            not_tested = [label[a] for a, s in states.items() if s == "NOT_TESTED"]
+            if failed:
                 category.add_result(CheckResult(
-                    name=f"  {mode_name}",
-                    status=CheckStatus.OK,
-                    message=f"SUPPORTED - {description}"
+                    name=f"  {mode_name}", status=CheckStatus.NOT_OK,
+                    message=f"NOT SUPPORTED - missing: {', '.join(failed)}",
+                    remediation=f"Grant the permissions flagged above for: {', '.join(failed)}.",
+                ))
+            elif not_tested:
+                category.add_result(CheckResult(
+                    name=f"  {mode_name}", status=CheckStatus.WARNING,
+                    message=f"NOT VERIFIED - could not confirm: {', '.join(not_tested)} (e.g. IAM simulation unavailable, --verify-only, or no target resource)",
+                    remediation="Re-run without --verify-only, grant iam:SimulatePrincipalPolicy, or pass the relevant target to confirm.",
                 ))
             else:
-                missing = []
-                if not storage_ok:
-                    missing.append("storage")
-                if not network_ok:
-                    missing.append("network")
-                if not cross_account_ok:
-                    missing.append("cross-account role")
-                if mode_name in ("PrivateLink", "Full") and not privatelink_ok:
-                    missing.append("VPC endpoints")
-                if mode_name in ("Unity Catalog", "Full") and not unity_ok:
-                    missing.append("Unity Catalog")
-                
                 category.add_result(CheckResult(
-                    name=f"  {mode_name}",
-                    status=CheckStatus.WARNING,
-                    message=f"MISSING PERMISSIONS - Fix: {', '.join(missing)}"
+                    name=f"  {mode_name}", status=CheckStatus.OK,
+                    message=f"SUPPORTED - {description}",
                 ))
-        
         return category
     
     def run_all_checks(self) -> CheckReport:
@@ -2528,7 +2520,7 @@ class AWSChecker(BaseChecker):
         
         if credentials_ok:
             storage_cat = self.check_storage_configuration()
-            self._check_results_by_area["storage"] = (storage_cat.not_ok_count == 0)
+            self._check_results_by_area["storage"] = storage_cat.area_state
             self._report.add_category(storage_cat)
             
             self._report.add_category(self.check_network_configuration())

@@ -1,0 +1,523 @@
+/**
+ * Databricks Theme for Docusaurus
+ * Based on official Databricks brand colors
+ */
+
+/* Databricks Color Palette */
+@theme {
+  --color-dbx-orange-600: #ff3621;
+  --color-dbx-navy-800: #1b3139;
+  --color-dbx-oat-light: #f9f7f4;
+  --color-dbx-oat-medium: #eeede9;
+  --color-dbx-white: #ffffff;
+  --color-dbx-dark-mode: #1b1b1b;
+  --color-dbx-dark-mode-900: #242526;
+
+  --color-dbx-maroon-600: #98102a;
+  --color-dbx-yellow-600: #ffab00;
+  --color-dbx-green-600: #00a972;
+  --color-dbx-blue-600: #2272b4;
+  --color-dbx-gray-navigation: #303f47;
+  --color-dbx-gray-text: #5a6f77;
+  --color-dbx-gray-lines: #dce0e2;
+  --color-dbx-gray-light: #b0b8bc;
+
+  --color-dbx-maroon-800: #4a121a;
+  --color-dbx-maroon-700: #730d21;
+  --color-dbx-maroon-500: #ab4057;
+  --color-dbx-maroon-400: #bf7080;
+  --color-dbx-maroon-300: #d69ea8;
+  --color-dbx-maroon-200: #eac0c7;
+  --color-dbx-maroon-100: #f8d5dc;
+  --color-dbx-orange-800: #801c17;
+  --color-dbx-orange-700: #bd2b26;
+  --color-dbx-orange-500: #ff5f46;
+  --color-dbx-orange-400: #ff9e94;
+  --color-dbx-orange-300: #fabfba;
+  --color-dbx-orange-200: #f8dedc;
+  --color-dbx-orange-100: #faeceb;
+  --color-dbx-yellow-800: #7d5319;
+  --color-dbx-yellow-700: #ba7b23;
+  --color-dbx-yellow-500: #fcba33;
+  --color-dbx-yellow-400: #ffcc66;
+  --color-dbx-yellow-300: #ffdb96;
+  --color-dbx-yellow-200: #ffe6b8;
+  --color-dbx-yellow-100: #fff0d3;
+  --color-dbx-green-800: #095a35;
+  --color-dbx-green-700: #00875c;
+  --color-dbx-green-500: #42ba91;
+  --color-dbx-green-400: #70c4ab;
+  --color-dbx-green-300: #9ed6c4;
+  --color-dbx-green-200: #bae9da;
+  --color-dbx-green-100: #dcf4ed;
+  --color-dbx-blue-800: #04355d;
+  --color-dbx-blue-700: #0e538b;
+  --color-dbx-blue-500: #4299e0;
+  --color-dbx-blue-400: #8acaff;
+  --color-dbx-blue-300: #bae1fc;
+  --color-dbx-blue-200: #d7edfe;
+  --color-dbx-blue-100: #f0f8ff;
+  --color-dbx-navy-700: #143d4a;
+  --color-dbx-navy-600: #1b5162;
+  --color-dbx-navy-500: #618794;
+  --color-dbx-navy-400: #90a5b1;
+  --color-dbx-navy-300: #c4ccd6;
+  --color-dbx-navy-200: #d8dfe5;
+  --color-dbx-navy-100: #edf2f8;
+
+  --color-dbx-info-400: #8acaff;
+  --color-dbx-info-700: #0e538b;
+  --color-dbx-info-100: #f0f8ff;
+  --color-dbx-info-300: #bae1fc;
+  --color-dbx-info-600: #2272b4;
+  --color-dbx-info-800: #04355d;
+  --color-dbx-info-900: #032845;
+
+  --color-dbx-success-100: #dcf4ed;
+  --color-dbx-success-300: #9ed6c4;
+  --color-dbx-success-600: #00a972;
+  --color-dbx-success-800: #095a35;
+  --color-dbx-success-900: #064527;
+
+  --color-dbx-warning-100: #fff0d3;
+  --color-dbx-warning-300: #ffdb96;
+  --color-dbx-warning-600: #ffab00;
+  --color-dbx-warning-800: #7d5319;
+  --color-dbx-warning-900: #5a3c12;
+
+  --color-dbx-error-100: #f8d5dc;
+  --color-dbx-error-300: #d69ea8;
+  --color-dbx-error-600: #98102a;
+  --color-dbx-error-800: #4a121a;
+  --color-dbx-error-900: #380e14;
+
+  --color-dbx-primary-100: #faeceb;
+  --color-dbx-primary-300: #fabfba;
+  --color-dbx-primary-400: #ff5f46;
+  --color-dbx-primary-500: #ff5f46;
+  --color-dbx-primary-600: #ff3621;
+  --color-dbx-primary-700: #bd2b26;
+  --color-dbx-primary-800: #801c17;
+  --color-dbx-primary-900: #601510;
+}
+
+/* Light Mode - Databricks Theme */
+:root {
+  /* Primary colors - Databricks Orange */
+  --ifm-color-primary: #ff3621;
+  --ifm-color-primary-dark: #bd2b26;
+  --ifm-color-primary-darker: #801c17;
+  --ifm-color-primary-darkest: #601510;
+  --ifm-color-primary-light: #ff5f46;
+  --ifm-color-primary-lighter: #ff9e94;
+  --ifm-color-primary-lightest: #fabfba;
+
+  /* Background colors */
+  --ifm-background-color: #ffffff;
+  --ifm-background-surface-color: #f9f7f4;
+
+  /* Text colors */
+  --ifm-font-color-base: #1b3139;
+  --ifm-font-color-secondary: #5a6f77;
+
+  /* Navbar */
+  --ifm-navbar-background-color: #1b3139;
+  --ifm-navbar-link-color: #ffffff;
+  --ifm-navbar-link-hover-color: #ff3621;
+
+  /* Footer */
+  --ifm-footer-background-color: #1b3139;
+  --ifm-footer-color: #ffffff;
+  --ifm-footer-link-color: #b0b8bc;
+  --ifm-footer-link-hover-color: #ff3621;
+
+  /* Links */
+  --ifm-link-color: #2272b4;
+  --ifm-link-hover-color: #0e538b;
+
+  /* Code */
+  --ifm-code-font-size: 95%;
+  --docusaurus-highlighted-code-line-bg: rgba(255, 54, 33, 0.1);
+
+  /* Cards and borders */
+  --ifm-card-background-color: #ffffff;
+  --ifm-color-emphasis-200: #dce0e2;
+  --ifm-color-emphasis-600: #5a6f77;
+  --ifm-color-emphasis-700: #1b3139;
+
+  /* Hero */
+  --ifm-hero-background-color: #1b3139;
+  --ifm-hero-text-color: #ffffff;
+
+  /* Misc */
+  --ifm-border-radius: 8px;
+  --ifm-global-shadow-lw: 0 1px 3px rgba(27, 49, 57, 0.08);
+  --ifm-global-shadow-md: 0 4px 12px rgba(27, 49, 57, 0.12);
+}
+
+/* Dark Mode - Databricks Theme */
+[data-theme='dark'] {
+  --ifm-color-primary: #ff5f46;
+  --ifm-color-primary-dark: #ff3621;
+  --ifm-color-primary-darker: #bd2b26;
+  --ifm-color-primary-darkest: #801c17;
+  --ifm-color-primary-light: #ff9e94;
+  --ifm-color-primary-lighter: #fabfba;
+  --ifm-color-primary-lightest: #f8dedc;
+
+  --ifm-background-color: #1b1b1b;
+  --ifm-background-surface-color: #242526;
+
+  --ifm-font-color-base: #ffffff;
+  --ifm-font-color-secondary: #b0b8bc;
+
+  --ifm-navbar-background-color: #242526;
+  --ifm-navbar-link-color: #ffffff;
+  --ifm-navbar-link-hover-color: #ff5f46;
+
+  --ifm-footer-background-color: #242526;
+  --ifm-footer-color: #ffffff;
+  --ifm-footer-link-color: #b0b8bc;
+  --ifm-footer-link-hover-color: #ff5f46;
+
+  --ifm-link-color: #8acaff;
+  --ifm-link-hover-color: #bae1fc;
+
+  --docusaurus-highlighted-code-line-bg: rgba(255, 95, 70, 0.2);
+
+  --ifm-card-background-color: #242526;
+  --ifm-color-emphasis-200: #303f47;
+  --ifm-color-emphasis-600: #b0b8bc;
+  --ifm-color-emphasis-700: #ffffff;
+}
+
+/* ==================== */
+/* NAVBAR STYLING */
+/* ==================== */
+.navbar {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.navbar__title {
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.navbar__link {
+  font-weight: 500;
+}
+
+.navbar__link:hover,
+.navbar__link--active {
+  color: var(--ifm-color-primary);
+}
+
+/* GitHub icon in navbar */
+.header-github-link::before {
+  content: '';
+  width: 24px;
+  height: 24px;
+  display: flex;
+  background: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='white' d='M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12'/%3E%3C/svg%3E") no-repeat;
+}
+
+[data-theme='dark'] .header-github-link::before {
+  background: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='white' d='M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12'/%3E%3C/svg%3E") no-repeat;
+}
+
+/* ==================== */
+/* HERO SECTION */
+/* ==================== */
+.hero--primary {
+  background: linear-gradient(135deg, #1b3139 0%, #143d4a 50%, #1b5162 100%);
+  color: #ffffff;
+  position: relative;
+  overflow: hidden;
+}
+
+.hero--primary::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background:
+    radial-gradient(circle at 20% 80%, rgba(255, 54, 33, 0.15) 0%, transparent 50%),
+    radial-gradient(circle at 80% 20%, rgba(34, 114, 180, 0.1) 0%, transparent 50%);
+  pointer-events: none;
+}
+
+.hero__title {
+  font-size: 3rem;
+  font-weight: 700;
+  margin-bottom: 1rem;
+  position: relative;
+}
+
+.hero__subtitle {
+  font-size: 1.25rem;
+  color: rgba(255, 255, 255, 0.85);
+  position: relative;
+}
+
+/* ==================== */
+/* BUTTONS */
+/* ==================== */
+.button--primary {
+  background-color: #ff3621;
+  border-color: #ff3621;
+  color: #ffffff;
+}
+
+.button--primary:hover {
+  background-color: #bd2b26;
+  border-color: #bd2b26;
+  color: #ffffff;
+}
+
+.button--secondary {
+  background-color: #ffffff;
+  border-color: #ffffff;
+  color: #1b3139;
+  font-weight: 600;
+}
+
+.button--secondary:hover {
+  background-color: #f9f7f4;
+  border-color: #f9f7f4;
+  color: #ff3621;
+}
+
+.button--outline {
+  border: 2px solid #ff3621;
+  color: #ff3621;
+  background: transparent;
+}
+
+.button--outline:hover {
+  background-color: #ff3621;
+  color: #ffffff;
+}
+
+/* ==================== */
+/* CARDS */
+/* ==================== */
+.card {
+  border-radius: 12px;
+  border: 1px solid var(--ifm-color-emphasis-200);
+  transition: all 0.2s ease;
+}
+
+.card:hover {
+  border-color: var(--ifm-color-primary);
+  box-shadow: 0 8px 24px rgba(255, 54, 33, 0.12);
+  transform: translateY(-4px);
+}
+
+/* ==================== */
+/* SIDEBAR */
+/* ==================== */
+.menu__link {
+  border-radius: 6px;
+  transition: all 0.15s ease;
+}
+
+.menu__link:hover {
+  background-color: rgba(255, 54, 33, 0.08);
+  color: var(--ifm-color-primary);
+}
+
+.menu__link--active {
+  background-color: rgba(255, 54, 33, 0.12);
+  color: var(--ifm-color-primary);
+  font-weight: 600;
+}
+
+/* ==================== */
+/* TABLE OF CONTENTS */
+/* ==================== */
+.table-of-contents__link:hover,
+.table-of-contents__link--active {
+  color: var(--ifm-color-primary);
+}
+
+/* ==================== */
+/* ADMONITIONS */
+/* ==================== */
+.alert--info {
+  --ifm-alert-background-color: #f0f8ff;
+  --ifm-alert-border-color: #2272b4;
+  --ifm-alert-foreground-color: #04355d;
+}
+
+.alert--success {
+  --ifm-alert-background-color: #dcf4ed;
+  --ifm-alert-border-color: #00a972;
+  --ifm-alert-foreground-color: #095a35;
+}
+
+.alert--warning {
+  --ifm-alert-background-color: #fff0d3;
+  --ifm-alert-border-color: #ffab00;
+  --ifm-alert-foreground-color: #7d5319;
+}
+
+.alert--danger {
+  --ifm-alert-background-color: #f8d5dc;
+  --ifm-alert-border-color: #98102a;
+  --ifm-alert-foreground-color: #4a121a;
+}
+
+[data-theme='dark'] .alert--info {
+  --ifm-alert-background-color: rgba(34, 114, 180, 0.15);
+  --ifm-alert-border-color: #8acaff;
+  --ifm-alert-foreground-color: #bae1fc;
+}
+
+[data-theme='dark'] .alert--success {
+  --ifm-alert-background-color: rgba(0, 169, 114, 0.15);
+  --ifm-alert-border-color: #70c4ab;
+  --ifm-alert-foreground-color: #bae9da;
+}
+
+[data-theme='dark'] .alert--warning {
+  --ifm-alert-background-color: rgba(255, 171, 0, 0.15);
+  --ifm-alert-border-color: #ffcc66;
+  --ifm-alert-foreground-color: #ffe6b8;
+}
+
+[data-theme='dark'] .alert--danger {
+  --ifm-alert-background-color: rgba(152, 16, 42, 0.15);
+  --ifm-alert-border-color: #bf7080;
+  --ifm-alert-foreground-color: #eac0c7;
+}
+
+/* ==================== */
+/* CODE BLOCKS */
+/* ==================== */
+.prism-code {
+  border-radius: 8px;
+}
+
+code {
+  border-radius: 4px;
+  padding: 0.2em 0.4em;
+  background-color: rgba(255, 54, 33, 0.08);
+  color: #bd2b26;
+}
+
+[data-theme='dark'] code {
+  background-color: rgba(255, 95, 70, 0.15);
+  color: #ff9e94;
+}
+
+/* ==================== */
+/* FOOTER */
+/* ==================== */
+.footer {
+  background-color: #1b3139;
+}
+
+.footer__title {
+  color: #ffffff;
+}
+
+.footer__link-item {
+  color: #b0b8bc;
+}
+
+.footer__link-item:hover {
+  color: #ff3621;
+}
+
+/* ==================== */
+/* SEARCH */
+/* ==================== */
+.DocSearch-Button {
+  border-radius: 8px;
+}
+
+/* ==================== */
+/* SCROLLBAR */
+/* ==================== */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--ifm-background-surface-color);
+}
+
+::-webkit-scrollbar-thumb {
+  background: #b0b8bc;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #5a6f77;
+}
+
+/* ==================== */
+/* BADGE STYLES */
+/* ==================== */
+.badge--primary {
+  background-color: #faeceb;
+  color: #bd2b26;
+  border: 1px solid #fabfba;
+}
+
+.badge--info {
+  background-color: #f0f8ff;
+  color: #0e538b;
+  border: 1px solid #bae1fc;
+}
+
+.badge--success {
+  background-color: #dcf4ed;
+  color: #095a35;
+  border: 1px solid #9ed6c4;
+}
+
+.badge--warning {
+  background-color: #fff0d3;
+  color: #7d5319;
+  border: 1px solid #ffdb96;
+}
+
+.badge--danger {
+  background-color: #f8d5dc;
+  color: #4a121a;
+  border: 1px solid #d69ea8;
+}
+
+[data-theme='dark'] .badge--primary {
+  background-color: rgba(255, 54, 33, 0.2);
+  color: #ff9e94;
+  border-color: rgba(255, 54, 33, 0.4);
+}
+
+[data-theme='dark'] .badge--info {
+  background-color: rgba(34, 114, 180, 0.2);
+  color: #8acaff;
+  border-color: rgba(34, 114, 180, 0.4);
+}
+
+[data-theme='dark'] .badge--success {
+  background-color: rgba(0, 169, 114, 0.2);
+  color: #70c4ab;
+  border-color: rgba(0, 169, 114, 0.4);
+}
+
+[data-theme='dark'] .badge--warning {
+  background-color: rgba(255, 171, 0, 0.2);
+  color: #ffcc66;
+  border-color: rgba(255, 171, 0, 0.4);
+}
+
+[data-theme='dark'] .badge--danger {
+  background-color: rgba(152, 16, 42, 0.2);
+  color: #bf7080;
+  border-color: rgba(152, 16, 42, 0.4);
+}

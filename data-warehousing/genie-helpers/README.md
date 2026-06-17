@@ -4,6 +4,7 @@
 # Manage Genie Space Permissions.ipynb 
 
 This notebook manages permissions for a Databricks Genie space via the **REST API**.
+Pre-requisite: the developer executing it must have access to the system.query.history table
 
 **Workflow:**
 1. **Review** current permissions on the Genie space (GET)

@@ -8,4 +8,4 @@ env:
   - name: DATABRICKS_WAREHOUSE_ID
     value: "0db536825c62b90a" # Change it to your Warehouse ID
   - name: LLM_MODEL
-    value: "databricks-claude-opus-4-6"
+    value: "databricks-qwen35-122b-a10b"

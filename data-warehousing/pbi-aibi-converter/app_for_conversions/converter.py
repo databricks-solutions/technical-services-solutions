@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any, Optional
 
-from clients import MODEL, KNOWLEDGE_DIR, GRID_COLUMNS, get_llm_client
+from clients import MODEL, MAX_OUTPUT_TOKENS, KNOWLEDGE_DIR, GRID_COLUMNS, get_llm_client
 
 
 def _load_knowledge_file(filename: str) -> str:
@@ -2182,7 +2182,125 @@ def _estimate_tokens(text: str) -> int:
     return len(text) // 4
 
 
+def _extract_content(response) -> str:
+    """Return the assistant text from a chat completion as a plain string.
+
+    Most endpoints return ``message.content`` as a string, but some
+    OpenAI-compatible serving endpoints (e.g. Qwen) return a list of
+    content-part objects/dicts. Normalize both shapes to a single string so
+    downstream concatenation and JSON parsing never see a list.
+    """
+    content = response.choices[0].message.content
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for part in content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict):
+                parts.append(part.get("text") or part.get("content") or "")
+            else:
+                parts.append(getattr(part, "text", "") or "")
+        return "".join(parts)
+    return str(content)
+
+
 MAX_PROMPT_TOKENS = 190_000
+
+# Safety cap on continuation rounds so a model that keeps hitting the output
+# limit can't loop forever. At 8192 tokens/round this still allows very large
+# dashboards (~100k+ output tokens total).
+MAX_CONTINUATION_ROUNDS = 12
+
+
+def _looks_like_complete_json(text: str) -> bool:
+    """Best-effort check that ``text`` contains a complete top-level JSON object.
+
+    Detects truncated LLM output even when the serving endpoint does NOT report
+    ``finish_reason == 'length'`` (e.g. Qwen returns 'stop' on a cut-off). Strips
+    a leading markdown fence, then scans for brace balance while respecting
+    string literals and escapes; returns True once the first top-level
+    ``{ ... }`` closes.
+    """
+    s = text.strip()
+    if s.startswith("```"):
+        lines = s.split("\n")
+        end = len(lines) - 1 if lines[-1].strip() == "```" else len(lines)
+        s = "\n".join(lines[1:end])
+
+    start = s.find("{")
+    if start == -1:
+        return False
+
+    depth = 0
+    in_string = False
+    escape = False
+    for ch in s[start:]:
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            if in_string:
+                escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return True
+    return False
+
+
+def _complete_with_continuation(client, messages, max_tokens) -> str:
+    """Run one assistant turn, transparently continuing if the response is cut
+    off by the output-token cap.
+
+    Returns the full concatenated assistant text. ``messages`` is not mutated.
+    This is required for serving endpoints with low max-output ceilings (e.g.
+    Qwen caps at 8192) where a single dashboard JSON routinely exceeds one
+    completion and would otherwise be returned truncated (invalid JSON).
+
+    Truncation is detected two ways, because not every endpoint sets
+    ``finish_reason``: (1) ``finish_reason == 'length'``, or (2) the accumulated
+    text does not yet contain a complete top-level JSON object.
+    """
+    full_response = ""
+    work_messages = list(messages)
+    for _ in range(MAX_CONTINUATION_ROUNDS):
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=work_messages,
+            max_tokens=max_tokens,
+            temperature=0,
+        )
+        chunk = _extract_content(response)
+        full_response += chunk
+
+        finish = getattr(response.choices[0], "finish_reason", None)
+        truncated = finish == "length" or not _looks_like_complete_json(full_response)
+        if not truncated:
+            break
+        # No new content means the model can't make progress — stop to avoid
+        # an infinite continuation loop.
+        if not chunk.strip():
+            break
+
+        work_messages.append({"role": "assistant", "content": chunk})
+        work_messages.append({
+            "role": "user",
+            "content": "The JSON was truncated. Continue EXACTLY where you left off — output only the remaining JSON, no repetition, no explanation.",
+        })
+
+    return full_response
 
 
 def call_llm(
@@ -2241,27 +2359,7 @@ Return ONLY the JSON — no markdown fences, no explanation."""
         {"role": "user", "content": user_message},
     ]
 
-    full_response = ""
-
-    while True:
-        response = client.chat.completions.create(
-            model=MODEL,
-            messages=messages,
-            max_tokens=32768,
-            temperature=0,
-        )
-
-        chunk = response.choices[0].message.content or ""
-        full_response += chunk
-
-        finish = getattr(response.choices[0], "finish_reason", None)
-        if finish != "length":
-            break
-
-        messages.append({"role": "assistant", "content": chunk})
-        messages.append({"role": "user", "content": "The JSON was truncated. Continue EXACTLY where you left off — output only the remaining JSON, no repetition, no explanation."})
-
-    return full_response
+    return _complete_with_continuation(client, messages, MAX_OUTPUT_TOKENS)
 
 
 CHUNK_TOKEN_BUDGET = 150_000
@@ -2373,16 +2471,9 @@ def call_llm_chunked(
                 f"({', '.join(batch_page_names)})..."
             )
 
-        max_out_tokens = 32768 if len(batches) > 1 else 16384
+        max_out_tokens = min(32768 if len(batches) > 1 else 16384, MAX_OUTPUT_TOKENS)
 
-        response = client.chat.completions.create(
-            model=MODEL,
-            messages=messages,
-            max_tokens=max_out_tokens,
-            temperature=0,
-        )
-
-        last_response = response.choices[0].message.content
+        last_response = _complete_with_continuation(client, messages, max_out_tokens)
         messages.append({"role": "assistant", "content": last_response})
 
         if progress_callback:
@@ -2429,11 +2520,11 @@ Keep it under 500 words. Use markdown headers and tables for clarity.
             {"role": "system", "content": "You are a technical writer that produces clear, concise conversion reports."},
             {"role": "user", "content": user_message},
         ],
-        max_tokens=4096,
+        max_tokens=min(4096, MAX_OUTPUT_TOKENS),
         temperature=0,
     )
 
-    return response.choices[0].message.content
+    return _extract_content(response)
 
 
 def _is_simple_aggregate(node) -> bool:

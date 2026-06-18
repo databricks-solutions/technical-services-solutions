@@ -1,0 +1,75 @@
+############################################
+# Databricks account
+############################################
+# DATABRICKS_CLIENT_ID and DATABRICKS_CLIENT_SECRET must be exported in your shell.
+# Only the account ID is in tfvars (it's an identifier, not a credential).
+
+databricks_account_id = "00000000-0000-0000-0000-000000000000"
+
+############################################
+# AWS / shared
+############################################
+# AWS credentials (AWS_PROFILE / AWS_ACCESS_KEY_ID / AWS_SESSION_TOKEN) come from your shell.
+
+region = "us-east-1"
+prefix = "demo"
+
+############################################
+# Workspace
+############################################
+# Option 1: create a new serverless workspace
+create_new_workspace = true
+workspace_name       = "demo-serverless-workspace"
+
+# Option 2: use an existing workspace by ID
+# create_new_workspace      = false
+# existing_workspace_id     = "1234567890123456"
+# existing_workspace_host   = "https://dbc-xxxxxxxx-xxxx.cloud.databricks.com"
+
+# Option 3: use an existing workspace by name
+# create_new_workspace      = false
+# existing_workspace_name   = "my-existing-workspace"
+# existing_workspace_host   = "https://dbc-xxxxxxxx-xxxx.cloud.databricks.com"
+
+############################################
+# NCC
+############################################
+# Defaults to "ncc-<prefix>". Set explicitly to force a new NCC for a new deployment.
+ncc_name = "ncc-demo"
+
+# Optional: generic non-S3 NCC private endpoint rule (RDS, Kinesis, custom VPCE service, etc.)
+create_private_endpoint_rule = false
+# endpoint_service             = "com.amazonaws.vpce.us-east-1.vpce-svc-0abc123def4567890"
+# domain_names                 = ["mydb.example.com"]
+
+############################################
+# Workspace admin
+############################################
+workspace_admin_email = "you@example.com"
+
+############################################
+# Metastore
+############################################
+# Option 1: create a new metastore
+use_existing_metastore = false
+metastore_name         = "demo-metastore"
+
+# Option 2: use an existing metastore
+# use_existing_metastore = true
+# existing_metastore_id  = "00000000-0000-0000-0000-000000000000"
+# OR
+# existing_metastore_name = "primary"
+
+############################################
+# S3 external location
+############################################
+# Bucket must already exist in the AWS account these creds authenticate as.
+external_location_bucket_name     = "my-existing-bucket"
+external_location_path            = ""
+storage_credential_name           = "my-bucket-cred"
+external_location_name            = "my-bucket-ext-loc"
+uc_iam_role_name                  = "my-bucket-uc-role"
+external_location_grant_principal = "account users"
+
+# Set to true if the bucket already has a policy you need to preserve.
+merge_existing_bucket_policy = false

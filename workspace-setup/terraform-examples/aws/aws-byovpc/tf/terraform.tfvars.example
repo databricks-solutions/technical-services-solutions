@@ -68,4 +68,33 @@ metastore_name = "my-unity-catalog-metastore"
 # Option 2: Use existing metastore (uncomment and specify ID)
 # metastore_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 
+# =============================================================================
+# Unity Catalog Storage Configuration
+# =============================================================================
+
+# AWS account ID where Unity Catalog IAM role and S3 bucket will be created
+aws_account_id = "your-aws-account-id"
+
+# =============================================================================
+# User-defined Catalog in UC (Optional)
+# =============================================================================
+
+# Set to true to create a user-defined catalog (storage credential, IAM role, S3 bucket, external location)
+new_catalog = true
+
+# Optional: override the generated names (only used when new_catalog = true)
+# catalog_name              = "my_catalog"
+# external_location_name    = "my-external-location"
+# storage_credential_name   = "my-storage-credential"
+
+# =============================================================================
+# Cluster Configuration (Optional)
+# =============================================================================
+
+# Set to true to create a UC-compatible single-node cluster in the workspace
+new_cluster = false
+
+# Optional: override the cluster default (only used when new_cluster = true)
+# cluster_autotermination_minutes = 10
+
 

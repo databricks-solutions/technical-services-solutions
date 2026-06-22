@@ -84,6 +84,35 @@ output "metastore_name" {
   value       = var.metastore_id == "" ? databricks_metastore.metastore[0].name : var.metastore_name
 }
 
+output "catalog_name" {
+  description = "Name of the user-defined Unity Catalog catalog (null when new_catalog is false)"
+  value       = one(databricks_catalog.uc_quickstart[*].name)
+}
+
+output "external_location_name" {
+  description = "Name of the Unity Catalog external location (null when new_catalog is false)"
+  value       = one(databricks_external_location.uc_external_location[*].name)
+}
+
+output "external_location_url" {
+  description = "URL of the Unity Catalog external location (null when new_catalog is false)"
+  value       = one(databricks_external_location.uc_external_location[*].url)
+}
+
+output "storage_credential_name" {
+  description = "Name of the Unity Catalog storage credential (null when new_catalog is false)"
+  value       = one(databricks_storage_credential.uc_storage_cred[*].name)
+}
+
+# =============================================================================
+# Cluster Outputs
+# =============================================================================
+
+output "cluster_name" {
+  description = "Name of the UC single-node cluster (null when new_cluster is false)"
+  value       = one(databricks_cluster.uc_single_node[*].cluster_name)
+}
+
 # =============================================================================
 # Databricks Account Objects Outputs
 # =============================================================================

@@ -13,18 +13,21 @@ provider "aws" {
   }
 }
 
-# Authenticate using environment variables: https://registry.terraform.io/providers/databricks/databricks/latest/docs#argument-reference
-# export DATABRICKS_CLIENT_ID=CLIENT_ID
-# export DATABRICKS_CLIENT_SECRET=CLIENT_SECRET
+# OAuth M2M (service principal). For terraform plan/apply:
+#   export DATABRICKS_AUTH_TYPE=oauth-m2m
+#   export DATABRICKS_CLIENT_ID=...
+#   export DATABRICKS_CLIENT_SECRET=...   # SP OAuth secret, not a PAT
+#   unset DATABRICKS_HOST DATABRICKS_ACCOUNT_ID DATABRICKS_TOKEN
 
 provider "databricks" {
   alias      = "mws"
   host       = "https://accounts.cloud.databricks.com"
   account_id = var.databricks_account_id
+  auth_type  = "oauth-m2m"
 }
 
 provider "databricks" {
-  alias = "workspace"
-  host  = databricks_mws_workspaces.this.workspace_url
+  alias        = "workspace"
+  host         = databricks_mws_workspaces.this.workspace_url
+  workspace_id = databricks_mws_workspaces.this.workspace_id
 }
-

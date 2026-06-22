@@ -30,7 +30,7 @@ variable "pricing_tier" {
   default     = "PREMIUM"
   validation {
     condition     = contains(["ENTERPRISE", "PREMIUM"], var.pricing_tier)
-    error_message = "resource_prefix must be either 'ENTERPRISE' or 'PREMIUM'."
+    error_message = "pricing_tier must be either 'ENTERPRISE' or 'PREMIUM'."
   }
 }
 
@@ -108,9 +108,15 @@ variable "intra_subnet_cidr" {
 # =============================================================================
 
 variable "security_group_ids" {
-  description = "Existing security group IDs to use. If empty, default VPC security group will be used"
+  description = "Existing security group IDs to use. If empty, a new dedicated security group will be created"
   type        = list(string)
   default     = []
+}
+
+variable "new_security_group_name" {
+  description = "Name for the new security group. If empty, defaults to \"{resource_prefix}-databricks-sg\""
+  type        = string
+  default     = ""
 }
 
 variable "sg_egress_ports" {
@@ -119,15 +125,14 @@ variable "sg_egress_ports" {
   default     = [443, 3306, 2443, 5432, 8443, 8444, 8445, 8446, 8447, 8448, 8449, 8450, 8451]
 }
 
-variable "new_security_group_name" {
-  description = "Name for the new security group. Required when new_security_group is true."
-  type        = string
-  default     = ""
-}
-
 # =============================================================================
 # Unity Catalog Metastore Configuration
 # =============================================================================
+
+variable "aws_account_id" {
+  description = "AWS account ID where resources are deployed (used to construct IAM role ARNs for Unity Catalog)"
+  type        = string
+}
 
 variable "metastore_id" {
   description = "Existing Unity Catalog metastore ID. If empty, a new metastore will be created"
@@ -136,9 +141,55 @@ variable "metastore_id" {
 }
 
 variable "metastore_name" {
-  description = "Name for the Unity Catalog metastore (only used if creating new metastore)"
+  description = "Name for the Unity Catalog metastore. Required only when metastore_id is empty (new metastore)."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.metastore_id != "" || var.metastore_name != ""
+    error_message = "metastore_name is required when creating a new metastore (metastore_id is empty)."
+  }
+}
+# =============================================================================
+# User Defined Catalog
+# =============================================================================
+variable "new_catalog" {
+  description = "Boolean flag to create a user-defined catalog (with its storage credential, IAM role, S3 bucket, and external location). Defaults to false."
+  type        = bool
+  default     = true
+}
+
+variable "catalog_name" {
+  description = "Name for the user defined catalog"
   type        = string
   default     = ""
 }
 
+variable "external_location_name" {
+  description = "Name for the user defined external location"
+  type        = string
+  default     = ""
+}
 
+variable "storage_credential_name" {
+  description = "Name for the user defined storage credential (Unity Catalog). If empty, defaults to \"{resource_prefix}-storage-credential\""
+  type        = string
+  default     = ""
+}
+
+# =============================================================================
+# Cluster Configuration (Optional)
+# =============================================================================
+variable "new_cluster"{
+  description = "Boolean flag to create a new cluster, defaults to false"
+  type        = bool
+  default     = false
+}
+variable "cluster_autotermination_minutes" {
+  description = "Idle minutes before the single-node UC cluster auto-terminates."
+  type        = number
+  default     = 10
+  validation {
+    condition     = var.cluster_autotermination_minutes >= 10
+    error_message = "cluster_autotermination_minutes must be at least 10 (Databricks minimum for auto-termination)."
+  }
+}

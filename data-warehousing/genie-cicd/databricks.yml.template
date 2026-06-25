@@ -1,0 +1,174 @@
+# Databricks Asset Bundle Configuration
+# =====================================
+# This bundle exports Genie spaces from a source workspace and deploys them to a target workspace
+# with catalog/schema replacement.
+#
+# Workflow Modes (controlled by run_mode variable):
+#   export_only:       Export Genie space definition from source workspace
+#   deploy_only:       Deploy Genie space to target workspace (using previously exported JSON)
+#   export_and_deploy: Export + Deploy in a single run (both run in parallel)
+#
+# Cross-workspace usage:
+#   databricks bundle deploy --target dev
+#   databricks bundle run promote_genie --target dev    # export_only from dev
+#
+#   databricks bundle deploy --target prod
+#   databricks bundle run promote_genie --target prod   # deploy_only to prod
+#
+# Same-workspace usage (override run_mode to export_and_deploy):
+#   databricks bundle deploy --target dev
+#   databricks bundle run promote_genie --target dev -p run_mode=export_and_deploy
+
+bundle:
+  name: genie-space-cicd
+
+# ============================================================
+# VARIABLES - Shared defaults (override per target below)
+# ============================================================
+variables:
+  run_mode:
+    description: "Workflow mode: export_only, deploy_only, or export_and_deploy"
+    default: "export_and_deploy"
+
+  source_space_id:
+    description: "Genie Space ID to export from the source workspace"
+    default: ""
+
+  target_space_id:
+    description: "Genie Space ID to deploy to (empty = create new)"
+    default: ""
+
+  warehouse_id:
+    description: "SQL Warehouse ID in the target workspace"
+    default: ""
+
+  genie_space_title:
+    description: "Display title for the Genie Space"
+    default: ""
+
+  source_catalog:
+    description: "Catalog name in the source workspace"
+    default: ""
+
+  source_schema:
+    description: "Schema name in the source workspace"
+    default: ""
+
+  target_catalog:
+    description: "Catalog name in the target workspace"
+    default: ""
+
+  target_schema:
+    description: "Schema name in the target workspace"
+    default: ""
+
+# ============================================================
+# RESOURCES - Single job with conditional task execution
+# ============================================================
+# Uses condition_task gates to control which steps run based on
+# the run_mode job parameter. Two independent branches:
+#
+#   Export branch:  check_export ──(true)──> export_genie_space
+#   Deploy branch:  check_deploy ──(true)──> deploy_genie_space
+#
+# In export_and_deploy mode both branches run in parallel;
+# deploy reads the file already in the bundle (from last export).
+resources:
+  jobs:
+    promote_genie:
+      name: "Promote Genie Space"
+      description: "Exports and/or deploys a Genie space based on run_mode"
+
+      parameters:
+        - name: run_mode
+          default: ${var.run_mode}
+
+      # Uncomment to run on a schedule
+      # schedule:
+      #   quartz_cron_expression: "0 0 9 * * ?"
+      #   timezone_id: "America/Los_Angeles"
+
+      tasks:
+        # ---- Export branch ----
+        - task_key: check_export
+          condition_task:
+            op: NOT_EQUAL
+            left: "{{job.parameters.run_mode}}"
+            right: "deploy_only"
+
+        - task_key: export_genie_space
+          depends_on:
+            - task_key: check_export
+              outcome: "true"
+          notebook_task:
+            notebook_path: ./src/export_genie_definition.ipynb
+            base_parameters:
+              space_id: ${var.source_space_id}
+              output_file: "../genie_definition/genie_space_dev.json"
+          environment_key: default
+
+        # ---- Deploy branch ----
+        - task_key: check_deploy
+          condition_task:
+            op: NOT_EQUAL
+            left: "{{job.parameters.run_mode}}"
+            right: "export_only"
+
+        - task_key: deploy_genie_space
+          depends_on:
+            - task_key: check_deploy
+              outcome: "true"
+          notebook_task:
+            notebook_path: ./src/deploy_genie_space.ipynb
+            base_parameters:
+              space_id: ${var.target_space_id}
+              input_file: "../genie_definition/genie_space_dev.json"
+              output_file: "../genie_definition/genie_space_prod.json"
+              warehouse_id: ${var.warehouse_id}
+              title: ${var.genie_space_title}
+              source_catalog: ${var.source_catalog}
+              target_catalog: ${var.target_catalog}
+              source_schema: ${var.source_schema}
+              target_schema: ${var.target_schema}
+          environment_key: default
+
+      environments:
+        - environment_key: default
+          spec:
+            client: "1"
+
+# ============================================================
+# TARGETS - Environment configurations
+# ============================================================
+# Each target uses a Databricks CLI profile for authentication.
+# Set up profiles: databricks configure --profile <name>
+# ============================================================
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      # TODO: Set your Dev CLI profile name
+      profile: dev-profile
+
+    variables:
+      run_mode: "export_only"
+      source_space_id: "<YOUR_DEV_GENIE_SPACE_ID>"
+      source_catalog: "<YOUR_DEV_CATALOG>"
+      source_schema: "<YOUR_DEV_SCHEMA>"
+
+  prod:
+    mode: production
+    workspace:
+      # TODO: Set your Prod CLI profile name
+      profile: prod-profile
+      # Required for mode: production — update the username below
+      root_path: /Workspace/Users/your-email@company.com/.bundle/${bundle.name}/${bundle.target}
+
+    variables:
+      run_mode: "deploy_only"
+      target_space_id: ""  # Leave empty for first deployment; set after first run
+      warehouse_id: "<YOUR_PROD_WAREHOUSE_ID>"
+      genie_space_title: "<YOUR_GENIE_SPACE_TITLE>"
+      target_catalog: "<YOUR_PROD_CATALOG>"
+      target_schema: "<YOUR_PROD_SCHEMA>"

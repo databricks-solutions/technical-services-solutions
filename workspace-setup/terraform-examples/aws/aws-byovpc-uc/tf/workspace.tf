@@ -32,9 +32,16 @@ resource "databricks_mws_networks" "this" {
   provider           = databricks.mws
   account_id         = var.databricks_account_id
   network_name       = "${var.prefix}-network"
-  security_group_ids = length(var.security_group_ids) > 0 ? var.security_group_ids : [module.vpc.default_security_group_id]
-  subnet_ids         = module.vpc.private_subnets
-  vpc_id             = module.vpc.vpc_id
+  security_group_ids = length(var.security_group_ids) > 0 ? var.security_group_ids : aws_security_group.databricks[*].id
+  subnet_ids         = length(var.subnet_ids) > 0 ? var.subnet_ids : module.vpc[0].private_subnets
+  vpc_id             = var.vpc_id == "" ? module.vpc[0].vpc_id : var.vpc_id
+
+  lifecycle {
+    precondition {
+      condition     = var.vpc_id == "" || length(var.subnet_ids) >= 2
+      error_message = "When `vpc_id` is set, `subnet_ids` must contain at least 2 subnet IDs."
+    }
+  }
 }
 
 resource "time_sleep" "wait_2_minutes" {

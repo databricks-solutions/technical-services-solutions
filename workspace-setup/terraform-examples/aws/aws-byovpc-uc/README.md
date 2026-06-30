@@ -1,11 +1,12 @@
-# AWS BYOVPC with User-Defined Catalog Workspace Setup Guide
+# AWS BYOVPC Workspace Setup Guide
 
-This Terraform example deploys a Databricks workspace on AWS using the "Bring Your Own VPC" (BYOVPC) pattern with Unity Catalog and a user-defined catalog backed by an external location. It provisions the full networking stack (VPC, subnets, NAT Gateway, VPC endpoints, security groups), a cross-account IAM role, an S3 root storage bucket, a Databricks workspace, and configures Unity Catalog with a storage credential, external location, and user-defined catalog backed by a dedicated S3 bucket.
+> [!NOTE]
+> **This is the recommended, canonical AWS BYOVPC template.** It supersedes the
+> legacy [`aws-byovpc`](../aws-byovpc/) example, which is now deprecated.
 
-It is important to note that this deployment creates a new VPC from scratch and currently does not support using an existing VPC.
+This Terraform example deploys a Databricks workspace on AWS using the "Bring Your Own VPC" (BYOVPC) pattern with Unity Catalog. It can either provision a full networking stack (VPC, subnets, NAT Gateway, VPC endpoints, security group) or reuse an existing VPC and subnets, then creates a cross-account IAM role, an S3 root storage bucket, a Databricks workspace, and a Unity Catalog metastore assignment. Optionally, it can also create a user-defined catalog (with its own storage credential, IAM role, S3 bucket, and external location) and a UC-compatible single-node cluster.
 
-### Important
-The difference between this deployment option and the standard option for aws-byovpc is the inclusion of a user-defined catalog and external location. The requirements and authentication procedures remain the same.
+
 
 ## Requirements
 
@@ -20,6 +21,8 @@ The difference between this deployment option and the standard option for aws-by
 ## Before you begin
 
 Configuration values (Databricks account ID, AWS region, VPC and subnet CIDRs, availability zones, metastore options) are defined as variables. Copy `tf/terraform.tfvars.example` to `tf/terraform.tfvars` and set your values there. Terraform loads `terraform.tfvars` automatically. You can also use a file ending in `.auto.tfvars` or pass variables via the command line.
+
+You can either create a new VPC (leave `vpc_id` empty and provide the CIDR/AZ values) or reuse an existing VPC by setting `vpc_id` and `subnet_ids`. Creation of the user-defined catalog (`new_catalog`) and the single-node cluster (`new_cluster`) are both optional and default to disabled.
 
 ## Authenticate
 
@@ -62,20 +65,21 @@ For more information on creating a Databricks service principal, visit the [Data
 
 The code provisions:
 
-1. **VPC** -- A VPC with address space from `vpc_cidr_range`, containing three subnet types:
+1. **VPC** -- When `vpc_id` is empty, a VPC with address space from `vpc_cidr_range`, containing three subnet types (when reusing an existing VPC, set `vpc_id` and `subnet_ids` and these are skipped):
    - **Private subnets** -- CIDRs from `private_subnets_cidr`. Used by Databricks for cluster nodes.
    - **Public subnets** -- CIDRs from `public_subnets_cidr`. Used for the NAT Gateway and internet gateway.
    - **Intra subnets** -- CIDRs from `intra_subnet_cidr`. Used for VPC endpoints (STS, Kinesis).
 2. **NAT Gateway** -- A single NAT Gateway for outbound internet connectivity from private subnets.
 3. **VPC Endpoints** -- Gateway endpoint for S3 and interface endpoints for STS and Kinesis Streams.
-4. **Security group** -- Default VPC security group configured with Databricks-required egress rules (ports 443, 3306, 2443, 8443-8451), internal TCP/UDP egress, and self-ingress. Optionally, you can provide existing security group IDs via `security_group_ids`.
+4. **Security group** -- When `security_group_ids` is empty, a dedicated security group (`{resource_prefix}-databricks-sg`, or `new_security_group_name` if set) configured with Databricks-required egress rules (ports 443, 3306, 2443, 5432, 8443-8451), internal TCP/UDP egress, and self-ingress. Alternatively, provide existing security group IDs via `security_group_ids`.
 5. **Cross-account IAM role** -- An IAM role that grants Databricks access to your AWS account for workspace provisioning.
 6. **Root S3 bucket** -- An S3 bucket for workspace root storage (DBFS), with a Databricks-specific bucket policy.
 7. **Databricks workspace** -- An E2 workspace using the provisioned network, credentials, and storage configuration.
 8. **Unity Catalog metastore** -- Either creates a new metastore (when `metastore_id` is empty) or uses an existing one. The metastore is assigned to the workspace.
-9. **Unity Catalog IAM role and S3 bucket** -- A dedicated IAM role and S3 bucket for the Unity Catalog external location, with appropriate trust and access policies.
-10. **Storage credential and external location** -- A Unity Catalog storage credential backed by the IAM role, and an external location pointing to the catalog S3 bucket.
-11. **User-defined catalog** -- A Unity Catalog catalog backed by the external location's storage.
+9. **Unity Catalog IAM role and S3 bucket** _(optional, when `new_catalog = true`)_ -- A dedicated IAM role and S3 bucket for the Unity Catalog external location, with appropriate trust and access policies.
+10. **Storage credential and external location** _(optional, when `new_catalog = true`)_ -- A Unity Catalog storage credential backed by the IAM role, and an external location pointing to the catalog S3 bucket.
+11. **User-defined catalog** _(optional, when `new_catalog = true`)_ -- A Unity Catalog catalog backed by the external location's storage.
+12. **Single-node cluster** _(optional, when `new_cluster = true`)_ -- A UC-compatible single-node cluster (`SINGLE_USER` mode) using the latest LTS runtime, intended to validate the deployment.
 
 ### Variables
 
@@ -91,21 +95,26 @@ Copy `terraform.tfvars.example` to `terraform.tfvars` in the `tf/` directory and
 | `pricing_tier` | **(Optional)** Pricing tier for the workspace. `ENTERPRISE` or `PREMIUM`. Default: `PREMIUM`. |
 | `region` | **(Required)** AWS region code where resources will be deployed. Must be a [Databricks-supported region](https://docs.databricks.com/en/resources/supported-regions.html). |
 | `tags` | **(Optional)** Additional tags to apply to all AWS resources. Default: `{}`. |
-| `vpc_cidr_range` | **(Optional)** CIDR range for the VPC. Default: `10.0.0.0/16`. |
-| `availability_zones` | **(Required)** List of AWS availability zones for subnet distribution (e.g. `["us-west-2a", "us-west-2b"]`). |
-| `private_subnets_cidr` | **(Required)** List of private subnet CIDR blocks (one per AZ). |
-| `public_subnets_cidr` | **(Required)** List of public subnet CIDR blocks (one per AZ). |
-| `intra_subnet_cidr` | **(Required)** List of intra subnet CIDR blocks for VPC endpoints. |
-| `security_group_ids` | **(Optional)** Existing security group IDs to use. If empty, the VPC default security group is used. Default: `[]`. |
-| `sg_egress_ports` | **(Optional)** List of egress ports to allow in security group rules. Default: `[443, 3306, 2443, 8443, 8444, 8445, 8446, 8447, 8448, 8449, 8450, 8451]`. |
+| `vpc_id` | **(Optional)** Existing VPC ID to reuse. If empty, a new VPC is created. Default: `""`. |
+| `vpc_cidr_range` | **(Optional)** CIDR range for the VPC (only used when creating a new VPC). Default: `10.0.0.0/16`. |
+| `availability_zones` | **(Required when creating a new VPC)** List of AWS availability zones for subnet distribution (e.g. `["us-west-2a", "us-west-2b"]`). |
+| `subnet_ids` | **(Required when reusing an existing VPC)** Existing subnet IDs to use. Default: `[]`. |
+| `private_subnets_cidr` | **(Required when creating a new VPC)** List of private subnet CIDR blocks (one per AZ). |
+| `public_subnets_cidr` | **(Required when creating a new VPC)** List of public subnet CIDR blocks (one per AZ). |
+| `intra_subnet_cidr` | **(Required when creating a new VPC)** List of intra subnet CIDR blocks for VPC endpoints. |
+| `security_group_ids` | **(Optional)** Existing security group IDs to use. If empty, a dedicated security group is created. Default: `[]`. |
+| `new_security_group_name` | **(Optional)** Name for the new security group. If empty, defaults to `{resource_prefix}-databricks-sg`. Default: `""`. |
+| `sg_egress_ports` | **(Optional)** List of egress ports to allow in security group rules. Default: `[443, 3306, 2443, 5432, 8443, 8444, 8445, 8446, 8447, 8448, 8449, 8450, 8451]`. |
 | `aws_account_id` | **(Required)** AWS account ID where resources are deployed (used to construct IAM role ARNs for Unity Catalog). |
 | `metastore_id` | **(Optional)** Existing Unity Catalog metastore ID. Leave empty to create a new one. Default: `""`. |
 | `metastore_name` | **(Optional)** Name for the Unity Catalog metastore. Required when `metastore_id` is empty. Default: `""`. |
-| `catalog_name` | **(Optional)** Unity Catalog catalog name. Default `""` uses `prefix`. |
+| `new_catalog` | **(Optional)** Whether to create a user-defined catalog (storage credential, IAM role, S3 bucket, external location, and catalog). Default: `false`. |
+| `catalog_name` | **(Optional)** Unity Catalog catalog name. Default `""` uses `{prefix}-catalog`. |
 | `external_location_name` | **(Optional)** Unity Catalog external location name. Default `""` uses `{resource_prefix}-external-location`. |
 | `storage_credential_name` | **(Optional)** Unity Catalog storage credential name. Default `""` uses `{resource_prefix}-storage-credential`. |
+| `new_cluster` | **(Optional)** Whether to create a UC-compatible single-node cluster. Default: `false`. |
+| `cluster_autotermination_minutes` | **(Optional)** Idle minutes before the cluster auto-terminates (minimum 10). Default: `10`. |
 
-**Note:** Those three variables default to `""` in `variables.tf`. They cannot default to `prefix` or `resource_prefix` there because Terraform does not allow a variable `default` to reference another variable; fallbacks are applied in `locals` in `unity_catalog.tf`.
 
 ## Deploy
 
@@ -166,7 +175,8 @@ Type `yes` when prompted. Destruction can take several minutes.
 | `terraform plan` fails on permissions | Insufficient AWS IAM permissions | Ensure the identity has permissions to create VPC, IAM, S3, and Security Group resources. |
 | Subnet CIDR errors | CIDRs overlap or don't fit in VPC range | Ensure `private_subnets_cidr`, `public_subnets_cidr`, and `intra_subnet_cidr` are non-overlapping and within `vpc_cidr_range`. |
 | NAT Gateway or outbound connectivity issues | Cluster nodes cannot reach the control plane | Verify the NAT Gateway exists and has a public IP. Check that security group rules allow outbound traffic on required ports. |
-| Cannot delete catalog on destroy | Catalog still has schemas, tables, or volumes | This template already sets `force_destroy = true` on `databricks_catalog.uc_quickstart` and `databricks_external_location`, so a normal `terraform destroy` should remove them. If destroy fails, empty or drop objects in that catalog in the workspace, then run `terraform destroy` again. 
+| Cannot delete catalog on destroy | Catalog still has schemas, tables, or volumes | This template already sets `force_destroy = true` on `databricks_catalog.uc_quickstart` and `databricks_external_location`, so a normal `terraform destroy` should remove them. If destroy fails, empty or drop objects in that catalog in the workspace, then run `terraform destroy` again. |
+| Cluster create fails on `node_type_id` validation | The workspace restricts allowed instance types | Set `node_type_id` (in `cluster.tf`) to an allowed type, or adjust the allowed instance types in the account console. |
 
 ## File Structure
 
@@ -186,13 +196,14 @@ tf/
 ├── root_s3_bucket.tf           # S3 bucket for workspace root storage
 ├── metastore.tf                # Unity Catalog metastore
 ├── unity_catalog.tf            # Storage credential, external location, and user-defined catalog
+├── cluster.tf                  # Optional UC-compatible single-node cluster
 ```
 
 | File | Purpose |
 |------|---------|
 | **versions.tf** | Terraform and provider version constraints (aws, databricks, random, time, null). |
 | **providers.tf** | AWS provider (region-based) and Databricks providers (account-level via MWS endpoint, workspace-level via workspace URL). Auth via environment variables. |
-| **variables.tf** | Input variables (Databricks config, AWS config, network CIDRs, security group options, metastore options) with validation. |
+| **variables.tf** | Input variables (Databricks config, AWS config, network CIDRs, security group options, metastore options, and optional catalog/cluster toggles) with validation. |
 | **terraform.tfvars.example** | Example variable values; copy to `terraform.tfvars` and set your account ID, region, CIDRs, etc. |
 | **workspace.tf** | Databricks MWS resources: storage configuration, credentials, network configuration, and workspace. |
 | **network.tf** | VPC module (address space, public/private/intra subnets, NAT Gateway, IGW) and VPC endpoints (S3 gateway, STS and Kinesis interface endpoints). |
@@ -200,8 +211,9 @@ tf/
 | **credential.tf** | Cross-account IAM role and policy for Databricks workspace provisioning. |
 | **root_s3_bucket.tf** | S3 bucket for workspace root storage (DBFS) with Databricks bucket policy. |
 | **metastore.tf** | Unity Catalog metastore (create new or use existing), region check for existing metastores, and workspace assignment. |
-| **unity_catalog.tf** | Unity Catalog IAM role, S3 bucket, storage credential, external location, and user-defined catalog. |
-| **outputs.tf** | Workspace URL/ID; VPC ID; subnet IDs; NAT gateway IDs; security group ID; S3 bucket names; metastore ID; Unity Catalog catalog, external location, and storage credential names; credentials and network config IDs. |
+| **unity_catalog.tf** | Optional Unity Catalog IAM role, S3 bucket, storage credential, external location, and user-defined catalog (gated by `new_catalog`). |
+| **cluster.tf** | Optional UC-compatible single-node cluster (gated by `new_cluster`). |
+| **outputs.tf** | Workspace URL/ID; VPC ID; subnet IDs; NAT gateway IDs; security group ID; S3 bucket names; metastore ID; Unity Catalog catalog, external location, and storage credential names; cluster name; credentials and network config IDs. |
 
 **Note:** There is no `main.tf` file in this project. Instead, resources are organized into descriptive, purpose-specific files.
 

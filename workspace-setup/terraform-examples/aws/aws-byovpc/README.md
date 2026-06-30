@@ -1,5 +1,12 @@
 # Databricks on AWS with Customer-Managed VPC (BYOVPC)
 
+> [!WARNING]
+> **This template is deprecated and will be removed in a future release.** It is
+> kept temporarily so existing users are not disrupted. For new deployments, use
+> the canonical, actively maintained template: [**`aws-byovpc-uc`**](../aws-byovpc-uc/).
+> That template supersedes this one and adds Unity Catalog, existing-VPC reuse, and
+> optional user-defined catalog and cluster provisioning.
+
 This Terraform configuration deploys a Databricks workspace on AWS using the "Bring Your Own VPC" (BYOVPC) pattern, giving you full control over your network infrastructure.
 
 ## Architecture Overview

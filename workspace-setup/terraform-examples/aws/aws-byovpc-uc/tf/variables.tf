@@ -61,8 +61,14 @@ variable "tags" {
 # Network Configuration
 # =============================================================================
 
+variable "vpc_id" {
+  description = "Existing VPC ID to use. If empty, a new VPC will be created"
+  type        = string
+  default     = ""
+}
+
 variable "vpc_cidr_range" {
-  description = "CIDR range for the VPC"
+  description = "CIDR range for the VPC (only used if creating new VPC)"
   type        = string
   default     = "10.0.0.0/16"
 }
@@ -73,20 +79,26 @@ variable "availability_zones" {
   default     = []
 }
 
+variable "subnet_ids" {
+  description = "Existing subnet IDs to use. If empty, new subnets will be created"
+  type        = list(string)
+  default     = []
+}
+
 variable "private_subnets_cidr" {
-  description = "List of private subnet CIDR blocks"
+  description = "List of private subnet CIDR blocks (only used if creating new VPC)"
   type        = list(string)
   default     = []
 }
 
 variable "public_subnets_cidr" {
-  description = "List of public subnet CIDR blocks"
+  description = "List of public subnet CIDR blocks (only used if creating new VPC)"
   type        = list(string)
   default     = []
 }
 
 variable "intra_subnet_cidr" {
-  description = "List of intra subnet CIDR blocks that contain the VPC endpoints"
+  description = "List of intra subnet CIDR blocks that contain the VPC endpoints (only used if creating new VPC)"
   type        = list(string)
   default     = []
 }
@@ -96,9 +108,15 @@ variable "intra_subnet_cidr" {
 # =============================================================================
 
 variable "security_group_ids" {
-  description = "Existing security group IDs to use. If empty, default VPC security group will be used"
+  description = "Existing security group IDs to use. If empty, a new dedicated security group will be created"
   type        = list(string)
   default     = []
+}
+
+variable "new_security_group_name" {
+  description = "Name for the new security group. If empty, defaults to \"{resource_prefix}-databricks-sg\""
+  type        = string
+  default     = ""
 }
 
 variable "sg_egress_ports" {
@@ -134,6 +152,12 @@ variable "metastore_name" {
 # =============================================================================
 # User Defined Catalog
 # =============================================================================
+variable "new_catalog" {
+  description = "Boolean flag to create a user-defined catalog (with its storage credential, IAM role, S3 bucket, and external location). Defaults to false."
+  type        = bool
+  default     = true
+}
+
 variable "catalog_name" {
   description = "Name for the user defined catalog"
   type        = string
@@ -150,4 +174,22 @@ variable "storage_credential_name" {
   description = "Name for the user defined storage credential (Unity Catalog). If empty, defaults to \"{resource_prefix}-storage-credential\""
   type        = string
   default     = ""
+}
+
+# =============================================================================
+# Cluster Configuration (Optional)
+# =============================================================================
+variable "new_cluster"{
+  description = "Boolean flag to create a new cluster, defaults to false"
+  type        = bool
+  default     = false
+}
+variable "cluster_autotermination_minutes" {
+  description = "Idle minutes before the single-node UC cluster auto-terminates."
+  type        = number
+  default     = 10
+  validation {
+    condition     = var.cluster_autotermination_minutes >= 10
+    error_message = "cluster_autotermination_minutes must be at least 10 (Databricks minimum for auto-termination)."
+  }
 }

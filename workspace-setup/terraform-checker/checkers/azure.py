@@ -756,7 +756,11 @@ class AzureChecker(BaseChecker):
                         message=sub.subscription_id
                     ))
 
-                    if str(sub.state) != "SubscriptionState.ENABLED":
+                    # Normalize the state across SDK builds: it may be an enum
+                    # (SubscriptionState.ENABLED), an enum with a .value ("Enabled"),
+                    # or a plain string — all should read as "enabled".
+                    state_str = str(getattr(sub.state, "value", sub.state)).split(".")[-1].strip().lower()
+                    if state_str != "enabled":
                         category.add_result(CheckResult(
                             name="Subscription State",
                             status=CheckStatus.WARNING,

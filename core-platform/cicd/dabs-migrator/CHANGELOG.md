@@ -6,6 +6,27 @@ Entries are reverse-chronological. Each entry: date, what changed, **why** (with
 
 ---
 
+## 2026-07-01 — Fixed `pipelines.md` stale/misplaced schema block; documented the safe refresh procedure
+
+**Change:** Repaired `resources/pipelines.md` after the 2026-06-30 CLI v1.5.0 refresh corrupted it, and recorded the procedure future refreshes must follow (below).
+
+**The failure mode:** the v1.5.0 refresh replaced each doc's schema block by matching *the first* ```` ```yaml ```` block in the file. That anchor is positional, not semantic. It holds for 29 of the 30 resource docs because they contain exactly one ```` ```yaml ```` block, which happens to be the one under `## Complete schema reference`. But `pipelines.md` is the sole exception: it has a **second** ```` ```yaml ```` block earlier in the file — a small "Mixed example" `libraries:` snippet under `## Library entry kind`. The "first block wins" logic therefore (1) overwrote that teaching snippet with the full ~200-line schema dump, and (2) left the real `## Complete schema reference` block untouched — i.e. still on the **v0.298.0** schema. The stale block mis-described three fields: `auto_full_refresh_policy.enabled` (`<...(nested)>` instead of `<bool>`), `restart_window.days_of_week` (`array[enum]` instead of `array[string]`), and `gateway_storage_catalog` (missing its `PRIVATE PREVIEW` flag). A user generating a pipeline from the stale block would write `enabled:` as a nested object and fail `databricks bundle validate` — the exact failure this skill exists to prevent. Nothing errored during the refresh, so it shipped silently.
+
+**Why it matters for correctness:** the skill's core promise is that generated YAML validates first try because every field comes from the live `databricks bundle schema`. A positional edit anchor breaks that promise the moment a doc grows a second code block.
+
+**The rule — how to refresh the schema reference safely (any future CLI bump):**
+
+1. **Anchor on the heading, never on position.** Replace only the ```` ```yaml ```` block that lives inside the `## Complete schema reference` section. Split the file at that heading, bound the edit by the *next* `## ` heading, and replace the single fenced block within that section (`count=1`). Do **not** use "first ```` ```yaml ```` block in the file" — `pipelines.md` (and any future doc with an example snippet) will be edited in the wrong place.
+2. **Fail loud.** Assert the `## Complete schema reference` heading exists and that exactly one ```` ```yaml ```` block is found inside that section. If either is false, stop with an error rather than editing the wrong block.
+3. **Validate after refreshing.** For every doc, re-extract the block under `## Complete schema reference` and confirm it equals what the generator produces from the current schema. Any mismatch = a stale/misplaced block; treat it as a hard failure. This check alone would have caught the `pipelines.md` regression immediately.
+4. **Preserve all other prose and code blocks.** Teaching snippets (e.g. the `pipelines.md` `libraries:` "Mixed example"), `## Common variations`, `## Source code`, and every `Required fields:` line are hand-written and must survive the refresh untouched.
+
+**Where:**
+- `resources/pipelines.md` — "Mixed example" snippet restored under `## Library entry kind`; `## Complete schema reference` block regenerated against the v1.5.0 schema.
+- This entry — the refresh procedure and the failure mode that motivates it.
+
+---
+
 ## 2026-06-30 — Schema reference upgraded to Databricks CLI v1.5.0; 7 new resource types added
 
 **Change:** Regenerated the authoritative bundle schema with Databricks CLI v1.5.0 (`databricks bundle schema`) and refreshed `dabs-schema.json` (was v0.298.0). Added reference docs for the 7 resource types that v1.5.0 introduces and the v0.298.0 schema lacked:

@@ -2,6 +2,8 @@
 
 CLI tool to validate **credentials, permissions, and resources** before deploying Databricks workspaces via Terraform on **AWS, Azure, and GCP**.
 
+> **Just want to run it and send back a report?** See **[CUSTOMER_QUICKSTART.md](CUSTOMER_QUICKSTART.md)** — one page, one command (`./run.sh` on macOS/Linux, `.\run.ps1` on Windows). The rest of this README is reference material for advanced use and CI/CD.
+
 ## Why Use This?
 
 Before running `terraform apply`, this tool verifies:

@@ -9,6 +9,7 @@ Render it anywhere Markdown is supported (GitHub, Slack, email, docs) or share
 the .md file directly.
 """
 
+import json
 from datetime import datetime
 from typing import List, Optional
 
@@ -20,9 +21,10 @@ from checkers.base import CheckReport, CheckResult, CheckStatus, CheckCategory
 # CheckResult.remediation.
 _GENERIC_FIX = {
     "aws": (
-        "Ask your AWS administrator to grant the missing IAM permission, or "
-        "attach the **Suggested IAM policy** generated at the end of the text "
-        "report. Then re-run this pre-check."
+        "Ask your AWS administrator to grant the missing IAM permission(s) shown "
+        "under **What we saw** above, then re-run this pre-check. (Tip: running "
+        "with the default text report also writes a ready-to-paste "
+        "`suggested-policy.json`.)"
     ),
     "azure": (
         "Ask your Azure administrator to assign the **Contributor** role (or "
@@ -174,6 +176,26 @@ class MarkdownReporter:
             lines.append("")
         return lines
 
+    def _suggested_policy_section(self, policy: dict) -> List[str]:
+        """Render a ready-to-paste IAM policy (AWS) covering the denied actions,
+        so the fix is inline in the report the customer already has open."""
+        return [
+            "## 📋 Suggested IAM policy",
+            "",
+            "A ready-to-use policy covering the denied action(s) above. Give it to "
+            "your AWS administrator to attach to the deploying user/role, then "
+            "re-run this pre-check:",
+            "",
+            "1. AWS Console → **IAM → Policies → Create policy**",
+            "2. Open the **JSON** tab and paste the block below",
+            "3. Attach the policy to the user or role running the deployment",
+            "",
+            "```json",
+            json.dumps(policy, indent=2),
+            "```",
+            "",
+        ]
+
     def _notes_block(self, results: List[tuple]) -> List[str]:
         """Informational items — tool limitations / context, NOT action items.
         Rendered as plain bullets so they don't read as scary 'fix this' tasks."""
@@ -242,7 +264,7 @@ class MarkdownReporter:
         return lines
 
     # ----- public API ----------------------------------------------------
-    def generate(self, report: CheckReport) -> str:
+    def generate(self, report: CheckReport, suggested_policy: Optional[dict] = None) -> str:
         icon, headline, summary = self._verdict(report)
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
@@ -282,6 +304,8 @@ class MarkdownReporter:
                 "These will block the deployment. Each item shows what we observed "
                 "and how to resolve it.",
             )
+            if suggested_policy and suggested_policy.get("Statement"):
+                lines += self._suggested_policy_section(suggested_policy)
 
         # Split warnings: items with a concrete remediation are real "review"
         # action items; the rest are informational notes (tool couldn't verify,

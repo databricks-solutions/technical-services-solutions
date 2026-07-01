@@ -126,5 +126,51 @@ def test_compatibility_and_not_validated_are_prominent_sections():
     assert "DEPLOYMENT COMPATIBILITY" not in md.split("Full check detail")[1]
 
 
+def test_suggested_policy_embedded_when_provided():
+    # AWS blocker + a suggested policy -> the policy is rendered INLINE in the
+    # markdown report (not just referenced as a separate text-mode artifact).
+    report = _report_with(
+        CheckResult(name="s3:CreateBucket", status=CheckStatus.NOT_OK, message="DENIED"),
+    )
+    policy = {
+        "Version": "2012-10-17",
+        "Statement": [{"Sid": "DatabricksS3Access", "Effect": "Allow",
+                       "Action": ["s3:CreateBucket"], "Resource": "*"}],
+    }
+    md = MarkdownReporter().generate(report, suggested_policy=policy)
+    assert "## 📋 Suggested IAM policy" in md
+    assert "```json" in md
+    assert '"s3:CreateBucket"' in md
+    assert "IAM → Policies → Create policy" in md
+
+
+def test_suggested_policy_absent_when_not_provided():
+    # No policy passed -> no policy section (e.g. clean run, or non-AWS).
+    report = _report_with(
+        CheckResult(name="s3:CreateBucket", status=CheckStatus.NOT_OK, message="DENIED"),
+    )
+    md = MarkdownReporter().generate(report)
+    assert "Suggested IAM policy" not in md
+
+
+def test_generate_suggested_policy_collects_denied_actions():
+    # The generator is a pure function of the report (no cloud calls), so we can
+    # drive it with a fabricated blocker report — this is what feeds the section.
+    from checkers.aws import AWSChecker
+
+    report = CheckReport(cloud="AWS", region="us-east-1")
+    cat = CheckCategory(name="STORAGE")
+    cat.add_result(CheckResult(name="s3:CreateBucket", status=CheckStatus.NOT_OK, message="DENIED"))
+    cat.add_result(CheckResult(name="iam:CreateRole", status=CheckStatus.NOT_OK, message="DENIED"))
+    cat.add_result(CheckResult(name="s3:PutObject", status=CheckStatus.OK, message="ok"))  # ignored
+    report.add_category(cat)
+
+    policy = AWSChecker(region="us-east-1").generate_suggested_policy(report)
+    actions = {a for stmt in policy["Statement"] for a in stmt["Action"]}
+    assert "s3:CreateBucket" in actions
+    assert "iam:CreateRole" in actions
+    assert "s3:PutObject" not in actions          # OK checks are not in the policy
+
+
 def test_export_path_is_same_class():
     assert MarkdownReporter is DirectMD

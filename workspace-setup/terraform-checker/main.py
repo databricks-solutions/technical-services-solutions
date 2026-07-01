@@ -794,8 +794,14 @@ def main(
     # Markdown output mode (customer-friendly report)
     if fmt == "markdown":
         md_reporter = MarkdownReporter()
+        suggested_policy = None
         if len(reports) == 1:
-            md_content = md_reporter.generate(reports[0])
+            # For AWS runs with blockers, attach a ready-to-paste IAM policy so
+            # the markdown report (the customer-facing artifact) is actionable on
+            # its own — matching what the text report has always produced.
+            if aws_checker and cloud == "aws" and reports[0].total_not_ok > 0:
+                suggested_policy = aws_checker.generate_suggested_policy(reports[0])
+            md_content = md_reporter.generate(reports[0], suggested_policy=suggested_policy)
         else:
             md_content = md_reporter.generate_all_clouds(reports)
         click.echo(md_content)
@@ -803,6 +809,12 @@ def main(
             with open(output, 'w') as f:
                 f.write(md_content)
             logger.info("Markdown report saved to %s", output)
+        # Also drop the policy as a standalone JSON file for easy Console import.
+        if suggested_policy:
+            policy_file = (output.rsplit('.', 1)[0] + '-policy.json') if output else 'suggested-policy.json'
+            with open(policy_file, 'w') as f:
+                json.dump(suggested_policy, f, indent=2)
+            logger.info("Suggested IAM policy saved to %s", policy_file)
         sys.exit(exit_code)
 
     # JSON output mode

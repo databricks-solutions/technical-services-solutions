@@ -7,12 +7,43 @@ Job API: https://docs.databricks.com/api/workspace/jobs/create
 
 ## Source code
 
-**If migrating an existing job:** clone the original notebook(s) and any referenced scripts verbatim into `src/{{ job_name }}/`. Keep filenames, comments, and logic intact. Do not insert `# TODO` placeholders or `# Originally sourced from:` headers — the user's working code must survive the migration unchanged. Update the `notebook_path` / `sql_task.file.path` entries above to match the cloned filenames.
+**If migrating an existing job:** clone the original notebook(s) and any referenced scripts verbatim into `src/{{ job_name }}/`. Keep filenames, comments, and logic intact. Do not insert `# TODO` placeholders or `# Originally sourced from:` headers — the user's working code must survive the migration unchanged. Update the `notebook_path` / `sql_task.file.path` entries above to match the cloned filenames — including the file extension (see below).
 
 **Stubs (only when starting from scratch):**
 
 - `notebook.py` — entrypoint notebook referenced by the task above.
 - Add `.sql` / `.py` files for additional tasks; reference each via its own task block.
+
+## Notebook path must carry a file extension
+
+A job exported from the workspace stores `notebook_task.notebook_path` as an **extensionless workspace path** (e.g. `.../01-Bike-Data-generator`). In a bundle the notebook is a **local file** under `src/`, and the CLI requires the `notebook_path` to include the source file's extension. Copying the workspace path verbatim therefore fails validation:
+
+```
+Error: notebook "src/<name>/01-Bike-Data-generator" not found.
+Did you mean "src/<name>/01-Bike-Data-generator.py"?
+Local notebook references are expected to contain one of the following
+file extensions: [.py, .r, .scala, .sql, .ipynb]
+```
+
+**The rule:** when the task source is a local file (`source: WORKSPACE` resolving to a path under `src/`), the `notebook_path` **must** end with the extension of the file you actually cloned into `src/<name>/`. Pick the extension by what the source file is:
+
+| Source file kind | Extension |
+|---|---|
+| Databricks notebook (exported as source) | `.py` |
+| Jupyter notebook | `.ipynb` |
+| plain Python script | `.py` |
+| R / Scala / SQL source | `.r` / `.scala` / `.sql` |
+
+Databricks notebooks export as `.py` source files (the `# Databricks notebook source` magic-comment format), so a migrated Databricks notebook task points at `../../src/{{ job_name }}/01-Bike-Data-generator.py`. Only use `.ipynb` when the cloned file is a genuine Jupyter `.ipynb`. The `notebook_path` in the YAML must match the on-disk filename in `src/<name>/` exactly, extension included.
+
+Example — job with a notebook task:
+
+```yaml
+tasks:
+  - task_key: generate_data
+    notebook_task:
+      notebook_path: ../../src/{{ job_name }}/01-Bike-Data-generator.py
+```
 
 ## Common variations
 

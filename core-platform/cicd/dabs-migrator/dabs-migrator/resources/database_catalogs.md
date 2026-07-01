@@ -14,8 +14,8 @@ resources:
     <database_catalog_name>:
       create_database_if_not_exists: <bool>  # bool
       database_instance_name: <string>  # REQUIRED | string | The name of the DatabaseInstance housing the database.
-      database_name: <string>  # REQUIRED | string | The name of the database (in a instance) associated with the catalog.
-      lifecycle:  # object | Lifecycle is a struct that contains the lifecycle settings for a resource. It co
+      database_name: <string>  # REQUIRED | string | The name of the database (in an instance) associated with the catalog.
+      lifecycle:  # object | Settings that control the deployment lifecycle of the resource, such as preventi
         prevent_destroy: <bool>  # bool | Lifecycle setting to prevent the resource from being destroyed.
       name: <string>  # REQUIRED | string | The name of the catalog in UC.
 ```

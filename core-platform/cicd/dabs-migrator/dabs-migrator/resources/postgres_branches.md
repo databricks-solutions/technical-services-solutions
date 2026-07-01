@@ -13,15 +13,18 @@ resources:
   postgres_branches:
     <postgres_branch_name>:
       branch_id: <string>  # REQUIRED | string
-      expire_time:  # object
+      expire_time:  # map[string, string]
+        <key>: <value>
       is_protected: <bool>  # bool
-      lifecycle:  # object
+      lifecycle:  # object | Settings that control the deployment lifecycle of the resource, such as preventi
         prevent_destroy: <bool>  # bool | Lifecycle setting to prevent the resource from being destroyed.
       no_expiry: <bool>  # bool
       parent: <string>  # REQUIRED | string
+      replace_existing: <bool>  # bool
       source_branch: <string>  # string
       source_branch_lsn: <string>  # string
-      source_branch_time:  # object
+      source_branch_time:  # map[string, string]
+        <key>: <value>
       ttl: <string>  # string
 ```
 

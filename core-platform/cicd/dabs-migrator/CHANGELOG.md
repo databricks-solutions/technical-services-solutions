@@ -6,6 +6,32 @@ Entries are reverse-chronological. Each entry: date, what changed, **why** (with
 
 ---
 
+## 2026-06-30 — Schema reference upgraded to Databricks CLI v1.5.0; 7 new resource types added
+
+**Change:** Regenerated the authoritative bundle schema with Databricks CLI v1.5.0 (`databricks bundle schema`) and refreshed `dabs-schema.json` (was v0.298.0). Added reference docs for the 7 resource types that v1.5.0 introduces and the v0.298.0 schema lacked:
+
+- `genie_spaces` — AI/BI Genie spaces (`resources/genie_spaces.md`)
+- `postgres_catalogs` — Lakebase Postgres catalog → UC catalog (`resources/postgres_catalogs.md`)
+- `postgres_databases` — logical Postgres database on a branch (`resources/postgres_databases.md`)
+- `postgres_roles` — Databricks-managed identity → Postgres role (`resources/postgres_roles.md`)
+- `postgres_synced_tables` — UC table → Lakebase Postgres sync (`resources/postgres_synced_tables.md`)
+- `vector_search_endpoints` — Vector Search serving endpoint (`resources/vector_search_endpoints.md`)
+- `vector_search_indexes` — Delta Sync / Direct Access vector index (`resources/vector_search_indexes.md`)
+
+The `## Complete schema reference` block in all 23 pre-existing resource docs was also regenerated against the v1.5.0 schema. This pulled in newer fields and flags — e.g. `jobs` now lists `dbt_platform_task`, `power_bi_task`, and `usage_policy_id`, and `pipelines.target` is now explicitly flagged `DEPRECATED` (reinforcing the existing "use `schema:` not `target:`" hard rule). All hand-written prose sections (`## Source code`, `## Common variations`, `## What to ask the user`, etc.) and every `Required fields:` line were preserved unchanged — the required-field sets in the v1.5.0 schema matched the existing prose exactly, so no required-field drift occurred.
+
+**Why:** The skill's core promise is that generated YAML passes `databricks bundle validate` on the first try because every field is taken from the live bundle schema. Users running newer CLI versions (v1.5.0 ships these 7 resource types) would otherwise hit "unknown resource type" or miss fields the skill could not describe. Keeping the schema docs pinned to v0.298.0 silently eroded that guarantee as the CLI moved on.
+
+**How the blocks were produced:** the existing schema blocks were originally emitted by a generator (the format — flattened YAML, `# REQUIRED | DEPRECATED | PRIVATE PREVIEW | <type> | <description truncated to 80 chars>` comments, `<...(nested)>` / `<...(circular)>` / `<any>` collapse markers — is mechanical). The legacy blocks were internally inconsistent about *when* a complex type collapses to `<...(nested)>` (e.g. `alerts.subscriptions` collapsed while the structurally identical `jobs.depends_on` expanded), so byte-for-byte reproduction was impossible. The refresh standardizes on one uniform nesting cap. The block content (field names, types, required/deprecated/preview flags, enums, descriptions) is the part that matters for validation and is fully v1.5.0-accurate; the collapse depth is only a readability aid.
+
+**Where:**
+- `dabs-schema.json` — replaced in place with the v1.5.0 `databricks bundle schema` output.
+- `resources/` — 7 new files added; `## Complete schema reference` block refreshed in all 23 existing files.
+- `SKILL.md` — supported-resource-types table extended with the 7 new YAML keys.
+- `README.md` — supported-assets table grown to 30 rows, CLI version column bumped to v1.5.0, changelog-summary row added.
+
+---
+
 ## 2026-05-06 — CI/CD variable naming: environment-scoped host and short bundle var names
 
 **Change:** Across all 6 CI/CD reference files, the stored variable names were simplified. `DATABRICKS_HOST_STAGING` and `DATABRICKS_HOST_PROD` were replaced by a single `DATABRICKS_HOST` that is scoped per CI/CD environment (GitHub environment secrets, Azure DevOps environment-scoped variable groups, GitLab environment-scoped variables, Bitbucket deployment variables, etc.). `BUNDLE_VAR_catalog` and `BUNDLE_VAR_schema` in the secret store were renamed to `catalog` and `schema` — the `BUNDLE_VAR_` prefix is applied only at the pipeline mapping level (e.g. `BUNDLE_VAR_catalog: $(catalog)`).

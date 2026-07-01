@@ -108,19 +108,26 @@ One reference doc per resource type lives under `resources/`. Read the relevant 
 | `database_instances` | [resources/database_instances.md](resources/database_instances.md) |
 | `experiments` | [resources/experiments.md](resources/experiments.md) |
 | `external_locations` | [resources/external_locations.md](resources/external_locations.md) |
+| `genie_spaces` | [resources/genie_spaces.md](resources/genie_spaces.md) |
 | `jobs` | [resources/jobs.md](resources/jobs.md) |
 | `models` | [resources/models.md](resources/models.md) |
 | `model_serving_endpoints` | [resources/model_serving_endpoints.md](resources/model_serving_endpoints.md) |
 | `pipelines` | [resources/pipelines.md](resources/pipelines.md) |
 | `postgres_branches` | [resources/postgres_branches.md](resources/postgres_branches.md) |
+| `postgres_catalogs` | [resources/postgres_catalogs.md](resources/postgres_catalogs.md) |
+| `postgres_databases` | [resources/postgres_databases.md](resources/postgres_databases.md) |
 | `postgres_endpoints` | [resources/postgres_endpoints.md](resources/postgres_endpoints.md) |
 | `postgres_projects` | [resources/postgres_projects.md](resources/postgres_projects.md) |
+| `postgres_roles` | [resources/postgres_roles.md](resources/postgres_roles.md) |
+| `postgres_synced_tables` | [resources/postgres_synced_tables.md](resources/postgres_synced_tables.md) |
 | `quality_monitors` | [resources/quality_monitors.md](resources/quality_monitors.md) |
 | `registered_models` | [resources/registered_models.md](resources/registered_models.md) |
 | `schemas` | [resources/schemas.md](resources/schemas.md) |
 | `secret_scopes` | [resources/secret_scopes.md](resources/secret_scopes.md) |
 | `sql_warehouses` | [resources/sql_warehouses.md](resources/sql_warehouses.md) |
 | `synced_database_tables` | [resources/synced_database_tables.md](resources/synced_database_tables.md) |
+| `vector_search_endpoints` | [resources/vector_search_endpoints.md](resources/vector_search_endpoints.md) |
+| `vector_search_indexes` | [resources/vector_search_indexes.md](resources/vector_search_indexes.md) |
 | `volumes` | [resources/volumes.md](resources/volumes.md) |
 
 ## CI/CD tools

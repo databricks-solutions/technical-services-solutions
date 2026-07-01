@@ -11,21 +11,25 @@ Required fields: `name`
 ```yaml
 resources:
   model_serving_endpoints:
-    <model_serving_endpoint_name>:
+    <endpoint_name>:
       ai_gateway:  # object | The AI Gateway configuration for the serving endpoint. NOTE: External model, pro
         fallback_config:  # object | Configuration for traffic fallback which auto fallbacks to other served entities
           enabled: <bool>  # REQUIRED | bool | Whether to enable traffic fallback. When a served entity in the serving endpoint
         guardrails:  # object | Configuration for AI Guardrails to prevent unwanted data and unsafe data in requ
           input:  # object | Configuration for input guardrail filters.
-            invalid_keywords: <...(nested)>  # DEPRECATED | ...(nested) | List of invalid keywords.
+            invalid_keywords:  # DEPRECATED | array[...(nested)] | List of invalid keywords.
+              - <value>
             pii: <...(nested)>  # ...(nested) | Configuration for guardrail PII filter.
-            safety: <...(nested)>  # ...(nested) | Indicates whether the safety filter is enabled.
-            valid_topics: <...(nested)>  # DEPRECATED | ...(nested) | The list of allowed topics.
+            safety: <bool>  # bool | Indicates whether the safety filter is enabled.
+            valid_topics:  # DEPRECATED | array[...(nested)] | The list of allowed topics.
+              - <value>
           output:  # object | Configuration for output guardrail filters.
-            invalid_keywords: <...(nested)>  # DEPRECATED | ...(nested) | List of invalid keywords.
+            invalid_keywords:  # DEPRECATED | array[...(nested)] | List of invalid keywords.
+              - <value>
             pii: <...(nested)>  # ...(nested) | Configuration for guardrail PII filter.
-            safety: <...(nested)>  # ...(nested) | Indicates whether the safety filter is enabled.
-            valid_topics: <...(nested)>  # DEPRECATED | ...(nested) | The list of allowed topics.
+            safety: <bool>  # bool | Indicates whether the safety filter is enabled.
+            valid_topics:  # DEPRECATED | array[...(nested)] | The list of allowed topics.
+              - <value>
         inference_table_config:  # object | Configuration for payload logging using inference tables.
           catalog_name: <string>  # string | The name of the catalog in Unity Catalog. Required when enabling inference table
           enabled: <bool>  # bool | Indicates whether the inference table is enabled.
@@ -34,15 +38,15 @@ resources:
         rate_limits:  # array[object] | Configuration for rate limits which can be set to limit endpoint traffic.
           -
             calls: <int>  # int | Used to specify how many calls are allowed for a key within the renewal_period.
-            key: <...(nested)>  # ...(nested) | Key field for a rate limit. Currently, 'user', 'user_group, 'service_principal',
+            key: user  # enum: user, endpoint, user_group, service_principal | Key field for a rate limit. Currently, 'user', 'user_group, 'service_principal',
             principal: <string>  # string | Principal field for a user, user group, or service principal to apply rate limit
-            renewal_period: <...(nested)>  # REQUIRED | ...(nested) | Renewal period field for a rate limit. Currently, only 'minute' is supported.
+            renewal_period: minute  # REQUIRED | enum: minute | Renewal period field for a rate limit. Currently, only 'minute' is supported.
             tokens: <int>  # int | Used to specify how many tokens are allowed for a key within the renewal_period.
         usage_tracking_config:  # object | Configuration to enable usage tracking using system tables.
           enabled: <bool>  # bool | Whether to enable usage tracking.
       budget_policy_id: <string>  # string | The budget policy to be applied to the serving endpoint.
       config:  # object | The core config of the serving endpoint.
-        auto_capture_config:  # object | Configuration for Inference Tables which automatically logs requests and respons
+        auto_capture_config:  # DEPRECATED | object | Configuration for legacy Inference Tables which automatically log requests and r
           catalog_name: <string>  # string | The name of the catalog in Unity Catalog. NOTE: On update, you cannot change the
           enabled: <bool>  # bool | Indicates whether the inference table is enabled.
           schema_name: <string>  # string | The name of the schema in Unity Catalog. NOTE: On update, you cannot change the
@@ -64,7 +68,7 @@ resources:
             provisioned_model_units: <int>  # int | The number of model units provisioned.
             scale_to_zero_enabled: <bool>  # bool | Whether the compute resources for the served entity should scale down to zero.
             workload_size: <string>  # string | The workload size of the served entity. The workload size corresponds to a range
-            workload_type: <...(nested)>  # ...(nested) | The workload type of the served entity. The workload type selects which type of
+            workload_type: CPU  # enum: CPU, GPU_MEDIUM, GPU_SMALL, GPU_LARGE, MULTIGPU_MEDIUM, GPU_XLARGE | The workload type of the served entity. The workload type selects which type of
         served_models:  # array[object] | (Deprecated, use served_entities instead) The list of served models under the se
           -
             burst_scaling_enabled: <bool>  # bool | Whether burst scaling is enabled. When enabled (default), the endpoint can autom
@@ -81,25 +85,28 @@ resources:
             provisioned_model_units: <int>  # int | The number of model units provisioned.
             scale_to_zero_enabled: <bool>  # REQUIRED | bool | Whether the compute resources for the served entity should scale down to zero.
             workload_size: <string>  # string | The workload size of the served entity. The workload size corresponds to a range
-            workload_type: <...(nested)>  # ...(nested) | The workload type of the served entity. The workload type selects which type of
+            workload_type: CPU  # enum: CPU, GPU_MEDIUM, GPU_SMALL, GPU_LARGE, MULTIGPU_MEDIUM, GPU_XLARGE | The workload type of the served entity. The workload type selects which type of
         traffic_config:  # object | The traffic configuration associated with the serving endpoint config.
-          routes:  # array[...(nested)] | The list of routes that define traffic to each served entity.
-            - <value>
+          routes:  # array[object] | The list of routes that define traffic to each served entity.
+            -
+              served_entity_name: <string>  # string
+              served_model_name: <string>  # string | The name of the served model this route configures traffic for.
+              traffic_percentage: <int>  # REQUIRED | int | The percentage of endpoint traffic to send to this route. It must be an integer
       description: <string>  # string
       email_notifications:  # object | Email notification settings.
         on_update_failure:  # array[string] | A list of email addresses to be notified when an endpoint fails to update its co
           - <value>
         on_update_success:  # array[string] | A list of email addresses to be notified when an endpoint successfully updates i
           - <value>
-      lifecycle:  # object | Lifecycle is a struct that contains the lifecycle settings for a resource. It co
+      lifecycle:  # object | Settings that control the deployment lifecycle of the resource, such as preventi
         prevent_destroy: <bool>  # bool | Lifecycle setting to prevent the resource from being destroyed.
       name: <string>  # REQUIRED | string | The name of the serving endpoint. This field is required and must be unique acro
-      permissions:  # array[object]
+      permissions:  # array[object] | The permissions to apply to this resource.
         -
-          group_name: <string>  # string
-          level: CAN_MANAGE  # REQUIRED | enum: CAN_MANAGE, CAN_QUERY, CAN_VIEW
-          service_principal_name: <string>  # string
-          user_name: <string>  # string
+          group_name: <string>  # string | The name of the group granted the permission level.
+          level: CAN_MANAGE  # REQUIRED | enum: CAN_MANAGE, CAN_QUERY, CAN_VIEW | The permission level to apply. The allowed levels depend on the resource type.
+          service_principal_name: <string>  # string | The name of the service principal granted the permission level.
+          user_name: <string>  # string | The name of the user granted the permission level.
       rate_limits:  # DEPRECATED | array[object] | Rate limits to be applied to the serving endpoint. NOTE: this field is deprecate
         -
           calls: <int>  # REQUIRED | int | Used to specify how many calls are allowed for a key within the renewal_period.

@@ -47,13 +47,13 @@ resources:
       environments:  # array[object] | A list of task execution environment specifications that can be referenced by se
         -
           environment_key: <string>  # REQUIRED | string | The key of an environment. It has to be unique within a job.
-          spec:  # object
+          spec:  # object | The environment entity used to preserve serverless environment side panel, jobs'
             base_environment: <string>  # string | The base environment this environment is built on top of. A base environment def
             client: <string>  # DEPRECATED | string | Use `environment_version` instead.
             dependencies:  # array[...(nested)] | List of pip dependencies, as supported by the version of pip in this environment
               - <value>
             environment_version: <string>  # string | Either `environment_version` or `base_environment` needs to be provided. Environ
-            java_dependencies:  # array[...(nested)]
+            java_dependencies:  # array[...(nested)] | List of java dependencies. Each dependency is a string representing a java libra
               - <value>
       git_source:  # object | An optional specification for a remote Git repository containing the source code
         git_branch: <string>  # string | Name of the branch to be checked out and used by this job. This field cannot be
@@ -64,11 +64,11 @@ resources:
         sparse_checkout:  # object
           patterns:  # array[string] | List of patterns to include for sparse checkout.
             - <value>
-      health:  # object
+      health:  # object | An optional set of health rules that can be defined for this job.
         rules:  # array[object]
           -
-            metric: <...(nested)>  # REQUIRED | ...(nested)
-            op: <...(nested)>  # REQUIRED | ...(nested)
+            metric: RUN_DURATION_SECONDS  # REQUIRED | enum: RUN_DURATION_SECONDS, STREAMING_BACKLOG_BYTES, STREAMING_BACKLOG_RECORDS, STREAMING_BACKLOG_SECONDS, STREAMING_BACKLOG_FILES | Specifies the health metric that is being evaluated for a particular health rule
+            op: GREATER_THAN  # REQUIRED | enum: GREATER_THAN | Specifies the operator used to compare the health metric value with the specifie
             value: <int>  # REQUIRED | int | Specifies the threshold value that the health metric should obey to satisfy the
       job_clusters:  # array[object] | A list of job cluster specifications that can be shared and reused by tasks of t
         -
@@ -83,8 +83,8 @@ resources:
             cluster_name: <string>  # string | Cluster name requested by the user. This doesn't have to be unique.
             custom_tags:  # map[string, string] | Additional tags for cluster resources. Databricks will tag all cluster resources
               <key>: <value>
-            data_security_mode: <...(nested)>  # ...(nested)
-            docker_image: <...(nested)>  # ...(nested)
+            data_security_mode: NONE  # enum: NONE, SINGLE_USER, USER_ISOLATION, LEGACY_TABLE_ACL, LEGACY_PASSTHROUGH, LEGACY_SINGLE_USER, ... | Data security mode decides what data governance model to use when accessing data
+            docker_image: <...(nested)>  # ...(nested) | Custom docker image BYOC
             driver_instance_pool_id: <string>  # string | The optional ID of the instance pool for the driver of the cluster belongs.
             driver_node_type_flexibility: <...(nested)>  # ...(nested) | Flexible node type configuration for the driver node.
             driver_node_type_id: <string>  # string | The node type of the Spark driver.
@@ -95,12 +95,12 @@ resources:
               - <value>
             instance_pool_id: <string>  # string | The optional ID of the instance pool to which the cluster belongs.
             is_single_node: <bool>  # bool | This field can only be used when `kind = CLASSIC_PREVIEW`.
-            kind: <...(nested)>  # ...(nested)
+            kind: CLASSIC_PREVIEW  # enum: CLASSIC_PREVIEW | The kind of compute described by this compute specification.
             node_type_id: <string>  # string | This field encodes, through a single value, the resources available to each of
             num_workers: <int>  # int | Number of worker nodes that this cluster should have. A cluster has one Spark Dr
             policy_id: <string>  # string | The ID of the cluster policy used to create the cluster if applicable.
             remote_disk_throughput: <int>  # int | If set, what the configurable throughput (in Mb/s) for the remote disk is. Curre
-            runtime_engine: <...(nested)>  # ...(nested)
+            runtime_engine: NULL  # enum: NULL, STANDARD, PHOTON | Determines the cluster's runtime engine, either standard or Photon.
             single_user_name: <string>  # string | Single user name if data_security_mode is `SINGLE_USER`
             spark_conf:  # map[string, string] | An object containing a set of optional, user-specified Spark configuration key-v
               <key>: <value>
@@ -112,8 +112,8 @@ resources:
             total_initial_remote_disk_size: <int>  # int | If set, what the total initial volume size (in GB) of the remote disks should be
             use_ml_runtime: <bool>  # bool | This field can only be used when `kind = CLASSIC_PREVIEW`.
             worker_node_type_flexibility: <...(nested)>  # ...(nested) | Flexible node type configuration for worker nodes.
-            workload_type: <...(nested)>  # ...(nested)
-      lifecycle:  # object | Lifecycle is a struct that contains the lifecycle settings for a resource. It co
+            workload_type: <...(nested)>  # ...(nested) | Cluster Attributes showing for clusters workload types.
+      lifecycle:  # object | Settings that control the deployment lifecycle of the resource, such as preventi
         prevent_destroy: <bool>  # bool | Lifecycle setting to prevent the resource from being destroyed.
       max_concurrent_runs: <int>  # int | An optional maximum allowed number of concurrent runs of the job.
       name: <string>  # string | An optional name for the job. The maximum length is 4096 bytes in UTF-8 encoding
@@ -125,15 +125,15 @@ resources:
           default: <string>  # REQUIRED | string | Default value of the parameter.
           name: <string>  # REQUIRED | string | The name of the defined parameter. May only contain alphanumeric characters, `_`
       performance_target: PERFORMANCE_OPTIMIZED  # enum: PERFORMANCE_OPTIMIZED, STANDARD | The performance mode on a serverless job. This field determines the level of com
-      permissions:  # array[object]
+      permissions:  # array[object] | The permissions to apply to this resource.
         -
-          group_name: <string>  # string
-          level: CAN_MANAGE  # REQUIRED | enum: CAN_MANAGE, IS_OWNER, CAN_MANAGE_RUN, CAN_VIEW
-          service_principal_name: <string>  # string
-          user_name: <string>  # string
+          group_name: <string>  # string | The name of the group granted the permission level.
+          level: CAN_MANAGE  # REQUIRED | enum: CAN_MANAGE, IS_OWNER, CAN_MANAGE_RUN, CAN_VIEW | The permission level to apply. The allowed levels depend on the resource type.
+          service_principal_name: <string>  # string | The name of the service principal granted the permission level.
+          user_name: <string>  # string | The name of the user granted the permission level.
       queue:  # object | The queue settings of the job.
         enabled: <bool>  # REQUIRED | bool | If true, enable queueing for the job. This is a required field.
-      run_as:  # object
+      run_as:  # object | The user or service principal that the job runs as, if specified in the request.
         group_name: <string>  # PRIVATE PREVIEW | string | Group name of an account group assigned to the workspace. Setting this field req
         service_principal_name: <string>  # string | The application ID of an active service principal. Setting this field requires t
         user_name: <string>  # string | The email of an active workspace user. Non-admin users can only set this field t
@@ -157,24 +157,24 @@ resources:
             notebook_base_parameters:  # map[string, string] | Base parameters to be used for the clean room notebook job.
               <key>: <value>
             notebook_name: <string>  # REQUIRED | string | Name of the notebook being run.
-          compute:  # object | Task level compute configuration.
-            hardware_accelerator: <...(nested)>  # ...(nested) | Hardware accelerator configuration for Serverless GPU workloads.
+          compute:  # object | [Beta] Task level compute configuration.
+            hardware_accelerator: GPU_1xA10  # enum: GPU_1xA10, GPU_8xH100 | [Beta] Hardware accelerator configuration for Serverless GPU workloads.
           condition_task:  # object | The task evaluates a condition that can be used to control the execution of othe
             left: <string>  # REQUIRED | string | The left operand of the condition task. Can be either a string value or a job st
-            op: <...(nested)>  # REQUIRED | ...(nested) | * `EQUAL_TO`, `NOT_EQUAL` operators perform string comparison of their operands.
+            op: EQUAL_TO  # REQUIRED | enum: EQUAL_TO, GREATER_THAN, GREATER_THAN_OR_EQUAL, LESS_THAN, LESS_THAN_OR_EQUAL, NOT_EQUAL | * `EQUAL_TO`, `NOT_EQUAL` operators perform string comparison of their operands.
             right: <string>  # REQUIRED | string | The right operand of the condition task. Can be either a string value or a job s
           dashboard_task:  # object | The task refreshes a dashboard and sends a snapshot to subscribers.
-            dashboard_id: <string>  # string
+            dashboard_id: <string>  # string | The identifier of the dashboard to refresh.
             filters:  # PRIVATE PREVIEW | map[string, string] | Dashboard task parameters. Used to apply dashboard filter values during dashboar
               <key>: <value>
-            subscription: <...(nested)>  # ...(nested)
+            subscription: <...(nested)>  # ...(nested) | Optional: subscription configuration for sending the dashboard snapshot.
             warehouse_id: <string>  # string | Optional: The warehouse id to execute the dashboard with for the schedule.
           dbt_cloud_task:  # DEPRECATED | PRIVATE PREVIEW | object | Task type for dbt cloud, deprecated in favor of the new name dbt_platform_task
-            connection_resource_name: <string>  # string | The resource name of the UC connection that authenticates the dbt Cloud for this
-            dbt_cloud_job_id: <int>  # int | Id of the dbt Cloud job to be triggered
+            connection_resource_name: <string>  # PRIVATE PREVIEW | string | The resource name of the UC connection that authenticates the dbt Cloud for this
+            dbt_cloud_job_id: <int>  # PRIVATE PREVIEW | int | Id of the dbt Cloud job to be triggered
           dbt_platform_task:  # PRIVATE PREVIEW | object
-            connection_resource_name: <string>  # string | The resource name of the UC connection that authenticates the dbt platform for t
-            dbt_platform_job_id: <string>  # string | Id of the dbt platform job to be triggered. Specified as a string for maximum co
+            connection_resource_name: <string>  # PRIVATE PREVIEW | string | The resource name of the UC connection that authenticates the dbt platform for t
+            dbt_platform_job_id: <string>  # PRIVATE PREVIEW | string | Id of the dbt platform job to be triggered. Specified as a string for maximum co
           dbt_task:  # object | The task runs one or more dbt commands when the `dbt_task` field is present. The
             catalog: <string>  # string | Optional name of the catalog to use. The value is the top level in the 3-level n
             commands:  # REQUIRED | array[...(nested)] | A list of dbt commands to execute. All commands must start with `dbt`. This para
@@ -182,15 +182,15 @@ resources:
             profiles_directory: <string>  # string | Optional (relative) path to the profiles directory. Can only be specified if no
             project_directory: <string>  # string | Path to the project directory. Optional for Git sourced tasks, in which
             schema: <string>  # string | Optional schema to write to. This parameter is only used when a warehouse_id is
-            source: <...(nested)>  # ...(nested) | Optional location type of the project directory. When set to `WORKSPACE`, the pr
+            source: WORKSPACE  # enum: WORKSPACE, GIT | Optional location type of the project directory. When set to `WORKSPACE`, the pr
             warehouse_id: <string>  # string | ID of the SQL warehouse to connect to. If provided, we automatically generate an
           depends_on:  # array[object] | An optional array of objects specifying the dependency graph of the task. All ta
             -
-              outcome: <...(nested)>  # ...(nested) | Can only be specified on condition task dependencies. The outcome of the depende
-              task_key: <...(nested)>  # REQUIRED | ...(nested) | The name of the task this task depends on.
+              outcome: <string>  # string | Can only be specified on condition task dependencies. The outcome of the depende
+              task_key: <string>  # REQUIRED | string | The name of the task this task depends on.
           description: <string>  # string | An optional description for this task.
           disable_auto_optimization: <bool>  # bool | An option to disable auto optimization in serverless
-          disabled: <bool>  # PRIVATE PREVIEW | bool | An optional flag to disable the task. If set to true, the task will not run even
+          disabled: <bool>  # bool | An optional flag to disable the task. If set to true, the task will not run even
           email_notifications:  # object | An optional set of email addresses that is notified when runs of this task begin
             no_alert_for_skipped_runs: <bool>  # DEPRECATED | bool | If true, do not send email to recipients specified in `on_failure` if the run is
             on_duration_warning_threshold_exceeded:  # array[...(nested)] | A list of email addresses to be notified when the duration of a run exceeds the
@@ -208,29 +208,29 @@ resources:
           for_each_task:  # object | The task executes a nested task for every input provided when the `for_each_task
             concurrency: <int>  # int | An optional maximum allowed number of concurrent runs of the task.
             inputs: <string>  # REQUIRED | string | Array for task to iterate on. This can be a JSON string or a reference to
-            task: <...(circular)>  # REQUIRED | ...(circular) | Configuration for the task that will be run for each element in the array
-          gen_ai_compute_task:  # PRIVATE PREVIEW | object
-            command: <string>  # string | Command launcher to run the actual script, e.g. bash, python etc.
-            compute: <...(nested)>  # ...(nested)
-            dl_runtime_image: <string>  # REQUIRED | string | Runtime image
-            mlflow_experiment_name: <string>  # string | Optional string containing the name of the MLflow experiment to log the run to.
-            source: <...(nested)>  # ...(nested) | Optional location type of the training script. When set to `WORKSPACE`, the scri
-            training_script_path: <string>  # string | The training script file path to be executed. Cloud file URIs (such as dbfs:/, s
-            yaml_parameters: <string>  # string | Optional string containing model parameters passed to the training script in yam
-            yaml_parameters_file_path: <string>  # string | Optional path to a YAML file containing model parameters passed to the training
-          health:  # object
+            task: <...(nested)>  # REQUIRED | ...(nested) | Configuration for the task that will be run for each element in the array
+          gen_ai_compute_task:  # PRIVATE PREVIEW | object | DEPRECATED — use `AiRuntimeTask` for all new BYOT multi-node GPU
+            command: <string>  # PRIVATE PREVIEW | string | Command launcher to run the actual script, e.g. bash, python etc.
+            compute: <...(nested)>  # PRIVATE PREVIEW | ...(nested)
+            dl_runtime_image: <string>  # REQUIRED | PRIVATE PREVIEW | string | Runtime image
+            mlflow_experiment_name: <string>  # PRIVATE PREVIEW | string | Optional string containing the name of the MLflow experiment to log the run to.
+            source: WORKSPACE  # PRIVATE PREVIEW | enum: WORKSPACE, GIT | Optional location type of the training script. When set to `WORKSPACE`, the scri
+            training_script_path: <string>  # PRIVATE PREVIEW | string | The training script file path to be executed. Cloud file URIs (such as dbfs:/, s
+            yaml_parameters: <string>  # PRIVATE PREVIEW | string | Optional string containing model parameters passed to the training script in yam
+            yaml_parameters_file_path: <string>  # PRIVATE PREVIEW | string | Optional path to a YAML file containing model parameters passed to the training
+          health:  # object | An optional set of health rules that can be defined for this job.
             rules:  # array[...(nested)]
               - <value>
           job_cluster_key: <string>  # string | If job_cluster_key, this task is executed reusing the cluster specified in `job.
           libraries:  # array[object] | An optional list of libraries to be installed on the cluster.
             -
               cran: <...(nested)>  # ...(nested) | Specification of a CRAN library to be installed as part of the library
-              egg: <...(nested)>  # DEPRECATED | ...(nested) | Deprecated. URI of the egg library to install. Installing Python egg files is de
-              jar: <...(nested)>  # ...(nested) | URI of the JAR library to install. Supported URIs include Workspace paths, Unity
+              egg: <string>  # DEPRECATED | string | Deprecated. URI of the egg library to install. Installing Python egg files is de
+              jar: <string>  # string | URI of the JAR library to install. Supported URIs include Workspace paths, Unity
               maven: <...(nested)>  # ...(nested) | Specification of a maven library to be installed. For example:
               pypi: <...(nested)>  # ...(nested) | Specification of a PyPi library to be installed. For example:
-              requirements: <...(nested)>  # ...(nested) | URI of the requirements.txt file to install. Only Workspace paths and Unity Cata
-              whl: <...(nested)>  # ...(nested) | URI of the wheel library to install. Supported URIs include Workspace paths, Uni
+              requirements: <string>  # string | URI of the requirements.txt file to install. Only Workspace paths and Unity Cata
+              whl: <string>  # string | URI of the wheel library to install. Supported URIs include Workspace paths, Uni
           max_retries: <int>  # int | An optional maximum number of times to retry an unsuccessful run. A run is consi
           min_retry_interval_millis: <int>  # int | An optional minimal interval in milliseconds between the start of the failed run
           new_cluster:  # object | If new_cluster, a description of a new cluster that is created for each run.
@@ -243,8 +243,8 @@ resources:
             cluster_name: <string>  # string | Cluster name requested by the user. This doesn't have to be unique.
             custom_tags:  # map[string, string] | Additional tags for cluster resources. Databricks will tag all cluster resources
               <key>: <value>
-            data_security_mode: <...(nested)>  # ...(nested)
-            docker_image: <...(nested)>  # ...(nested)
+            data_security_mode: NONE  # enum: NONE, SINGLE_USER, USER_ISOLATION, LEGACY_TABLE_ACL, LEGACY_PASSTHROUGH, LEGACY_SINGLE_USER, ... | Data security mode decides what data governance model to use when accessing data
+            docker_image: <...(nested)>  # ...(nested) | Custom docker image BYOC
             driver_instance_pool_id: <string>  # string | The optional ID of the instance pool for the driver of the cluster belongs.
             driver_node_type_flexibility: <...(nested)>  # ...(nested) | Flexible node type configuration for the driver node.
             driver_node_type_id: <string>  # string | The node type of the Spark driver.
@@ -255,12 +255,12 @@ resources:
               - <value>
             instance_pool_id: <string>  # string | The optional ID of the instance pool to which the cluster belongs.
             is_single_node: <bool>  # bool | This field can only be used when `kind = CLASSIC_PREVIEW`.
-            kind: <...(nested)>  # ...(nested)
+            kind: CLASSIC_PREVIEW  # enum: CLASSIC_PREVIEW | The kind of compute described by this compute specification.
             node_type_id: <string>  # string | This field encodes, through a single value, the resources available to each of
             num_workers: <int>  # int | Number of worker nodes that this cluster should have. A cluster has one Spark Dr
             policy_id: <string>  # string | The ID of the cluster policy used to create the cluster if applicable.
             remote_disk_throughput: <int>  # int | If set, what the configurable throughput (in Mb/s) for the remote disk is. Curre
-            runtime_engine: <...(nested)>  # ...(nested)
+            runtime_engine: NULL  # enum: NULL, STANDARD, PHOTON | Determines the cluster's runtime engine, either standard or Photon.
             single_user_name: <string>  # string | Single user name if data_security_mode is `SINGLE_USER`
             spark_conf:  # map[string, string] | An object containing a set of optional, user-specified Spark configuration key-v
               <key>: <value>
@@ -272,20 +272,30 @@ resources:
             total_initial_remote_disk_size: <int>  # int | If set, what the total initial volume size (in GB) of the remote disks should be
             use_ml_runtime: <bool>  # bool | This field can only be used when `kind = CLASSIC_PREVIEW`.
             worker_node_type_flexibility: <...(nested)>  # ...(nested) | Flexible node type configuration for worker nodes.
-            workload_type: <...(nested)>  # ...(nested)
+            workload_type: <...(nested)>  # ...(nested) | Cluster Attributes showing for clusters workload types.
           notebook_task:  # object | The task runs a notebook when the `notebook_task` field is present.
             base_parameters:  # map[string, string] | Base parameters to be used for each run of this job. If the run is initiated by
               <key>: <value>
             notebook_path: <string>  # REQUIRED | string | The path of the notebook to be run in the Databricks workspace or remote reposit
-            source: <...(nested)>  # ...(nested) | Optional location type of the notebook. When set to `WORKSPACE`, the notebook wi
+            source: WORKSPACE  # enum: WORKSPACE, GIT | Optional location type of the notebook. When set to `WORKSPACE`, the notebook wi
             warehouse_id: <string>  # string | Optional `warehouse_id` to run the notebook on a SQL warehouse. Classic SQL ware
           notification_settings:  # object | Optional notification settings that are used when sending notifications to each
             alert_on_last_attempt: <bool>  # bool | If true, do not send notifications to recipients specified in `on_start` for the
             no_alert_for_canceled_runs: <bool>  # bool | If true, do not send notifications to recipients specified in `on_failure` if th
             no_alert_for_skipped_runs: <bool>  # bool | If true, do not send notifications to recipients specified in `on_failure` if th
           pipeline_task:  # object | The task triggers a pipeline update when the `pipeline_task` field is present. O
-            full_refresh: <bool>  # bool | If true, triggers a full refresh on the delta live table.
+            full_refresh: <bool>  # bool | If true, triggers a full refresh on the spark declarative pipeline.
+            full_refresh_selection:  # array[...(nested)] | [Beta] A list of tables to update with fullRefresh.
+              - <value>
+            parameters:  # map[string, string] | [Beta] Key/value-map of parameters passed to the pipeline execution.
+              <key>: <value>
             pipeline_id: <string>  # REQUIRED | string | The full name of the pipeline task to execute.
+            refresh_flow_selection:  # array[...(nested)] | [Beta] Flow names to selectively refresh. These are unioned with other selective
+              - <value>
+            refresh_selection:  # array[...(nested)] | [Beta] A list of tables to update without fullRefresh.
+              - <value>
+            reset_checkpoint_selection:  # array[...(nested)] | [Beta] A list of streaming flows to reset checkpoints without clearing data.
+              - <value>
           power_bi_task:  # object | The task triggers a Power BI semantic model update when the `power_bi_task` fiel
             connection_resource_name: <string>  # string | The resource name of the UC connection to authenticate from Databricks to Power
             power_bi_model: <...(nested)>  # ...(nested) | The semantic model to update
@@ -293,6 +303,10 @@ resources:
             tables:  # array[...(nested)] | The tables to be exported to Power BI
               - <value>
             warehouse_id: <string>  # string | The SQL warehouse ID to use as the Power BI data source
+          python_operator_task:  # PRIVATE PREVIEW | object | The task runs a Python operator task.
+            main: <string>  # PRIVATE PREVIEW | string | Fully qualified name of the main class or function.
+            parameters:  # PRIVATE PREVIEW | array[...(nested)] | An ordered list of task parameters.
+              - <value>
           python_wheel_task:  # object | The task runs a Python wheel when the `python_wheel_task` field is present.
             entry_point: <string>  # REQUIRED | string | Named entry point to use, if it does not exist in the metadata of the package it
             named_parameters:  # map[string, string] | Command-line parameters passed to Python wheel task in the form of `["--name=tas
@@ -331,7 +345,7 @@ resources:
             parameters:  # array[...(nested)] | Command line parameters passed to the Python file.
               - <value>
             python_file: <string>  # REQUIRED | string | The Python file to be executed. Cloud file URIs (such as dbfs:/, s3:/, adls:/, g
-            source: <...(nested)>  # ...(nested) | Optional location type of the Python file. When set to `WORKSPACE` or not specif
+            source: WORKSPACE  # enum: WORKSPACE, GIT | Optional location type of the Python file. When set to `WORKSPACE` or not specif
           spark_submit_task:  # DEPRECATED | object | (Legacy) The task runs the spark-submit script when the spark_submit_task field
             parameters:  # array[...(nested)] | Command-line parameters passed to spark submit.
               - <value>
@@ -363,12 +377,12 @@ resources:
           url: <string>  # REQUIRED | string | URL to be monitored for file arrivals. The path must point to the root or a subp
           wait_after_last_change_seconds: <int>  # int | If set, the trigger starts a run only after no file activity has occurred for th
         model:  # PRIVATE PREVIEW | object
-          aliases:  # array[string] | Aliases of the model versions to monitor. Can only be used in conjunction with c
+          aliases:  # PRIVATE PREVIEW | array[string] | Aliases of the model versions to monitor. Can only be used in conjunction with c
             - <value>
-          condition: MODEL_CREATED  # REQUIRED | enum: MODEL_CREATED, MODEL_VERSION_READY, MODEL_ALIAS_SET | The condition based on which to trigger a job run.
-          min_time_between_triggers_seconds: <int>  # int | If set, the trigger starts a run only after the specified amount of time has pas
-          securable_name: <string>  # string | Name of the securable to monitor ("mycatalog.myschema.mymodel" in the case of mo
-          wait_after_last_change_seconds: <int>  # int | If set, the trigger starts a run only after no model updates have occurred for t
+          condition: MODEL_CREATED  # REQUIRED | PRIVATE PREVIEW | enum: MODEL_CREATED, MODEL_VERSION_READY, MODEL_ALIAS_SET | The condition based on which to trigger a job run.
+          min_time_between_triggers_seconds: <int>  # PRIVATE PREVIEW | int | If set, the trigger starts a run only after the specified amount of time has pas
+          securable_name: <string>  # PRIVATE PREVIEW | string | Name of the securable to monitor ("mycatalog.myschema.mymodel" in the case of mo
+          wait_after_last_change_seconds: <int>  # PRIVATE PREVIEW | int | If set, the trigger starts a run only after no model updates have occurred for t
         pause_status: UNPAUSED  # enum: UNPAUSED, PAUSED | Whether this trigger is paused or not.
         periodic:  # object | Periodic trigger settings.
           interval: <int>  # REQUIRED | int | The interval at which the trigger should run.

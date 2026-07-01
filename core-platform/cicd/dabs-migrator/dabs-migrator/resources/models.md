@@ -13,15 +13,15 @@ resources:
   models:
     <model_name>:
       description: <string>  # string | Optional description for registered model.
-      lifecycle:  # object | Lifecycle is a struct that contains the lifecycle settings for a resource. It co
+      lifecycle:  # object | Settings that control the deployment lifecycle of the resource, such as preventi
         prevent_destroy: <bool>  # bool | Lifecycle setting to prevent the resource from being destroyed.
       name: <string>  # REQUIRED | string | Register models under this name
-      permissions:  # array[object]
+      permissions:  # array[object] | The permissions to apply to this resource.
         -
-          group_name: <string>  # string
-          level: CAN_MANAGE  # REQUIRED | enum: CAN_MANAGE, CAN_MANAGE_PRODUCTION_VERSIONS, CAN_MANAGE_STAGING_VERSIONS, CAN_EDIT, CAN_READ
-          service_principal_name: <string>  # string
-          user_name: <string>  # string
+          group_name: <string>  # string | The name of the group granted the permission level.
+          level: CAN_MANAGE  # REQUIRED | enum: CAN_MANAGE, CAN_MANAGE_PRODUCTION_VERSIONS, CAN_MANAGE_STAGING_VERSIONS, CAN_EDIT, CAN_READ | The permission level to apply. The allowed levels depend on the resource type.
+          service_principal_name: <string>  # string | The name of the service principal granted the permission level.
+          user_name: <string>  # string | The name of the user granted the permission level.
       tags:  # array[object] | Additional metadata for registered model.
         -
           key: <string>  # string | The tag key.

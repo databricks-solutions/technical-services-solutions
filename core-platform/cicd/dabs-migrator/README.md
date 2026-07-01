@@ -6,33 +6,40 @@ A [Genie Code](https://docs.databricks.com/aws/en/genie-code/skills) skill for D
 
 When you invoke it from Genie Code, `dabs-migrator` reads the assets you name from your Databricks workspace and scaffolds a complete DABs project that you can push to Git and deploy through CI/CD. No more copy-pasting YAML or guessing at field names — every resource is generated from the authoritative bundle schema so `databricks bundle validate` passes on the first try.
 
-### Supported assets (23 resource types)
+### Supported assets (30 resource types)
 
 | Asset | CLI version |
 |---|---|
-| Alerts | v0.298.0 |
-| Apps | v0.298.0 |
-| Catalogs | v0.298.0 |
-| Clusters | v0.298.0 |
-| Dashboards (Lakeview) | v0.298.0 |
-| Database Catalogs | v0.298.0 |
-| Database Instances | v0.298.0 |
-| External Locations | v0.298.0 |
-| Jobs | v0.298.0 |
-| MLflow Experiments | v0.298.0 |
-| MLflow Models (legacy) | v0.298.0 |
-| Model Serving Endpoints | v0.298.0 |
-| Pipelines (SDP/DLT) | v0.298.0 |
-| Postgres Branches | v0.298.0 |
-| Postgres Endpoints | v0.298.0 |
-| Postgres Projects | v0.298.0 |
-| Quality Monitors | v0.298.0 |
-| Registered Models (Unity Catalog) | v0.298.0 |
-| Schemas | v0.298.0 |
-| Secret Scopes | v0.298.0 |
-| SQL Warehouses | v0.298.0 |
-| Synced Database Tables | v0.298.0 |
-| Volumes | v0.298.0 |
+| Alerts | v1.5.0 |
+| Apps | v1.5.0 |
+| Catalogs | v1.5.0 |
+| Clusters | v1.5.0 |
+| Dashboards (Lakeview) | v1.5.0 |
+| Database Catalogs | v1.5.0 |
+| Database Instances | v1.5.0 |
+| External Locations | v1.5.0 |
+| Genie Spaces | v1.5.0 |
+| Jobs | v1.5.0 |
+| MLflow Experiments | v1.5.0 |
+| MLflow Models (legacy) | v1.5.0 |
+| Model Serving Endpoints | v1.5.0 |
+| Pipelines (SDP/DLT) | v1.5.0 |
+| Postgres Branches | v1.5.0 |
+| Postgres Catalogs | v1.5.0 |
+| Postgres Databases | v1.5.0 |
+| Postgres Endpoints | v1.5.0 |
+| Postgres Projects | v1.5.0 |
+| Postgres Roles | v1.5.0 |
+| Postgres Synced Tables | v1.5.0 |
+| Quality Monitors | v1.5.0 |
+| Registered Models (Unity Catalog) | v1.5.0 |
+| Schemas | v1.5.0 |
+| Secret Scopes | v1.5.0 |
+| SQL Warehouses | v1.5.0 |
+| Synced Database Tables | v1.5.0 |
+| Vector Search Endpoints | v1.5.0 |
+| Vector Search Indexes | v1.5.0 |
+| Volumes | v1.5.0 |
 
 ### Supported CI/CD tools
 
@@ -94,6 +101,7 @@ Genie will ask for anything missing (project name, CI/CD tool, target environmen
 
 | Date | Change |
 |---|---|
+| 2026-06-30 | Upgraded schema reference to Databricks CLI v1.5.0; added 7 new resource types (Genie Spaces, Postgres Catalogs/Databases/Roles/Synced Tables, Vector Search Endpoints/Indexes) and refreshed all 23 existing resource schemas |
 | 2026-05-06 | Incremental mode added — safely add resources to an existing project without regenerating the whole repo |
 | 2026-05-06 | Old hand-written skeletons removed; workflow now maps actual asset attributes against the live schema reference |
 | 2026-05-06 | Complete schema reference added to all 23 resource files (derived from `databricks bundle schema`) |

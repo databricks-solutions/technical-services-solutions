@@ -24,17 +24,17 @@ resources:
       embed_credentials: <bool>  # bool
       etag: <string>  # string | The etag for the dashboard. Can be optionally provided on updates to ensure that
       file_path: <string>  # string
-      lifecycle:  # object | Lifecycle is a struct that contains the lifecycle settings for a resource. It co
+      lifecycle:  # object | Settings that control the deployment lifecycle of the resource, such as preventi
         prevent_destroy: <bool>  # bool | Lifecycle setting to prevent the resource from being destroyed.
       lifecycle_state: ACTIVE  # enum: ACTIVE, TRASHED | The state of the dashboard resource. Used for tracking trashed status.
       parent_path: <string>  # string | The workspace path of the folder containing the dashboard. Includes leading slas
       path: <string>  # string | The workspace path of the dashboard asset, including the file name.
-      permissions:  # array[object]
+      permissions:  # array[object] | The permissions to apply to this resource.
         -
-          group_name: <string>  # string | The name of the group that has the permission set in level.
-          level: CAN_MANAGE  # REQUIRED | enum: CAN_MANAGE, CAN_RESTART, CAN_ATTACH_TO, IS_OWNER, CAN_MANAGE_RUN, CAN_VIEW, ... | The allowed permission for user, group, service principal defined for this permi
-          service_principal_name: <string>  # string | The name of the service principal that has the permission set in level.
-          user_name: <string>  # string | The name of the user that has the permission set in level.
+          group_name: <string>  # string | The name of the group granted the permission level.
+          level: CAN_MANAGE  # REQUIRED | enum: CAN_MANAGE, CAN_RESTART, CAN_ATTACH_TO, IS_OWNER, CAN_MANAGE_RUN, CAN_VIEW, ... | The permission level to apply. The allowed levels depend on the resource type.
+          service_principal_name: <string>  # string | The name of the service principal granted the permission level.
+          user_name: <string>  # string | The name of the user granted the permission level.
       serialized_dashboard: <any>  # any | The contents of the dashboard in serialized string form.
       update_time: <string>  # string | The timestamp of when the dashboard was last updated by the user.
       warehouse_id: <string>  # string | The warehouse ID used to run the dashboard.

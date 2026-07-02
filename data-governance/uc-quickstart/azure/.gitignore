@@ -40,3 +40,9 @@ override.tf.json
 
 # IntelliJ
 .idea/
+
+# Environment variables with secrets
+env_variables.sh
+
+# Terraform lock file (optional, uncomment if you want to ignore)
+# .terraform.lock.hcl

@@ -1,6 +1,6 @@
 # Local .terraform directories
-*/.terraform/*
-*/.terraform
+**/.terraform/*
+**/.terraform
 
 # .tfstate files
 *.tfstate
@@ -45,4 +45,4 @@ override.tf.json
 env_variables.sh
 
 # Terraform lock file (optional, uncomment if you want to ignore)
-# .terraform.lock.hcl
+.terraform.lock.hcl

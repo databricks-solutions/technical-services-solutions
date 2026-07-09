@@ -1,4 +1,5 @@
 module "vpc" {
+  count   = var.vpc_id == "" ? 1 : 0
   source  = "terraform-aws-modules/vpc/aws"
   version = "5.1.1"
 
@@ -36,16 +37,17 @@ module "vpc" {
 }
 
 module "vpc_endpoints" {
+  count   = var.vpc_id == "" ? 1 : 0
   source  = "terraform-aws-modules/vpc/aws//modules/vpc-endpoints"
   version = "5.1.1"
 
-  vpc_id = module.vpc.vpc_id
+  vpc_id = module.vpc[0].vpc_id
 
   endpoints = {
     s3 = {
       service         = "s3"
       service_type    = "Gateway"
-      route_table_ids = module.vpc.private_route_table_ids
+      route_table_ids = module.vpc[0].private_route_table_ids
       tags = {
         Name    = "${var.resource_prefix}-s3-vpc-endpoint"
         Project = var.resource_prefix
@@ -54,7 +56,7 @@ module "vpc_endpoints" {
     sts = {
       service             = "sts"
       private_dns_enabled = true
-      subnet_ids          = module.vpc.intra_subnets
+      subnet_ids          = module.vpc[0].intra_subnets
       tags = {
         Name    = "${var.resource_prefix}-sts-vpc-endpoint"
         Project = var.resource_prefix
@@ -63,7 +65,7 @@ module "vpc_endpoints" {
     kinesis-streams = {
       service             = "kinesis-streams"
       private_dns_enabled = true
-      subnet_ids          = module.vpc.intra_subnets
+      subnet_ids          = module.vpc[0].intra_subnets
       tags = {
         Name    = "${var.resource_prefix}-kinesis-vpc-endpoint"
         Project = var.resource_prefix

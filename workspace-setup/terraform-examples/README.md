@@ -69,8 +69,8 @@ This naming helps you quickly identify the right scenario for your needs.
 ### AWS
 | Scenario | Description |
 |----------|-------------|
-| [aws-byovpc](./aws/aws-byovpc/) | Deploy a Databricks workspace using "Bring Your Own VPC" (BYOVPC) pattern with Unity Catalog Metastore. Create a new VPC or use an existing one with full control over network infrastructure. |
-| [aws-byovpc-uc](./aws/aws-byovpc-uc/) | Deploy a Databricks workspace using "Bring Your Own VPC" (BYOVPC) with Unity Catalog metastore, external location, and user-defined catalog backed by dedicated S3. Creates a new VPC from scratch with full control over network infrastructure (existing VPC not supported). |
+| [aws-byovpc](./aws/aws-byovpc/) | **(Deprecated — use [aws-byovpc-uc](./aws/aws-byovpc-uc/))** Legacy "Bring Your Own VPC" (BYOVPC) deployment with Unity Catalog Metastore. Kept temporarily for existing users; no longer the recommended path. |
+| [aws-byovpc-uc](./aws/aws-byovpc-uc/) | **(Recommended)** Deploy a Databricks workspace using "Bring Your Own VPC" (BYOVPC) with Unity Catalog. Create a new VPC or reuse an existing one, with full control over network infrastructure, plus an optional user-defined catalog (dedicated S3, storage credential, external location) and an optional UC-compatible single-node cluster. |
 | [aws-byovpc-classic-privatelink](./aws/aws-byovpc-classic-privatelink/) | Deploy a Databricks workspace with classic Private Link (REST API and SCC relay). Choose **standard** (template creates VPC with NAT/IGW and S3/STS/Kinesis endpoints), **fully_private** (no NAT/IGW, dedicated endpoint subnet), or **custom** (you supply VPC, subnets, security groups, and backend VPC endpoint IDs; no AWS networking created). Optional Unity Catalog metastore creation or attachment. |
 
 ### Azure

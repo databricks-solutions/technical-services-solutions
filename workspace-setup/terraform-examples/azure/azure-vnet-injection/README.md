@@ -1,5 +1,12 @@
 # Azure VNet injection Workspace Setup Guide (with VNet deployment)
 
+> [!WARNING]
+> **This template is deprecated and will be removed in a future release.** It is
+> kept temporarily so existing users are not disrupted. For new deployments, use
+> the canonical, actively maintained template: [**`azure-vnet-injection-uc`**](../azure-vnet-injection-uc/).
+> That template supersedes this one and adds Unity Catalog, an optional user-defined
+> catalog and external location, and an optional UC-compatible single-node cluster.
+
 ## Requirements
 
 - Terraform is installed on your local machine: [link](https://developer.hashicorp.com/terraform/tutorials/aws-get-started/install-cli#install-terraform)

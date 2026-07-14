@@ -122,6 +122,14 @@ variable "new_metastore_name" {
     error_message = "metastore_name can only contain alphanumerical characters, hyphens, and underscores."
   }
 }
+#=============================================================================
+# Cluster Configuration (optional)
+#=============================================================================
+variable "create_cluster" {
+  description = "Whether to create a cluster"
+  type        = bool
+  default     = false
+}
 
 variable "node_type_id" {
   description = "Azure VM SKU for the single-node UC cluster driver."
@@ -142,6 +150,22 @@ variable "cluster_autotermination_minutes" {
 # =============================================================================
 # Network Configuration
 # =============================================================================
+
+variable "create_new_vnet" {
+  description = "Whether to create a new VNet. Set to false to bring an existing VNet (specify vnet_name and vnet_resource_group_name)."
+  type        = bool
+  default     = true
+}
+
+variable "vnet_name" {
+  description = "The name of the virtual network. When create_new_vnet is false, this must be the name of the existing VNet to reuse."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.create_new_vnet || length(var.vnet_name) > 0
+    error_message = "vnet_name must be set to the existing VNet name when create_new_vnet is false."
+  }
+}
 
 variable "vnet_resource_group_name" {
   description = "The name of the VNet resource group"

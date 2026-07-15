@@ -129,11 +129,32 @@ data "external" "bucket_region" {
   program = ["bash", "-c", "set -o pipefail; aws s3api get-bucket-location --bucket ${var.external_location_bucket_name} --output json 2>/dev/null | jq '{region: (.LocationConstraint // \"us-east-1\")}' || echo '{\"region\": \"NOT_FOUND\"}'"]
 }
 
-# If merging with an existing bucket policy is requested, read it. Used as
-# source_policy_documents in the IAM policy doc below.
-data "aws_s3_bucket_policy" "existing" {
-  count  = var.merge_existing_bucket_policy ? 1 : 0
-  bucket = var.external_location_bucket_name
+# Read the pre-Terraform bucket policy (tolerant of "no policy exists" and
+# emitted only when merge mode is on). The stock `data "aws_s3_bucket_policy"`
+# errors with NoSuchBucketPolicy on empty-policy buckets, blocking apply and
+# any post-destroy re-apply; the helper script returns an empty string in
+# that case so both flows just work.
+data "external" "current_bucket_policy" {
+  count   = var.merge_existing_bucket_policy ? 1 : 0
+  program = ["bash", "${path.module}/scripts/read-bucket-policy.sh"]
+  query = {
+    bucket = var.external_location_bucket_name
+  }
+}
+
+# Snapshot the pre-Terraform policy into state on first apply, and never
+# refresh it. The `ignore_changes = [input]` guarantees later applies keep
+# using the originally-captured value even if the on-bucket policy has since
+# drifted (e.g. we merged our statement in). Consumed by (a) the merge below
+# so we don't append our statement twice, and (b) the destroy-time restore
+# provisioner further down.
+resource "terraform_data" "original_bucket_policy" {
+  count = var.merge_existing_bucket_policy ? 1 : 0
+  input = data.external.current_bucket_policy[0].result.policy
+
+  lifecycle {
+    ignore_changes = [input]
+  }
 }
 
 # Build the bucket policy. The aws:SourceVpce condition restricts the allow
@@ -142,7 +163,14 @@ data "aws_s3_bucket_policy" "existing" {
 # depends_on = [ncc_refreshed] keeps this data source deferred to apply time
 # so it picks up the resolved vpce_id from the local above.
 data "aws_iam_policy_document" "allow_databricks_s3_vpce" {
-  source_policy_documents = var.merge_existing_bucket_policy ? [data.aws_s3_bucket_policy.existing[0].policy] : []
+  # Sourcing from the snapshot (not a fresh read) means the merge is stable
+  # across applies and safe when the bucket had no prior policy (empty string
+  # → no source doc).
+  source_policy_documents = (
+    var.merge_existing_bucket_policy && terraform_data.original_bucket_policy[0].output != ""
+    ? [terraform_data.original_bucket_policy[0].output]
+    : []
+  )
 
   statement {
     sid    = "AllowDatabricksServerlessViaVpce"
@@ -172,10 +200,44 @@ data "aws_iam_policy_document" "allow_databricks_s3_vpce" {
 
 # Apply the bucket policy. If merge_existing_bucket_policy=false (default),
 # this REPLACES whatever policy was on the bucket. Set the flag if the bucket
-# has other statements you need to preserve.
+# has other statements you need to preserve — merge mode also arranges to
+# restore the original policy on destroy (see null_resource below).
+#
+# depends_on = [restore_bucket_policy_on_destroy] is a create-order stub that
+# only matters on destroy: reversed, it forces this resource to tear down
+# BEFORE the null_resource runs its `when = destroy` provisioner, so the
+# restore lands on the (now-Databricks-statement-free) bucket. In non-merge
+# mode the null_resource is count = 0, so the depends_on is a no-op.
 resource "aws_s3_bucket_policy" "allow_databricks_s3_vpce" {
   bucket = var.external_location_bucket_name
   policy = data.aws_iam_policy_document.allow_databricks_s3_vpce.json
+
+  depends_on = [null_resource.restore_bucket_policy_on_destroy]
+}
+
+# Destroy-time restore of the original bucket policy (merge mode only).
+#
+# Terraform owns the *entire* bucket policy via aws_s3_bucket_policy — S3's
+# API has no per-statement resource. Without this, destroy would leave the
+# bucket with no policy at all, wiping any statements that existed before
+# our apply. `when = destroy` provisioners can only reference `self`, so the
+# original policy (and bucket name) travel via triggers.
+resource "null_resource" "restore_bucket_policy_on_destroy" {
+  count = var.merge_existing_bucket_policy ? 1 : 0
+
+  triggers = {
+    bucket_name     = var.external_location_bucket_name
+    original_policy = terraform_data.original_bucket_policy[0].output
+  }
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = "bash ${path.module}/scripts/restore-bucket-policy.sh"
+    environment = {
+      BUCKET_NAME     = self.triggers.bucket_name
+      ORIGINAL_POLICY = self.triggers.original_policy
+    }
+  }
 }
 
 # Enable the rule via the Databricks API.

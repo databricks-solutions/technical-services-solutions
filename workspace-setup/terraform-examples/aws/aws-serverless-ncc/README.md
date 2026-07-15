@@ -21,7 +21,7 @@ This configuration creates:
 2. **AWS Account**: With permissions to create IAM roles/policies and put bucket policies on the target bucket
 3. **Databricks Account**: E2 account with account admin OAuth M2M service principal
 4. **AWS CLI**: Configured with valid credentials
-5. **`databricks` CLI (>= 0.297), `aws` CLI, `jq`**: Used by the helper scripts in `tf/scripts/` that poll for VPC endpoint readiness and enable the NCC private endpoint rule. Install via `brew install databricks awscli jq` (or your distro's equivalent).
+5. **`databricks` CLI (>= 0.297), `aws` CLI, `jq`**: Used by the helper scripts in `tf/scripts/` that poll for VPC endpoint readiness, enable the NCC private endpoint rule, and (in merge mode) read + restore the bucket policy. Install via `brew install databricks awscli jq` (or your distro's equivalent).
 6. **S3 bucket**: Must already exist in the same region as the workspace — the script does not create it
 
 ## Required Permissions
@@ -178,7 +178,16 @@ If your S3 bucket already has a policy you need to preserve, set:
 merge_existing_bucket_policy = true
 ```
 
-The Terraform run will read the existing policy and append the VPCE-allow statement instead of replacing.
+Behavior:
+
+- **First apply:** the pre-Terraform bucket policy is snapshotted into Terraform state (via `terraform_data.original_bucket_policy` with `ignore_changes = [input]`) and the VPCE-allow statement is appended to the merged policy pushed to S3. If the bucket had no prior policy, an empty snapshot is stored — no error.
+- **Subsequent applies:** the merge sources from the snapshot in state (not a fresh read), so it's stable even if the on-bucket policy drifts.
+- **Destroy:** `aws_s3_bucket_policy` owns the full policy — deleting it would leave the bucket with no policy at all, wiping any pre-existing statements. To avoid that, a `null_resource` with a `when = destroy` provisioner runs `scripts/restore-bucket-policy.sh` after the merged policy is torn down, putting the snapshotted original back. If the bucket originally had no policy, the restore is a no-op.
+
+Constraints of this approach:
+
+- The snapshot only captures what was on the bucket at *first apply*. If someone edits the bucket policy out-of-band later, that edit is lost on destroy.
+- `restore-bucket-policy.sh` tolerates the bucket having been deleted before destroy (exits 0). All other AWS failures surface non-zero.
 
 ### Optional non-S3 NCC private endpoint rule
 
@@ -225,7 +234,9 @@ aws-serverless-ncc/
     ├── external_location.tf     # 6b. UC external location + grants
     └── scripts/
         ├── wait-for-vpc-endpoint.sh  # polls until vpc_endpoint_id is populated
-        └── enable-s3-rule.sh         # polls for ESTABLISHED, then enables the rule
+        ├── enable-s3-rule.sh         # polls for ESTABLISHED, then enables the rule
+        ├── read-bucket-policy.sh     # merge mode: tolerant read of existing bucket policy
+        └── restore-bucket-policy.sh  # merge mode: restore original policy on destroy
 ```
 
 ## How the NCC + bucket policy + enable flow works
@@ -268,9 +279,12 @@ terraform destroy
 
 Notes:
 - `force_destroy = true` is set on the metastore so it can be deleted even if it has catalogs/workspaces attached.
-- `aws_s3_bucket_policy` will leave the bucket policy in whatever state Terraform last applied. If `merge_existing_bucket_policy = false`, this means destroy effectively *deletes* the bucket policy. If you want to preserve other statements, use `merge_existing_bucket_policy = true`.
+- **Bucket policy on destroy:**
+  - `merge_existing_bucket_policy = false` (default): destroy deletes the bucket policy Terraform wrote — the bucket ends up with no policy at all. Use this only when the bucket has no other statements that need to survive.
+  - `merge_existing_bucket_policy = true`: destroy restores the *snapshot* captured on first apply (see [Merge with existing bucket policy](#merge-with-existing-bucket-policy)). Statements added to the bucket out-of-band *after* first apply are not preserved.
 - The IAM role / IAM policy / storage credential / external location are destroyed in the right order automatically.
 - The S3 bucket itself is *not* managed by Terraform here, so it's left alone.
+- A `time_sleep.delay_before_ncc_delete` (30s destroy delay) sits between the NCC and its binding so the Databricks control plane has time to propagate the unbind before the NCC delete runs — avoiding the "unable to be deleted because it is attached to one or more workspaces" error that used to require a manual destroy rerun.
 
 ## Verifying the rule state on demand
 

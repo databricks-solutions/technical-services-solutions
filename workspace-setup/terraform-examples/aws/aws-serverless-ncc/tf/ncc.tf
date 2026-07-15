@@ -10,6 +10,19 @@ resource "databricks_mws_network_connectivity_config" "ncc" {
   region   = var.region
 }
 
+# Sits between the NCC and its binding so that on destroy TF pauses for 30s
+# after the binding is removed before deleting the NCC. Without this pause,
+# the NCC delete can race the Databricks control plane's unbind propagation
+# and fail with "unable to be deleted because it is attached to one or more
+# workspaces" — requiring a manual `terraform destroy` rerun.
+#
+# Create order:  ncc → delay_before_ncc_delete → ncc_binding
+# Destroy order: ncc_binding → delay_before_ncc_delete (30s) → ncc
+resource "time_sleep" "delay_before_ncc_delete" {
+  depends_on       = [databricks_mws_network_connectivity_config.ncc]
+  destroy_duration = "30s"
+}
+
 # Bind the NCC to the workspace. Must succeed before metastore assignment +
 # admin assignment are attempted.
 resource "databricks_mws_ncc_binding" "ncc_binding" {
@@ -17,6 +30,8 @@ resource "databricks_mws_ncc_binding" "ncc_binding" {
 
   network_connectivity_config_id = databricks_mws_network_connectivity_config.ncc.network_connectivity_config_id
   workspace_id                   = local.workspace_id
+
+  depends_on = [time_sleep.delay_before_ncc_delete]
 
   lifecycle {
     precondition {

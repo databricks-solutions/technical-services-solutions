@@ -17,7 +17,7 @@ This configuration creates:
 
 ## Prerequisites
 
-1. **Terraform**: Version 1.4 or higher (uses `terraform_data`)
+1. **Terraform**: Version 1.4 or higher
 2. **AWS Account**: With permissions to create IAM roles/policies and put bucket policies on the target bucket
 3. **Databricks Account**: E2 account with account admin OAuth M2M service principal
 4. **AWS CLI**: Configured with valid credentials
@@ -180,9 +180,9 @@ merge_existing_bucket_policy = true
 
 Behavior:
 
-- **First apply:** the pre-Terraform bucket policy is snapshotted into Terraform state (via `terraform_data.original_bucket_policy` with `ignore_changes = [input]`) and the VPCE-allow statement is appended to the merged policy pushed to S3. If the bucket had no prior policy, an empty snapshot is stored — no error.
-- **Subsequent applies:** the merge sources from the snapshot in state (not a fresh read), so it's stable even if the on-bucket policy drifts.
-- **Destroy:** `aws_s3_bucket_policy` owns the full policy — deleting it would leave the bucket with no policy at all, wiping any pre-existing statements. To avoid that, a `null_resource` with a `when = destroy` provisioner runs `scripts/restore-bucket-policy.sh` after the merged policy is torn down, putting the snapshotted original back. If the bucket originally had no policy, the restore is a no-op.
+- **First apply:** `scripts/read-bucket-policy.sh` reads the pre-Terraform bucket policy and stores it on `null_resource.restore_bucket_policy_on_destroy.triggers.original_policy`. `ignore_changes = [triggers]` pins that snapshot for the lifetime of the resource. The read is tolerant — a bucket with no policy returns an empty snapshot rather than erroring. The VPCE-allow statement is then merged into the source policy and the combined document is pushed to S3.
+- **Subsequent applies:** `read-bucket-policy.sh` strips its own `AllowDatabricksServerlessViaVpce` statement out of what it reads, so a re-read of the (now-merged) policy returns the same pre-merge document as the first read — the merge is stable and idempotent, and `ignore_changes` keeps the destroy-time snapshot pinned even if that idempotence ever regresses.
+- **Destroy:** `aws_s3_bucket_policy` owns the full policy — deleting it would leave the bucket with no policy at all, wiping any pre-existing statements. To avoid that, a `null_resource` with a `when = destroy` provisioner runs `scripts/restore-bucket-policy.sh` after the merged policy is torn down, putting the snapshotted original back. If the bucket originally had no policy (or only had our merged statement), the restore is a no-op.
 
 Constraints of this approach:
 

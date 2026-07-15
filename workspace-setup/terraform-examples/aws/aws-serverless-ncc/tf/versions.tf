@@ -1,5 +1,4 @@
 terraform {
-  # 1.4.0 required for terraform_data resource (used in s3_endpoint.tf — none currently, but pinned for safety)
   required_version = ">= 1.4.0"
 
   required_providers {

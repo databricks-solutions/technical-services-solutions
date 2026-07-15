@@ -134,26 +134,18 @@ data "external" "bucket_region" {
 # errors with NoSuchBucketPolicy on empty-policy buckets, blocking apply and
 # any post-destroy re-apply; the helper script returns an empty string in
 # that case so both flows just work.
+#
+# Idempotence: read-bucket-policy.sh strips any AllowDatabricksServerlessViaVpce
+# statement from what it reads back, so the value is stable across applies —
+# on second apply, when the bucket already has our merged statement, the
+# script returns the same pre-merge policy it did on first apply. That
+# stability is what lets null_resource.restore_bucket_policy_on_destroy
+# consume this data source directly (no snapshot resource needed).
 data "external" "current_bucket_policy" {
   count   = var.merge_existing_bucket_policy ? 1 : 0
   program = ["bash", "${path.module}/scripts/read-bucket-policy.sh"]
   query = {
     bucket = var.external_location_bucket_name
-  }
-}
-
-# Snapshot the pre-Terraform policy into state on first apply, and never
-# refresh it. The `ignore_changes = [input]` guarantees later applies keep
-# using the originally-captured value even if the on-bucket policy has since
-# drifted (e.g. we merged our statement in). Consumed by (a) the merge below
-# so we don't append our statement twice, and (b) the destroy-time restore
-# provisioner further down.
-resource "terraform_data" "original_bucket_policy" {
-  count = var.merge_existing_bucket_policy ? 1 : 0
-  input = data.external.current_bucket_policy[0].result.policy
-
-  lifecycle {
-    ignore_changes = [input]
   }
 }
 
@@ -163,12 +155,14 @@ resource "terraform_data" "original_bucket_policy" {
 # depends_on = [ncc_refreshed] keeps this data source deferred to apply time
 # so it picks up the resolved vpce_id from the local above.
 data "aws_iam_policy_document" "allow_databricks_s3_vpce" {
-  # Sourcing from the snapshot (not a fresh read) means the merge is stable
-  # across applies and safe when the bucket had no prior policy (empty string
-  # → no source doc).
+  # Source directly from the (idempotent) data.external read — no
+  # terraform_data intermediary. read-bucket-policy.sh returns "" when the
+  # bucket had no prior policy OR when its only statement was ours, in
+  # which case source_policy_documents stays empty and we emit just our
+  # own statement below.
   source_policy_documents = (
-    var.merge_existing_bucket_policy && terraform_data.original_bucket_policy[0].output != ""
-    ? [terraform_data.original_bucket_policy[0].output]
+    var.merge_existing_bucket_policy && data.external.current_bucket_policy[0].result.policy != ""
+    ? [data.external.current_bucket_policy[0].result.policy]
     : []
   )
 
@@ -222,12 +216,31 @@ resource "aws_s3_bucket_policy" "allow_databricks_s3_vpce" {
 # bucket with no policy at all, wiping any statements that existed before
 # our apply. `when = destroy` provisioners can only reference `self`, so the
 # original policy (and bucket name) travel via triggers.
+#
+# triggers.original_policy reads data.external.current_bucket_policy directly.
+# That data source is stable across applies because read-bucket-policy.sh
+# strips our merged statement (see the data.external comment above), so the
+# trigger value doesn't drift on re-apply. `ignore_changes = [triggers]` is
+# a defense-in-depth belt on top of that suspenders — it pins the snapshot
+# even if the read script's stripping behavior ever regresses.
+#
+# Design note: we intentionally do NOT use a terraform_data resource to
+# snapshot the policy. terraform_data.output is (known after apply) on first
+# create, and the resulting unknown-value propagation through the merge-mode
+# graph tripped a plan-time bug in the Databricks provider (v1.114.0+) where
+# workspace-level resources errored with "requires a workspace_id" while the
+# workspace URL was still known-after-apply. Sourcing the trigger directly
+# from a data source keeps every input to this null_resource known at plan.
 resource "null_resource" "restore_bucket_policy_on_destroy" {
   count = var.merge_existing_bucket_policy ? 1 : 0
 
   triggers = {
     bucket_name     = var.external_location_bucket_name
-    original_policy = terraform_data.original_bucket_policy[0].output
+    original_policy = data.external.current_bucket_policy[0].result.policy
+  }
+
+  lifecycle {
+    ignore_changes = [triggers]
   }
 
   provisioner "local-exec" {

@@ -1,5 +1,6 @@
 // Latest LTS Databricks Runtime.
 data "databricks_spark_version" "latest_lts" {
+  count             = var.create_cluster ? 1 : 0
   long_term_support = true
   latest            = true
 
@@ -12,7 +13,8 @@ data "databricks_spark_version" "latest_lts" {
 // Built-in Personal Compute policy enforces SINGLE_USER access mode, the
 // single-node cluster profile, and other UC-compatible defaults.
 data "databricks_cluster_policy" "personal" {
-  name = "Personal Compute"
+  count = var.create_cluster ? 1 : 0
+  name  = "Personal Compute"
 
   depends_on = [
     databricks_metastore_assignment.this,
@@ -22,9 +24,10 @@ data "databricks_cluster_policy" "personal" {
 
 // UC-compatible single-node cluster governed by the Personal Compute policy.
 resource "databricks_cluster" "uc_single_node" {
+  count                   = var.create_cluster ? 1 : 0
   cluster_name            = "${var.workspace_name}-uc-cluster"
-  policy_id               = data.databricks_cluster_policy.personal.id
-  spark_version           = data.databricks_spark_version.latest_lts.id
+  policy_id               = data.databricks_cluster_policy.personal[0].id
+  spark_version           = data.databricks_spark_version.latest_lts[0].id
   node_type_id            = var.node_type_id
   autotermination_minutes = var.cluster_autotermination_minutes
   data_security_mode      = "SINGLE_USER"

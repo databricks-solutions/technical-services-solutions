@@ -13,8 +13,8 @@ output "workspace_url" {
 }
 
 output "cluster_id" {
-  description = "ID of the UC-compatible single-node cluster"
-  value       = databricks_cluster.uc_single_node.id
+  description = "ID of the UC-compatible single-node cluster (null when create_cluster is false)"
+  value       = one(databricks_cluster.uc_single_node[*].id)
 }
 
 # =============================================================================

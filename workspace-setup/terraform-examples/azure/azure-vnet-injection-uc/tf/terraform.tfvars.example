@@ -25,6 +25,11 @@ uc_storage_account_name = "ucrootstorage"
 catalog_name            = "my-catalog"
 storage_credential_name = "my-uc-storage-cred"
 external_location_name = "my-ext-loc"
+
+# =============================================================================
+# Cluster Configuration (optional)
+# =============================================================================
+create_cluster = false
 node_type_id = "Standard_DS3_v2"
 cluster_autotermination_minutes = "10"
 
@@ -32,6 +37,8 @@ cluster_autotermination_minutes = "10"
 # Network Configuration
 # =============================================================================
 
+create_new_vnet = true
+vnet_name = "vnet-name" 
 vnet_resource_group_name = "vnet-resource-group-name"
 cidr = "10.0.0.0/16"
 subnet_public_cidr = "10.0.1.0/24"

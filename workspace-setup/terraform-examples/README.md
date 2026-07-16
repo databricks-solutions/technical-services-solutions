@@ -76,8 +76,8 @@ This naming helps you quickly identify the right scenario for your needs.
 ### Azure
 | Scenario | Description |
 |----------|-------------|
-| [azure-vnet-injection](./azure/azure-vnet-injection/) | Deploy a Databricks workspace with VNet injection. Create a new VNet or use an existing one with support for both user login and service principal authentication. |
-| [azure-vnet-injection-uc](./azure/azure-vnet-injection-uc/) | Deploy a Databricks workspace with VNet injection and Unity Catalog. Creates a new VNet with a NAT gateway, and configures a Unity Catalog metastore (new or existing), storage account, access connector, external location, and catalog. |
+| [azure-vnet-injection](./azure/azure-vnet-injection/) | **(Deprecated — use [azure-vnet-injection-uc](./azure/azure-vnet-injection-uc/))** Legacy VNet injection deployment with a Unity Catalog metastore assignment. Create a new VNet or use an existing one, with support for both user login and service principal authentication. Kept temporarily for existing users; no longer the recommended path. |
+| [azure-vnet-injection-uc](./azure/azure-vnet-injection-uc/) | **(Recommended)** Deploy a Databricks workspace with VNet injection and Unity Catalog. Create a new VNet (with NAT gateway) or reuse an existing one, and configure a Unity Catalog metastore (new or existing), storage account, access connector, external location, and user-defined catalog, plus an optional UC-compatible single-node cluster. |
 | [azure-privatelink-classic](./azure/azure-privatelink-classic/) | Deploy a Databricks workspace with Azure Private Link (classic): VNet injection, NAT gateway, and private endpoints for control plane and DBFS. Optional public network access. |
 
 ### GCP

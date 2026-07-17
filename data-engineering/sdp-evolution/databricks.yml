@@ -1,0 +1,28 @@
+bundle:
+  name: sdp-evolution
+
+experimental:
+  skip_name_prefix_for_schema: true
+
+variables:
+  catalog:
+    description: UC catalog for the demo (set to your catalog before deploy)
+    default: main
+  schema:
+    description: UC schema for the demo
+    default: sdp_evolution
+
+include:
+  - resources/*.yml
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://YOUR_WORKSPACE.cloud.databricks.com/
+
+  prod:
+    mode: production
+    variables:
+      schema: sdp_evolution_prod

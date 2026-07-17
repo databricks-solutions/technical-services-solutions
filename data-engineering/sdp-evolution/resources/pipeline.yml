@@ -1,0 +1,17 @@
+resources:
+  pipelines:
+    orders_pipeline:
+      name: sdp-evolution-${bundle.target}
+      serverless: true
+      catalog: ${var.catalog}
+      schema: ${resources.schemas.demo_schema.name}
+      channel: PREVIEW
+      configuration:
+        source.path: /Volumes/${var.catalog}/${resources.schemas.demo_schema.name}/${resources.volumes.landing.name}/orders
+        target.catalog: ${var.catalog}
+        target.schema: ${resources.schemas.demo_schema.name}
+      libraries:
+        - file:
+            path: ../src/pipeline.py
+        - file:
+            path: ../src/reconcile.py

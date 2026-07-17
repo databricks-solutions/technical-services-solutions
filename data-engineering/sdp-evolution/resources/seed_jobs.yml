@@ -1,0 +1,45 @@
+resources:
+  jobs:
+    seed_v1_job:
+      name: sdp-evolution-seed-v1-${bundle.target}
+      description: "Step 1 - land the clean v1 baseline batch into the landing volume."
+      tasks:
+        - task_key: seed_v1
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/seed_data.py
+            parameters:
+              - "--catalog"
+              - "${var.catalog}"
+              - "--schema"
+              - "${resources.schemas.demo_schema.name}"
+              - "--volume"
+              - "${resources.volumes.landing.name}"
+              - "--version"
+              - "v1"
+      environments:
+        - environment_key: default
+          spec:
+            client: "3"
+
+    seed_v2_job:
+      name: sdp-evolution-seed-v2-${bundle.target}
+      description: "Step 3 - land the drifted v2 batch (rename + type change + new column)."
+      tasks:
+        - task_key: seed_v2
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/seed_data.py
+            parameters:
+              - "--catalog"
+              - "${var.catalog}"
+              - "--schema"
+              - "${resources.schemas.demo_schema.name}"
+              - "--volume"
+              - "${resources.volumes.landing.name}"
+              - "--version"
+              - "v2"
+      environments:
+        - environment_key: default
+          spec:
+            client: "3"

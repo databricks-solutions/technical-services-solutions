@@ -1,0 +1,27 @@
+# Terraform state — contains all resource attributes including any sensitive computed values
+terraform.tfstate
+terraform.tfstate.backup
+*.tfstate
+*.tfstate.*
+
+# Per-user / per-machine override file
+*.tfvars.user
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Local tfvars (may contain account_id; keep example only)
+terraform.tfvars
+
+# Terraform working directory and lock
+.terraform/
+.terraform.lock.hcl
+
+# Crash logs
+crash.log
+crash.*.log
+
+# Plan output files
+*.tfplan
+plan.out

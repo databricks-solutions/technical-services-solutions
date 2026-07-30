@@ -1,6 +1,6 @@
 # Lakeflow Connect: SQL Server CDC
 
-Databricks Asset Bundle (DABs) to deploy [Lakeflow Connect](https://docs.databricks.com/aws/en/ingestion/lakeflow-connect) for SQL Server CDC into Unity Catalog.
+Declarative Automation Bundles (DABs) to deploy [Lakeflow Connect](https://docs.databricks.com/aws/en/ingestion/lakeflow-connect) for SQL Server CDC into Unity Catalog.
 
 Use this bundle after you create a Unity Catalog connection to SQL Server to stand up:
 
@@ -234,7 +234,7 @@ Uncomment and configure the `prod` target in `databricks.yml`, then add a `targe
 ## References
 
 - [Lakeflow Connect](https://docs.databricks.com/aws/en/ingestion/lakeflow-connect)
-- [Databricks Asset Bundles](https://docs.databricks.com/aws/en/dev-tools/bundles/index.html)
+- [Declarative Automation Bundles](https://docs.databricks.com/aws/en/dev-tools/bundles/index.html)
 - [Bundles in the workspace](https://docs.databricks.com/aws/en/dev-tools/bundles/workspace)
 - [Deploy bundles from the workspace](https://docs.databricks.com/aws/en/dev-tools/bundles/workspace-deploy)
 - [Git folders (Repos)](https://docs.databricks.com/aws/en/repos/git-operations-with-repos)

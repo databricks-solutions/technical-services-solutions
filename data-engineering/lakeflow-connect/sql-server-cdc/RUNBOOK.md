@@ -10,7 +10,7 @@ For a standard human setup guide, see [README.md](./README.md).
 
 ## What this demo teaches
 
-Deploy Lakeflow Connect for SQL Server CDC with a Databricks Asset Bundle.
+Deploy Lakeflow Connect for SQL Server CDC with a Declarative Automation Bundle (formerly known as Databricks Asset Bundles)
 An **ingestion gateway** pipeline stages change data from a Unity Catalog federated SQL Server connection.
 An **ingestion pipeline** lands CDC tables into Unity Catalog destination tables.
 A scheduled job can trigger refreshes after the initial setup.
@@ -206,5 +206,5 @@ When the user confirms Step 4 (and optionally Step 5), the demo is complete.
 ## References
 
 - [Lakeflow Connect documentation](https://docs.databricks.com/aws/en/ingestion/lakeflow-connect)
-- [Databricks Asset Bundles](https://docs.databricks.com/aws/en/dev-tools/bundles/index.html)
+- [Declarative Automation Bundles](https://docs.databricks.com/aws/en/dev-tools/bundles/index.html)
 - [Unity Catalog connections](https://docs.databricks.com/aws/en/connect/unity-catalog/cloud-services/manage-credentials)

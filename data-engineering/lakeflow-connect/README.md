@@ -1,6 +1,6 @@
 # Lakeflow Connect
 
-Databricks Asset Bundle examples for [Lakeflow Connect](https://docs.databricks.com/aws/en/ingestion/lakeflow-connect) ingestion patterns.
+Declarative Automation Bundles examples for [Lakeflow Connect](https://docs.databricks.com/aws/en/ingestion/lakeflow-connect) ingestion patterns.
 
 ## Projects
 

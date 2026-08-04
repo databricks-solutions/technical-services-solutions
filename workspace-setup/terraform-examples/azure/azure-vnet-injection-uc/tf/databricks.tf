@@ -1,10 +1,10 @@
 resource "azurerm_databricks_workspace" "this" {
-  name                        = var.workspace_name
+  name                        = local.workspace_name
   resource_group_name         = azurerm_resource_group.this.name
   location                    = azurerm_resource_group.this.location
   sku                         = "premium"
   tags                        = var.tags
-  managed_resource_group_name = var.managed_resource_group_name
+  managed_resource_group_name = local.managed_resource_group_name
 
   custom_parameters {
     virtual_network_id                                   = local.vnet.id
@@ -12,7 +12,7 @@ resource "azurerm_databricks_workspace" "this" {
     public_subnet_name                                   = azurerm_subnet.public.name
     public_subnet_network_security_group_association_id  = azurerm_subnet_network_security_group_association.public.id
     private_subnet_network_security_group_association_id = azurerm_subnet_network_security_group_association.private.id
-    storage_account_name                                 = var.root_storage_name
+    storage_account_name                                 = local.root_storage_name
     no_public_ip                                         = true
   }
 

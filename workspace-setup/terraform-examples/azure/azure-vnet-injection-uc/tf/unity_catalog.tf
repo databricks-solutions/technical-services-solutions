@@ -1,6 +1,6 @@
 // Create azure managed identity to be used by Databricks storage credential
 resource "azurerm_databricks_access_connector" "db_mi" {
-  name                = "${var.workspace_name}-uc-mi"
+  name                = "${local.workspace_name}-uc-mi"
   resource_group_name = azurerm_resource_group.this.name
   location            = azurerm_resource_group.this.location
   identity {
@@ -10,7 +10,7 @@ resource "azurerm_databricks_access_connector" "db_mi" {
 
 // Create a storage account to be used by catalog
 resource "azurerm_storage_account" "db_uc_catalog" {
-  name                     = var.uc_storage_account_name
+  name                     = local.storage_account_name
   resource_group_name      = azurerm_resource_group.this.name
   location                 = azurerm_resource_group.this.location
   tags                     = var.tags
@@ -21,7 +21,7 @@ resource "azurerm_storage_account" "db_uc_catalog" {
 
 // Create a container in storage account to be used by unity catalog metastore as root storage
 resource "azurerm_storage_container" "db_uc_catalog" {
-  name                  = "${var.workspace_name}-uc-container"
+  name                  = "${local.workspace_name}-uc-container"
   storage_account_id    = azurerm_storage_account.db_uc_catalog.id
   container_access_type = "private"
 }
@@ -35,7 +35,7 @@ resource "azurerm_role_assignment" "db_mi_data_contributor" {
 
 // Create Databricks Storage Credential
 resource "databricks_storage_credential" "db_uc_storage_cred" {
-  name = var.storage_credential_name
+  name = local.storage_credential_name
   azure_managed_identity {
     access_connector_id = azurerm_databricks_access_connector.db_mi.id
   }
@@ -47,7 +47,7 @@ resource "databricks_storage_credential" "db_uc_storage_cred" {
 
 // Create Databricks External Location
 resource "databricks_external_location" "db_ext_loc" {
-  name = var.external_location_name
+  name = local.external_location_name
   url = format("abfss://%s@%s.dfs.core.windows.net",
     azurerm_storage_container.db_uc_catalog.name,
   azurerm_storage_account.db_uc_catalog.name)
@@ -62,7 +62,7 @@ resource "databricks_external_location" "db_ext_loc" {
 
 // Create Databricks Catalog
 resource "databricks_catalog" "uc_quickstart_sandbox" {
-  name = var.catalog_name
+  name = local.catalog_name
   storage_root = format(
     "abfss://%s@%s.dfs.core.windows.net",
     azurerm_storage_container.db_uc_catalog.name,

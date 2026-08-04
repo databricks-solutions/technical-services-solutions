@@ -11,6 +11,10 @@ terraform {
       source  = "databricks/databricks"
       version = "~> 1.84"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
   }
 }
 

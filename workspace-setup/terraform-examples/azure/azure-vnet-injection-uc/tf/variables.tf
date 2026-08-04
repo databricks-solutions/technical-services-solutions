@@ -13,12 +13,12 @@ variable "azure_subscription_id" {
 }
 
 variable "resource_group_name" {
-  description = "The name of the resource group"
+  description = "Base name for the resource group. An 8-character random suffix is appended automatically."
   type        = string
 }
 
 variable "managed_resource_group_name" {
-  description = "The name of managed resource group. This is optional field"
+  description = "Base name for the managed resource group. An 8-character random suffix is appended automatically. Leave null to let Azure auto-generate one."
   type        = string
   default     = null
   validation {
@@ -48,7 +48,7 @@ variable "databricks_account_id" {
 }
 
 variable "workspace_name" {
-  description = "The name of the Databricks workspace"
+  description = "Base name for the Databricks workspace. An 8-character random suffix is appended automatically."
   type        = string
 }
 
@@ -59,10 +59,10 @@ variable "admin_user" {
 
 variable "root_storage_name" {
   type        = string
-  description = "The root storage name. Only lowercase letters and numbers, 3-24 characters."
+  description = "Base name for the workspace root storage account. An 8-character random suffix is appended automatically, so keep this <= 16 characters."
   validation {
-    condition     = length(var.root_storage_name) >= 3 && length(var.root_storage_name) <= 24
-    error_message = "root_storage_name must be between 3 and 24 characters."
+    condition     = length(var.root_storage_name) >= 3 && length(var.root_storage_name) <= 16
+    error_message = "root_storage_name must be between 3 and 16 characters (random suffix uses the remaining 8)."
   }
   validation {
     condition     = can(regex("^[a-z0-9]+$", var.root_storage_name))
@@ -71,24 +71,24 @@ variable "root_storage_name" {
 }
 variable "catalog_name" {
   type        = string
-  description = "The name of the Unity Catalog catalog"
+  description = "Base name for the Unity Catalog catalog. An 8-character random suffix is appended automatically."
 }
 
 variable "storage_credential_name" {
   type        = string
-  description = "The name of the Databricks storage credential"
+  description = "Base name for the Databricks storage credential. An 8-character random suffix is appended automatically."
 }
 
 variable "external_location_name" {
   type        = string
-  description = "The name of the external location"
+  description = "Base name for the external location. An 8-character random suffix is appended automatically."
 }
 variable "uc_storage_account_name" {
   type        = string
-  description = "Azure storage account name for the Unity Catalog external location. Must be globally unique, only lowercase letters and numbers, 3-24 characters."
+  description = "Base name for the Unity Catalog storage account. An 8-character random suffix is appended automatically, so keep this <= 16 characters."
   validation {
-    condition     = length(var.uc_storage_account_name) >= 3 && length(var.uc_storage_account_name) <= 24
-    error_message = "uc_storage_account_name must be between 3 and 24 characters."
+    condition     = length(var.uc_storage_account_name) >= 3 && length(var.uc_storage_account_name) <= 16
+    error_message = "uc_storage_account_name must be between 3 and 16 characters (random suffix uses the remaining 8)."
   }
   validation {
     condition     = can(regex("^[a-z0-9]+$", var.uc_storage_account_name))
@@ -158,7 +158,7 @@ variable "create_new_vnet" {
 }
 
 variable "vnet_name" {
-  description = "The name of the virtual network. When create_new_vnet is false, this must be the name of the existing VNet to reuse."
+  description = "Base name for the virtual network when create_new_vnet is true (suffix appended). When create_new_vnet is false, must be the exact name of the existing VNet."
   type        = string
   default     = ""
   validation {
@@ -168,7 +168,7 @@ variable "vnet_name" {
 }
 
 variable "vnet_resource_group_name" {
-  description = "The name of the VNet resource group"
+  description = "Base name for the VNet resource group. An 8-character random suffix is appended automatically when create_new_vnet is true. When create_new_vnet is false, must be the exact name of the existing VNet resource group."
   type        = string
   validation {
     condition     = var.vnet_resource_group_name != var.resource_group_name

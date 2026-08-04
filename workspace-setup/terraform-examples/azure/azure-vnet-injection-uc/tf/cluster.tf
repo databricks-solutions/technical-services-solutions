@@ -25,7 +25,7 @@ data "databricks_cluster_policy" "personal" {
 // UC-compatible single-node cluster governed by the Personal Compute policy.
 resource "databricks_cluster" "uc_single_node" {
   count                   = var.create_cluster ? 1 : 0
-  cluster_name            = "${var.workspace_name}-uc-cluster"
+  cluster_name            = "${local.workspace_name}-uc-cluster"
   policy_id               = data.databricks_cluster_policy.personal[0].id
   spark_version           = data.databricks_spark_version.latest_lts[0].id
   node_type_id            = var.node_type_id

@@ -1,0 +1,39 @@
+# Lakebase (Autoscaling Postgres) infrastructure, managed natively by the bundle.
+# Creating a project auto-provisions a `production` branch and `primary` endpoint;
+# we declare them explicitly so they are versioned and referenceable. A dedicated
+# `orderflow` database holds the app's OLTP tables (schema applied by scripts/init_db.sh).
+resources:
+  postgres_projects:
+    orderflow_pg:
+      project_id: orderflow-db
+
+  postgres_branches:
+    orderflow_production:
+      branch_id: production
+      parent: ${resources.postgres_projects.orderflow_pg.id}
+      no_expiry: true   # production branch is permanent (not a short-lived dev branch)
+
+  postgres_endpoints:
+    orderflow_primary:
+      endpoint_id: primary
+      parent: ${resources.postgres_branches.orderflow_production.id}
+      endpoint_type: ENDPOINT_TYPE_READ_WRITE
+
+  postgres_databases:
+    orderflow_db:
+      database_id: orderflow
+      parent: ${resources.postgres_branches.orderflow_production.id}
+      postgres_database: orderflow                            # actual Postgres DB name
+      role: ${resources.postgres_roles.orderflow_owner.id}   # owning Postgres role
+
+  postgres_roles:
+    # Owner role for the orderflow database, backed by the deploying user's identity.
+    # role_id must match the branch's auto-created user role (a slugified form of
+    # your username, e.g. jane-doe) so it binds instead of colliding. postgres_role
+    # is your login email. See docs/ARCHITECTURE.md for the bind workflow.
+    orderflow_owner:
+      role_id: <your-user-role-id>
+      parent: ${resources.postgres_branches.orderflow_production.id}
+      identity_type: USER
+      postgres_role: <you@example.com>
+      auth_method: LAKEBASE_OAUTH_V1

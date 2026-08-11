@@ -1,0 +1,105 @@
+{
+  "version": 2,
+  "config": {
+    "sample_questions": [
+      {"id": "10000000000000000000000000000001", "question": ["What's our churn-risk index by region this quarter, and how does it compare to baseline?"]},
+      {"id": "10000000000000000000000000000002", "question": ["Show on-time delivery rate by region over the last 12 weeks."]},
+      {"id": "10000000000000000000000000000003", "question": ["How have EMEA unresolved cases and shipping-delay cases trended over the last 12 weeks?"]},
+      {"id": "10000000000000000000000000000004", "question": ["Which account segments are most exposed to the churn-risk spike?"]},
+      {"id": "10000000000000000000000000000005", "question": ["Which EMEA Enterprise accounts are at risk and how much ARR is exposed?"]},
+      {"id": "10000000000000000000000000000006", "question": ["Is EMEA on-time delivery recovering? Show the last 6 weeks."]}
+    ]
+  },
+  "data_sources": {
+    "tables": [
+      {"identifier": "<your_catalog>.customer_360_demo.gold_account_health"},
+      {"identifier": "<your_catalog>.customer_360_demo.mv_customer_health"},
+      {"identifier": "<your_catalog>.customer_360_demo.silver_accounts"},
+      {"identifier": "<your_catalog>.customer_360_demo.silver_cases"},
+      {"identifier": "<your_catalog>.customer_360_demo.silver_orders"}
+    ]
+  },
+  "instructions": {
+    "example_question_sqls": [
+      {
+        "id": "20000000000000000000000000000001",
+        "question": ["What's our churn-risk index by region this quarter, and how does it compare to baseline?"],
+        "sql": [
+          "SELECT date_trunc('week', `date`) AS week, region,\n",
+          "  ROUND(MEASURE(`churn_risk_index`), 2) AS churn_risk_index\n",
+          "FROM <your_catalog>.customer_360_demo.mv_customer_health\n",
+          "WHERE `date` >= date_sub(current_date(), 84)\n",
+          "GROUP BY 1, 2 ORDER BY 1, 2"
+        ]
+      },
+      {
+        "id": "20000000000000000000000000000002",
+        "question": ["Show on-time delivery rate by region over the last 12 weeks."],
+        "sql": [
+          "SELECT date_trunc('week', `date`) AS week, region,\n",
+          "  ROUND(MEASURE(`on_time_delivery_rate`), 3) AS on_time_delivery_rate\n",
+          "FROM <your_catalog>.customer_360_demo.mv_customer_health\n",
+          "WHERE `date` >= date_sub(current_date(), 84)\n",
+          "GROUP BY 1, 2 ORDER BY 1, 2"
+        ]
+      },
+      {
+        "id": "20000000000000000000000000000003",
+        "question": ["How have EMEA unresolved cases and shipping-delay cases trended over the last 12 weeks?"],
+        "sql": [
+          "SELECT date_trunc('week', `date`) AS week,\n",
+          "  ROUND(MEASURE(`unresolved_cases`)) AS unresolved_cases,\n",
+          "  ROUND(MEASURE(`shipping_delay_cases`)) AS shipping_delay_cases\n",
+          "FROM <your_catalog>.customer_360_demo.mv_customer_health\n",
+          "WHERE region = 'EMEA' AND `date` >= date_sub(current_date(), 84)\n",
+          "GROUP BY 1 ORDER BY 1"
+        ]
+      },
+      {
+        "id": "20000000000000000000000000000004",
+        "question": ["Which account segments are most exposed to the churn-risk spike?"],
+        "sql": [
+          "SELECT region, segment,\n",
+          "  ROUND(AVG(churn_risk_index), 2) AS avg_churn_risk_index,\n",
+          "  COUNT(*) AS accounts\n",
+          "FROM <your_catalog>.customer_360_demo.gold_account_health\n",
+          "GROUP BY region, segment ORDER BY avg_churn_risk_index DESC"
+        ]
+      },
+      {
+        "id": "20000000000000000000000000000005",
+        "question": ["Which EMEA Enterprise accounts are at risk and how much ARR is exposed?"],
+        "sql": [
+          "SELECT account_name, country, arr_usd, days_to_renewal, churn_risk_index, open_cases_30d, on_time_rate_30d\n",
+          "FROM <your_catalog>.customer_360_demo.gold_account_health\n",
+          "WHERE region = 'EMEA' AND segment = 'Enterprise' AND is_at_risk\n",
+          "ORDER BY arr_usd DESC"
+        ]
+      },
+      {
+        "id": "20000000000000000000000000000006",
+        "question": ["Is EMEA on-time delivery recovering? Show the last 6 weeks."],
+        "sql": [
+          "SELECT date_trunc('week', `date`) AS week,\n",
+          "  ROUND(MEASURE(`on_time_delivery_rate`), 3) AS on_time_delivery_rate\n",
+          "FROM <your_catalog>.customer_360_demo.mv_customer_health\n",
+          "WHERE region = 'EMEA' AND `date` >= date_sub(current_date(), 42)\n",
+          "GROUP BY 1 ORDER BY 1"
+        ]
+      }
+    ],
+    "text_instructions": [
+      {
+        "id": "30000000000000000000000000000001",
+        "content": [
+          "You analyze Vela Cloud customer-360 data for Maya Patel (VP Customer Experience, non-technical). Be concise and business-friendly; lead with the number and the 'so what'.\n\n",
+          "WHAT HAPPENED: ~5 weeks ago an EMEA fulfillment slip blew out shipping times; late orders drove a support-case surge; the churn-risk index spiked to ~3x on the largest EMEA renewals; ~$1.4M of ARR is exposed. It peaked ~3 weeks ago and is now decaying but still elevated.\n\n",
+          "BASELINES: normal churn-risk index ~1.0x; normal on-time delivery ~92%; EMEA unresolved-case load normally steady. Anomaly = churn-risk index > ~2x or on-time delivery < ~75%.\n\n",
+          "HEADLINE NUMBERS — always answer from mv_customer_health (same definitions the dashboard KPI tiles use, so numbers match exactly): churn risk -> MEASURE(`churn_risk_index`); on-time delivery -> MEASURE(`on_time_delivery_rate`); ARR-at-risk trend -> MEASURE(`arr_at_risk`); cases -> MEASURE(`unresolved_cases`), MEASURE(`shipping_delay_cases`), MEASURE(`new_cases`). Dimensions are `date`, region, segment.\n\n",
+          "PER-ACCOUNT questions (which accounts, how much ARR, renewal dates) come from gold_account_health (one row per account: churn_risk_index, region, segment, arr_usd, renewal_date, days_to_renewal, is_at_risk, open_cases_30d, on_time_rate_30d). The crisp '$1.4M at risk' = SUM(arr_usd) WHERE is_at_risk.\n\n",
+          "INVESTIGATION FLOW for 'Why is churn risk spiking?': (1) mv_customer_health churn_risk_index by week by region -> EMEA ~3x ~3 weeks ago, others flat ~1x. (2) mv_customer_health on_time_delivery_rate by week for EMEA -> collapses ~92% -> ~55% same window. (3) mv_customer_health unresolved_cases + shipping_delay_cases by week for EMEA -> surge tracks the delivery drop. (4) gold_account_health GROUP BY region, segment ORDER BY AVG churn_risk_index DESC -> EMEA Enterprise most exposed. (5) gold_account_health WHERE region='EMEA' AND segment='Enterprise' AND is_at_risk -> top accounts by arr_usd, SUM ~= $1.4M. Conclude: delayed EMEA shipments drove the support surge and the churn-risk spike; exposure concentrates in a handful of EMEA Enterprise renewals worth ~$1.4M.\n"
+        ]
+      }
+    ]
+  }
+}

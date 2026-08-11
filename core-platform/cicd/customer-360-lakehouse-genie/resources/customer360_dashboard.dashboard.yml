@@ -1,0 +1,13 @@
+resources:
+  # ──────────────────────────────────────────────────────────────────────────
+  # AI/BI dashboard — dataset_catalog/dataset_schema rebind the embedded bare
+  # table names per-target (requires CLI v0.283.0+). The JSON ships with NO
+  # catalog/schema on its datasets.
+  # ──────────────────────────────────────────────────────────────────────────
+  dashboards:
+    customer360_dashboard:
+      display_name: "[${bundle.target}] Customer 360"
+      file_path: ../src/dashboard/dashboard.json
+      warehouse_id: ${var.warehouse_id}
+      dataset_catalog: ${resources.schemas.customer360_schema.catalog_name}
+      dataset_schema: ${resources.schemas.customer360_schema.name}

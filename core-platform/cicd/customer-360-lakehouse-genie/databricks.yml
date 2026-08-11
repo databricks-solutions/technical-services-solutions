@@ -1,0 +1,71 @@
+# Customer 360 Lakehouse — an end-to-end Databricks Asset Bundle example.
+#
+# WHAT THIS TEACHES: a complete Lakehouse project defined as a single bundle —
+# a Unity Catalog schema + volume, a Lakeflow Declarative Pipeline (Auto Loader
+# + expectations, bronze → silver → gold), a metric view, an AI/BI dashboard, a
+# Genie space, and an orchestration job that ties them together.
+#
+# HOW IT DEPLOYS: parametrized via --var (no hardcoded IDs). `bundle deploy`
+# creates the resource definitions (schema, volume, pipeline, dashboard, Genie
+# space, setup job); `bundle run customer360_setup` populates them:
+# generate_data → run_pipeline → deploy_metric_view → validate_metrics.
+#
+# Workflow-only example (no app or serving components). Deploy is a 3-PHASE flow
+# (the Genie space validates its tables at deploy time, but the setup job builds
+# them at run time), so a plain one-shot deploy won't work:
+#   1. databricks bundle deploy --select <everything except the Genie space> …
+#   2. databricks bundle run customer360_setup …   # builds the tables
+#   3. databricks bundle deploy …                  # full deploy, adds Genie
+# See AGENTS.md for the full agent-oriented deploy instructions.
+
+bundle:
+  name: customer_360_lakehouse
+  engine: direct   # required to deploy the `genie_spaces` resource (below)
+
+include:
+  - resources/*.yml
+
+variables:
+  catalog:
+    description: "Unity Catalog for demo resources"
+    # Set this to an existing catalog in your workspace before deploying. NOTE:
+    # if you change catalog/schema you MUST also edit the hardcoded identifiers
+    # in src/genie/genie_space.json to match — the genie_spaces resource does not
+    # substitute ${var...} into its file_path JSON. See README "Known limitations".
+    default: "<your_catalog>"
+  schema:
+    description: "Schema within the catalog (created by this bundle)"
+    default: "customer_360_demo"
+  warehouse_id:
+    description: "SQL Warehouse ID — powers the dashboard + Genie space"
+  prod_service_principal:
+    description: "Application ID of the SP that deploys AND runs prod"
+    default: "REPLACE-WITH-PROD-SP-APPLICATION-ID"
+
+sync:
+  include:
+    - "src/**"   # the sync block defines which files are synced to the workspace. Guarantees everything under src/ ships
+
+targets:
+  # ISOLATION MODEL: dev and prod are isolated at the WORKSPACE level (the
+  # Databricks-recommended practice) — separate workspaces/metastores, same
+  # catalog/schema NAME (<your_catalog>.customer_360_demo) in each. Because the
+  # workspaces are separate, reusing the name is safe, and it keeps every resource
+  # (incl. the Genie space, whose table refs are static) valid in both targets.
+
+  # dev = default target: host from your CLI profile (--profile). 3-phase deploy.
+  dev:
+    default: true
+  # prod = separate workspace, deploys + runs as a SERVICE PRINCIPAL.
+  # The prod workspace URL is NOT set here: workspace.host does not support
+  # ${var...} interpolation, and a literal host would override the CLI's auth
+  # resolution. Instead point at prod via the DATABRICKS_HOST env var (what the
+  # CI/CD pipelines do) or a `--profile` whose host is the prod workspace. Set the
+  # deploying/running SP with --var prod_service_principal=<app-id>. Uses the same
+  # <your_catalog>.customer_360_demo (isolation is by workspace, not by name).
+  prod:
+    mode: production
+    workspace:
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/prod
+    run_as:
+      service_principal_name: ${var.prod_service_principal}

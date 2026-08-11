@@ -1,0 +1,24 @@
+resources:
+  # ──────────────────────────────────────────────────────────────────────────
+  # SDP pipeline — Python bronze (Auto Loader + expectations) → SQL silver/gold.
+  # The bronze reads the landing volume from `demo.volume_path` (SQL read_files
+  # can't interpolate conf vars), resolved through the schema resource so it
+  # stays consistent with the data-gen task's catalog/schema.
+  # ──────────────────────────────────────────────────────────────────────────
+  pipelines:
+    customer360_pipeline:
+      name: "[${bundle.target}] Customer 360"
+      catalog: ${resources.schemas.customer360_schema.catalog_name}
+      target: ${resources.schemas.customer360_schema.name}
+      serverless: true
+      photon: true
+      channel: current
+      configuration:
+        demo.volume_path: "/Volumes/${resources.schemas.customer360_schema.catalog_name}/${resources.schemas.customer360_schema.name}/raw_data"
+      libraries:
+        - file:
+            path: ../src/pipeline/01_bronze.py
+        - file:
+            path: ../src/pipeline/02_silver.sql
+        - file:
+            path: ../src/pipeline/03_gold.sql

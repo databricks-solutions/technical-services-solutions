@@ -3,3 +3,6 @@
 __pycache__
 .idea/
 .env
+
+# Terraform provider lock files (do not track; regenerated per environment)
+.terraform.lock.hcl

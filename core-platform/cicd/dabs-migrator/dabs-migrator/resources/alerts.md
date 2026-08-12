@@ -4,6 +4,20 @@ SQL Alerts (Alerts V2) — monitor query results and notify on threshold breache
 
 Docs: https://docs.databricks.com/api/workspace/alertsv2/createalert
 
+## Migration guidance
+
+Resolve the id, then read the alert (redirect stderr before `jq` so a proxied CLI banner can't corrupt the JSON):
+
+```bash
+databricks alerts-v2 list-alerts -p <profile> -o json 2>/dev/null | jq -r '.[] | select(.display_name=="<name>") | .id'
+databricks alerts-v2 get-alert <id> -p <profile> -o json 2>/dev/null
+```
+
+- `warehouse_id` comes back from a live read as a concrete ID (e.g. `3d885699…`). Replace it with `${var.warehouse_id}` and declare the variable — never inline the raw ID.
+- `query_text` is read back with fully-qualified table names. Parameterize the catalog and schema with `${var.catalog}` / `${var.schema}` (e.g. `SELECT count(*) FROM ${var.catalog}.${var.schema}.<table>`) rather than hardcoding them.
+- Preserve `schedule.pause_status` exactly as the source alert has it (`PAUSED` or `UNPAUSED`). Omitting it silently flips a paused alert to active.
+- **Omit `evaluation.notification` entirely unless it has real content.** A live read returns the `notification` key even when the alert has no subscriptions, so a naive copy produces an empty `evaluation.notification: {}`. That passes `bundle validate` but the create API rejects it: `evaluation.notification is provided but doesn't contain any value, please remove this field if you don't want to set it (400 INVALID_PARAMETER_VALUE)`. Only emit `notification` when it carries `subscriptions` (or `notify_on_ok`/`retrigger_seconds`); otherwise drop the whole key. The same "drop empty optional sub-objects" rule applies to any block you'd otherwise serialize as `{}`.
+
 ## Complete schema reference
 
 Required fields: `display_name`, `evaluation`, `query_text`, `schedule`, `warehouse_id`

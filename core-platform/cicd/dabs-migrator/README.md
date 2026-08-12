@@ -2,6 +2,36 @@
 
 A [Genie Code](https://docs.databricks.com/aws/en/genie-code/skills) skill for Databricks that converts existing workspace assets (jobs, pipelines, dashboards, apps, and more) into a production-ready [Databricks Asset Bundles (DABs)](https://docs.databricks.com/aws/en/dev-tools/bundles/index.html) repository — complete with per-resource YAML, source code, tests, and a CI/CD pipeline for your preferred tool.
 
+## Installation
+
+The skill lives in this repo at [`core-platform/cicd/dabs-migrator/dabs-migrator/`](dabs-migrator/). You can install it into Claude Code or Genie Code just by giving the agent this GitHub URL in a prompt:
+
+```
+https://github.com/databricks-solutions/technical-services-solutions/tree/main/core-platform/cicd/dabs-migrator/dabs-migrator
+```
+
+**Claude Code** — paste the URL and ask it to install the skill:
+
+```
+Install the skill at
+https://github.com/databricks-solutions/technical-services-solutions/tree/main/core-platform/cicd/dabs-migrator/dabs-migrator
+```
+
+Claude clones the folder and copies it to your skills directory (`~/.claude/skills/dabs-migrator/`, or `.claude/skills/dabs-migrator/` for a single project). It's available the next time a prompt matches — no restart needed.
+
+**Genie Code** — same idea from Genie Code in your Databricks workspace:
+
+```
+Install the dabs-migrator skill from
+https://github.com/databricks-solutions/technical-services-solutions/tree/main/core-platform/cicd/dabs-migrator/dabs-migrator
+```
+
+Genie fetches the skill folder (the `SKILL.md` plus its `resources/`, `cicd/`, and `templates/` references) and registers it. See the [Genie Code skills docs](https://docs.databricks.com/aws/en/genie-code/skills) for where skills are stored and how they're discovered.
+
+> The URL must point at the **skill folder** (the directory containing `SKILL.md`), not the repo root — the agent needs `SKILL.md` and its sibling `resources/`, `cicd/`, and `templates/` directories to install the skill correctly.
+
+Once installed, [invoke it with a plain-English prompt](#how-to-invoke).
+
 ## What this skill does
 
 When you invoke it from Genie Code, `dabs-migrator` reads the assets you name from your Databricks workspace and scaffolds a complete DABs project that you can push to Git and deploy through CI/CD. No more copy-pasting YAML or guessing at field names — every resource is generated from the authoritative bundle schema so `databricks bundle validate` passes on the first try.

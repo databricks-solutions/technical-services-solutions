@@ -23,7 +23,7 @@ resources:
           output_data_type: <string>  # REQUIRED | string | The output type of the custom metric.
           type: CUSTOM_METRIC_TYPE_AGGREGATE  # REQUIRED | enum: CUSTOM_METRIC_TYPE_AGGREGATE, CUSTOM_METRIC_TYPE_DERIVED, CUSTOM_METRIC_TYPE_DRIFT | Can only be one of ``"CUSTOM_METRIC_TYPE_AGGREGATE"``, ``"CUSTOM_METRIC_TYPE_DER
       data_classification_config:  # PRIVATE PREVIEW | object | [Create:OPT Update:OPT] Data classification related config.
-        enabled: <bool>  # bool | Whether to enable data classification.
+        enabled: <bool>  # PRIVATE PREVIEW | bool | Whether to enable data classification.
       inference_log:  # object
         granularities:  # REQUIRED | array[string] | Granularities for aggregating data into time windows based on their timestamp. V
           - <value>
@@ -34,7 +34,7 @@ resources:
         problem_type: PROBLEM_TYPE_CLASSIFICATION  # REQUIRED | enum: PROBLEM_TYPE_CLASSIFICATION, PROBLEM_TYPE_REGRESSION | Problem type the model aims to solve.
         timestamp_col: <string>  # REQUIRED | string | Column for the timestamp.
       latest_monitor_failure_msg: <string>  # string | [Create:ERR Update:IGN] The latest error message for a monitor failure.
-      lifecycle:  # object | Lifecycle is a struct that contains the lifecycle settings for a resource. It co
+      lifecycle:  # object | Settings that control the deployment lifecycle of the resource, such as preventi
         prevent_destroy: <bool>  # bool | Lifecycle setting to prevent the resource from being destroyed.
       notifications:  # object | [Create:OPT Update:OPT] Field for specifying notification settings.
         on_failure:  # object | Destinations to send notifications on failure/timeout.
@@ -51,7 +51,8 @@ resources:
       skip_builtin_dashboard: <bool>  # bool | Whether to skip creating a default dashboard summarizing data quality metrics.
       slicing_exprs:  # array[string] | [Create:OPT Update:OPT] List of column expressions to slice data with for target
         - <value>
-      snapshot:  # object | Configuration for monitoring snapshot tables.
+      snapshot:  # map[string, string] | Configuration for monitoring snapshot tables.
+        <key>: <value>
       table_name: <string>  # REQUIRED | string
       time_series:  # object | Configuration for monitoring time series tables.
         granularities:  # REQUIRED | array[string] | Granularities for aggregating data into time windows based on their timestamp. V

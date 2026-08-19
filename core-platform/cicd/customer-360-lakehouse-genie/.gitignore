@@ -1,0 +1,12 @@
+# Databricks Asset Bundle local state (per-user, per-workspace — never commit)
+.databricks/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# OS / editor cruft
+.DS_Store
+*.swp

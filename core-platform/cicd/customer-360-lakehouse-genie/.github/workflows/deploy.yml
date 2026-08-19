@@ -1,0 +1,95 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# GitHub Actions CI/CD for the Customer 360 Lakehouse bundle.
+#
+# STRATEGY (same across all four CI platforms in this repo) — the full lifecycle:
+#   1. Push to a feature branch  → validate + DEPLOY to the DEV workspace.
+#   2. Pull request → main       → VALIDATE only (cheap, no-compute merge gate).
+#   3. Merge/push to main        → DEPLOY to PROD as a SERVICE PRINCIPAL.
+#
+# Each deploy is a 3-PHASE flow: deploy all-except-Genie → run the setup job to
+# build the tables → full deploy (adds Genie). This is required because the
+# genie_spaces resource validates its bound tables exist at deploy time, but the
+# setup job builds those tables at run time. See AGENTS.md / README.
+#
+# AUTH: OAuth machine-to-machine (M2M). The CLI reads three env vars:
+#   DATABRICKS_HOST, DATABRICKS_CLIENT_ID, DATABRICKS_CLIENT_SECRET
+# Store the *_CLIENT_ID / *_CLIENT_SECRET as GitHub repo secrets (Settings →
+# Secrets and variables → Actions). Use one service principal per environment.
+#
+# NOTE: adjust the feature-branch glob ('feature/**') to your team's convention.
+# ⚠️ Public-repo note: deploying on branches/PRs from FORKS would expose secrets
+#   to untrusted code. This example assumes same-repo branches; harden before
+#   enabling on a public repo.
+# ─────────────────────────────────────────────────────────────────────────────
+name: databricks-cicd
+
+on:
+  push:
+    branches:
+      - 'feature/**'        # feature branch push → validate + deploy to dev
+      - main                # merge/push to main   → deploy to prod
+  pull_request:
+    branches: [main]        # PR targeting main     → validate-only merge gate
+
+jobs:
+  # 1. Feature-branch push → validate + deploy to DEV ──────────────────────────
+  dev:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/feature/')
+    runs-on: ubuntu-latest
+    env:
+      DATABRICKS_HOST: ${{ secrets.DEV_DATABRICKS_HOST }}
+      DATABRICKS_CLIENT_ID: ${{ secrets.DEV_CLIENT_ID }}
+      DATABRICKS_CLIENT_SECRET: ${{ secrets.DEV_CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      # Installs the modern Databricks CLI (NOT the deprecated pip package).
+      - uses: databricks/setup-cli@main
+      - name: Validate (dev)
+        run: databricks bundle validate -t dev --var warehouse_id=${{ secrets.DEV_WAREHOUSE_ID }}
+      # 3-PHASE DEPLOY — the Genie space validates its tables at deploy time, but
+      # the setup job builds those tables at run time. So: deploy everything
+      # EXCEPT Genie → run the job to build tables → full deploy (adds Genie).
+      - name: Phase 1 — deploy all except Genie (dev)
+        run: databricks bundle deploy -t dev --var warehouse_id=${{ secrets.DEV_WAREHOUSE_ID }} --select schemas.customer360_schema,volumes.raw_data,pipelines.customer360_pipeline,dashboards.customer360_dashboard,jobs.customer360_setup
+      - name: Phase 2 — run setup job to build tables (dev)
+        run: databricks bundle run -t dev customer360_setup --var warehouse_id=${{ secrets.DEV_WAREHOUSE_ID }}
+      - name: Phase 3 — full deploy incl. Genie (dev)
+        run: databricks bundle deploy -t dev --var warehouse_id=${{ secrets.DEV_WAREHOUSE_ID }}
+
+  # 2. Pull request → main → VALIDATE only (merge gate, no deploy) ──────────────
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    env:
+      DATABRICKS_HOST: ${{ secrets.DEV_DATABRICKS_HOST }}
+      DATABRICKS_CLIENT_ID: ${{ secrets.DEV_CLIENT_ID }}
+      DATABRICKS_CLIENT_SECRET: ${{ secrets.DEV_CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: databricks/setup-cli@main
+      - name: Validate (dev)
+        run: databricks bundle validate -t dev --var warehouse_id=${{ secrets.DEV_WAREHOUSE_ID }}
+
+  # 3. Merge/push to main → deploy to PROD as the service principal ────────────
+  prod:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      DATABRICKS_HOST: ${{ secrets.PROD_DATABRICKS_HOST }}
+      DATABRICKS_CLIENT_ID: ${{ secrets.PROD_CLIENT_ID }}
+      DATABRICKS_CLIENT_SECRET: ${{ secrets.PROD_CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: databricks/setup-cli@main
+      # prod deploys + runs as a service principal — run_as.service_principal_name
+      # must be the SP's application ID, which for an OAuth M2M SP is the same as
+      # its client id (PROD_CLIENT_ID). Pass it via --var prod_service_principal.
+      - name: Validate (prod)
+        run: databricks bundle validate -t prod --var warehouse_id=${{ secrets.PROD_WAREHOUSE_ID }} --var prod_service_principal=${{ secrets.PROD_CLIENT_ID }}
+      # 3-phase deploy (see the dev job for why).
+      - name: Phase 1 — deploy all except Genie (prod)
+        run: databricks bundle deploy -t prod --var warehouse_id=${{ secrets.PROD_WAREHOUSE_ID }} --var prod_service_principal=${{ secrets.PROD_CLIENT_ID }} --select schemas.customer360_schema,volumes.raw_data,pipelines.customer360_pipeline,dashboards.customer360_dashboard,jobs.customer360_setup
+      - name: Phase 2 — run setup job to build tables (prod)
+        run: databricks bundle run -t prod customer360_setup --var warehouse_id=${{ secrets.PROD_WAREHOUSE_ID }} --var prod_service_principal=${{ secrets.PROD_CLIENT_ID }}
+      - name: Phase 3 — full deploy incl. Genie (prod)
+        run: databricks bundle deploy -t prod --var warehouse_id=${{ secrets.PROD_WAREHOUSE_ID }} --var prod_service_principal=${{ secrets.PROD_CLIENT_ID }}

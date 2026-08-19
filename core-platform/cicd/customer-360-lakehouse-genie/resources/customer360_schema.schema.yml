@@ -1,0 +1,9 @@
+resources:
+  # ──────────────────────────────────────────────────────────────────────────
+  # Schema + raw landing volume
+  # ──────────────────────────────────────────────────────────────────────────
+  schemas:
+    customer360_schema:
+      name: ${var.schema}
+      catalog_name: ${var.catalog}
+      comment: "Customer 360 demo data"

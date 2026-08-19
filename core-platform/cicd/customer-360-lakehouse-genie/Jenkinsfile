@@ -1,0 +1,86 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Jenkins CI/CD for the Customer 360 Lakehouse bundle.
+//
+// STRATEGY (same across all four CI platforms in this repo) — the full lifecycle:
+//   1. Push to a feature branch  → validate + DEPLOY to the DEV workspace
+//                                  (inner loop; dev + prod are separate workspaces).
+//   2. Pull request → main       → VALIDATE only (cheap, no-compute merge gate).
+//   3. Merge/push to main        → DEPLOY to PROD as a SERVICE PRINCIPAL.
+//
+// AUTH: OAuth M2M. The CLI reads DATABRICKS_HOST / DATABRICKS_CLIENT_ID /
+// DATABRICKS_CLIENT_SECRET. Store each SP's host + client id + secret as Jenkins
+// credentials (Manage Jenkins → Credentials), one set per environment, mapped
+// with withCredentials below. Requires the Databricks CLI Docker image and a
+// MULTIBRANCH pipeline (so env.BRANCH_NAME / env.CHANGE_ID are populated).
+//
+// `env.CHANGE_ID` is set ONLY for pull requests; `env.BRANCH_NAME` is the branch
+// for branch builds. Adjust the feature-branch match to your team's convention.
+// ─────────────────────────────────────────────────────────────────────────────
+pipeline {
+  // Run inside the official Databricks CLI image (CLI pre-installed).
+  agent { docker { image 'ghcr.io/databricks/cli:latest' } }
+
+  stages {
+    // 1. Feature-branch push → validate + deploy to DEV ──────────────────────
+    stage('Deploy (dev)') {
+      when {
+        allOf {
+          not { changeRequest() }                 // not a PR build
+          branch 'feature/*'                       // a feature branch
+        }
+      }
+      steps {
+        withCredentials([
+          string(credentialsId: 'dev-databricks-host',          variable: 'DATABRICKS_HOST'),
+          string(credentialsId: 'dev-databricks-client-id',     variable: 'DATABRICKS_CLIENT_ID'),
+          string(credentialsId: 'dev-databricks-client-secret', variable: 'DATABRICKS_CLIENT_SECRET'),
+          string(credentialsId: 'dev-databricks-warehouse-id',  variable: 'DATABRICKS_WAREHOUSE_ID')
+        ]) {
+          // 3-phase deploy: all-except-Genie → run setup job (builds tables) →
+          // full deploy (adds Genie). genie_spaces validates tables at deploy;
+          // the job builds them at run. See AGENTS.md.
+          sh 'databricks bundle validate -t dev --var warehouse_id=$DATABRICKS_WAREHOUSE_ID'
+          sh 'databricks bundle deploy   -t dev --var warehouse_id=$DATABRICKS_WAREHOUSE_ID --select schemas.customer360_schema,volumes.raw_data,pipelines.customer360_pipeline,dashboards.customer360_dashboard,jobs.customer360_setup'
+          sh 'databricks bundle run      -t dev customer360_setup --var warehouse_id=$DATABRICKS_WAREHOUSE_ID'
+          sh 'databricks bundle deploy   -t dev --var warehouse_id=$DATABRICKS_WAREHOUSE_ID'
+        }
+      }
+    }
+
+    // 2. Pull request → main → VALIDATE only (merge gate, no deploy) ──────────
+    stage('Validate (merge gate)') {
+      when { changeRequest(target: 'main') }       // true only for PRs into main
+      steps {
+        withCredentials([
+          string(credentialsId: 'dev-databricks-host',          variable: 'DATABRICKS_HOST'),
+          string(credentialsId: 'dev-databricks-client-id',     variable: 'DATABRICKS_CLIENT_ID'),
+          string(credentialsId: 'dev-databricks-client-secret', variable: 'DATABRICKS_CLIENT_SECRET'),
+          string(credentialsId: 'dev-databricks-warehouse-id',  variable: 'DATABRICKS_WAREHOUSE_ID')
+        ]) {
+          sh 'databricks bundle validate -t dev --var warehouse_id=$DATABRICKS_WAREHOUSE_ID'
+        }
+      }
+    }
+
+    // 3. Merge/push to main → deploy to PROD as the service principal ─────────
+    stage('Deploy (prod)') {
+      when { branch 'main' }                       // true only on the main branch
+      steps {
+        withCredentials([
+          string(credentialsId: 'prod-databricks-host',          variable: 'DATABRICKS_HOST'),
+          string(credentialsId: 'prod-databricks-client-id',     variable: 'DATABRICKS_CLIENT_ID'),
+          string(credentialsId: 'prod-databricks-client-secret', variable: 'DATABRICKS_CLIENT_SECRET'),
+          string(credentialsId: 'prod-databricks-warehouse-id',  variable: 'DATABRICKS_WAREHOUSE_ID')
+        ]) {
+          // 3-phase deploy (see the dev stage for why). run_as.service_principal_name
+          // must be the SP's application ID = its OAuth client id
+          // ($DATABRICKS_CLIENT_ID), passed via --var prod_service_principal.
+          sh 'databricks bundle validate -t prod --var warehouse_id=$DATABRICKS_WAREHOUSE_ID --var prod_service_principal=$DATABRICKS_CLIENT_ID'
+          sh 'databricks bundle deploy   -t prod --var warehouse_id=$DATABRICKS_WAREHOUSE_ID --var prod_service_principal=$DATABRICKS_CLIENT_ID --select schemas.customer360_schema,volumes.raw_data,pipelines.customer360_pipeline,dashboards.customer360_dashboard,jobs.customer360_setup'
+          sh 'databricks bundle run      -t prod customer360_setup --var warehouse_id=$DATABRICKS_WAREHOUSE_ID --var prod_service_principal=$DATABRICKS_CLIENT_ID'
+          sh 'databricks bundle deploy   -t prod --var warehouse_id=$DATABRICKS_WAREHOUSE_ID --var prod_service_principal=$DATABRICKS_CLIENT_ID'
+        }
+      }
+    }
+  }
+}

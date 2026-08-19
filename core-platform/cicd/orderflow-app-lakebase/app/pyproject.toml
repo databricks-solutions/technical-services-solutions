@@ -1,0 +1,16 @@
+[project]
+name = "orderflow-app"
+version = "0.1.0"
+description = "OrderFlow — order & inventory management on Databricks Apps + Lakebase"
+requires-python = ">=3.11"
+# Upper bounds keep resolution on versions mirrored by the Databricks pypi proxy.
+dependencies = [
+    "fastapi>=0.110,<0.116",
+    "uvicorn[standard]>=0.30,<0.35",
+    "psycopg[binary,pool]>=3.2,<3.3",
+    "databricks-sdk>=0.99,<1",
+    "pydantic>=2.9,<3",
+]
+
+[tool.uv]
+package = false

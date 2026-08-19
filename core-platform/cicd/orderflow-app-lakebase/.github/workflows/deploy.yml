@@ -1,0 +1,45 @@
+name: Deploy
+
+# Deploy the bundle (app + pipeline + job) to the workspace.
+# Runs automatically on push to main (prod), and can be triggered manually.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Bundle target"
+        default: prod
+        type: choice
+        options: [dev, prod]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    concurrency: deploy-${{ github.ref }}
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+      DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+      TARGET: ${{ github.event.inputs.target || 'prod' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build frontend (bundled into the app)
+        working-directory: app/frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install Databricks CLI
+        uses: databricks/setup-cli@main
+
+      - name: Deploy bundle
+        run: databricks bundle deploy -t "$TARGET"
+
+      - name: Run the pipeline+job once after deploy
+        run: databricks bundle run orderflow_job -t "$TARGET" || true

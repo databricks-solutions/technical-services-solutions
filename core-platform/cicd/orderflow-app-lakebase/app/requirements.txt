@@ -1,0 +1,7 @@
+# Databricks Apps installs from this file. Kept in sync with pyproject.toml.
+# Versions are mirrored by the Databricks pypi proxy.
+fastapi==0.115.14
+uvicorn[standard]==0.34.3
+psycopg[binary,pool]==3.2.9
+databricks-sdk==0.126.0
+pydantic==2.13.4

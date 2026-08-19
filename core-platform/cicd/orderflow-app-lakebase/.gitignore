@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Build outputs — keep app/frontend/dist for deployment, ignore locally-built noise
+app/frontend/dist/
+
+# Databricks
+.databricks/
+.databricks-login.json
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store

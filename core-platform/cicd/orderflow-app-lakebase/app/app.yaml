@@ -1,0 +1,17 @@
+# Databricks App runtime config.
+# Lakebase is attached as an app `postgres` resource (see resources/app.yml), so
+# the runtime auto-injects PGHOST / PGUSER / PGPORT / PGDATABASE. We only supply
+# ENDPOINT_NAME so the app can mint a fresh OAuth token per DB connection.
+command:
+  - "python"
+  - "-m"
+  - "uvicorn"
+  - "app:app"
+  - "--host"
+  - "0.0.0.0"
+  - "--port"
+  - "8000"
+
+env:
+  - name: ENDPOINT_NAME
+    value: "projects/orderflow-db/branches/production/endpoints/primary"

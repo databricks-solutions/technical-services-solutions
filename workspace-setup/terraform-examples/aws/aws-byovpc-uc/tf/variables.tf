@@ -164,9 +164,9 @@ variable "metastore_name" {
 # User Defined Catalog
 # =============================================================================
 variable "new_catalog" {
-  description = "Boolean flag to create a user-defined catalog (with its storage credential, IAM role, S3 bucket, and external location). Defaults to false."
+  description = "Boolean flag to create a user-defined catalog (with its storage credential, IAM role, S3 bucket, and external location). Defaults to true."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "catalog_name" {

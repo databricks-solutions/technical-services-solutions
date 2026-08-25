@@ -22,7 +22,7 @@ This Terraform example deploys a Databricks workspace on AWS using the "Bring Yo
 
 Configuration values (Databricks account ID, AWS region, VPC and subnet CIDRs, availability zones, metastore options) are defined as variables. Copy `tf/terraform.tfvars.example` to `tf/terraform.tfvars` and set your values there. Terraform loads `terraform.tfvars` automatically. You can also use a file ending in `.auto.tfvars` or pass variables via the command line.
 
-You can either create a new VPC (leave `vpc_id` empty and provide the CIDR/AZ values) or reuse an existing VPC by setting `vpc_id` and `subnet_ids`. Creation of the user-defined catalog (`new_catalog`) and the single-node cluster (`new_cluster`) are both optional and default to disabled.
+You can either create a new VPC (leave `vpc_id` empty and provide the CIDR/AZ values) or reuse an existing VPC by setting `vpc_id` and `subnet_ids`. The user-defined catalog (`new_catalog`) is created by default; the optional single-node cluster (`new_cluster`) is disabled by default.
 
 ## Authenticate
 
@@ -109,7 +109,7 @@ Copy `terraform.tfvars.example` to `terraform.tfvars` in the `tf/` directory and
 | `aws_account_id` | **(Required)** AWS account ID where resources are deployed (used to construct IAM role ARNs for Unity Catalog). |
 | `metastore_id` | **(Optional)** Existing Unity Catalog metastore ID. Leave empty to create a new one. Default: `""`. |
 | `metastore_name` | **(Optional)** Name for the Unity Catalog metastore. Required when `metastore_id` is empty. Default: `""`. |
-| `new_catalog` | **(Optional)** Whether to create a user-defined catalog (storage credential, IAM role, S3 bucket, external location, and catalog). Default: `false`. |
+| `new_catalog` | **(Optional)** Whether to create a user-defined catalog (storage credential, IAM role, S3 bucket, external location, and catalog). Default: `true`. |
 | `catalog_name` | **(Optional)** Unity Catalog catalog name. Default `""` uses `{prefix}-catalog`. |
 | `external_location_name` | **(Optional)** Unity Catalog external location name. Default `""` uses `{resource_prefix}-external-location`. |
 | `storage_credential_name` | **(Optional)** Unity Catalog storage credential name. Default `""` uses `{resource_prefix}-storage-credential`. |

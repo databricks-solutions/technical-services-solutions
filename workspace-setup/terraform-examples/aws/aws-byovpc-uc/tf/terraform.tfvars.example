@@ -81,7 +81,7 @@ aws_account_id = "your-aws-account-id"
 # =============================================================================
 
 # Set to true to create a user-defined catalog (storage credential, IAM role, S3 bucket, external location)
-new_catalog = false
+new_catalog = true
 
 # Optional: override the generated names (only used when new_catalog = true)
 # catalog_name              = "my_catalog"

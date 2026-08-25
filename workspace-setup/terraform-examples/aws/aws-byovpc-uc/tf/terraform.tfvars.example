@@ -34,11 +34,16 @@ region = "us-west-2"
 
 # Option 1: Create new VPC (leave vpc_id empty and specify network config)
 vpc_id              = ""
+nat_gateway_mode     = "single" # "single" or "per_az"
 vpc_cidr_range      = "10.0.0.0/16"
 availability_zones  = ["us-west-2a", "us-west-2b"]
 private_subnets_cidr = ["10.0.1.0/24", "10.0.2.0/24"]
 public_subnets_cidr  = ["10.0.101.0/24", "10.0.102.0/24"]
-intra_subnet_cidr    = ["10.0.201.0/24"]
+
+# Optional hourly billed STS and Kinesis interface endpoints. When enabled,
+# provide intra subnet CIDRs (normally one per selected availability zone).
+enable_aws_service_endpoints = false
+# intra_subnet_cidr = ["10.0.201.0/28", "10.0.201.16/28"]
 
 # Option 2: Use existing VPC (uncomment and specify IDs)
 # vpc_id     = "vpc-xxxxxxxxx"
@@ -72,15 +77,16 @@ metastore_name = "my-unity-catalog-metastore"
 # Unity Catalog Storage Configuration
 # =============================================================================
 
-# AWS account ID where Unity Catalog IAM role and S3 bucket will be created
-aws_account_id = "your-aws-account-id"
+# Optional AWS account ID override. When omitted, Terraform uses the current
+# AWS caller account ID.
+# aws_account_id = "your-aws-account-id"
 
 # =============================================================================
 # User-defined Catalog in UC (Optional)
 # =============================================================================
 
 # Set to true to create a user-defined catalog (storage credential, IAM role, S3 bucket, external location)
-new_catalog = true
+new_catalog = false
 
 # Optional: override the generated names (only used when new_catalog = true)
 # catalog_name              = "my_catalog"
@@ -96,5 +102,4 @@ new_cluster = false
 
 # Optional: override the cluster default (only used when new_cluster = true)
 # cluster_autotermination_minutes = 10
-
 

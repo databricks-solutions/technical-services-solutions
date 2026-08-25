@@ -67,6 +67,23 @@ variable "vpc_id" {
   default     = ""
 }
 
+variable "nat_gateway_mode" {
+  description = "NAT gateway topology for a newly created VPC: 'single' uses one shared NAT gateway; 'per_az' creates one NAT gateway per availability zone. Existing VPC routing is user-managed."
+  type        = string
+  default     = "single"
+
+  validation {
+    condition     = contains(["single", "per_az"], var.nat_gateway_mode)
+    error_message = "nat_gateway_mode must be either 'single' or 'per_az'. This non-PrivateLink example requires NAT-based outbound connectivity."
+  }
+}
+
+variable "enable_aws_service_endpoints" {
+  description = "Whether to create optional STS and Kinesis interface endpoints in dedicated intra subnets. The S3 gateway endpoint is always created for a new VPC."
+  type        = bool
+  default     = false
+}
+
 variable "vpc_cidr_range" {
   description = "CIDR range for the VPC (only used if creating new VPC)"
   type        = string
@@ -98,7 +115,7 @@ variable "public_subnets_cidr" {
 }
 
 variable "intra_subnet_cidr" {
-  description = "List of intra subnet CIDR blocks that contain the VPC endpoints (only used if creating new VPC)"
+  description = "List of intra subnet CIDR blocks for optional STS and Kinesis interface endpoints (used only when creating a VPC and enable_aws_service_endpoints is true)"
   type        = list(string)
   default     = []
 }
@@ -130,8 +147,9 @@ variable "sg_egress_ports" {
 # =============================================================================
 
 variable "aws_account_id" {
-  description = "AWS account ID where resources are deployed (used to construct IAM role ARNs for Unity Catalog)"
+  description = "AWS account ID used for optional Unity Catalog resources. When empty, the current AWS caller account ID is used."
   type        = string
+  default     = ""
 }
 
 variable "metastore_id" {
@@ -155,7 +173,7 @@ variable "metastore_name" {
 variable "new_catalog" {
   description = "Boolean flag to create a user-defined catalog (with its storage credential, IAM role, S3 bucket, and external location). Defaults to false."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "catalog_name" {
@@ -179,7 +197,7 @@ variable "storage_credential_name" {
 # =============================================================================
 # Cluster Configuration (Optional)
 # =============================================================================
-variable "new_cluster"{
+variable "new_cluster" {
   description = "Boolean flag to create a new cluster, defaults to false"
   type        = bool
   default     = false

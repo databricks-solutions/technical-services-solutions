@@ -1,5 +1,7 @@
 # Delay after IAM policy is attached so AWS / UC propagation can settle before
 # Databricks validates S3 read on external location creation.
+data "aws_caller_identity" "current" {}
+
 resource "time_sleep" "wait_60_seconds" {
   count           = var.new_catalog ? 1 : 0
   depends_on      = [aws_iam_policy_attachment.unity_catalog_attach]
@@ -7,9 +9,10 @@ resource "time_sleep" "wait_60_seconds" {
 }
 
 locals {
-  uc_iam_role         = "${var.resource_prefix}-catalog"
-  uc_catalog_name_us  = replace(var.prefix, "-", "_")
-  catalog_bucket_name = "${var.resource_prefix}-catalog-storage-${join("", random_string.catalog_bucket_suffix[*].result)}"
+  resolved_aws_account_id = var.aws_account_id != "" ? var.aws_account_id : data.aws_caller_identity.current.account_id
+  uc_iam_role             = "${var.resource_prefix}-catalog"
+  uc_catalog_name_us      = replace(var.prefix, "-", "_")
+  catalog_bucket_name     = "${var.resource_prefix}-catalog-storage-${join("", random_string.catalog_bucket_suffix[*].result)}"
 
   # Resolved UC object names (optional vars default to "" in variables.tf; prefix-based defaults cannot live in variable defaults)
   uc_catalog_name            = var.catalog_name != "" ? var.catalog_name : "${var.prefix}-catalog"
@@ -30,7 +33,7 @@ resource "databricks_storage_credential" "uc_storage_cred" {
   provider = databricks.workspace
   name     = local.uc_storage_credential_name
   aws_iam_role {
-    role_arn = "arn:aws:iam::${var.aws_account_id}:role/${local.uc_iam_role}"
+    role_arn = "arn:aws:iam::${local.resolved_aws_account_id}:role/${local.uc_iam_role}"
   }
   depends_on = [databricks_metastore_assignment.this]
 }
@@ -39,7 +42,7 @@ resource "databricks_storage_credential" "uc_storage_cred" {
 data "databricks_aws_unity_catalog_assume_role_policy" "unity_catalog" {
   count                 = var.new_catalog ? 1 : 0
   provider              = databricks.workspace
-  aws_account_id        = var.aws_account_id
+  aws_account_id        = local.resolved_aws_account_id
   aws_partition         = "aws"
   role_name             = local.uc_iam_role
   unity_catalog_iam_arn = "arn:aws:iam::414351767826:role/unity-catalog-prod-UCMasterRole-14S5ZJVKOTYTL"
@@ -50,7 +53,7 @@ data "databricks_aws_unity_catalog_assume_role_policy" "unity_catalog" {
 data "databricks_aws_unity_catalog_policy" "unity_catalog" {
   count          = var.new_catalog ? 1 : 0
   provider       = databricks.workspace
-  aws_account_id = var.aws_account_id
+  aws_account_id = local.resolved_aws_account_id
   aws_partition  = "aws"
   bucket_name    = local.catalog_bucket_name
   role_name      = local.uc_iam_role

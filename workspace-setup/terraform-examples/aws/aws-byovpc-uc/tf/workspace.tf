@@ -1,4 +1,5 @@
 resource "time_sleep" "wait_30_seconds" {
+  depends_on      = [aws_iam_role_policy.this]
   create_duration = "30s"
 }
 
@@ -48,4 +49,3 @@ resource "time_sleep" "wait_2_minutes" {
   depends_on      = [databricks_mws_workspaces.this]
   create_duration = "120s"
 }
-

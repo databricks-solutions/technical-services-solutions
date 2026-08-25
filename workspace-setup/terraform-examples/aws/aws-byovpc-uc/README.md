@@ -68,9 +68,9 @@ The code provisions:
 1. **VPC** -- When `vpc_id` is empty, a VPC with address space from `vpc_cidr_range`, containing three subnet types (when reusing an existing VPC, set `vpc_id` and `subnet_ids` and these are skipped):
    - **Private subnets** -- CIDRs from `private_subnets_cidr`. Used by Databricks for cluster nodes.
    - **Public subnets** -- CIDRs from `public_subnets_cidr`. Used for NAT Gateways and the internet gateway.
-   - **Intra subnets** -- Optional CIDRs from `intra_subnet_cidr`. Used only when optional STS and Kinesis interface endpoints are enabled.
+   - **Intra subnets** -- CIDRs from `intra_subnet_cidr`. Used for STS and Kinesis interface endpoints.
 2. **NAT Gateway** -- Either one shared NAT Gateway or one NAT Gateway per availability zone, selected with `nat_gateway_mode`.
-3. **VPC Endpoints** -- A free S3 gateway endpoint is always created for a new VPC. Hourly billed STS and Kinesis interface endpoints can be enabled with `enable_aws_service_endpoints`.
+3. **VPC Endpoints** -- Gateway endpoint for S3 and interface endpoints for STS and Kinesis Streams.
 4. **Security group** -- When `security_group_ids` is empty, a dedicated security group (`{resource_prefix}-databricks-sg`, or `new_security_group_name` if set) configured with Databricks-required egress rules (ports 443, 3306, 2443, 5432, 8443-8451), internal TCP/UDP egress, and self-ingress. Alternatively, provide existing security group IDs via `security_group_ids`.
 5. **Cross-account IAM role** -- An IAM role that grants Databricks access to your AWS account for workspace provisioning.
 6. **Root S3 bucket** -- An S3 bucket for workspace root storage (DBFS), with a Databricks-specific bucket policy.
@@ -97,17 +97,16 @@ Copy `terraform.tfvars.example` to `terraform.tfvars` in the `tf/` directory and
 | `tags` | **(Optional)** Additional tags to apply to all AWS resources. Default: `{}`. |
 | `vpc_id` | **(Optional)** Existing VPC ID to reuse. If empty, a new VPC is created. Default: `""`. |
 | `nat_gateway_mode` | **(Optional)** NAT topology for a new VPC: `single` or `per_az`. Default: `single`. Existing VPC routing is user-managed. |
-| `enable_aws_service_endpoints` | **(Optional)** Create STS and Kinesis interface endpoints in intra subnets. Default: `false`. The S3 gateway endpoint is always created for a new VPC. |
 | `vpc_cidr_range` | **(Optional)** CIDR range for the VPC (only used when creating a new VPC). Default: `10.0.0.0/16`. |
 | `availability_zones` | **(Required when creating a new VPC)** List of AWS availability zones for subnet distribution (e.g. `["us-west-2a", "us-west-2b"]`). |
 | `subnet_ids` | **(Required when reusing an existing VPC)** Existing subnet IDs to use. Default: `[]`. |
 | `private_subnets_cidr` | **(Required when creating a new VPC)** List of private subnet CIDR blocks (one per AZ). |
 | `public_subnets_cidr` | **(Required when creating a new VPC)** List of public subnet CIDR blocks (one per AZ). |
-| `intra_subnet_cidr` | **(Required when `enable_aws_service_endpoints = true`)** List of intra subnet CIDR blocks for STS and Kinesis endpoints. |
+| `intra_subnet_cidr` | **(Required when creating a new VPC)** List of intra subnet CIDR blocks for STS and Kinesis endpoints. |
 | `security_group_ids` | **(Optional)** Existing security group IDs to use. If empty, a dedicated security group is created. Default: `[]`. |
 | `new_security_group_name` | **(Optional)** Name for the new security group. If empty, defaults to `{resource_prefix}-databricks-sg`. Default: `""`. |
 | `sg_egress_ports` | **(Optional)** List of egress ports to allow in security group rules. Default: `[443, 3306, 2443, 5432, 8443, 8444, 8445, 8446, 8447, 8448, 8449, 8450, 8451]`. |
-| `aws_account_id` | **(Optional)** AWS account ID override for optional Unity Catalog resources. Defaults to the current AWS caller account ID. |
+| `aws_account_id` | **(Required)** AWS account ID where resources are deployed (used to construct IAM role ARNs for Unity Catalog). |
 | `metastore_id` | **(Optional)** Existing Unity Catalog metastore ID. Leave empty to create a new one. Default: `""`. |
 | `metastore_name` | **(Optional)** Name for the Unity Catalog metastore. Required when `metastore_id` is empty. Default: `""`. |
 | `new_catalog` | **(Optional)** Whether to create a user-defined catalog (storage credential, IAM role, S3 bucket, external location, and catalog). Default: `false`. |
@@ -175,7 +174,7 @@ Type `yes` when prompted. Destruction can take several minutes.
 | AWS provider auth fails | AWS CLI not configured or credentials expired | Run `aws configure` or set `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` environment variables. |
 | Databricks provider auth fails | Missing or invalid service principal credentials | Set `DATABRICKS_CLIENT_ID` and `DATABRICKS_CLIENT_SECRET` environment variables. |
 | `terraform plan` fails on permissions | Insufficient AWS IAM permissions | Ensure the identity has permissions to create VPC, IAM, S3, and Security Group resources. |
-| Subnet CIDR errors | CIDRs overlap or don't fit in VPC range | Ensure `private_subnets_cidr`, `public_subnets_cidr`, and any enabled `intra_subnet_cidr` values are non-overlapping and within `vpc_cidr_range`. |
+| Subnet CIDR errors | CIDRs overlap or don't fit in VPC range | Ensure `private_subnets_cidr`, `public_subnets_cidr`, and `intra_subnet_cidr` are non-overlapping and within `vpc_cidr_range`. |
 | NAT Gateway or outbound connectivity issues | Cluster nodes cannot reach the control plane | Verify the selected `nat_gateway_mode` created the expected NAT Gateway resources and that each private subnet has a working route. Check that security group rules allow outbound traffic on required ports. |
 | Cannot delete catalog on destroy | Catalog still has schemas, tables, or volumes | This template already sets `force_destroy = true` on `databricks_catalog.uc_quickstart` and `databricks_external_location`, so a normal `terraform destroy` should remove them. If destroy fails, empty or drop objects in that catalog in the workspace, then run `terraform destroy` again. |
 | Cluster create fails on `node_type_id` validation | The workspace restricts allowed instance types | Set `node_type_id` (in `cluster.tf`) to an allowed type, or adjust the allowed instance types in the account console. |
@@ -208,7 +207,7 @@ tf/
 | **variables.tf** | Input variables (Databricks config, AWS config, network CIDRs, security group options, metastore options, and optional catalog/cluster toggles) with validation. |
 | **terraform.tfvars.example** | Example variable values; copy to `terraform.tfvars` and set your account ID, region, CIDRs, etc. |
 | **workspace.tf** | Databricks MWS resources: storage configuration, credentials, network configuration, and workspace. |
-| **network.tf** | VPC module (address space, public/private and optional intra subnets), selectable NAT topology, IGW, S3 gateway endpoint, and optional STS/Kinesis interface endpoints. |
+| **network.tf** | VPC module (address space, public/private/intra subnets), selectable NAT topology, IGW, S3 gateway endpoint, and STS/Kinesis interface endpoints. |
 | **security_group.tf** | Default security group egress rules for Databricks-required ports, internal TCP/UDP egress, and self-ingress. |
 | **credential.tf** | Cross-account IAM role and policy for Databricks workspace provisioning. |
 | **root_s3_bucket.tf** | S3 bucket for workspace root storage (DBFS) with Databricks bucket policy. |

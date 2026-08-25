@@ -78,12 +78,6 @@ variable "nat_gateway_mode" {
   }
 }
 
-variable "enable_aws_service_endpoints" {
-  description = "Whether to create optional STS and Kinesis interface endpoints in dedicated intra subnets. The S3 gateway endpoint is always created for a new VPC."
-  type        = bool
-  default     = false
-}
-
 variable "vpc_cidr_range" {
   description = "CIDR range for the VPC (only used if creating new VPC)"
   type        = string
@@ -115,7 +109,7 @@ variable "public_subnets_cidr" {
 }
 
 variable "intra_subnet_cidr" {
-  description = "List of intra subnet CIDR blocks for optional STS and Kinesis interface endpoints (used only when creating a VPC and enable_aws_service_endpoints is true)"
+  description = "List of intra subnet CIDR blocks that contain the STS and Kinesis VPC endpoints (only used if creating new VPC)"
   type        = list(string)
   default     = []
 }
@@ -147,9 +141,8 @@ variable "sg_egress_ports" {
 # =============================================================================
 
 variable "aws_account_id" {
-  description = "AWS account ID used for optional Unity Catalog resources. When empty, the current AWS caller account ID is used."
+  description = "AWS account ID where resources are deployed (used to construct IAM role ARNs for Unity Catalog)"
   type        = string
-  default     = ""
 }
 
 variable "metastore_id" {

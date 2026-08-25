@@ -20,8 +20,8 @@ module "vpc" {
   public_subnet_names = [for az in var.availability_zones : format("%s-public-%s", var.resource_prefix, az)]
   public_subnets      = var.public_subnets_cidr
 
-  intra_subnet_names = var.enable_aws_service_endpoints ? [for az in var.availability_zones : format("%s-intra-%s", var.resource_prefix, az)] : []
-  intra_subnets      = var.enable_aws_service_endpoints ? var.intra_subnet_cidr : []
+  intra_subnet_names = [for az in var.availability_zones : format("%s-intra-%s", var.resource_prefix, az)]
+  intra_subnets      = var.intra_subnet_cidr
 
   # Enable default security group management
   manage_default_security_group  = true
@@ -46,37 +46,33 @@ module "vpc_endpoints" {
 
   security_group_ids = length(var.security_group_ids) > 0 ? var.security_group_ids : aws_security_group.databricks[*].id
 
-  endpoints = merge(
-    {
-      s3 = {
-        service         = "s3"
-        service_type    = "Gateway"
-        route_table_ids = module.vpc[0].private_route_table_ids
-        tags = {
-          Name    = "${var.resource_prefix}-s3-vpc-endpoint"
-          Project = var.resource_prefix
-        }
+  endpoints = {
+    s3 = {
+      service         = "s3"
+      service_type    = "Gateway"
+      route_table_ids = module.vpc[0].private_route_table_ids
+      tags = {
+        Name    = "${var.resource_prefix}-s3-vpc-endpoint"
+        Project = var.resource_prefix
       }
-    },
-    var.enable_aws_service_endpoints ? {
-      sts = {
-        service             = "sts"
-        private_dns_enabled = true
-        subnet_ids          = module.vpc[0].intra_subnets
-        tags = {
-          Name    = "${var.resource_prefix}-sts-vpc-endpoint"
-          Project = var.resource_prefix
-        }
+    }
+    sts = {
+      service             = "sts"
+      private_dns_enabled = true
+      subnet_ids          = module.vpc[0].intra_subnets
+      tags = {
+        Name    = "${var.resource_prefix}-sts-vpc-endpoint"
+        Project = var.resource_prefix
       }
-      kinesis-streams = {
-        service             = "kinesis-streams"
-        private_dns_enabled = true
-        subnet_ids          = module.vpc[0].intra_subnets
-        tags = {
-          Name    = "${var.resource_prefix}-kinesis-vpc-endpoint"
-          Project = var.resource_prefix
-        }
+    }
+    kinesis-streams = {
+      service             = "kinesis-streams"
+      private_dns_enabled = true
+      subnet_ids          = module.vpc[0].intra_subnets
+      tags = {
+        Name    = "${var.resource_prefix}-kinesis-vpc-endpoint"
+        Project = var.resource_prefix
       }
-    } : {}
-  )
+    }
+  }
 }

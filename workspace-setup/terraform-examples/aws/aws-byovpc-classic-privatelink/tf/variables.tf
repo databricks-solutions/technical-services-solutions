@@ -61,6 +61,17 @@ variable "network_configuration" {
   }
 }
 
+variable "nat_gateway_mode" {
+  description = "NAT gateway topology for standard template-owned networking: 'single' uses one shared NAT gateway; 'per_az' creates one NAT gateway per availability zone. Ignored for fully_private and custom networking."
+  type        = string
+  default     = "single"
+
+  validation {
+    condition     = contains(["single", "per_az"], var.nat_gateway_mode)
+    error_message = "nat_gateway_mode must be either 'single' or 'per_az'. Use network_configuration = 'fully_private' for no NAT gateway."
+  }
+}
+
 variable "vpc_id" {
   description = "Existing VPC ID. Required when network_configuration is 'custom'. Must be empty when 'standard' or 'fully_private' (template creates VPC)."
   type        = string

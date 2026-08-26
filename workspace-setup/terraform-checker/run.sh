@@ -127,9 +127,19 @@ fi
 # --- 5. Run ----------------------------------------------------------------
 echo
 echo "→ Running the pre-check..."
-# The tool exits non-zero when it finds blockers; that's expected, so don't let
-# it abort the script before we point you at the report.
-python main.py "${ARGS[@]}" || true
+
+# For a full run, delete any report from a previous run FIRST, so a crash can't
+# leave us pointing at a stale report.md and calling it success (review H9).
+if [ "${RUN_MODE:-}" = "full" ]; then
+  rm -f report.md
+fi
+
+# Capture the tool's exit code instead of swallowing it with `|| true`. A
+# non-zero code from blockers is expected (a report is still written), so we
+# still surface the report below, then propagate the real code so CI/callers
+# can act on it.
+RUN_EXIT=0
+python main.py "${ARGS[@]}" || RUN_EXIT=$?
 
 echo
 if [ "${RUN_MODE:-}" = "dryrun" ]; then
@@ -142,6 +152,15 @@ elif [ -f report.md ]; then
   echo "    $(pwd)/report.md"
   echo
   echo "  Please send report.md back to your Databricks contact."
+  if [ "$RUN_EXIT" -ne 0 ]; then
+    echo
+    echo "  Note: the pre-check found blockers (exit code $RUN_EXIT). The report"
+    echo "  lists exactly what to fix — send it back and we'll help."
+  fi
 else
-  echo "The run finished but no report.md was produced — check the output above."
+  echo "⚠️  The run did not finish cleanly (exit code $RUN_EXIT) and no report.md"
+  echo "   was produced — check the output above."
 fi
+
+# Propagate the tool's exit code so a failed/blocked run is not reported as success.
+exit $RUN_EXIT

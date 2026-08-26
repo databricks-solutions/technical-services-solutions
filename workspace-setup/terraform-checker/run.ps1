@@ -117,10 +117,18 @@ if ($args.Count -gt 0) {
 # --- 5. Run ----------------------------------------------------------------
 Write-Host ""
 Write-Host "-> Running the pre-check..."
-# The tool exits non-zero when it finds blockers; that's expected, so don't let
-# it abort the script before we point you at the report.
+
+# For a full run, delete any report from a previous run FIRST, so a crash can't
+# leave us pointing at a stale report.md and calling it success (review H9).
+if ($runMode -eq "full") {
+    Remove-Item -Path report.md -ErrorAction SilentlyContinue
+}
+
+# The tool exits non-zero when it finds blockers; that's expected (a report is
+# still written), so don't abort here — capture the code and propagate it below.
 $ErrorActionPreference = "Continue"
 & python main.py @runArgs
+$runExit = $LASTEXITCODE
 
 Write-Host ""
 if ($runMode -eq "dryrun") {
@@ -133,6 +141,14 @@ if ($runMode -eq "dryrun") {
     Write-Host "    $(Join-Path (Get-Location) 'report.md')"
     Write-Host ""
     Write-Host "Please send report.md back to your Databricks contact."
+    if ($runExit -ne 0) {
+        Write-Host ""
+        Write-Host "Note: the pre-check found blockers (exit code $runExit). The report lists"
+        Write-Host "exactly what to fix - send it back and we'll help."
+    }
 } else {
-    Write-Host "The run finished but no report.md was produced - check the output above."
+    Write-Host "The run did not finish cleanly (exit code $runExit) and no report.md was produced - check the output above." -ForegroundColor Yellow
 }
+
+# Propagate the tool's exit code so a failed/blocked run is not reported as success.
+exit $runExit

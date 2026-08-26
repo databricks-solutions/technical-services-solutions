@@ -17,7 +17,7 @@ from pathlib import Path
 import click
 
 from checkers import AWSChecker, AzureChecker, GCPChecker
-from checkers.base import CheckReport
+from checkers.base import CheckReport, CheckCategory, CheckResult, CheckStatus
 from reporters import TxtReporter, JsonReporter, MarkdownReporter
 from utils import CredentialLoader, ExitCode, load_config, setup_logging
 
@@ -60,125 +60,126 @@ def cleanup_orphaned_resources(
     """Find and delete any orphaned test resources."""
     prefix = "dbx-precheck-temp"
 
+    aws_failures = 0
     if cloud == "aws" or cloud is None:
         try:
             import boto3
-            
+
             if profile:
                 session = boto3.Session(profile_name=profile, region_name=region or "us-east-1")
             else:
                 session = boto3.Session(region_name=region or "us-east-1")
-            
-            orphans_found = False
-            
-            # Check S3 buckets
+
             s3 = session.client("s3")
-            try:
-                buckets = s3.list_buckets().get("Buckets", [])
-                orphan_buckets = [b["Name"] for b in buckets if b["Name"].startswith(prefix)]
-                
-                if orphan_buckets:
-                    orphans_found = True
-                    click.echo(click.style(f"\n📦 Found {len(orphan_buckets)} orphaned S3 bucket(s):", fg="yellow"))
+            iam = session.client("iam")
+            ec2 = session.client("ec2")
+
+            # Collect first, PAGINATED — list_roles/list_policies cap at 100 and
+            # describe_security_groups also pages, so an unpaginated sweep silently
+            # misses orphans on page 2+ (review H5).
+            orphan_buckets = [
+                b["Name"] for b in s3.list_buckets().get("Buckets", [])
+                if b["Name"].startswith(prefix)
+            ]
+            orphan_roles = [
+                r["RoleName"]
+                for page in iam.get_paginator("list_roles").paginate()
+                for r in page.get("Roles", [])
+                if r["RoleName"].startswith(prefix)
+            ]
+            orphan_policies = [
+                pol
+                for page in iam.get_paginator("list_policies").paginate(Scope="Local")
+                for pol in page.get("Policies", [])
+                if pol["PolicyName"].startswith(prefix)
+            ]
+            orphan_sgs = [
+                sg
+                for page in ec2.get_paginator("describe_security_groups").paginate()
+                for sg in page.get("SecurityGroups", [])
+                if sg["GroupName"].startswith(prefix)
+            ]
+
+            total = len(orphan_buckets) + len(orphan_roles) + len(orphan_policies) + len(orphan_sgs)
+            if total == 0:
+                click.echo(click.style("\n✓ No orphaned AWS test resources found!", fg="green"))
+            else:
+                click.echo(click.style(f"\nFound {total} orphaned AWS resource(s):", fg="yellow"))
+                for b in orphan_buckets:
+                    click.echo(f"   S3 bucket        {b}")
+                for r in orphan_roles:
+                    click.echo(f"   IAM role         {r}")
+                for pol in orphan_policies:
+                    click.echo(f"   IAM policy       {pol['PolicyName']}")
+                for sg in orphan_sgs:
+                    click.echo(f"   Security group   {sg['GroupId']} ({sg['GroupName']})")
+
+                # Confirm before deleting real AWS resources (parity with the
+                # Azure branch, which already prompts) (review H5).
+                if not click.confirm("\nDelete these resources?"):
+                    click.echo("Aborted - nothing deleted.")
+                else:
                     for bucket in orphan_buckets:
-                        click.echo(f"   - {bucket}")
                         try:
                             s3.delete_bucket(Bucket=bucket)
-                            click.echo(click.style(f"     ✓ Deleted", fg="green"))
+                            click.echo(click.style(f"   ✓ Deleted bucket {bucket}", fg="green"))
                         except Exception as e:
-                            click.echo(click.style(f"     ✗ Error: {str(e)[:50]}", fg="red"))
-            except Exception as e:
-                click.echo(f"   Could not check S3: {str(e)[:50]}")
-            
-            # Check IAM Roles
-            iam = session.client("iam")
-            try:
-                roles = iam.list_roles().get("Roles", [])
-                orphan_roles = [r["RoleName"] for r in roles if r["RoleName"].startswith(prefix)]
-                
-                if orphan_roles:
-                    orphans_found = True
-                    click.echo(click.style(f"\n👤 Found {len(orphan_roles)} orphaned IAM role(s):", fg="yellow"))
+                            aws_failures += 1
+                            click.echo(click.style(f"   ✗ {bucket}: {str(e)[:60]}", fg="red"))
                     for role in orphan_roles:
-                        click.echo(f"   - {role}")
                         try:
-                            # Delete inline policies
-                            inline = iam.list_role_policies(RoleName=role).get("PolicyNames", [])
-                            for policy in inline:
-                                iam.delete_role_policy(RoleName=role, PolicyName=policy)
-                            # Delete attached policies
-                            attached = iam.list_attached_role_policies(RoleName=role).get("AttachedPolicies", [])
-                            for policy in attached:
-                                iam.detach_role_policy(RoleName=role, PolicyArn=policy["PolicyArn"])
-                            # Delete role
+                            for pn in iam.list_role_policies(RoleName=role).get("PolicyNames", []):
+                                iam.delete_role_policy(RoleName=role, PolicyName=pn)
+                            for ap in iam.list_attached_role_policies(RoleName=role).get("AttachedPolicies", []):
+                                iam.detach_role_policy(RoleName=role, PolicyArn=ap["PolicyArn"])
                             iam.delete_role(RoleName=role)
-                            click.echo(click.style(f"     ✓ Deleted", fg="green"))
+                            click.echo(click.style(f"   ✓ Deleted role {role}", fg="green"))
                         except Exception as e:
-                            click.echo(click.style(f"     ✗ Error: {str(e)[:50]}", fg="red"))
-            except Exception as e:
-                click.echo(f"   Could not check IAM Roles: {str(e)[:50]}")
-            
-            # Check IAM Policies
-            try:
-                policies = iam.list_policies(Scope='Local').get("Policies", [])
-                orphan_policies = [p for p in policies if p["PolicyName"].startswith(prefix)]
-                
-                if orphan_policies:
-                    orphans_found = True
-                    click.echo(click.style(f"\n📜 Found {len(orphan_policies)} orphaned IAM policy(ies):", fg="yellow"))
-                    for policy in orphan_policies:
-                        click.echo(f"   - {policy['PolicyName']}")
+                            aws_failures += 1
+                            click.echo(click.style(f"   ✗ {role}: {str(e)[:60]}", fg="red"))
+                    for pol in orphan_policies:
                         try:
-                            # Delete non-default versions
-                            versions = iam.list_policy_versions(PolicyArn=policy["Arn"]).get("Versions", [])
-                            for v in versions:
+                            for v in iam.list_policy_versions(PolicyArn=pol["Arn"]).get("Versions", []):
                                 if not v["IsDefaultVersion"]:
-                                    iam.delete_policy_version(PolicyArn=policy["Arn"], VersionId=v["VersionId"])
-                            # Delete policy
-                            iam.delete_policy(PolicyArn=policy["Arn"])
-                            click.echo(click.style(f"     ✓ Deleted", fg="green"))
+                                    iam.delete_policy_version(PolicyArn=pol["Arn"], VersionId=v["VersionId"])
+                            iam.delete_policy(PolicyArn=pol["Arn"])
+                            click.echo(click.style(f"   ✓ Deleted policy {pol['PolicyName']}", fg="green"))
                         except Exception as e:
-                            click.echo(click.style(f"     ✗ Error: {str(e)[:50]}", fg="red"))
-            except Exception as e:
-                click.echo(f"   Could not check IAM Policies: {str(e)[:50]}")
-            
-            # Check Security Groups
-            ec2 = session.client("ec2")
-            try:
-                sgs = ec2.describe_security_groups().get("SecurityGroups", [])
-                orphan_sgs = [sg for sg in sgs if sg["GroupName"].startswith(prefix)]
-                
-                if orphan_sgs:
-                    orphans_found = True
-                    click.echo(click.style(f"\n🔒 Found {len(orphan_sgs)} orphaned Security Group(s):", fg="yellow"))
+                            aws_failures += 1
+                            click.echo(click.style(f"   ✗ {pol['PolicyName']}: {str(e)[:60]}", fg="red"))
                     for sg in orphan_sgs:
-                        click.echo(f"   - {sg['GroupId']} ({sg['GroupName']})")
                         try:
                             ec2.delete_security_group(GroupId=sg["GroupId"])
-                            click.echo(click.style(f"     ✓ Deleted", fg="green"))
+                            click.echo(click.style(f"   ✓ Deleted SG {sg['GroupId']}", fg="green"))
                         except Exception as e:
-                            click.echo(click.style(f"     ✗ Error: {str(e)[:50]}", fg="red"))
-            except Exception as e:
-                click.echo(f"   Could not check Security Groups: {str(e)[:50]}")
-            
-            if not orphans_found:
-                click.echo(click.style("\n✓ No orphaned test resources found!", fg="green"))
-            else:
-                click.echo(click.style("\n✓ Cleanup complete!", fg="green"))
-                
+                            aws_failures += 1
+                            click.echo(click.style(f"   ✗ {sg['GroupId']}: {str(e)[:60]}", fg="red"))
+                    if aws_failures:
+                        click.echo(click.style(
+                            f"\n⚠️  {aws_failures} resource(s) could NOT be deleted — delete them manually.",
+                            fg="red"))
+                    else:
+                        click.echo(click.style("\n✓ Cleanup complete!", fg="green"))
+
         except ImportError:
             click.echo(click.style("AWS SDK (boto3) not installed", fg="red"))
         except Exception as e:
+            aws_failures += 1
             click.echo(click.style(f"Error: {e}", fg="red"))
 
+    azure_failures = 0
     if cloud == "azure" or cloud is None:
-        cleanup_azure_orphans(subscription_id, region)
+        azure_failures = cleanup_azure_orphans(subscription_id, region) or 0
 
     if cloud == "gcp":
         click.echo(click.style(
             "\nℹ️  GCP checks are read-only - they never create resources, "
             "so there is nothing to clean up.", fg="cyan"
         ))
+
+    # Total resources that could NOT be deleted, so the caller can exit non-zero
+    # instead of always reporting success (review H5).
+    return aws_failures + azure_failures
 
 
 def cleanup_azure_orphans(subscription_id: Optional[str], region: Optional[str]):
@@ -239,22 +240,27 @@ def cleanup_azure_orphans(subscription_id: Optional[str], region: Optional[str])
 
         if not click.confirm("\nDelete these resource groups (and everything inside them)?"):
             click.echo("Aborted - nothing deleted.")
-            return
+            return 0
 
+        azure_failures = 0
         for rg in orphan_rgs:
             try:
                 client.resource_groups.begin_delete(rg.name)
                 click.echo(click.style(f"     ✓ Deleting {rg.name} (async, cascades)", fg="green"))
             except Exception as e:
+                azure_failures += 1
                 click.echo(click.style(f"     ✗ Error deleting {rg.name}: {str(e)[:60]}", fg="red"))
+        return azure_failures
 
     except ImportError:
         click.echo(click.style(
             "\nAzure SDK not installed - cannot sweep Azure orphans "
             "(pip install azure-identity azure-mgmt-resource)", fg="yellow"
         ))
+        return 0
     except Exception as e:
         click.echo(click.style(f"\nCould not sweep Azure orphans: {str(e)[:80]}", fg="red"))
+        return 1
 
 
 def show_azure_dry_run_plan():
@@ -358,6 +364,27 @@ To cleanup orphans:      python main.py --cleanup-orphans --cloud aws
 """)
 
 
+def _crash_report(cloud_name: str, region: Optional[str], error: Exception) -> CheckReport:
+    """Build a report that records a checker crash as a NOT_OK result.
+
+    A cloud checker that raises must NOT be silently dropped — otherwise `--all`
+    can report success while a requested cloud was never evaluated (review H6).
+    Returning a report with a blocker means it is counted and the run exits
+    non-zero.
+    """
+    report = CheckReport(cloud=cloud_name, region=region or "unknown")
+    cat = CheckCategory(name="CHECKER ERROR")
+    cat.add_result(CheckResult(
+        name=f"{cloud_name} checks did not complete",
+        status=CheckStatus.NOT_OK,
+        message=f"The {cloud_name} checker crashed before finishing: {str(error)[:200]}",
+        remediation="Re-run with --log-level debug --log-file debug.log and share the log; "
+                    "the run is treated as failed because this cloud could not be verified.",
+    ))
+    report.add_category(cat)
+    return report
+
+
 def run_aws_checks(
     region: Optional[str],
     profile: Optional[str],
@@ -401,7 +428,7 @@ def run_aws_checks(
         return None, None
     except Exception as e:
         _progress(f"  ✗ AWS check failed: {e}", fg="red")
-        return None, None
+        return _crash_report("AWS", region, e), None
 
 
 def run_azure_checks(
@@ -442,7 +469,7 @@ def run_azure_checks(
         return None
     except Exception as e:
         _progress(f"  ✗ Azure check failed: {e}", fg="red")
-        return None
+        return _crash_report("Azure", region, e)
 
 
 def run_gcp_checks(
@@ -479,7 +506,7 @@ def run_gcp_checks(
         return None
     except Exception as e:
         _progress(f"  ✗ GCP check failed: {e}", fg="red")
-        return None
+        return _crash_report("GCP", region, e)
 
 
 @click.command()
@@ -673,6 +700,26 @@ def main(
         file_config = load_config(config)
         if file_config:
             logger.info("Loaded configuration from %s", config)
+            # Apply config-file values as defaults for any option the user did
+            # NOT pass on the command line (CLI flags take precedence). Without
+            # this the file was loaded and then ignored entirely (review H10).
+            if output is None and file_config.output_file:
+                output = file_config.output_file
+            dry_run = dry_run or file_config.dry_run
+            cloud_cfg = getattr(file_config, cloud, None) if cloud else None
+            if cloud_cfg is not None:
+                if region is None and cloud_cfg.region:
+                    region = cloud_cfg.region
+                if profile is None and cloud_cfg.profile:
+                    profile = cloud_cfg.profile
+                if subscription_id is None and cloud_cfg.subscription_id:
+                    subscription_id = cloud_cfg.subscription_id
+                if resource_group is None and cloud_cfg.resource_group:
+                    resource_group = cloud_cfg.resource_group
+                if project is None and cloud_cfg.project:
+                    project = cloud_cfg.project
+                if credentials_file is None and cloud_cfg.credentials_file:
+                    credentials_file = cloud_cfg.credentials_file
     
     # Print banner (unless quiet mode or JSON output)
     if not quiet and not json_output:
@@ -681,8 +728,10 @@ def main(
     # Handle cleanup-orphans mode
     if cleanup_orphans:
         click.echo(click.style("\n🧹 Searching for orphaned test resources...", fg="yellow"))
-        cleanup_orphaned_resources(cloud, region, profile, subscription_id)
-        sys.exit(0)
+        cleanup_failures = cleanup_orphaned_resources(cloud, region, profile, subscription_id)
+        # Exit non-zero if anything could not be deleted, so an automated sweep
+        # doesn't report success while orphans remain (review H5).
+        sys.exit(ExitCode.GENERAL_ERROR if cleanup_failures else ExitCode.SUCCESS)
 
     # Handle dry-run mode (cloud-aware: each cloud has a different test surface)
     if dry_run:
@@ -717,7 +766,7 @@ def main(
             click.echo("  AWS:   Set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY or configure ~/.aws/credentials")
             click.echo("  Azure: Set AZURE_CLIENT_ID/AZURE_CLIENT_SECRET/AZURE_TENANT_ID or run 'az login'")
             click.echo("  GCP:   Set GOOGLE_APPLICATION_CREDENTIALS or run 'gcloud auth application-default login'")
-            sys.exit(1)
+            sys.exit(ExitCode.AUTH_FAILED)
         
         _progress(f"\nDetected credentials for: {', '.join(c.upper() for c in available_clouds)}")
 
@@ -773,13 +822,25 @@ def main(
     # Calculate totals
     total_not_ok = sum(r.total_not_ok for r in reports)
     total_warning = sum(r.total_warning for r in reports)
-    
+
+    # NOT-VERIFIED deployment types, counted explicitly from the compatibility
+    # matrix rather than inferred from the warning total, so --strict gates on an
+    # incomplete run even if the representation of "not verified" changes (H8).
+    total_not_verified = sum(
+        1
+        for r in reports
+        for cat in r.categories
+        if "DEPLOYMENT COMPATIBILITY" in (cat.name or "")
+        for res in cat.results
+        if "NOT VERIFIED" in (res.message or "")
+    )
+
     # Determine exit code. Blockers always fail (2). In --strict, unresolved
     # warnings / NOT-VERIFIED items also fail (distinct code) so CI can gate on an
     # incomplete run; default keeps warnings = 0.
     if total_not_ok > 0:
         exit_code = ExitCode.PERMISSION_DENIED
-    elif strict and total_warning > 0:
+    elif strict and (total_warning > 0 or total_not_verified > 0):
         exit_code = ExitCode.GENERAL_ERROR
     else:
         exit_code = ExitCode.SUCCESS
@@ -893,7 +954,11 @@ def main(
                     click.echo()
                     
                     # Save suggested policy to file
-                    policy_file = output.replace('.txt', '-policy.json') if output else 'suggested-policy.json'
+                    # Derive a sibling filename by stripping the extension — a
+                    # blind .replace('.txt', …) left a non-.txt output (e.g.
+                    # report.md) unchanged and overwrote the report with the
+                    # policy JSON (review M1).
+                    policy_file = (output.rsplit('.', 1)[0] + '-policy.json') if output else 'suggested-policy.json'
                     with open(policy_file, 'w') as f:
                         json.dump(suggested_policy, f, indent=2)
                     click.echo(click.style(f"✓ Policy saved to: {policy_file}", fg="green"))

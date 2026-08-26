@@ -5,6 +5,7 @@ Provides structured logging with support for file output and different log level
 """
 
 import logging
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -128,12 +129,35 @@ def setup_logging(
     level: str = 'info',
     log_file: Optional[str] = None
 ) -> PreCheckLogger:
-    """Setup logging with the specified configuration."""
+    """Setup logging with the specified configuration.
+
+    --log-level controls the console verbosity of the app logger. --log-file, when
+    set, attaches a DEBUG file handler to the ROOT logger (not to
+    'databricks-precheck'): every module logs via logging.getLogger(__name__)
+    (checkers.aws, checkers.azure, utils.*, __main__ …) and those records
+    propagate to root, so only a root handler captures them. Attaching the file
+    handler to 'databricks-precheck' alone produced a near-empty file (review H7).
+    Root stays file-only (no console handler) so stdout remains clean for --json.
+    """
     logger = get_logger()
     logger.set_level(level)
-    
+
     if log_file:
-        logger.enable_file_logging(log_file)
-    
+        root = logging.getLogger()
+        root.setLevel(logging.DEBUG)
+        abspath = os.path.abspath(log_file)
+        already_attached = any(
+            isinstance(h, logging.FileHandler)
+            and getattr(h, 'baseFilename', None) == abspath
+            for h in root.handlers
+        )
+        if not already_attached:
+            file_handler = logging.FileHandler(log_file)
+            file_handler.setLevel(logging.DEBUG)
+            file_handler.setFormatter(logging.Formatter(
+                '%(asctime)s - %(levelname)s - %(name)s - %(message)s'
+            ))
+            root.addHandler(file_handler)
+
     return logger
 

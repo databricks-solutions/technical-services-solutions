@@ -27,16 +27,30 @@ def _checker():
 
 @pytest.mark.parametrize("code", [
     "InvalidInstanceID.NotFound",
-    "InvalidInstanceID.Malformed",
     "InvalidVolume.NotFound",
-    "InvalidID",
 ])
-def test_placeholder_id_errors_count_as_permission_ok(code):
-    # Permission is granted; only the placeholder resource doesn't exist.
+def test_resource_not_found_counts_as_permission_ok(code):
+    # AWS evaluated the request, authorization PASSED, and only then found the
+    # placeholder resource missing — so the permission is genuinely granted.
     def boom():
         raise _FakeClientError(code)
     status, _msg = _checker()._test_dryrun("ec2:TerminateInstances", boom)
     assert status == CheckStatus.OK
+
+
+@pytest.mark.parametrize("code", [
+    "InvalidInstanceID.Malformed",
+    "InvalidParameterValue",
+    "MalformedAMIID",
+])
+def test_parameter_validation_errors_are_unverified(code):
+    # Rejected BEFORE authorization was evaluated (a malformed/invalid parameter)
+    # — this proves nothing about the permission, so it must be WARNING
+    # (unverified), never OK. Reporting it OK produced a false PASS (review H3).
+    def boom():
+        raise _FakeClientError(code)
+    status, _msg = _checker()._test_dryrun("ec2:RunInstances", boom)
+    assert status == CheckStatus.WARNING
 
 
 @pytest.mark.parametrize("code", ["UnauthorizedOperation", "AccessDenied"])

@@ -86,6 +86,30 @@ class MarkdownReporter:
                     "run this pre-check again until it passes."
                 ),
             )
+        # Deployment types that could NOT be verified (read-only / --verify-only,
+        # no iam:SimulatePrincipalPolicy, or no target resource) must not be
+        # headlined "Ready to deploy" — nothing was actually confirmed for them
+        # (review H12).
+        compat = next(
+            (c for c in report.categories if "DEPLOYMENT COMPATIBILITY" in (c.name or "")),
+            None,
+        )
+        not_verified = [
+            r for r in (compat.results if compat else [])
+            if "NOT VERIFIED" in (r.message or "")
+        ]
+        if not_verified:
+            return (
+                "🔍",
+                "Verification incomplete — re-run to confirm",
+                (
+                    f"No blockers were found, but **{len(not_verified)} deployment "
+                    "type(s) could not be verified** (read-only / `--verify-only` "
+                    "mode, missing `iam:SimulatePrincipalPolicy`, or no target "
+                    "resource passed). Re-run without `--verify-only` — or grant "
+                    "simulation / pass the target — to confirm before deploying."
+                ),
+            )
         if report.total_warning > 0:
             return (
                 "⚠️",

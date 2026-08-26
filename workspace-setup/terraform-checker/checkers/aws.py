@@ -10,7 +10,7 @@ import json
 import logging
 from typing import Optional, List, Dict, Any, Callable, Tuple
 
-from utils.denial import is_access_denied, is_throttling
+from utils.denial import is_access_denied, is_throttling, is_deploy_blocking
 from .base import (
     BaseChecker,
     CheckCategory,
@@ -1366,19 +1366,17 @@ class AWSChecker(BaseChecker):
         return results
     
     def _test_dryrun(
-        self, 
-        action_name: str, 
+        self,
+        action_name: str,
         test_func: Callable,
         success_patterns: List[str] = None,
-        permission_patterns: List[str] = None,
     ) -> Tuple[CheckStatus, str]:
         """
         Test an action using DryRun.
         Returns (status, detailed_message)
         """
         success_patterns = success_patterns or ["DryRunOperation"]
-        permission_patterns = permission_patterns or ["UnauthorizedOperation", "AccessDenied", "is not authorized"]
-        
+
         try:
             test_func()
             # If no exception, unexpected success
@@ -1392,31 +1390,52 @@ class AWSChecker(BaseChecker):
                 if pattern in error_str or pattern == error_code:
                     return (CheckStatus.OK, "Allowed (DryRun verified)")
             
-            # Check for permission denied
-            for pattern in permission_patterns:
-                if pattern in error_str:
-                    # Extract the specific denial message
-                    if "is not authorized to perform" in error_str:
-                        # Parse the specific action and resource
-                        parts = error_str.split("is not authorized to perform:")
-                        if len(parts) > 1:
-                            denied_action = parts[1].split(" on ")[0].strip()
-                            return (CheckStatus.NOT_OK, f"DENIED: {denied_action}")
-                    return (CheckStatus.NOT_OK, f"DENIED: {error_str[:100]}")
-            
-            # Check for resource-not-found errors (means permission exists but resource doesn't)
-            not_found_patterns = [
-                "InvalidVpcID", "InvalidSubnet", "InvalidGroup",
-                "InvalidAMIID", "NoSuchEntity", "InvalidParameterValue",
-                "InvalidVpcId", "MalformedAMIID", "InvalidGroupId",
-                "InvalidInstanceID", "InvalidID", "InvalidVolume",
-                "InvalidAddress", "InvalidRoute", "InvalidEndpoint",
-                "Malformed",
+            # Permission denied / org-policy / quota block. Use the shared
+            # deploy-blocking classifier (SCP, permission boundary, explicit
+            # deny, *Exception-suffixed codes) instead of ad-hoc substring
+            # matching, which let SCP/boundary denials fall through to a soft
+            # WARNING and then PASS (review H2).
+            if is_deploy_blocking(error_str):
+                if "is not authorized to perform" in error_str:
+                    parts = error_str.split("is not authorized to perform:")
+                    if len(parts) > 1:
+                        denied_action = parts[1].split(" on ")[0].strip()
+                        return (CheckStatus.NOT_OK, f"DENIED: {denied_action}")
+                return (CheckStatus.NOT_OK, f"DENIED: {error_str[:100]}")
+
+            # Resource-not-found: AWS evaluated the request, authorization PASSED,
+            # and only THEN found the (deliberately non-existent) test resource
+            # missing — so the permission is genuinely granted.
+            resource_not_found_patterns = [
+                "InvalidVpcID.NotFound", "InvalidSubnetID.NotFound",
+                "InvalidGroup.NotFound", "InvalidAMIID.NotFound",
+                "NoSuchEntity", "InvalidInstanceID.NotFound",
+                "InvalidVolume.NotFound", "InvalidAllocationID.NotFound",
+                "InvalidRoute.NotFound", "InvalidVpcEndpointId.NotFound",
+                "does not exist",
             ]
-            for pattern in not_found_patterns:
+            for pattern in resource_not_found_patterns:
                 if pattern in error_str or pattern == error_code:
                     return (CheckStatus.OK, "Allowed (resource doesn't exist)")
-            
+
+            # Parameter-validation / malformed request: AWS rejected this BEFORE
+            # evaluating authorization, so it proves NOTHING about the permission.
+            # Report it unverified (WARNING) rather than OK, so it can't produce a
+            # false PASS (review H3). The probes pass placeholder ids like
+            # "vpc-test" / "i-test12345" that hit exactly this path.
+            param_validation_patterns = [
+                "InvalidParameterValue", "InvalidParameterCombination",
+                "MalformedAMIID", "Malformed", "ValidationError",
+                "InvalidParameter",
+            ]
+            for pattern in param_validation_patterns:
+                if pattern in error_str or pattern == error_code:
+                    return (
+                        CheckStatus.WARNING,
+                        f"Unverified — request rejected at parameter validation "
+                        f"({pattern}), before authorization; cannot confirm this permission",
+                    )
+
             # Unknown error - return full message for debugging
             return (CheckStatus.WARNING, f"Check failed: {error_str}")
     
@@ -1611,7 +1630,12 @@ class AWSChecker(BaseChecker):
                 results = self._simulate_actions(s3_actions)
                 for action in s3_actions:
                     status_str, message = results.get(action, ("error", "Unknown"))
-                    status = CheckStatus.OK if status_str == "allowed" else CheckStatus.WARNING
+                    if status_str == "allowed":
+                        status = CheckStatus.OK
+                    elif status_str == "denied":
+                        status = CheckStatus.NOT_OK  # explicit deny is a hard blocker (review C2)
+                    else:
+                        status = CheckStatus.WARNING
                     category.add_result(CheckResult(
                         name=f"  {action}",
                         status=status,
@@ -1653,7 +1677,12 @@ class AWSChecker(BaseChecker):
                 results = self._simulate_actions(iam_actions)
                 for action in iam_actions:
                     status_str, message = results.get(action, ("error", "Unknown"))
-                    status = CheckStatus.OK if status_str == "allowed" else CheckStatus.WARNING
+                    if status_str == "allowed":
+                        status = CheckStatus.OK
+                    elif status_str == "denied":
+                        status = CheckStatus.NOT_OK  # explicit deny is a hard blocker (review C2)
+                    else:
+                        status = CheckStatus.WARNING
                     category.add_result(CheckResult(
                         name=f"  {action}",
                         status=status,
@@ -2007,7 +2036,12 @@ class AWSChecker(BaseChecker):
                 results = self._simulate_actions(sg_actions)
                 for action in sg_actions:
                     status_str, message = results.get(action, ("error", "Unknown"))
-                    status = CheckStatus.OK if status_str == "allowed" else CheckStatus.WARNING
+                    if status_str == "allowed":
+                        status = CheckStatus.OK
+                    elif status_str == "denied":
+                        status = CheckStatus.NOT_OK  # explicit deny is a hard blocker (review C2)
+                    else:
+                        status = CheckStatus.WARNING
                     category.add_result(CheckResult(
                         name=f"  {action}",
                         status=status,

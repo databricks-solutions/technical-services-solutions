@@ -28,6 +28,7 @@ class CheckResult:
     remediation: Optional[str] = None  # How to fix the issue
     doc_link: Optional[str] = None  # Link to documentation
     assumed: bool = False  # True if based on a guessed/default value, not a real reading
+    decorative: bool = False  # progress/section banner, not a real check — excluded from scoring
 
     def __str__(self) -> str:
         result = f"{self.name}: {self.status.value}"
@@ -65,7 +66,37 @@ class CheckCategory:
     @property
     def ok_count(self) -> int:
         return sum(1 for r in self.results if r.status == CheckStatus.OK)
-    
+
+    @staticmethod
+    def _is_scoring_row(r: CheckResult) -> bool:
+        """Whether a row represents a real check (vs. a presentation row).
+
+        Progress announcements ("📦 Creating test bucket"), section banners
+        ("── … ──") and method banners ("Test Method") are decorative and must
+        not count toward area health — otherwise a genuinely unverified area
+        looks supported because its only OK rows are decorative (review M9).
+        """
+        if r.decorative:
+            return False
+        name = (r.name or "").strip()
+        if name.startswith("──") or name == "Test Method":
+            return False
+        if "Creating " in name:  # emoji progress announcement, e.g. "📦 Creating test bucket"
+            return False
+        return True
+
+    @property
+    def _scoring_ok_count(self) -> int:
+        """OK rows that represent a real check (decorative/progress rows excluded).
+
+        Used only by area_state so the compatibility matrix is not fooled;
+        ok_count (and the human-facing summary) is intentionally left unchanged.
+        """
+        return sum(
+            1 for r in self.results
+            if r.status == CheckStatus.OK and self._is_scoring_row(r)
+        )
+
     @property
     def warning_count(self) -> int:
         return sum(1 for r in self.results if r.status == CheckStatus.WARNING)
@@ -99,7 +130,9 @@ class CheckCategory:
         if self.not_ok_count > 0:
             return "FAIL"
         # Genuinely unverifiable: nothing confirmed, or a value was assumed/guessed.
-        if self.ok_count == 0 or any(r.assumed for r in self.results):
+        # Uses the scoring OK count so decorative/progress rows can't masquerade
+        # as verification (review M9).
+        if self._scoring_ok_count == 0 or any(r.assumed for r in self.results):
             return "NOT_TESTED"
         # Verified, but an actionable advisory (WARNING + remediation) remains.
         if any(

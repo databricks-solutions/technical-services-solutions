@@ -109,8 +109,8 @@ Before running `terraform apply`, this tool verifies:
 
 ## How it works
 
-This tool tests permissions by **creating temporary resources and immediately
-deleting them**:
+This tool tests permissions by **creating temporary resources and then deleting
+them** (on AWS/Azure; GCP is read-only):
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -122,11 +122,20 @@ deleting them**:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Guarantees:**
-- All temporary resources use prefix `dbxprecheck-*` or `dbx-precheck-temp-*`
-- Resources are deleted immediately after testing
-- Resource Group deletion in Azure cascades to all contained resources
-- Run `--cleanup-orphans` to find/delete any leftover resources
+**Cleanup behavior (what's actually guaranteed):**
+- All temporary resources are named with the prefix `dbxprecheck-*` or
+  `dbx-precheck-temp-*`, so they're easy to identify.
+- Teardown is **requested at the end of the run, and also in a `finally` block**
+  — so a failure part-way through still triggers cleanup rather than leaking.
+- On **Azure** deletion is asynchronous: the tool *requests* the resource-group
+  delete (which cascades to everything inside it) and does not block waiting for
+  the cloud to finish removing it.
+- On **AWS**, if any temporary resource cannot be deleted, the report flags it as
+  a blocker (a leaked resource is never silently reported as a clean run).
+- On **GCP** nothing is ever created — the checks are read-only.
+- Run `--cleanup-orphans` (read-only-first: it lists matches and asks for
+  confirmation, then paginates and reports failures) as a safety net to find and
+  remove anything left behind.
 
 ## Advanced usage (run directly with Python)
 

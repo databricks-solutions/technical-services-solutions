@@ -1,7 +1,6 @@
 """Azure checker for Databricks Terraform Pre-Check."""
 
 import uuid
-import time
 import logging
 from typing import Optional, List, Dict, Any
 
@@ -177,94 +176,6 @@ class AzureChecker(BaseChecker):
     # =========================================================================
     # REAL RESOURCE TESTING
     # =========================================================================
-    
-    def _test_resource_group_permissions(self) -> List[CheckResult]:
-        """Test Resource Group permissions by creating a real RG."""
-        results = []
-        resource_client = self._get_resource_client()
-        rg_name = f"{TEST_RESOURCE_PREFIX}-rg-{self._test_id}"
-        rg_created = False
-        
-        # Show what we're creating
-        results.append(CheckResult(
-            name="  📁 Creating test Resource Group",
-            status=CheckStatus.OK,
-            message=rg_name
-        ))
-        
-        try:
-            # Create Resource Group
-            resource_client.resource_groups.create_or_update(
-                rg_name,
-                {"location": self.region or "eastus"}
-            )
-            rg_created = True
-            results.append(CheckResult(
-                name="  Microsoft.Resources/resourceGroups/write",
-                status=CheckStatus.OK,
-                message=f"✓ CREATED: {rg_name}"
-            ))
-            
-        except Exception as e:
-            error = str(e)
-            if is_deploy_blocking(error):
-                results.append(CheckResult(
-                    name="  Microsoft.Resources/resourceGroups/write",
-                    status=CheckStatus.NOT_OK,
-                    message=f"BLOCKED: {error[:120]}",
-                    remediation="Resolve the RBAC denial / Azure Policy / quota that blocks resource-group creation.",
-                ))
-            else:
-                results.append(CheckResult(
-                    name="  Microsoft.Resources/resourceGroups/write",
-                    status=CheckStatus.WARNING,
-                    message=f"Error: {error[:100]}"
-                ))
-            return results
-        
-        if not rg_created:
-            return results
-        
-        # Test read
-        try:
-            resource_client.resource_groups.get(rg_name)
-            results.append(CheckResult(
-                name="  Microsoft.Resources/resourceGroups/read",
-                status=CheckStatus.OK,
-                message="VERIFIED"
-            ))
-        except Exception as e:
-            results.append(CheckResult(
-                name="  Microsoft.Resources/resourceGroups/read",
-                status=CheckStatus.NOT_OK,
-                message=f"DENIED: {str(e)[:50]}"
-            ))
-        
-        # CLEANUP: Delete the test resource group
-        try:
-            # Start deletion (async)
-            delete_operation = resource_client.resource_groups.begin_delete(rg_name)
-            results.append(CheckResult(
-                name="  🗑️  Microsoft.Resources/resourceGroups/delete",
-                status=CheckStatus.OK,
-                message=f"✓ DELETING: {rg_name} (async)"
-            ))
-        except Exception as e:
-            error = str(e)
-            if is_access_denied(error):
-                results.append(CheckResult(
-                    name="  🗑️  Microsoft.Resources/resourceGroups/delete",
-                    status=CheckStatus.NOT_OK,
-                    message=f"DENIED: {error[:50]}"
-                ))
-            else:
-                results.append(CheckResult(
-                    name="  🗑️  Microsoft.Resources/resourceGroups/delete",
-                    status=CheckStatus.WARNING,
-                    message=f"Manual cleanup needed: {rg_name}"
-                ))
-        
-        return results
     
     def _test_network_permissions(self, test_rg: str = None) -> List[CheckResult]:
         """Test VNet/Subnet permissions by creating real resources."""
@@ -1300,37 +1211,41 @@ class AzureChecker(BaseChecker):
                 message=f"Could not check: {str(e)[:50]}"
             ))
         
-        # CLEANUP
+        # CLEANUP — order matters: the NAT Gateway references the Public IP, so
+        # the NAT delete must COMPLETE before the Public IP can be deleted.
+        # Awaiting the long-running operations (instead of sleeping a fixed 2s)
+        # is what makes the reported "DELETED" honest; without it the Public IP
+        # delete always fails while the NAT still references it.
         if nat_gw_created:
             try:
-                network_client.nat_gateways.begin_delete(test_rg, nat_gw_name)
+                nat_poller = network_client.nat_gateways.begin_delete(test_rg, nat_gw_name)
+                nat_poller.result()  # wait for the NAT Gateway to actually delete
                 category.add_result(CheckResult(
                     name="  🗑️  Deleting NAT Gateway",
                     status=CheckStatus.OK,
-                    message=f"✓ DELETING: {nat_gw_name}"
+                    message=f"✓ DELETED: {nat_gw_name}"
                 ))
-            except Exception:
+            except Exception as e:
                 category.add_result(CheckResult(
                     name="  🗑️  NAT Gateway Cleanup",
                     status=CheckStatus.WARNING,
-                    message=f"Manual cleanup needed: {nat_gw_name}"
+                    message=f"Manual cleanup needed: {nat_gw_name} ({str(e)[:60]})"
                 ))
-        
+
         if public_ip_created:
             try:
-                # Wait a bit for NAT Gateway deletion
-                time.sleep(2)
-                network_client.public_ip_addresses.begin_delete(test_rg, public_ip_name)
+                pip_poller = network_client.public_ip_addresses.begin_delete(test_rg, public_ip_name)
+                pip_poller.result()  # only succeeds once the NAT no longer references it
                 category.add_result(CheckResult(
                     name="  🗑️  Deleting Public IP",
                     status=CheckStatus.OK,
-                    message=f"✓ DELETING: {public_ip_name}"
+                    message=f"✓ DELETED: {public_ip_name}"
                 ))
-            except Exception:
+            except Exception as e:
                 category.add_result(CheckResult(
                     name="  🗑️  Public IP Cleanup",
                     status=CheckStatus.WARNING,
-                    message=f"Manual cleanup needed: {public_ip_name}"
+                    message=f"Manual cleanup needed: {public_ip_name} ({str(e)[:60]})"
                 ))
         
         return category
@@ -1545,52 +1460,58 @@ class AzureChecker(BaseChecker):
         test_rg = f"{TEST_RESOURCE_PREFIX}-rg-{self._test_id}"
         rg_created = False
         
-        if self.verify_only:
-            self._run_verify_only_checks(resource_client)
-            # Read-only mode cannot confirm create/write permissions, so the
-            # create-dependent areas are NOT_TESTED (not "supported"). This makes
-            # the compatibility matrix honest in --verify-only.
-            for _a in ("resource_group", "network", "storage", "access_connector", "privatelink"):
-                self._check_results_by_area[_a] = "NOT_TESTED"
-        else:
-            rg_created = self._run_full_checks(resource_client, test_rg)
-        
-        # Databricks workspace permissions
-        workspace_cat = self.check_databricks_permissions()
-        self._check_results_by_area["workspace"] = workspace_cat.area_state
-        self._report.add_category(workspace_cat)
-        
-        # Quotas
-        self._report.add_category(self.check_quotas())
-        
-        # Deployment compatibility matrix
-        self._report.add_category(self._compute_deployment_compatibility())
-        
-        # Cleanup. The RG was registered in _cleanup_tasks on creation, so
-        # _cleanup_test_resources() below issues the delete (and would also run
-        # if a check above had raised). Deletion is async — we request it, not
-        # confirm. Every created resource lives inside the RG, so deleting the RG
-        # cascades to all of them.
-        if rg_created and not self.verify_only:
-            cleanup_category = CheckCategory(name="CLEANUP")
-            cleanup_category.add_result(CheckResult(
-                name="  🗑️  Resource Group deletion",
-                status=CheckStatus.OK,
-                message=f"DELETE REQUESTED: {test_rg} (async, cascades to all temp resources). "
-                        f"Run --cleanup-orphans --cloud azure to confirm nothing was left behind.",
-            ))
-            self._report.add_category(cleanup_category)
-        elif self.verify_only:
-            cleanup_category = CheckCategory(name="CLEANUP")
-            cleanup_category.add_result(CheckResult(
-                name="  No cleanup needed",
-                status=CheckStatus.OK,
-                message="VERIFY-ONLY mode: No temporary resources were created"
-            ))
-            self._report.add_category(cleanup_category)
-        
-        self._cleanup_test_resources()
-        
+        # Everything below may create the test RG (inside _run_full_checks) and
+        # additional resources. A mid-run exception (e.g. a missing azure-mgmt-*
+        # import raising ImportError) must NOT skip cleanup, or the RG and all its
+        # billing resources leak. The RG delete is registered in _cleanup_tasks on
+        # creation; the finally below guarantees it is issued regardless.
+        try:
+            if self.verify_only:
+                self._run_verify_only_checks(resource_client)
+                # Read-only mode cannot confirm create/write permissions, so the
+                # create-dependent areas are NOT_TESTED (not "supported"). This makes
+                # the compatibility matrix honest in --verify-only.
+                for _a in ("resource_group", "network", "storage", "access_connector", "privatelink"):
+                    self._check_results_by_area[_a] = "NOT_TESTED"
+            else:
+                rg_created = self._run_full_checks(resource_client, test_rg)
+
+            # Databricks workspace permissions
+            workspace_cat = self.check_databricks_permissions()
+            self._check_results_by_area["workspace"] = workspace_cat.area_state
+            self._report.add_category(workspace_cat)
+
+            # Quotas
+            self._report.add_category(self.check_quotas())
+
+            # Deployment compatibility matrix
+            self._report.add_category(self._compute_deployment_compatibility())
+
+            # Cleanup bookkeeping for the report. Deletion is async — we request
+            # it, not confirm. Every created resource lives inside the RG, so
+            # deleting the RG cascades to all of them.
+            if rg_created and not self.verify_only:
+                cleanup_category = CheckCategory(name="CLEANUP")
+                cleanup_category.add_result(CheckResult(
+                    name="  🗑️  Resource Group deletion",
+                    status=CheckStatus.OK,
+                    message=f"DELETE REQUESTED: {test_rg} (async, cascades to all temp resources). "
+                            f"Run --cleanup-orphans --cloud azure to confirm nothing was left behind.",
+                ))
+                self._report.add_category(cleanup_category)
+            elif self.verify_only:
+                cleanup_category = CheckCategory(name="CLEANUP")
+                cleanup_category.add_result(CheckResult(
+                    name="  No cleanup needed",
+                    status=CheckStatus.OK,
+                    message="VERIFY-ONLY mode: No temporary resources were created"
+                ))
+                self._report.add_category(cleanup_category)
+        finally:
+            # Always issue the RG delete, even if a check above raised. This is
+            # what makes the "cleanup runs on failure" guarantee actually true.
+            self._cleanup_test_resources()
+
         return self._report
     
     def _run_verify_only_checks(self, resource_client):

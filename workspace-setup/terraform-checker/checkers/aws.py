@@ -107,13 +107,42 @@ class AWSChecker(BaseChecker):
         return f"{TEST_RESOURCE_PREFIX}-{resource_type}-{self._test_id}"
     
     def _cleanup_test_resources(self):
-        """Clean up any temporary resources created during testing."""
+        """Delete every registered temp resource, most-recent first.
+
+        Returns a list of ``(resource_name, error)`` for deletions that FAILED,
+        so a leaked resource can be surfaced as NOT_OK in the report. A silent
+        best-effort ``pass`` here made a leaked resource and a clean run look
+        identical (review H1).
+        """
+        failures = []
         for cleanup_func, resource_name in reversed(self._cleanup_tasks):
             try:
                 cleanup_func()
-            except Exception:
-                pass  # Best effort cleanup
+            except Exception as e:
+                failures.append((resource_name, str(e)))
         self._cleanup_tasks = []
+        return failures
+
+    def _unregister_cleanup(self, resource_name):
+        """Drop a resource from the cleanup queue once an inline delete has
+        already removed it, so the final sweep doesn't re-issue the delete (which
+        would always raise NoSuchEntity and be swallowed — review H1)."""
+        self._cleanup_tasks = [t for t in self._cleanup_tasks if t[1] != resource_name]
+
+    @staticmethod
+    def _safe_delete(fn, not_found_markers):
+        """Run a delete, treating 'resource not found' as success (nothing was
+        leaked) and re-raising anything else so a genuine leak still surfaces.
+
+        Used for the defensive cleanup registered when a create call raises an
+        *ambiguous* error — the resource may have been created server-side before
+        the client-side exception (review M2)."""
+        try:
+            fn()
+        except Exception as e:
+            if any(marker in str(e) for marker in not_found_markers):
+                return  # already gone — not a leak
+            raise
     
     # =========================================================================
     # REAL RESOURCE TESTING (Create & Delete)
@@ -217,6 +246,18 @@ class AWSChecker(BaseChecker):
                     message="VERIFIED - Bucket exists (permission OK)"
                 ))
             else:
+                # Ambiguous error — the bucket may have been created server-side
+                # before this raised. Register a not-found-tolerant delete so it
+                # can't orphan; a genuine delete failure then surfaces via H1
+                # instead of being silently dropped (review M2).
+                self._temp_bucket_name = bucket_name
+                self._cleanup_tasks.append((
+                    lambda: self._safe_delete(
+                        lambda: self._get_client("s3").delete_bucket(Bucket=bucket_name),
+                        ["NoSuchBucket", "NotFound", "404"],
+                    ),
+                    bucket_name,
+                ))
                 results.append(CheckResult(
                     name="  s3:CreateBucket",
                     status=CheckStatus.WARNING,
@@ -667,19 +708,33 @@ class AWSChecker(BaseChecker):
                     message=f"DENIED: {error}"
                 ))
             elif "EntityAlreadyExists" in error:
-                role_created = True
+                # CreateRole reached the "already exists" check, so the permission
+                # is proven. But a role with the test name pre-exists and we did
+                # NOT create it — leaving role_created False makes the early-return
+                # below skip the mutation/cleanup path, so we never modify or
+                # delete a role we didn't create (review M3).
                 results.append(CheckResult(
                     name="  iam:CreateRole",
                     status=CheckStatus.OK,
-                    message="VERIFIED - Role exists (permission OK)"
+                    message="VERIFIED - permission OK (a role with the test name already exists; not modifying it)"
                 ))
             else:
+                # Ambiguous error — the role may have been created server-side
+                # before this raised. Register a not-found-tolerant delete so it
+                # can't orphan (review M2).
+                self._cleanup_tasks.append((
+                    lambda: self._safe_delete(
+                        lambda: iam.delete_role(RoleName=role_name),
+                        ["NoSuchEntity"],
+                    ),
+                    role_name,
+                ))
                 results.append(CheckResult(
                     name="  iam:CreateRole",
                     status=CheckStatus.WARNING,
                     message=f"Error: {error}"
                 ))
-            
+
             if not role_created:
                 return results
         
@@ -802,6 +857,7 @@ class AWSChecker(BaseChecker):
                 pass
             
             iam.delete_role(RoleName=role_name)
+            self._unregister_cleanup(role_name)  # inline delete done; don't re-sweep
             results.append(CheckResult(
                 name="  🗑️  iam:DeleteRole",
                 status=CheckStatus.OK,
@@ -884,20 +940,33 @@ class AWSChecker(BaseChecker):
                     message=f"DENIED: {error}"
                 ))
             elif "EntityAlreadyExists" in error:
-                # Get existing policy ARN
-                policy_arn = f"arn:aws:iam::{self._account_id}:policy/{policy_name}"
+                # Permission proven (create reached the "already exists" check).
+                # Do NOT adopt the pre-existing policy ARN — leaving policy_arn
+                # None makes the early-return below skip mutating/deleting a policy
+                # we did not create (review M3).
                 results.append(CheckResult(
                     name="  iam:CreatePolicy",
                     status=CheckStatus.OK,
-                    message="VERIFIED - Policy exists (permission OK)"
+                    message="VERIFIED - permission OK (a policy with the test name already exists; not modifying it)"
                 ))
             else:
+                # Ambiguous error — the policy may have been created server-side
+                # before this raised. Register a not-found-tolerant delete so it
+                # can't orphan (review M2).
+                _maybe_arn = f"arn:aws:iam::{self._account_id}:policy/{policy_name}"
+                self._cleanup_tasks.append((
+                    lambda: self._safe_delete(
+                        lambda: iam.delete_policy(PolicyArn=_maybe_arn),
+                        ["NoSuchEntity"],
+                    ),
+                    policy_name,
+                ))
                 results.append(CheckResult(
                     name="  iam:CreatePolicy",
                     status=CheckStatus.WARNING,
                     message=f"Error: {error}"
                 ))
-            
+
             if not policy_arn:
                 return results
         
@@ -957,6 +1026,7 @@ class AWSChecker(BaseChecker):
                 pass
             
             iam.delete_policy(PolicyArn=policy_arn)
+            self._unregister_cleanup(policy_name)  # inline delete done; don't re-sweep
             results.append(CheckResult(
                 name="  🗑️  iam:DeletePolicy",
                 status=CheckStatus.OK,
@@ -1059,27 +1129,41 @@ class AWSChecker(BaseChecker):
                     message=f"DENIED: {error}"
                 ))
             elif "InvalidGroup.Duplicate" in error:
-                # SG already exists - find it
+                # Permission proven (create reached the duplicate-name check). Do
+                # NOT adopt the pre-existing SG — leaving sg_id None makes the
+                # early-return below skip mutating/deleting an SG we did not
+                # create (review M3).
+                results.append(CheckResult(
+                    name="  ec2:CreateSecurityGroup",
+                    status=CheckStatus.OK,
+                    message="VERIFIED - permission OK (an SG with the test name already exists; not modifying it)"
+                ))
+            else:
+                # Ambiguous error — the SG may have been created server-side
+                # before this raised. Look it up by name and register a
+                # not-found-tolerant delete so it can't orphan (review M2).
                 try:
-                    sgs = ec2.describe_security_groups(
+                    _sgs = ec2.describe_security_groups(
                         Filters=[{'Name': 'group-name', 'Values': [sg_name]}]
                     )
-                    if sgs.get('SecurityGroups'):
-                        sg_id = sgs['SecurityGroups'][0]['GroupId']
-                        results.append(CheckResult(
-                            name="  ec2:CreateSecurityGroup",
-                            status=CheckStatus.OK,
-                            message="VERIFIED - SG exists (permission OK)"
+                    _found = _sgs.get('SecurityGroups', [])
+                    if _found:
+                        _orphan_id = _found[0]['GroupId']
+                        self._cleanup_tasks.append((
+                            lambda: self._safe_delete(
+                                lambda: ec2.delete_security_group(GroupId=_orphan_id),
+                                ["InvalidGroup.NotFound"],
+                            ),
+                            _orphan_id,
                         ))
-                except:
+                except Exception:
                     pass
-            else:
                 results.append(CheckResult(
                     name="  ec2:CreateSecurityGroup",
                     status=CheckStatus.WARNING,
                     message=f"Error: {error}"
                 ))
-            
+
             if not sg_id:
                 return results
         
@@ -1185,6 +1269,7 @@ class AWSChecker(BaseChecker):
         # CLEANUP: Delete the test security group
         try:
             ec2.delete_security_group(GroupId=sg_id)
+            self._unregister_cleanup(sg_id)  # inline delete done; don't re-sweep
             results.append(CheckResult(
                 name="  🗑️  ec2:DeleteSecurityGroup",
                 status=CheckStatus.OK,
@@ -3014,7 +3099,20 @@ class AWSChecker(BaseChecker):
             # Be explicit about what a cloud-credential pre-check cannot prove.
             self._report.add_category(self.check_account_api_scope_note())
           finally:
-            self._cleanup_test_resources()
+            cleanup_failures = self._cleanup_test_resources()
+            if cleanup_failures:
+                cleanup_cat = CheckCategory(name="CLEANUP")
+                for res_name, err in cleanup_failures:
+                    cleanup_cat.add_result(CheckResult(
+                        name=f"  ⚠️  Leaked resource: {res_name}",
+                        status=CheckStatus.NOT_OK,
+                        message=f"Automatic deletion FAILED — delete it manually. ({err[:80]})",
+                        remediation=(
+                            f"Delete '{res_name}' manually, or run: "
+                            f"--cleanup-orphans --cloud aws --region {self.region}"
+                        ),
+                    ))
+                self._report.add_category(cleanup_cat)
         else:
             for name in ["STORAGE CONFIGURATION", "NETWORK CONFIGURATION",
                         "CROSS-ACCOUNT ROLE", "VPC ENDPOINTS (PrivateLink)",

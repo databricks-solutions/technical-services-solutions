@@ -36,6 +36,11 @@ REQUIRED_KEYS: Dict[str, Set[str]] = {
 # Required keys for each resource definition
 RESOURCE_REQUIRED_KEYS = {"name", "terraform_type", "description", "actions"}
 
+# All recognized keys for a resource definition. Keys outside this set are almost
+# always typos (e.g. "action" for "actions") and are surfaced as warnings so they
+# aren't silently ignored (review M12).
+RESOURCE_KNOWN_KEYS = RESOURCE_REQUIRED_KEYS | {"deployment_modes", "reference"}
+
 # Valid deployment modes
 VALID_DEPLOYMENT_MODES = {"standard", "privatelink", "unity", "vnet", "full"}
 
@@ -139,7 +144,16 @@ def validate_yaml_schema(filepath: Path, cloud: str) -> ValidationResult:
     if data is None:
         errors.append("YAML file is empty")
         return ValidationResult(valid=False, errors=errors, warnings=warnings)
-    
+
+    # Parseable YAML that isn't a mapping (a top-level list or scalar) would crash
+    # the .keys()/.items() calls below with an AttributeError — fail with a clear
+    # message instead (review M12).
+    if not isinstance(data, dict):
+        errors.append(
+            f"YAML root must be a mapping/object, got {type(data).__name__}"
+        )
+        return ValidationResult(valid=False, errors=errors, warnings=warnings)
+
     # Check required top-level keys
     required = REQUIRED_KEYS.get(cloud, set())
     for key in required:
@@ -159,14 +173,25 @@ def validate_yaml_schema(filepath: Path, cloud: str) -> ValidationResult:
     
     # Validate resources section
     resources = data.get("resources", {})
+    if not isinstance(resources, dict):
+        errors.append("'resources' must be a mapping of resource-name -> definition")
+        resources = {}
     resource_names = set(resources.keys())
-    
+
     for name, res_data in resources.items():
         res_errors = validate_resource(name, res_data, cloud)
         errors.extend(res_errors)
-    
+        # Flag unrecognized keys (typically typos) so they aren't silently
+        # ignored (review M12).
+        if isinstance(res_data, dict):
+            for key in set(res_data.keys()) - RESOURCE_KNOWN_KEYS:
+                warnings.append(f"Resource '{name}' has unknown key: {key}")
+
     # Validate deployment profiles
     profiles = data.get("deployment_profiles", {})
+    if not isinstance(profiles, dict):
+        errors.append("'deployment_profiles' must be a mapping of profile-name -> definition")
+        profiles = {}
     for name, prof_data in profiles.items():
         prof_errors = validate_deployment_profile(name, prof_data, resource_names)
         errors.extend(prof_errors)

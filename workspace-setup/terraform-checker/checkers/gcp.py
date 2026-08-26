@@ -103,6 +103,9 @@ class GCPChecker(BaseChecker):
                 "compute.subnetworks.useExternalIp",
                 # GAP: required by private_ip_google_access=true on subnets
                 "compute.subnetworks.setPrivateIpGoogleAccess",
+                # Declared in config/permissions/gcp.yaml — tested so the YAML's
+                # declared set is never left unverified (H11).
+                "compute.subnetworks.update",
                 "compute.firewalls.create",
                 "compute.firewalls.get",
                 "compute.firewalls.update",
@@ -133,6 +136,12 @@ class GCPChecker(BaseChecker):
                 "storage.buckets.getIamPolicy",
                 "storage.buckets.setIamPolicy",
                 "storage.buckets.update",
+                # Object-level access declared in config/permissions/gcp.yaml —
+                # tested so the YAML's declared set is never left unverified (H11).
+                "storage.objects.create",
+                "storage.objects.delete",
+                "storage.objects.get",
+                "storage.objects.list",
             ],
             "deploy_blocking": [
                 "storage.buckets.create",
@@ -157,6 +166,10 @@ class GCPChecker(BaseChecker):
                 "iam.serviceAccounts.actAs",
                 # Only when create_service_account_key=true (keys.tf)
                 "iam.serviceAccountKeys.create",
+                # Declared in config/permissions/gcp.yaml — tested so the YAML's
+                # declared set is never left unverified (H11).
+                "iam.serviceAccountKeys.delete",
+                "iam.serviceAccounts.delete",
             ],
             "deploy_blocking": [
                 "iam.serviceAccounts.actAs",
@@ -178,6 +191,12 @@ class GCPChecker(BaseChecker):
                 "cloudkms.cryptoKeys.setIamPolicy",
                 "cloudkms.cryptoKeyVersions.list",
                 "cloudkms.cryptoKeyVersions.destroy",
+                # Declared in config/permissions/gcp.yaml — tested so the YAML's
+                # declared set is never left unverified (H11).
+                "cloudkms.cryptoKeyVersions.useToEncrypt",
+                "cloudkms.cryptoKeyVersions.useToDecrypt",
+                "cloudkms.keyRings.getIamPolicy",
+                "cloudkms.keyRings.setIamPolicy",
             ],
             "deploy_blocking": [
                 "cloudkms.keyRings.create",
@@ -402,6 +421,45 @@ class GCPChecker(BaseChecker):
             perms[i:i + cls._MAX_PERMS_PER_CALL]
             for i in range(0, len(perms), cls._MAX_PERMS_PER_CALL)
         ] or [[]]
+
+    @staticmethod
+    def _is_invalid_argument(error: object) -> bool:
+        """True if testIamPermissions rejected the request as malformed.
+
+        A single unrecognized permission string makes the API return
+        400 INVALID_ARGUMENT for the WHOLE call, not just that entry.
+        """
+        text = str(error).lower()
+        return "invalid_argument" in text or "invalidargument" in text or " 400" in text
+
+    def _test_permissions_resilient(self, rm_client, batch, granted: set, invalid: set) -> None:
+        """testIamPermissions a batch, isolating an invalid permission by bisection.
+
+        Without this, one bad/unknown permission string (400 INVALID_ARGUMENT)
+        blinds the entire GCP IAM check because it fails the whole batch (review
+        M7). On a malformed-request error we split the batch and retry each half,
+        narrowing down to the offending single permission, which is recorded in
+        `invalid` and skipped so every valid permission is still evaluated.
+        Non-400 errors (auth/network) are re-raised for the caller to handle.
+        """
+        try:
+            response = rm_client.projects().testIamPermissions(
+                resource=self.project_id,
+                body={"permissions": batch},
+            ).execute()
+            granted.update(response.get("permissions", []))
+            return
+        except Exception as e:
+            if len(batch) <= 1:
+                if self._is_invalid_argument(e):
+                    invalid.update(batch)  # unknown/invalid permission — skip it
+                    return
+                raise  # a single valid perm failing for another reason is real
+            if not self._is_invalid_argument(e):
+                raise  # auth/network error — don't pointlessly bisect
+        mid = len(batch) // 2
+        self._test_permissions_resilient(rm_client, batch[:mid], granted, invalid)
+        self._test_permissions_resilient(rm_client, batch[mid:], granted, invalid)
 
     @classmethod
     def _evaluate_permissions(
@@ -807,16 +865,15 @@ class GCPChecker(BaseChecker):
             return category
 
         granted: set = set()
+        invalid: set = set()
         call_failed_reason = None
         try:
             for batch in self._batched(perms):
                 if not batch:
                     continue
-                response = rm_client.projects().testIamPermissions(
-                    resource=self.project_id,
-                    body={"permissions": batch},
-                ).execute()
-                granted.update(response.get("permissions", []))
+                # Resilient: an invalid permission string in the batch would
+                # otherwise 400 the whole call and blind the check (review M7).
+                self._test_permissions_resilient(rm_client, batch, granted, invalid)
         except Exception as e:
             call_failed_reason = self._error_reason(e)
 
@@ -830,6 +887,19 @@ class GCPChecker(BaseChecker):
                 assumed=True,
             ))
             return category
+
+        # Surface any permission strings the API rejected as unknown/invalid,
+        # rather than silently dropping them (review M7). These are almost always
+        # a typo or a permission that no longer exists in the required set.
+        if invalid:
+            category.add_result(CheckResult(
+                name="Unrecognized permissions (skipped)",
+                status=CheckStatus.WARNING,
+                message="testIamPermissions rejected these as invalid: "
+                        + ", ".join(sorted(invalid)),
+                remediation="Fix or remove these permission strings in the "
+                            "checker's required set / config/permissions/gcp.yaml.",
+            ))
 
         results = self._evaluate_permissions(granted, scopes)
         for area in self.REQUIRED_PERMISSION_SET:

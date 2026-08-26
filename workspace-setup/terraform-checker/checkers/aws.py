@@ -8,6 +8,7 @@ import uuid
 import time
 import json
 import logging
+import re
 from typing import Optional, List, Dict, Any, Callable, Tuple
 
 from utils.denial import is_access_denied, is_throttling, is_deploy_blocking
@@ -128,6 +129,24 @@ class AWSChecker(BaseChecker):
         already removed it, so the final sweep doesn't re-issue the delete (which
         would always raise NoSuchEntity and be swallowed — review H1)."""
         self._cleanup_tasks = [t for t in self._cleanup_tasks if t[1] != resource_name]
+
+    @staticmethod
+    def _describe_all(client, method_name, result_key, **kwargs):
+        """Collect ALL items from a paginated EC2 describe_* call.
+
+        Unpaginated describe_subnets / describe_vpcs / describe_vpc_endpoints /
+        describe_nat_gateways return only the first page, which silently skews
+        subnet counts, endpoint-presence checks and quota verdicts on larger
+        accounts (review M6). Falls back to a single call if no paginator exists.
+        """
+        try:
+            paginator = client.get_paginator(method_name)
+        except Exception:
+            return getattr(client, method_name)(**kwargs).get(result_key, [])
+        items = []
+        for page in paginator.paginate(**kwargs):
+            items.extend(page.get(result_key, []))
+        return items
 
     @staticmethod
     def _safe_delete(fn, not_found_markers):
@@ -386,8 +405,15 @@ class AWSChecker(BaseChecker):
                     status=CheckStatus.OK,
                     message="VERIFIED"
                 ))
-            except:
-                pass
+            except Exception as e:
+                # Surface the outcome instead of a bare except: pass, which hid a
+                # denial of this permission entirely (review M10).
+                results.append(CheckResult(
+                    name="  s3:DeleteBucketPolicy",
+                    status=CheckStatus.NOT_OK if is_access_denied(str(e)) else CheckStatus.WARNING,
+                    message=(f"DENIED: {str(e)[:80]}" if is_access_denied(str(e))
+                             else f"Could not verify: {str(e)[:80]}"),
+                ))
                 
         except Exception as e:
             error = str(e)
@@ -826,8 +852,15 @@ class AWSChecker(BaseChecker):
                     status=CheckStatus.OK,
                     message="VERIFIED"
                 ))
-            except:
-                pass
+            except Exception as e:
+                # Surface the outcome instead of a bare except: pass, which hid a
+                # denial of this permission entirely (review M10).
+                results.append(CheckResult(
+                    name="  iam:DeleteRolePolicy",
+                    status=CheckStatus.NOT_OK if is_access_denied(str(e)) else CheckStatus.WARNING,
+                    message=(f"DENIED: {str(e)[:80]}" if is_access_denied(str(e))
+                             else f"Could not verify: {str(e)[:80]}"),
+                ))
                 
         except Exception as e:
             error = str(e)
@@ -845,16 +878,16 @@ class AWSChecker(BaseChecker):
                 attached = iam.list_attached_role_policies(RoleName=role_name)
                 for policy in attached.get('AttachedPolicies', []):
                     iam.detach_role_policy(RoleName=role_name, PolicyArn=policy['PolicyArn'])
-            except:
-                pass
+            except Exception:
+                pass  # best-effort cleanup of a test artifact
             
             # Delete inline policies
             try:
                 inline = iam.list_role_policies(RoleName=role_name)
                 for policy_name in inline.get('PolicyNames', []):
                     iam.delete_role_policy(RoleName=role_name, PolicyName=policy_name)
-            except:
-                pass
+            except Exception:
+                pass  # best-effort cleanup of a test artifact
             
             iam.delete_role(RoleName=role_name)
             self._unregister_cleanup(role_name)  # inline delete done; don't re-sweep
@@ -1022,8 +1055,8 @@ class AWSChecker(BaseChecker):
                 for version in versions.get('Versions', []):
                     if not version['IsDefaultVersion']:
                         iam.delete_policy_version(PolicyArn=policy_arn, VersionId=version['VersionId'])
-            except:
-                pass
+            except Exception:
+                pass  # best-effort cleanup of a test artifact
             
             iam.delete_policy(PolicyArn=policy_arn)
             self._unregister_cleanup(policy_name)  # inline delete done; don't re-sweep
@@ -1872,14 +1905,16 @@ class AWSChecker(BaseChecker):
                     ))
                     self._check_results_by_area["network"] = category.area_state
                     return category
-                subnets = ec2.describe_subnets(Filters=[{"Name": "vpc-id", "Values": [self.vpc_id]}])
+                subnet_list = self._describe_all(
+                    ec2, "describe_subnets", "Subnets",
+                    Filters=[{"Name": "vpc-id", "Values": [self.vpc_id]}],
+                )
             else:
-                subnets = ec2.describe_subnets()
+                subnet_list = self._describe_all(ec2, "describe_subnets", "Subnets")
                 category.add_result(CheckResult(
                     name="  Scope", status=CheckStatus.WARNING,
                     message="No --vpc-id given: counting subnets ACCOUNT-WIDE, not the target VPC. Pass --vpc-id for an accurate check.",
                 ))
-            subnet_list = subnets.get("Subnets", [])
 
             private_subnets = [s for s in subnet_list if not s.get("MapPublicIpOnLaunch", False)]
             private = len(private_subnets)
@@ -1965,7 +2000,7 @@ class AWSChecker(BaseChecker):
                 nat_filters = [{"Name": "state", "Values": ["available"]}]
                 if self.vpc_id:
                     nat_filters.append({"Name": "vpc-id", "Values": [self.vpc_id]})
-                nats = ec2.describe_nat_gateways(Filter=nat_filters).get("NatGateways", [])
+                nats = self._describe_all(ec2, "describe_nat_gateways", "NatGateways", Filter=nat_filters)
                 scope = self.vpc_id or "the account"
                 if nats:
                     category.add_result(CheckResult(
@@ -2149,8 +2184,7 @@ class AWSChecker(BaseChecker):
                 ))
 
         try:
-            endpoints = ec2.describe_vpc_endpoints()
-            endpoint_list = endpoints.get("VpcEndpoints", [])
+            endpoint_list = self._describe_all(ec2, "describe_vpc_endpoints", "VpcEndpoints")
             
             gateway = sum(1 for e in endpoint_list if e["VpcEndpointType"] == "Gateway")
             interface = sum(1 for e in endpoint_list if e["VpcEndpointType"] == "Interface")
@@ -2722,10 +2756,14 @@ class AWSChecker(BaseChecker):
                                        message=f"{count}/{limit} ({pct:.0f}%) - approaching limit")
                 return CheckResult(name=name, status=CheckStatus.OK, message=f"{count}/{limit} ({pct:.0f}%)")
 
-            category.add_result(usage_result("  VPCs", len(ec2.describe_vpcs().get("Vpcs", [])), "vpc"))
+            # Paginate the counts so a large account isn't undercounted, which
+            # would produce a wrong quota-usage verdict (review M6). (Elastic IPs
+            # are returned in a single describe_addresses call — no paginator.)
+            category.add_result(usage_result("  VPCs", len(self._describe_all(ec2, "describe_vpcs", "Vpcs")), "vpc"))
             category.add_result(usage_result("  Elastic IPs", len(ec2.describe_addresses().get("Addresses", [])), "eip"))
-            nats = ec2.describe_nat_gateways(Filters=[{"Name": "state", "Values": ["available"]}])
-            category.add_result(usage_result("  NAT Gateways", len(nats.get("NatGateways", [])), "natgw"))
+            nats = self._describe_all(ec2, "describe_nat_gateways", "NatGateways",
+                                      Filters=[{"Name": "state", "Values": ["available"]}])
+            category.add_result(usage_result("  NAT Gateways", len(nats), "natgw"))
 
             for nm, key, unit in [("  EC2 On-Demand vCPUs", "vcpu", "vCPUs"),
                                   ("  Security Groups per VPC", "sg", "")]:
@@ -2754,22 +2792,39 @@ class AWSChecker(BaseChecker):
     # POLICY SUGGESTION GENERATOR
     # =========================================================================
     
+    # A valid IAM action is "service:Action" — lowercase service (may contain
+    # digits/hyphens, e.g. service-quotas), CamelCase action, optional wildcard.
+    _IAM_ACTION_RE = re.compile(r'[a-z][a-z0-9-]*:[A-Za-z0-9*]+')
+
+    @classmethod
+    def _extract_iam_action(cls, name: Optional[str]) -> Optional[str]:
+        """Pull the canonical 'service:Action' token out of a display name.
+
+        Result names carry decoration the raw name does not: a 🗑️ prefix,
+        suffixes like ' (STS)' / ' (DryRun)', etc. Using result.name verbatim in
+        an IAM policy Action produced a MalformedPolicyDocument that AWS rejects
+        — exactly when the run has blockers and the customer is told to paste it
+        (review H4). Extract and return only the valid action token, or None.
+        """
+        match = cls._IAM_ACTION_RE.search(name or "")
+        return match.group(0) if match else None
+
     def generate_suggested_policy(self, report: CheckReport) -> Dict[str, Any]:
         """
         Generate a suggested IAM policy based on failed permission checks.
         Returns a dict that can be serialized to JSON.
         """
         denied_actions = set()
-        
-        # Collect all denied actions from the report
+
+        # Collect all denied actions from the report, normalizing each to a valid
+        # IAM action token so the generated document always parses (review H4).
         for category in report.categories:
             for result in category.results:
                 if result.status == CheckStatus.NOT_OK:
-                    # Extract action name from result name (e.g., "  s3:CreateBucket" -> "s3:CreateBucket")
-                    action_name = result.name.strip()
-                    if ":" in action_name and not action_name.startswith("──"):
-                        denied_actions.add(action_name)
-        
+                    action = self._extract_iam_action(result.name)
+                    if action:
+                        denied_actions.add(action)
+
         if not denied_actions:
             return None
         
@@ -2785,16 +2840,17 @@ class AWSChecker(BaseChecker):
         # Build policy document
         statements = []
         
-        # S3 permissions
+        # S3 permissions. Resource is "*" (not "arn:aws:s3:::databricks-*"): the
+        # denied checks are for the pre-check's own temp bucket (dbxprecheck-*)
+        # and the customer's chosen root/UC bucket names, so a databricks-* scope
+        # would not actually clear the failing check (review M8). Narrow to your
+        # specific bucket ARNs before using this in production.
         if "s3" in services:
             statements.append({
                 "Sid": "DatabricksS3Access",
                 "Effect": "Allow",
                 "Action": sorted(services["s3"]),
-                "Resource": [
-                    "arn:aws:s3:::databricks-*",
-                    "arn:aws:s3:::databricks-*/*"
-                ]
+                "Resource": "*"
             })
         
         # IAM permissions

@@ -1,0 +1,19 @@
+# Core application dependencies
+# Generated from pyproject.toml [project.dependencies]
+# Run: pip install -r requirements.txt
+#   or: pip install -e .
+
+pandas>=2.0.0
+openpyxl>=3.1.0
+xlrd>=2.0.1
+databricks-sdk>=0.57.0
+fastapi>=0.116.1
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+networkx>=3.5
+httpx>=0.28.1
+aiofiles>=24.1.0
+python-jose[cryptography]>=3.3.0
+PyJWT>=2.8.0

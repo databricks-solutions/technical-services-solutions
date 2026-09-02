@@ -96,7 +96,7 @@ class TxtReporter:
         # Permission problems
         if problems["permissions"]:
             lines.append("┌─────────────────────────────────────────────────────────────────────┐")
-            lines.append("│ ❌ PERMISSÕES FALTANDO (Terraform VAI FALHAR nestas etapas)        │")
+            lines.append("│ ❌ MISSING PERMISSIONS (Terraform WILL FAIL at these steps)        │")
             lines.append("├─────────────────────────────────────────────────────────────────────┤")
             
             for action, message, category in problems["permissions"]:
@@ -105,7 +105,7 @@ class TxtReporter:
                 lines.append(f"│  • {clean_action:<30} │")
             
             lines.append("│                                                                     │")
-            lines.append("│  📋 O QUE FAZER:                                                    │")
+            lines.append("│  📋 WHAT TO DO:                                                     │")
             if self._current_cloud.upper() == "AZURE":
                 lines.append("│     1. Ask your Azure administrator to add the permissions        │")
                 lines.append("│     2. Or use a role with Contributor/Owner on the subscription   │")
@@ -120,7 +120,7 @@ class TxtReporter:
         # Quota problems
         if problems["quotas"]:
             lines.append("┌─────────────────────────────────────────────────────────────────────┐")
-            lines.append("│ ⚠️  LIMITES DE QUOTA ATINGIDOS                                      │")
+            lines.append("│ ⚠️  QUOTA LIMITS REACHED                                            │")
             lines.append("├─────────────────────────────────────────────────────────────────────┤")
             
             for action, message, category in problems["quotas"]:
@@ -128,7 +128,7 @@ class TxtReporter:
                 lines.append(f"│  • {clean_action}: {message:<40}│")
             
             lines.append("│                                                                     │")
-            lines.append("│  📋 O QUE FAZER:                                                    │")
+            lines.append("│  📋 WHAT TO DO:                                                     │")
             if self._current_cloud.upper() == "AZURE":
                 lines.append("│     1. Go to Azure Portal → Quotas                                 │")
                 lines.append("│     2. Request quota increase for the listed resources             │")

@@ -64,6 +64,7 @@ class AzureChecker(BaseChecker):
         client_secret: str = None,
         verify_only: bool = False,
         vnet_id: str = None,
+        skip_cleanup: bool = False,
     ):
         super().__init__(region)
         self.subscription_id = subscription_id
@@ -72,6 +73,7 @@ class AzureChecker(BaseChecker):
         self.client_id = client_id
         self.client_secret = client_secret
         self.verify_only = verify_only
+        self.skip_cleanup = skip_cleanup
         # Optional: validate an existing VNet for VNet injection (read-only).
         self.vnet_id = vnet_id
         self._credential = None
@@ -165,13 +167,25 @@ class AzureChecker(BaseChecker):
         )
     
     def _cleanup_test_resources(self):
-        """Clean up any temporary resources created during testing."""
+        """Delete every registered temp resource, most-recent first.
+
+        Returns a list of ``(resource_name, error)`` for deletions that FAILED,
+        so a leaked resource can be surfaced as NOT_OK in the report. A silent
+        ``except: pass`` here made a leaked resource and a clean run look
+        identical — the same fail-silent bug fixed for AWS in review H1, now
+        closed for Azure too.
+        """
+        # --skip-cleanup: leave temp resources in place for inspection (review H10).
+        if self.skip_cleanup:
+            return []
+        failures = []
         for cleanup_func, resource_name in reversed(self._cleanup_tasks):
             try:
                 cleanup_func()
-            except Exception:
-                pass  # Best effort cleanup
+            except Exception as e:
+                failures.append((resource_name, str(e)))
         self._cleanup_tasks = []
+        return failures
     
     # =========================================================================
     # REAL RESOURCE TESTING
@@ -1487,30 +1501,50 @@ class AzureChecker(BaseChecker):
             # Deployment compatibility matrix
             self._report.add_category(self._compute_deployment_compatibility())
 
-            # Cleanup bookkeeping for the report. Deletion is async — we request
-            # it, not confirm. Every created resource lives inside the RG, so
-            # deleting the RG cascades to all of them.
-            if rg_created and not self.verify_only:
-                cleanup_category = CheckCategory(name="CLEANUP")
-                cleanup_category.add_result(CheckResult(
-                    name="  🗑️  Resource Group deletion",
-                    status=CheckStatus.OK,
-                    message=f"DELETE REQUESTED: {test_rg} (async, cascades to all temp resources). "
-                            f"Run --cleanup-orphans --cloud azure to confirm nothing was left behind.",
-                ))
-                self._report.add_category(cleanup_category)
-            elif self.verify_only:
-                cleanup_category = CheckCategory(name="CLEANUP")
-                cleanup_category.add_result(CheckResult(
+        finally:
+            # All cleanup reporting lives HERE (not in the try) so it reflects the
+            # ACTUAL outcome and survives a mid-run exception. The RG delete is
+            # always issued — that is what makes the "cleanup runs on failure"
+            # guarantee true — and a delete that FAILS is surfaced as NOT_OK
+            # (Azure parity with AWS review H1) so a silent leak can't look clean.
+            # Reporting the outcome in one place also avoids the old contradiction
+            # of an OK "delete requested" note alongside a NOT_OK "leaked" note.
+            cleanup_cat = CheckCategory(name="CLEANUP")
+            if self.verify_only:
+                cleanup_cat.add_result(CheckResult(
                     name="  No cleanup needed",
                     status=CheckStatus.OK,
-                    message="VERIFY-ONLY mode: No temporary resources were created"
+                    message="VERIFY-ONLY mode: No temporary resources were created",
                 ))
-                self._report.add_category(cleanup_category)
-        finally:
-            # Always issue the RG delete, even if a check above raised. This is
-            # what makes the "cleanup runs on failure" guarantee actually true.
-            self._cleanup_test_resources()
+            elif self.skip_cleanup:
+                cleanup_cat.add_result(CheckResult(
+                    name="  ⏭️  Cleanup skipped (--skip-cleanup)",
+                    status=CheckStatus.WARNING,
+                    message=f"Test resources were intentionally LEFT in place ({test_rg}). "
+                            f"Remove them with --cleanup-orphans --cloud azure.",
+                    remediation="Run: --cleanup-orphans --cloud azure",
+                ))
+            else:
+                cleanup_failures = self._cleanup_test_resources()
+                if cleanup_failures:
+                    for res_name, err in cleanup_failures:
+                        cleanup_cat.add_result(CheckResult(
+                            name=f"  ⚠️  Leaked resource: {res_name}",
+                            status=CheckStatus.NOT_OK,
+                            message=f"Automatic deletion FAILED — delete it manually. ({err[:80]})",
+                            remediation=(
+                                f"Delete '{res_name}' manually, or run: "
+                                f"--cleanup-orphans --cloud azure"
+                            ),
+                        ))
+                else:
+                    cleanup_cat.add_result(CheckResult(
+                        name="  🗑️  Resource Group deletion",
+                        status=CheckStatus.OK,
+                        message=f"DELETE REQUESTED: {test_rg} (async, cascades to all temp resources). "
+                                f"Run --cleanup-orphans --cloud azure to confirm nothing was left behind.",
+                    ))
+            self._report.add_category(cleanup_cat)
 
         return self._report
     

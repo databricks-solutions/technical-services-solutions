@@ -294,6 +294,7 @@ class GCPChecker(BaseChecker):
         project_id: str = None,
         credentials_file: str = None,
         verify_only: bool = False,
+        skip_cleanup: bool = False,
     ):
         super().__init__(region)
         self.project_id = project_id
@@ -301,6 +302,9 @@ class GCPChecker(BaseChecker):
         # GCP is read-only by construction; verify_only is accepted for parity
         # with the AWS/Azure checkers and main.py but is purely informational.
         self.verify_only = verify_only
+        # GCP creates no temp resources, so skip_cleanup is a no-op kept for
+        # signature parity with the AWS/Azure checkers.
+        self.skip_cleanup = skip_cleanup
         self._credentials = None
         self._project_info = None
         # Feature flags. Default to checking PSC/DNS/KMS so we never silently

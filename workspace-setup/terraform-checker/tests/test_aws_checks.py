@@ -34,7 +34,7 @@ def test_resource_not_found_counts_as_permission_ok(code):
     # placeholder resource missing — so the permission is genuinely granted.
     def boom():
         raise _FakeClientError(code)
-    status, _msg = _checker()._test_dryrun("ec2:TerminateInstances", boom)
+    status, _msg, _assumed = _checker()._test_dryrun("ec2:TerminateInstances", boom)
     assert status == CheckStatus.OK
 
 
@@ -49,22 +49,25 @@ def test_parameter_validation_errors_are_unverified(code):
     # (unverified), never OK. Reporting it OK produced a false PASS (review H3).
     def boom():
         raise _FakeClientError(code)
-    status, _msg = _checker()._test_dryrun("ec2:RunInstances", boom)
+    status, _msg, assumed = _checker()._test_dryrun("ec2:RunInstances", boom)
     assert status == CheckStatus.WARNING
+    # H3: an unverified (parameter-validation) result must be flagged assumed, so
+    # a mixed area drops to NOT_TESTED instead of reading a false PASS.
+    assert assumed is True
 
 
 @pytest.mark.parametrize("code", ["UnauthorizedOperation", "AccessDenied"])
 def test_real_denial_still_not_ok(code):
     def boom():
         raise _FakeClientError(code, "You are not authorized")
-    status, _msg = _checker()._test_dryrun("ec2:RunInstances", boom)
+    status, _msg, _assumed = _checker()._test_dryrun("ec2:RunInstances", boom)
     assert status == CheckStatus.NOT_OK
 
 
 def test_dryrun_success_is_ok():
     def boom():
         raise _FakeClientError("DryRunOperation", "would have succeeded")
-    status, _msg = _checker()._test_dryrun("ec2:CreateVpc", boom)
+    status, _msg, _assumed = _checker()._test_dryrun("ec2:CreateVpc", boom)
     assert status == CheckStatus.OK
 
 
@@ -208,3 +211,99 @@ def test_area_state_distinguishes_review_assumed_and_clean():
         CheckResult(name="info", status=CheckStatus.WARNING, message="fyi"),
     ])
     assert benign.area_state == "PASS"
+
+
+def test_h3_param_validation_assumed_drops_mixed_area_to_not_tested():
+    # H3: a mixed area (an OK read + a create probe that only reached parameter
+    # validation) never actually verified the create permission. Flagging it
+    # assumed must drop the whole area to NOT_TESTED, not read a false PASS.
+    describe_ok = CheckResult(name="  ec2:DescribeVpcEndpoints",
+                              status=CheckStatus.OK, message="Allowed")
+    create_unverified = CheckResult(
+        name="  ec2:CreateVpcEndpoint (S3 Gateway)",
+        status=CheckStatus.WARNING,
+        message="Unverified — request rejected at parameter validation",
+        assumed=True,
+    )
+    mixed = CheckCategory(name="privatelink",
+                          results=[describe_ok, create_unverified])
+    assert mixed.area_state == "NOT_TESTED"
+
+    # Sanity: the SAME rows without the assumed flag would have read PASS —
+    # exactly the false-green that H3 closes.
+    not_flagged = CheckResult(
+        name="  ec2:CreateVpcEndpoint (S3 Gateway)",
+        status=CheckStatus.WARNING, message="Unverified", assumed=False,
+    )
+    assert CheckCategory(name="privatelink",
+                         results=[describe_ok, not_flagged]).area_state == "PASS"
+
+
+def test_skip_cleanup_does_not_invoke_cleanup_tasks():
+    # --skip-cleanup (review H10): registered temp resources are intentionally
+    # left in place — the cleanup callables must NOT run.
+    c = AWSChecker(region="us-east-1", skip_cleanup=True)
+    called = []
+    c._cleanup_tasks = [(lambda: called.append(1), "temp-bucket")]
+    assert c._cleanup_test_resources() == []
+    assert called == []
+
+
+def test_cleanup_runs_when_not_skipped():
+    c = AWSChecker(region="us-east-1")  # skip_cleanup defaults to False
+    called = []
+    c._cleanup_tasks = [(lambda: called.append(1), "temp-bucket")]
+    assert c._cleanup_test_resources() == []   # deletion succeeded, no failures
+    assert called == [1]                        # cleanup callable actually ran
+
+
+# --- Create-path error handling (audit: these paths were barely covered) ------
+
+def test_s3_create_denied_is_not_ok(monkeypatch):
+    # A denied CreateBucket must be NOT_OK (a blocked deploy permission), never a
+    # soft warning that could read as PASS. Exercises the real create path.
+    c = AWSChecker(region="us-east-1")
+    c._account_id = "123456789012"
+
+    class _DenyS3:
+        def create_bucket(self, **kw):
+            raise _FakeClientError("AccessDenied",
+                                   "User is not authorized to perform: s3:CreateBucket")
+
+    monkeypatch.setattr(c, "_get_client", lambda service: _DenyS3())
+    by_name = {r.name.strip(): r for r in c._test_s3_bucket_permissions()}
+    assert by_name["s3:CreateBucket"].status == CheckStatus.NOT_OK
+    assert "DENIED" in by_name["s3:CreateBucket"].message
+
+
+def test_s3_ambiguous_create_error_registers_cleanup(monkeypatch):
+    # An ambiguous (non-denial, non-already-owned) error might mean the bucket
+    # WAS created server-side, so a not-found-tolerant cleanup must be registered
+    # (review M2) — never orphan — and it reports WARNING, not a false OK.
+    c = AWSChecker(region="us-east-1")
+    c._account_id = "123456789012"
+
+    class _WeirdS3:
+        def create_bucket(self, **kw):
+            raise _FakeClientError("InternalError", "something ambiguous happened")
+
+    monkeypatch.setattr(c, "_get_client", lambda service: _WeirdS3())
+    by_name = {r.name.strip(): r for r in c._test_s3_bucket_permissions()}
+    assert by_name["s3:CreateBucket"].status == CheckStatus.WARNING
+    assert len(c._cleanup_tasks) == 1  # registered so a server-side create can't leak
+
+
+def test_iam_role_create_denied_is_not_ok(monkeypatch):
+    # A denied CreateRole must be NOT_OK. Exercises the IAM role create path.
+    c = AWSChecker(region="us-east-1")
+    c._account_id = "123456789012"
+
+    class _DenyIam:
+        def create_role(self, **kw):
+            raise _FakeClientError("AccessDenied",
+                                   "not authorized to perform: iam:CreateRole")
+
+    monkeypatch.setattr(c, "_get_client", lambda service: _DenyIam())
+    by_name = {r.name.strip(): r for r in c._test_iam_role_permissions()}
+    assert by_name["iam:CreateRole"].status == CheckStatus.NOT_OK
+    assert "DENIED" in by_name["iam:CreateRole"].message

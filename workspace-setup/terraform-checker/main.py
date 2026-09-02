@@ -392,6 +392,7 @@ def run_aws_checks(
     vpc_id: Optional[str] = None,
     sg_id: Optional[str] = None,
     databricks_account_id: Optional[str] = None,
+    skip_cleanup: bool = False,
 ) -> tuple:
     """Run AWS checks and return the report and checker instance.
 
@@ -411,6 +412,7 @@ def run_aws_checks(
             vpc_id=vpc_id,
             sg_id=sg_id,
             databricks_account_id=databricks_account_id,
+            skip_cleanup=skip_cleanup,
         )
         report = checker.run_all_checks()
 
@@ -425,7 +427,9 @@ def run_aws_checks(
     except ImportError as e:
         _progress(f"  ✗ AWS SDK not installed: {e}", fg="red")
         _progress("    Install with: pip install boto3")
-        return None, None
+        # Surface the missing SDK as a NOT_OK report (not None) so a requested
+        # cloud is never silently dropped and --all can't exit 0 (review H6).
+        return _crash_report("AWS", region, e), None
     except Exception as e:
         _progress(f"  ✗ AWS check failed: {e}", fg="red")
         return _crash_report("AWS", region, e), None
@@ -437,6 +441,7 @@ def run_azure_checks(
     resource_group: Optional[str],
     verify_only: bool = False,
     vnet_id: Optional[str] = None,
+    skip_cleanup: bool = False,
 ) -> Optional[CheckReport]:
     """Run Azure checks and return the report."""
     _progress("\n▶ Running Azure checks (all deployment types)...", fg="yellow")
@@ -452,6 +457,7 @@ def run_azure_checks(
             resource_group=resource_group,
             verify_only=verify_only,
             vnet_id=vnet_id,
+            skip_cleanup=skip_cleanup,
         )
         report = checker.run_all_checks()
 
@@ -466,7 +472,9 @@ def run_azure_checks(
     except ImportError as e:
         _progress(f"  ✗ Azure SDK not installed: {e}", fg="red")
         _progress("    Install with: pip install azure-identity azure-mgmt-resource azure-mgmt-network azure-mgmt-storage")
-        return None
+        # NOT_OK report (not None) so a missing Azure SDK is never silently
+        # dropped and --all can't exit 0 (review H6).
+        return _crash_report("Azure", region, e)
     except Exception as e:
         _progress(f"  ✗ Azure check failed: {e}", fg="red")
         return _crash_report("Azure", region, e)
@@ -477,6 +485,7 @@ def run_gcp_checks(
     project: Optional[str],
     credentials_file: Optional[str],
     verify_only: bool = False,
+    skip_cleanup: bool = False,
 ) -> Optional[CheckReport]:
     """Run GCP checks and return the report."""
     _progress("\n▶ Running GCP checks...", fg="yellow")
@@ -489,6 +498,7 @@ def run_gcp_checks(
             project_id=project,
             credentials_file=credentials_file,
             verify_only=verify_only,
+            skip_cleanup=skip_cleanup,
         )
         report = checker.run_all_checks()
 
@@ -503,10 +513,31 @@ def run_gcp_checks(
     except ImportError as e:
         _progress(f"  ✗ GCP SDK not installed: {e}", fg="red")
         _progress("    Install with: pip install google-cloud-storage google-api-python-client google-auth")
-        return None
+        # NOT_OK report (not None) so a missing GCP SDK is never silently
+        # dropped and --all can't exit 0 (review H6).
+        return _crash_report("GCP", region, e)
     except Exception as e:
         _progress(f"  ✗ GCP check failed: {e}", fg="red")
         return _crash_report("GCP", region, e)
+
+
+def _compute_exit_code(
+    total_not_ok: int,
+    total_warning: int,
+    total_not_verified: int,
+    strict: bool,
+) -> int:
+    """Map result tallies to a process exit code (extracted for testing, review M11).
+
+    Blockers always fail; in --strict, unresolved warnings / NOT-VERIFIED items
+    also fail (a distinct code) so CI can gate on an incomplete run; otherwise
+    warnings are non-fatal.
+    """
+    if total_not_ok > 0:
+        return ExitCode.PERMISSION_DENIED
+    if strict and (total_warning > 0 or total_not_verified > 0):
+        return ExitCode.GENERAL_ERROR
+    return ExitCode.SUCCESS
 
 
 @click.command()
@@ -627,6 +658,11 @@ def run_gcp_checks(
     is_flag=True,
     help="Exit non-zero on warnings / NOT-VERIFIED items too (for strict CI gating)"
 )
+@click.option(
+    "--skip-cleanup",
+    is_flag=True,
+    help="Leave temporary test resources in place instead of deleting them (inspect, then --cleanup-orphans)"
+)
 @click.version_option(
     version="1.2.0",
     prog_name="Databricks Terraform Pre-Check"
@@ -656,6 +692,7 @@ def main(
     config: Optional[str],
     quiet: bool,
     strict: bool,
+    skip_cleanup: bool,
 ):
     """
     Databricks Terraform Pre-Check Tool
@@ -690,22 +727,28 @@ def main(
       # Debug mode with log file
       python main.py --cloud aws --log-level debug --log-file debug.log
     """
-    # Setup logging
-    log_config = setup_logging(level=log_level, log_file=log_file)
-    logger.debug("Starting Databricks Terraform Pre-Check v1.2.0")
-    
-    # Load config file if specified
+    # Load the config file BEFORE setting up logging, so a config-file log_level
+    # / log_file can actually take effect (review H10: setup_logging used to run
+    # first, and log_file/log_level/verbose/skip_cleanup were never applied).
     file_config = None
     if config:
         file_config = load_config(config)
         if file_config:
-            logger.info("Loaded configuration from %s", config)
             # Apply config-file values as defaults for any option the user did
             # NOT pass on the command line (CLI flags take precedence). Without
             # this the file was loaded and then ignored entirely (review H10).
             if output is None and file_config.output_file:
                 output = file_config.output_file
             dry_run = dry_run or file_config.dry_run
+            skip_cleanup = skip_cleanup or file_config.skip_cleanup
+            verbose = verbose or file_config.verbose
+            log_file = log_file or file_config.log_file
+            # Let config override log_level only when the CLI did NOT set it
+            # explicitly. A plain `== "info"` check can't tell an explicit
+            # `--log-level info` from the default, so check the parameter source.
+            _ll_source = click.get_current_context().get_parameter_source("log_level")
+            if _ll_source != click.core.ParameterSource.COMMANDLINE and file_config.log_level:
+                log_level = file_config.log_level
             cloud_cfg = getattr(file_config, cloud, None) if cloud else None
             if cloud_cfg is not None:
                 if region is None and cloud_cfg.region:
@@ -721,6 +764,16 @@ def main(
                 if credentials_file is None and cloud_cfg.credentials_file:
                     credentials_file = cloud_cfg.credentials_file
     
+    # --verbose (CLI or config) raises the effective log level to debug unless a
+    # more specific level was already requested. (Previously --verbose was unused.)
+    effective_log_level = "debug" if (verbose and log_level == "info") else log_level
+
+    # Now that config-file log settings are resolved, set up logging (review H10).
+    log_config = setup_logging(level=effective_log_level, log_file=log_file)
+    logger.debug("Starting Databricks Terraform Pre-Check v1.2.0")
+    if config and file_config:
+        logger.info("Loaded configuration from %s", config)
+
     # Print banner (unless quiet mode or JSON output)
     if not quiet and not json_output:
         print_banner()
@@ -784,32 +837,32 @@ def main(
         available = CredentialLoader.detect_available_clouds()
         
         if available.get("aws"):
-            report, checker = run_aws_checks(region, profile, verify_only, vpc_id, sg_id, databricks_account_id)
+            report, checker = run_aws_checks(region, profile, verify_only, vpc_id, sg_id, databricks_account_id, skip_cleanup)
             if report:
                 reports.append(report)
                 aws_checker = checker
         
         if available.get("azure"):
-            report = run_azure_checks(region, subscription_id, resource_group, verify_only, vnet_id)
+            report = run_azure_checks(region, subscription_id, resource_group, verify_only, vnet_id, skip_cleanup)
             if report:
                 reports.append(report)
         
         if available.get("gcp"):
-            report = run_gcp_checks(region, project, credentials_file, verify_only)
+            report = run_gcp_checks(region, project, credentials_file, verify_only, skip_cleanup)
             if report:
                 reports.append(report)
     else:
         if cloud == "aws":
-            report, checker = run_aws_checks(region, profile, verify_only, vpc_id, sg_id, databricks_account_id)
+            report, checker = run_aws_checks(region, profile, verify_only, vpc_id, sg_id, databricks_account_id, skip_cleanup)
             if report:
                 reports.append(report)
                 aws_checker = checker
         elif cloud == "azure":
-            report = run_azure_checks(region, subscription_id, resource_group, verify_only, vnet_id)
+            report = run_azure_checks(region, subscription_id, resource_group, verify_only, vnet_id, skip_cleanup)
             if report:
                 reports.append(report)
         elif cloud == "gcp":
-            report = run_gcp_checks(region, project, credentials_file, verify_only)
+            report = run_gcp_checks(region, project, credentials_file, verify_only, skip_cleanup)
             if report:
                 reports.append(report)
     
@@ -835,15 +888,10 @@ def main(
         if "NOT VERIFIED" in (res.message or "")
     )
 
-    # Determine exit code. Blockers always fail (2). In --strict, unresolved
-    # warnings / NOT-VERIFIED items also fail (distinct code) so CI can gate on an
-    # incomplete run; default keeps warnings = 0.
-    if total_not_ok > 0:
-        exit_code = ExitCode.PERMISSION_DENIED
-    elif strict and (total_warning > 0 or total_not_verified > 0):
-        exit_code = ExitCode.GENERAL_ERROR
-    else:
-        exit_code = ExitCode.SUCCESS
+    # Determine exit code (mapping extracted to _compute_exit_code for testing, M11).
+    exit_code = _compute_exit_code(
+        total_not_ok, total_warning, total_not_verified, strict
+    )
     
     # Normalize the requested output format (--json is a shortcut for --format json).
     fmt = output_format.lower()

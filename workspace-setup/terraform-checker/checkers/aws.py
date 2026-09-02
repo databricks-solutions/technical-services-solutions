@@ -60,10 +60,12 @@ class AWSChecker(BaseChecker):
         vpc_id: str = None,
         sg_id: str = None,
         databricks_account_id: str = None,
+        skip_cleanup: bool = False,
     ):
         super().__init__(region)
         self.profile = profile
         self.verify_only = verify_only
+        self.skip_cleanup = skip_cleanup
         # Optional BYO-network scoping / validation targets.
         self.vpc_id = vpc_id
         self.sg_id = sg_id
@@ -115,6 +117,9 @@ class AWSChecker(BaseChecker):
         best-effort ``pass`` here made a leaked resource and a clean run look
         identical (review H1).
         """
+        # --skip-cleanup: leave temp resources in place for inspection (review H10).
+        if self.skip_cleanup:
+            return []
         failures = []
         for cleanup_func, resource_name in reversed(self._cleanup_tasks):
             try:
@@ -1403,17 +1408,22 @@ class AWSChecker(BaseChecker):
         action_name: str,
         test_func: Callable,
         success_patterns: List[str] = None,
-    ) -> Tuple[CheckStatus, str]:
+    ) -> Tuple[CheckStatus, str, bool]:
         """
         Test an action using DryRun.
-        Returns (status, detailed_message)
+
+        Returns (status, detailed_message, assumed). ``assumed`` is True only
+        when the probe could NOT actually verify the permission — the request
+        was rejected at parameter validation, BEFORE authorization was
+        evaluated — so callers can flag the result and a mixed area won't read
+        PASS on an unverified deploy-critical permission (review H3).
         """
         success_patterns = success_patterns or ["DryRunOperation"]
 
         try:
             test_func()
             # If no exception, unexpected success
-            return (CheckStatus.OK, "Allowed (unexpected actual success)")
+            return (CheckStatus.OK, "Allowed (unexpected actual success)", False)
         except Exception as e:
             error_str = str(e)
             error_code = getattr(e, 'response', {}).get('Error', {}).get('Code', '')
@@ -1421,7 +1431,7 @@ class AWSChecker(BaseChecker):
             # Check for DryRun success (means permission is granted)
             for pattern in success_patterns:
                 if pattern in error_str or pattern == error_code:
-                    return (CheckStatus.OK, "Allowed (DryRun verified)")
+                    return (CheckStatus.OK, "Allowed (DryRun verified)", False)
             
             # Permission denied / org-policy / quota block. Use the shared
             # deploy-blocking classifier (SCP, permission boundary, explicit
@@ -1433,8 +1443,8 @@ class AWSChecker(BaseChecker):
                     parts = error_str.split("is not authorized to perform:")
                     if len(parts) > 1:
                         denied_action = parts[1].split(" on ")[0].strip()
-                        return (CheckStatus.NOT_OK, f"DENIED: {denied_action}")
-                return (CheckStatus.NOT_OK, f"DENIED: {error_str[:100]}")
+                        return (CheckStatus.NOT_OK, f"DENIED: {denied_action}", False)
+                return (CheckStatus.NOT_OK, f"DENIED: {error_str[:100]}", False)
 
             # Resource-not-found: AWS evaluated the request, authorization PASSED,
             # and only THEN found the (deliberately non-existent) test resource
@@ -1449,7 +1459,7 @@ class AWSChecker(BaseChecker):
             ]
             for pattern in resource_not_found_patterns:
                 if pattern in error_str or pattern == error_code:
-                    return (CheckStatus.OK, "Allowed (resource doesn't exist)")
+                    return (CheckStatus.OK, "Allowed (resource doesn't exist)", False)
 
             # Parameter-validation / malformed request: AWS rejected this BEFORE
             # evaluating authorization, so it proves NOTHING about the permission.
@@ -1467,10 +1477,11 @@ class AWSChecker(BaseChecker):
                         CheckStatus.WARNING,
                         f"Unverified — request rejected at parameter validation "
                         f"({pattern}), before authorization; cannot confirm this permission",
+                        True,
                     )
 
             # Unknown error - return full message for debugging
-            return (CheckStatus.WARNING, f"Check failed: {error_str}")
+            return (CheckStatus.WARNING, f"Check failed: {error_str}", False)
     
     def _add_detailed_result(self, category: CheckCategory, name: str, status: CheckStatus, message: str):
         """Add a result with proper formatting."""
@@ -2054,7 +2065,7 @@ class AWSChecker(BaseChecker):
                 ))
             
             # DryRun test for CreateSecurityGroup
-            status, msg = self._test_dryrun(
+            status, msg, assumed = self._test_dryrun(
                 "ec2:CreateSecurityGroup",
                 lambda: ec2.create_security_group(
                     GroupName="databricks-test",
@@ -2063,7 +2074,7 @@ class AWSChecker(BaseChecker):
                     DryRun=True
                 ),
             )
-            category.add_result(CheckResult(name="  ec2:CreateSecurityGroup (DryRun)", status=status, message=msg))
+            category.add_result(CheckResult(name="  ec2:CreateSecurityGroup (DryRun)", status=status, message=msg, assumed=assumed))
             
             if self._can_simulate:
                 sg_actions = ["ec2:AuthorizeSecurityGroupIngress", "ec2:AuthorizeSecurityGroupEgress",
@@ -2103,8 +2114,7 @@ class AWSChecker(BaseChecker):
         category = CheckCategory(name="VPC ENDPOINTS (PrivateLink)")
         
         ec2 = self._get_client("ec2")
-        privatelink_ok = True
-        
+
         endpoint_actions = [
             ("ec2:CreateVpcEndpoint", "Create VPC endpoint"),
             ("ec2:DeleteVpcEndpoints", "Delete VPC endpoint"),
@@ -2124,7 +2134,6 @@ class AWSChecker(BaseChecker):
                     status = CheckStatus.OK
                 elif status_str == "denied":
                     status = CheckStatus.NOT_OK
-                    privatelink_ok = False
                 else:
                     status = CheckStatus.WARNING
                 
@@ -2142,14 +2151,13 @@ class AWSChecker(BaseChecker):
                     message="Allowed"
                 ))
             except Exception as e:
-                privatelink_ok = False
                 category.add_result(CheckResult(
                     name="  ec2:DescribeVpcEndpoints",
                     status=CheckStatus.NOT_OK,
                     message=f"DENIED: {str(e)}"
                 ))
             
-            status, msg = self._test_dryrun(
+            status, msg, assumed = self._test_dryrun(
                 "ec2:CreateVpcEndpoint",
                 lambda: ec2.create_vpc_endpoint(
                     VpcId="vpc-test",
@@ -2158,9 +2166,7 @@ class AWSChecker(BaseChecker):
                     DryRun=True
                 ),
             )
-            if status == CheckStatus.NOT_OK:
-                privatelink_ok = False
-            category.add_result(CheckResult(name="  ec2:CreateVpcEndpoint (S3 Gateway)", status=status, message=msg))
+            category.add_result(CheckResult(name="  ec2:CreateVpcEndpoint (S3 Gateway)", status=status, message=msg, assumed=assumed))
 
             # Interface endpoints the SRA creates (STS, Kinesis Streams). These
             # need CreateVpcEndpoint with the Interface type (+ ENI + SG attach).
@@ -2168,7 +2174,7 @@ class AWSChecker(BaseChecker):
                 ("STS", f"com.amazonaws.{self.region}.sts"),
                 ("Kinesis Streams", f"com.amazonaws.{self.region}.kinesis-streams"),
             ]:
-                status, msg = self._test_dryrun(
+                status, msg, assumed = self._test_dryrun(
                     f"ec2:CreateVpcEndpoint ({svc_label})",
                     lambda s=svc_name: ec2.create_vpc_endpoint(
                         VpcId="vpc-test",
@@ -2177,10 +2183,8 @@ class AWSChecker(BaseChecker):
                         DryRun=True,
                     ),
                 )
-                if status == CheckStatus.NOT_OK:
-                    privatelink_ok = False
                 category.add_result(CheckResult(
-                    name=f"  ec2:CreateVpcEndpoint ({svc_label})", status=status, message=msg
+                    name=f"  ec2:CreateVpcEndpoint ({svc_label})", status=status, message=msg, assumed=assumed
                 ))
 
         try:
@@ -2386,7 +2390,7 @@ class AWSChecker(BaseChecker):
             # DryRun tests for critical EC2 actions
             
             # RunInstances
-            status, msg = self._test_dryrun(
+            status, msg, assumed = self._test_dryrun(
                 "ec2:RunInstances",
                 lambda: ec2.run_instances(
                     ImageId="ami-12345678",
@@ -2396,17 +2400,17 @@ class AWSChecker(BaseChecker):
                     DryRun=True
                 ),
             )
-            category.add_result(CheckResult(name="  ec2:RunInstances", status=status, message=msg))
+            category.add_result(CheckResult(name="  ec2:RunInstances", status=status, message=msg, assumed=assumed))
             
             # TerminateInstances
-            status, msg = self._test_dryrun(
+            status, msg, assumed = self._test_dryrun(
                 "ec2:TerminateInstances",
                 lambda: ec2.terminate_instances(InstanceIds=["i-test12345"], DryRun=True),
             )
-            category.add_result(CheckResult(name="  ec2:TerminateInstances", status=status, message=msg))
+            category.add_result(CheckResult(name="  ec2:TerminateInstances", status=status, message=msg, assumed=assumed))
             
             # CreateVolume
-            status, msg = self._test_dryrun(
+            status, msg, assumed = self._test_dryrun(
                 "ec2:CreateVolume",
                 lambda: ec2.create_volume(
                     AvailabilityZone=f"{self.region}a",
@@ -2415,17 +2419,17 @@ class AWSChecker(BaseChecker):
                     DryRun=True
                 ),
             )
-            category.add_result(CheckResult(name="  ec2:CreateVolume", status=status, message=msg))
+            category.add_result(CheckResult(name="  ec2:CreateVolume", status=status, message=msg, assumed=assumed))
             
             # DeleteVolume
-            status, msg = self._test_dryrun(
+            status, msg, assumed = self._test_dryrun(
                 "ec2:DeleteVolume",
                 lambda: ec2.delete_volume(VolumeId="vol-test12345", DryRun=True),
             )
-            category.add_result(CheckResult(name="  ec2:DeleteVolume", status=status, message=msg))
+            category.add_result(CheckResult(name="  ec2:DeleteVolume", status=status, message=msg, assumed=assumed))
             
             # CreateSecurityGroup
-            status, msg = self._test_dryrun(
+            status, msg, assumed = self._test_dryrun(
                 "ec2:CreateSecurityGroup",
                 lambda: ec2.create_security_group(
                     GroupName="databricks-test",
@@ -2434,10 +2438,10 @@ class AWSChecker(BaseChecker):
                     DryRun=True
                 ),
             )
-            category.add_result(CheckResult(name="  ec2:CreateSecurityGroup", status=status, message=msg))
+            category.add_result(CheckResult(name="  ec2:CreateSecurityGroup", status=status, message=msg, assumed=assumed))
             
             # CreateTags
-            status, msg = self._test_dryrun(
+            status, msg, assumed = self._test_dryrun(
                 "ec2:CreateTags",
                 lambda: ec2.create_tags(
                     Resources=["i-test12345"],
@@ -2445,7 +2449,7 @@ class AWSChecker(BaseChecker):
                     DryRun=True
                 ),
             )
-            category.add_result(CheckResult(name="  ec2:CreateTags", status=status, message=msg))
+            category.add_result(CheckResult(name="  ec2:CreateTags", status=status, message=msg, assumed=assumed))
             
             # DescribeInstances (no DryRun, just test)
             try:
@@ -2547,7 +2551,9 @@ class AWSChecker(BaseChecker):
                     ))
             
             # Test RequestSpotInstances
-            status, msg = self._test_dryrun(
+            # Spot is an OPTIONAL capability. Ignore the ``assumed`` flag here so an
+            # unverifiable spot probe never drags cross_account to NOT_TESTED.
+            status, msg, _ = self._test_dryrun(
                 "ec2:RequestSpotInstances",
                 lambda: ec2.request_spot_instances(
                     InstanceCount=1,
@@ -3189,20 +3195,36 @@ class AWSChecker(BaseChecker):
             # Be explicit about what a cloud-credential pre-check cannot prove.
             self._report.add_category(self.check_account_api_scope_note())
           finally:
-            cleanup_failures = self._cleanup_test_resources()
-            if cleanup_failures:
+            if self.skip_cleanup:
+                # Resources were intentionally left in place (--skip-cleanup).
                 cleanup_cat = CheckCategory(name="CLEANUP")
-                for res_name, err in cleanup_failures:
-                    cleanup_cat.add_result(CheckResult(
-                        name=f"  ⚠️  Leaked resource: {res_name}",
-                        status=CheckStatus.NOT_OK,
-                        message=f"Automatic deletion FAILED — delete it manually. ({err[:80]})",
-                        remediation=(
-                            f"Delete '{res_name}' manually, or run: "
-                            f"--cleanup-orphans --cloud aws --region {self.region}"
-                        ),
-                    ))
+                cleanup_cat.add_result(CheckResult(
+                    name="  ⏭️  Cleanup skipped (--skip-cleanup)",
+                    status=CheckStatus.WARNING,
+                    message=(
+                        "Temporary test resources were intentionally LEFT in place. "
+                        "Remove them manually or run --cleanup-orphans."
+                    ),
+                    remediation=(
+                        f"Run: --cleanup-orphans --cloud aws --region {self.region}"
+                    ),
+                ))
                 self._report.add_category(cleanup_cat)
+            else:
+                cleanup_failures = self._cleanup_test_resources()
+                if cleanup_failures:
+                    cleanup_cat = CheckCategory(name="CLEANUP")
+                    for res_name, err in cleanup_failures:
+                        cleanup_cat.add_result(CheckResult(
+                            name=f"  ⚠️  Leaked resource: {res_name}",
+                            status=CheckStatus.NOT_OK,
+                            message=f"Automatic deletion FAILED — delete it manually. ({err[:80]})",
+                            remediation=(
+                                f"Delete '{res_name}' manually, or run: "
+                                f"--cleanup-orphans --cloud aws --region {self.region}"
+                            ),
+                        ))
+                    self._report.add_category(cleanup_cat)
         else:
             for name in ["STORAGE CONFIGURATION", "NETWORK CONFIGURATION",
                         "CROSS-ACCOUNT ROLE", "VPC ENDPOINTS (PrivateLink)",

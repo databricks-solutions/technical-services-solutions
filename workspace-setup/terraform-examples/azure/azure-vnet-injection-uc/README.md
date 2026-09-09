@@ -155,19 +155,20 @@ Copy `terraform.tfvars.example` to `terraform.tfvars` in the `tf/` directory and
 | `subnet_public_cidr` | **(Required)** CIDR for the public (host) subnet. Must be within the VNet. |
 | `subnet_private_cidr` | **(Required)** CIDR for the private (container) subnet. Must be within the VNet. |
 | `nat_gateway_zones` | **(Optional)** Availability zone(s) for the NAT gateway and its public IP. Azure NAT gateway is a zonal resource, so provide at most one zone. Default: `["1"]`. Use `[]` for regions without availability-zone support. For zone-redundant egress, deploy one NAT gateway per zone (not covered by this example). |
-| `uc_storage_public_network_access_enabled` | **(Optional)** Allow access to the UC external-location storage account from its public endpoint. Default: `true`. Set `false` only when you provide private connectivity (private endpoints) to the account. |
 | `uc_storage_network_default_action` | **(Optional)** Storage firewall default action for the UC storage account: `Allow` (default, so the example deploys without extra setup) or `Deny` (restrict to AzureServices plus the IPs/subnets granted below). |
 | `uc_storage_allowed_ip_rules` | **(Optional)** Public IPs/CIDRs allowed to reach the UC storage account when the default action is `Deny`. Include the IP running Terraform so container creation succeeds. Default: `[]`. |
-| `uc_storage_allowed_subnet_ids` | **(Optional)** Subnet IDs allowed to reach the UC storage account when the default action is `Deny` (each must have the `Microsoft.Storage` service endpoint enabled). Default: `[]`. |
+| `uc_storage_allowed_subnet_ids` | **(Optional)** Subnet IDs allowed to reach the UC storage account when the default action is `Deny`. The workspace public/private subnets created by this template already have the `Microsoft.Storage` service endpoint enabled, so their IDs can be used directly. Default: `[]`. |
 
 ### Unity Catalog storage security
 
 The UC external-location storage account is always created with TLS 1.2 minimum, infrastructure (double) encryption, and public blob access disabled. Its network firewall defaults to **Allow** so the example deploys with no extra setup: Terraform creates the container over the storage data plane and Databricks compute reaches the account over the public endpoint.
 
-To lock the account down (recommended for anything beyond a sandbox), set `uc_storage_network_default_action = "Deny"` and grant access explicitly:
+This is a VNet-injection (non-Private Link) example, so the storage account keeps its public endpoint and is protected by the **firewall** — not by private endpoints. To lock it down (recommended beyond a sandbox), set `uc_storage_network_default_action = "Deny"` and grant access explicitly:
 
 - add the public IP running Terraform to `uc_storage_allowed_ip_rules` (otherwise container creation fails), and
-- add the workspace subnet IDs to `uc_storage_allowed_subnet_ids` (each subnet needs the `Microsoft.Storage` service endpoint), or front the account with private endpoints and set `uc_storage_public_network_access_enabled = false`.
+- add the workspace subnet IDs to `uc_storage_allowed_subnet_ids`. The public/private subnets this template creates already have the `Microsoft.Storage` service endpoint enabled, so no extra network setup is needed.
+
+> **Note:** `infrastructure_encryption_enabled` is applied at storage-account creation only. Enabling it on an account that already exists from a previous deploy forces the account to be replaced — plan a migration for existing state, or accept the recreation on a throwaway sandbox.
 
 ### Provider authentication
 

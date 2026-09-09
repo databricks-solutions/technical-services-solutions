@@ -49,6 +49,9 @@ resource "azurerm_subnet" "public" {
   virtual_network_name            = local.vnet.name
   address_prefixes                = [var.subnet_public_cidr]
   default_outbound_access_enabled = false
+  # Lets the UC storage firewall allow this subnet (uc_storage_allowed_subnet_ids)
+  # without private endpoints. Service endpoint, not Private Link.
+  service_endpoints = ["Microsoft.Storage"]
 
   delegation {
     name = "databricks"
@@ -73,6 +76,9 @@ resource "azurerm_subnet" "private" {
   virtual_network_name            = local.vnet.name
   address_prefixes                = [var.subnet_private_cidr]
   default_outbound_access_enabled = false
+  # Lets the UC storage firewall allow this subnet (uc_storage_allowed_subnet_ids)
+  # without private endpoints. Service endpoint, not Private Link.
+  service_endpoints = ["Microsoft.Storage"]
 
   delegation {
     name = "databricks"

@@ -206,14 +206,11 @@ variable "nat_gateway_zones" {
 # Unity Catalog Storage Security (optional)
 # =============================================================================
 # The UC external-location storage account is created with TLS 1.2, infrastructure
-# encryption, and no public blob access. Network access defaults to open so the
-# example applies without extra setup; lock it down with the toggles below.
-
-variable "uc_storage_public_network_access_enabled" {
-  description = "Allow access to the UC storage account from the public endpoint. Default true so the example deploys without private endpoints. Set false only if you provide private connectivity (private endpoints) to the account."
-  type        = bool
-  default     = true
-}
+# encryption, and no public blob access. This is a VNet-injection (non-Private Link)
+# example, so the account keeps its public endpoint; the firewall below (with the
+# Microsoft.Storage service endpoint already enabled on the workspace subnets) is the
+# lock-down lever. Network access defaults to open so the example applies without
+# extra setup.
 
 variable "uc_storage_network_default_action" {
   description = "Default action for the UC storage account firewall. \"Allow\" (default) keeps the account reachable for the initial deploy; \"Deny\" restricts access to AzureServices plus the IPs/subnets granted below."

@@ -21,11 +21,14 @@ databricks_account_id       = "xxx-xxx"
 managed_resource_group_name = null # optional. If no name is provided, Azure generates one automatically.
 
 # Metastore: attach an existing one OR create a new one (exactly one path).
-#   - Attach existing: set existing_metastore_id and leave new_metastore_name = "".
-#   - Create new:      leave existing_metastore_id = "" and set new_metastore_name.
-# Note: Azure allows only one Unity Catalog metastore per region per account.
-existing_metastore_id = "" # e.g. "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-new_metastore_name    = "my-metastore"
+#   - Attach existing (recommended): set existing_metastore_id, leave new_metastore_name = "".
+#   - Create new:                    leave existing_metastore_id = "", set new_metastore_name.
+# Azure allows only ONE Unity Catalog metastore per region per account, so in most
+# accounts the regional metastore already exists — attach it rather than creating one
+# (creating fails if the region already has a metastore). Find IDs with:
+#   databricks account metastores list
+existing_metastore_id = "REPLACE-WITH-EXISTING-METASTORE-UUID"
+new_metastore_name    = ""
 
 # =============================================================================
 # Unity Catalog (user-defined catalog) Configuration
@@ -67,4 +70,4 @@ nat_gateway_zones = ["1"]
 
 cidr                = "10.0.0.0/20" # matches the variable default; subnets below must fit inside it
 subnet_public_cidr  = "10.0.1.0/24"
-subnet_private_cidr  = "10.0.2.0/24"
+subnet_private_cidr = "10.0.2.0/24"

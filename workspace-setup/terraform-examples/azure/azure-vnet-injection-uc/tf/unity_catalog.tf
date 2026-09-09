@@ -19,19 +19,21 @@ resource "azurerm_storage_account" "db_uc_catalog" {
   account_replication_type = "LRS"
   is_hns_enabled           = true
 
-  # Security hardening (see variables for the toggles).
+  # Security hardening. Note: infrastructure_encryption_enabled is set at creation
+  # only — enabling it on a storage account that already exists forces replacement.
   min_tls_version                   = "TLS1_2"
   allow_nested_items_to_be_public   = false
   infrastructure_encryption_enabled = true
-  public_network_access_enabled     = var.uc_storage_public_network_access_enabled
 
-  # Storage firewall. Defaults to "Allow" so the default example applies cleanly
+  # Storage firewall. This is a VNet-injection (non-Private Link) example, so the
+  # account keeps its public endpoint and is protected by the firewall rather than
+  # by private endpoints. Defaults to "Allow" so the example applies cleanly
   # (Terraform creates the container over the data plane, and Databricks compute
   # reaches the account over the public endpoint). For production, set
   # uc_storage_network_default_action = "Deny" and grant access by adding your
   # deployer IP (uc_storage_allowed_ip_rules) and the workspace subnets
-  # (uc_storage_allowed_subnet_ids, which requires the Microsoft.Storage service
-  # endpoint on those subnets) — or front the account with private endpoints.
+  # (uc_storage_allowed_subnet_ids). The public/private subnets created by this
+  # template already have the Microsoft.Storage service endpoint enabled.
   network_rules {
     default_action             = var.uc_storage_network_default_action
     bypass                     = ["AzureServices"]

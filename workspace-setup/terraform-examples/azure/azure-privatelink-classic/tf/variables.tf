@@ -113,9 +113,13 @@ variable "databricks_account_id" {
 }
 
 variable "metastore_id" {
-  description = "Unity Catalog metastore ID (UUID) to assign to this workspace via the account API. Leave empty to skip—attach manually after deploy or use account/regional defaults if your org configures them."
+  description = "Unity Catalog metastore ID (UUID) of an existing metastore to assign to this workspace via the account API. Leave empty to skip—attach manually after deploy or use account/regional defaults if your org configures them."
   type        = string
   default     = ""
+  validation {
+    condition     = var.metastore_id == "" || can(regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", var.metastore_id))
+    error_message = "metastore_id must be empty or a valid UUID (e.g. aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee). Find IDs with: databricks account metastores list."
+  }
 }
 
 # =============================================================================

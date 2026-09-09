@@ -81,13 +81,11 @@ data "azapi_resource" "dbfs_storage" {
 }
 
 locals {
-  # Storage account GET (2024-01-01) includes privateEndpointConnections. Handle output as object (azapi 2.x) or JSON string (azapi 1.x).
-  dbfs_pe_connections = try(
-    data.azapi_resource.dbfs_storage.output.properties.privateEndpointConnections,
-    try(jsondecode(data.azapi_resource.dbfs_storage.output).properties.privateEndpointConnections, [])
-  )
-  blob_pe_name = [for pe in local.dbfs_pe_connections : pe.name if endswith(try(pe.properties.privateEndpoint.id, ""), databricks_mws_ncc_private_endpoint_rule.dbfs_blob.endpoint_name)][0]
-  dfs_pe_name  = [for pe in local.dbfs_pe_connections : pe.name if endswith(try(pe.properties.privateEndpoint.id, ""), databricks_mws_ncc_private_endpoint_rule.dbfs_dfs.endpoint_name)][0]
+  # Storage account GET (2024-01-01) includes privateEndpointConnections. azapi 2.x
+  # returns output as a typed object; [] guards the case where none exist yet.
+  dbfs_pe_connections = try(data.azapi_resource.dbfs_storage.output.properties.privateEndpointConnections, [])
+  blob_pe_name        = [for pe in local.dbfs_pe_connections : pe.name if endswith(try(pe.properties.privateEndpoint.id, ""), databricks_mws_ncc_private_endpoint_rule.dbfs_blob.endpoint_name)][0]
+  dfs_pe_name         = [for pe in local.dbfs_pe_connections : pe.name if endswith(try(pe.properties.privateEndpoint.id, ""), databricks_mws_ncc_private_endpoint_rule.dbfs_dfs.endpoint_name)][0]
 }
 
 resource "azapi_update_resource" "ncc_pe_approve_blob" {

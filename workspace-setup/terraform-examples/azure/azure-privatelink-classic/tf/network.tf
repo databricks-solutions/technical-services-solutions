@@ -28,7 +28,9 @@ resource "azurerm_public_ip" "dp_nat" {
   resource_group_name = local.dp_rg_name
   allocation_method   = "Static"
   sku                 = "Standard"
-  # Zone matches the NAT gateway. Empty list (default) = non-zonal (original behavior).
+  # Zone must match the NAT gateway. Default [] = non-zonal (regional). Note: `zones`
+  # is ForceNew — changing it on an existing deployment replaces the IP (new SNAT
+  # address). Set once at create time.
   zones = var.nat_gateway_zones
   tags  = local.tags
 }

@@ -111,11 +111,11 @@ The code provisions:
    - **Public subnet** – CIDR from `subnet_public_cidr`. Delegated to `Microsoft.Databricks/workspaces` for cluster host IPs.
    - **Private subnet** – CIDR from `subnet_private_cidr`. Delegated to `Microsoft.Databricks/workspaces` for cluster container IPs.
 3. **Network security group (NSG)** – Attached to both public and private subnets.
-4. **NAT Gateway** – With a static public IP, associated to both subnets for outbound connectivity (Secure Cluster Connectivity / No Public IP).
+4. **NAT Gateway** – Standard SKU with a static Standard-SKU public IP, associated to both subnets for outbound connectivity (Secure Cluster Connectivity / No Public IP). Placed in the availability zone(s) from `nat_gateway_zones` (default `["1"]`).
 5. **Databricks workspace** – Premium SKU, VNet-injected into the public/private subnets with No Public IP enabled. Root DBFS storage uses a named storage account (`root_storage_name`).
 6. **Unity Catalog metastore** – Either creates a new metastore (when `existing_metastore_id` is empty) with an admin group and owner assignment, or uses an existing one. The metastore is assigned to the workspace.
 7. **Workspace access** – Grants ADMIN permissions to the specified `admin_user` on the workspace.
-8. **Managed identity and storage** – An Azure Databricks Access Connector (system-assigned managed identity), a storage account and container for the catalog, and a Storage Blob Data Contributor role assignment on the storage account.
+8. **Managed identity and storage** – An Azure Databricks Access Connector (system-assigned managed identity), a hardened storage account (TLS 1.2, infrastructure encryption, no public blob access; configurable firewall) and container for the catalog, and a Storage Blob Data Contributor role assignment on the storage account. See [Unity Catalog storage security](#unity-catalog-storage-security).
 9. **Storage credential** – A Unity Catalog storage credential backed by the managed identity.
 10. **External location** – Points to the storage container using the storage credential.
 11. **User-defined catalog** – A Unity Catalog catalog backed by the external location's storage.
@@ -154,6 +154,24 @@ Copy `terraform.tfvars.example` to `terraform.tfvars` in the `tf/` directory and
 | `cidr` | **(Optional)** CIDR for the VNet address space. Default: `10.0.0.0/20`. |
 | `subnet_public_cidr` | **(Required)** CIDR for the public (host) subnet. Must be within the VNet. |
 | `subnet_private_cidr` | **(Required)** CIDR for the private (container) subnet. Must be within the VNet. |
+| `nat_gateway_zones` | **(Optional)** Availability zone(s) for the NAT gateway and its public IP. Azure NAT gateway is a zonal resource, so provide at most one zone. Default: `["1"]`. Use `[]` for regions without availability-zone support. For zone-redundant egress, deploy one NAT gateway per zone (not covered by this example). |
+| `uc_storage_public_network_access_enabled` | **(Optional)** Allow access to the UC external-location storage account from its public endpoint. Default: `true`. Set `false` only when you provide private connectivity (private endpoints) to the account. |
+| `uc_storage_network_default_action` | **(Optional)** Storage firewall default action for the UC storage account: `Allow` (default, so the example deploys without extra setup) or `Deny` (restrict to AzureServices plus the IPs/subnets granted below). |
+| `uc_storage_allowed_ip_rules` | **(Optional)** Public IPs/CIDRs allowed to reach the UC storage account when the default action is `Deny`. Include the IP running Terraform so container creation succeeds. Default: `[]`. |
+| `uc_storage_allowed_subnet_ids` | **(Optional)** Subnet IDs allowed to reach the UC storage account when the default action is `Deny` (each must have the `Microsoft.Storage` service endpoint enabled). Default: `[]`. |
+
+### Unity Catalog storage security
+
+The UC external-location storage account is always created with TLS 1.2 minimum, infrastructure (double) encryption, and public blob access disabled. Its network firewall defaults to **Allow** so the example deploys with no extra setup: Terraform creates the container over the storage data plane and Databricks compute reaches the account over the public endpoint.
+
+To lock the account down (recommended for anything beyond a sandbox), set `uc_storage_network_default_action = "Deny"` and grant access explicitly:
+
+- add the public IP running Terraform to `uc_storage_allowed_ip_rules` (otherwise container creation fails), and
+- add the workspace subnet IDs to `uc_storage_allowed_subnet_ids` (each subnet needs the `Microsoft.Storage` service endpoint), or front the account with private endpoints and set `uc_storage_public_network_access_enabled = false`.
+
+### Provider authentication
+
+The `databricks` providers do not pin `auth_type`, so authentication is auto-detected: Azure CLI (`az login`) for interactive use, or a service principal via `ARM_CLIENT_ID` / `ARM_CLIENT_SECRET` / `ARM_TENANT_ID` for CI/CD (see [Option 2](#option-2-service-principal-login-for-automation-cicd) above).
 
 ## Deploy
 

@@ -3,6 +3,7 @@ resource "azurerm_databricks_access_connector" "db_mi" {
   name                = "${var.workspace_name}-uc-mi"
   resource_group_name = azurerm_resource_group.this.name
   location            = azurerm_resource_group.this.location
+  tags                = var.tags
   identity {
     type = "SystemAssigned"
   }
@@ -17,6 +18,26 @@ resource "azurerm_storage_account" "db_uc_catalog" {
   account_tier             = "Standard"
   account_replication_type = "LRS"
   is_hns_enabled           = true
+
+  # Security hardening (see variables for the toggles).
+  min_tls_version                   = "TLS1_2"
+  allow_nested_items_to_be_public   = false
+  infrastructure_encryption_enabled = true
+  public_network_access_enabled     = var.uc_storage_public_network_access_enabled
+
+  # Storage firewall. Defaults to "Allow" so the default example applies cleanly
+  # (Terraform creates the container over the data plane, and Databricks compute
+  # reaches the account over the public endpoint). For production, set
+  # uc_storage_network_default_action = "Deny" and grant access by adding your
+  # deployer IP (uc_storage_allowed_ip_rules) and the workspace subnets
+  # (uc_storage_allowed_subnet_ids, which requires the Microsoft.Storage service
+  # endpoint on those subnets) — or front the account with private endpoints.
+  network_rules {
+    default_action             = var.uc_storage_network_default_action
+    bypass                     = ["AzureServices"]
+    ip_rules                   = var.uc_storage_allowed_ip_rules
+    virtual_network_subnet_ids = var.uc_storage_allowed_subnet_ids
+  }
 }
 
 // Create a container in storage account to be used by unity catalog metastore as root storage

@@ -191,3 +191,48 @@ variable "subnet_private_cidr" {
   description = "The CIDR address of the second subnet"
   type        = string
 }
+
+variable "nat_gateway_zones" {
+  description = "Availability zone(s) for the NAT gateway and its public IP. Azure NAT gateway is a zonal resource, so provide at most one zone (e.g. [\"1\"]). Use [] for regions without availability-zone support (non-zonal). Default [\"1\"] preserves prior behavior. For zone-redundant egress, deploy one NAT gateway per zone (not covered by this example)."
+  type        = list(string)
+  default     = ["1"]
+  validation {
+    condition     = length(var.nat_gateway_zones) <= 1 && alltrue([for z in var.nat_gateway_zones : contains(["1", "2", "3"], z)])
+    error_message = "nat_gateway_zones must be empty (non-zonal) or a single zone from [\"1\", \"2\", \"3\"]. Azure NAT gateway supports only one availability zone."
+  }
+}
+
+# =============================================================================
+# Unity Catalog Storage Security (optional)
+# =============================================================================
+# The UC external-location storage account is created with TLS 1.2, infrastructure
+# encryption, and no public blob access. Network access defaults to open so the
+# example applies without extra setup; lock it down with the toggles below.
+
+variable "uc_storage_public_network_access_enabled" {
+  description = "Allow access to the UC storage account from the public endpoint. Default true so the example deploys without private endpoints. Set false only if you provide private connectivity (private endpoints) to the account."
+  type        = bool
+  default     = true
+}
+
+variable "uc_storage_network_default_action" {
+  description = "Default action for the UC storage account firewall. \"Allow\" (default) keeps the account reachable for the initial deploy; \"Deny\" restricts access to AzureServices plus the IPs/subnets granted below."
+  type        = string
+  default     = "Allow"
+  validation {
+    condition     = contains(["Allow", "Deny"], var.uc_storage_network_default_action)
+    error_message = "uc_storage_network_default_action must be either \"Allow\" or \"Deny\"."
+  }
+}
+
+variable "uc_storage_allowed_ip_rules" {
+  description = "Public IP addresses/CIDRs allowed to reach the UC storage account when uc_storage_network_default_action = \"Deny\". Include the IP running Terraform so container creation succeeds. Ignored when the default action is \"Allow\"."
+  type        = list(string)
+  default     = []
+}
+
+variable "uc_storage_allowed_subnet_ids" {
+  description = "Subnet IDs allowed to reach the UC storage account when uc_storage_network_default_action = \"Deny\" (e.g. the workspace public/private subnets). Each subnet must have the Microsoft.Storage service endpoint enabled. Ignored when the default action is \"Allow\"."
+  type        = list(string)
+  default     = []
+}

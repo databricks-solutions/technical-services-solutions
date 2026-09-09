@@ -133,7 +133,7 @@ private_subnets_cidr  = ["10.0.1.0/24", "10.0.2.0/24"]
 public_subnets_cidr   = ["10.0.101.0/24", "10.0.102.0/24"]
 ```
 
-- **standard:** VPC with an Internet Gateway and either one shared NAT Gateway (`nat_gateway_mode = "single"`) or one NAT Gateway per availability zone (`"per_az"`); S3 gateway, STS, and Kinesis VPC endpoints are created in workspace subnets. Use when compute can use the internet for optional traffic.
+- **standard:** VPC with an Internet Gateway and either one shared NAT Gateway (`nat_gateway_mode = "single"`) or one NAT Gateway per availability zone (`"per_az"`); S3 gateway, STS, and Kinesis VPC endpoints are created in workspace subnets. NAT provides outbound reachability, but the default workspace security group restricts egress to the VPC CIDR. Configure `additional_egress_ips` and `sg_egress_ports` to allow required internet destinations. The `per_az` mode also requires one public subnet and one Elastic IP per availability zone; check the regional Elastic IP quota before deploying.
 - **fully_private:** VPC with no NAT/IGW; dedicated subnet for AWS service endpoints (min /27) and S3/STS/Kinesis endpoints. Use for strict no-internet (air-gap) deployments. Ensure `endpoint_subnet_cidr` (default `10.0.3.0/27`) does not overlap `private_subnets_cidr`.
 
 ### Pathway 2 – Custom

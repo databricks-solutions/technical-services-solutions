@@ -44,7 +44,7 @@ module "vpc_endpoints" {
 
   vpc_id = module.vpc[0].vpc_id
 
-  security_group_ids = length(var.security_group_ids) > 0 ? var.security_group_ids : aws_security_group.databricks[*].id
+  security_group_ids = aws_security_group.databricks[*].id
 
   endpoints = {
     s3 = {

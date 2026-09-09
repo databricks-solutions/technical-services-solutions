@@ -130,6 +130,11 @@ variable "public_subnets_cidr" {
   description = "List of public subnet CIDR blocks (only used if creating new VPC)"
   type        = list(string)
   default     = []
+
+  validation {
+    condition     = var.network_configuration != "standard" || var.nat_gateway_mode != "per_az" || length(var.public_subnets_cidr) >= length(var.availability_zones)
+    error_message = "nat_gateway_mode = \"per_az\" requires at least one public subnet CIDR per availability zone."
+  }
 }
 
 variable "private_route_table_ids" {

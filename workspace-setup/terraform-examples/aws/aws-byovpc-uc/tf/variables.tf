@@ -106,6 +106,11 @@ variable "public_subnets_cidr" {
   description = "List of public subnet CIDR blocks (only used if creating new VPC)"
   type        = list(string)
   default     = []
+
+  validation {
+    condition     = var.vpc_id != "" || var.nat_gateway_mode != "per_az" || length(var.public_subnets_cidr) >= length(var.availability_zones)
+    error_message = "nat_gateway_mode = \"per_az\" requires at least one public subnet CIDR per availability zone."
+  }
 }
 
 variable "intra_subnet_cidr" {
@@ -119,7 +124,7 @@ variable "intra_subnet_cidr" {
 # =============================================================================
 
 variable "security_group_ids" {
-  description = "Existing security group IDs to use. If empty, a new dedicated security group will be created"
+  description = "Existing security group IDs to use with an existing VPC. For a newly created VPC, a dedicated security group is created."
   type        = list(string)
   default     = []
 }

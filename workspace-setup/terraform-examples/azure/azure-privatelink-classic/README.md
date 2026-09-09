@@ -110,7 +110,7 @@ Copy `terraform.tfvars.example` to `terraform.tfvars` in the `tf/` directory and
 | `subnets_service_endpoints` | **(Optional)** List of Azure service endpoints for the public and private subnets (e.g. `["Microsoft.Storage"]`). Default: `[]`. |
 | `nat_gateway_zones` | **(Optional)** Availability zone(s) for the NAT gateway and its public IP. `[]` (default) creates a non-zonal (regional) NAT gateway. Provide a single zone (e.g. `["1"]`) to pin the NAT gateway to that zone. An Azure NAT gateway cannot span multiple zones. Default: `[]`. |
 | `databricks_account_id` | **(Required)** Databricks account ID for serverless NCC. Find it in the account console URL: `https://accounts.azuredatabricks.net/accounts/<account_id>`. NCC is always created so serverless compute can reach DBFS over Private Link; private endpoint connections are auto-approved. |
-| `metastore_id` | **(Optional)** Unity Catalog metastore UUID to assign to the workspace. Default `""` skips Terraform assignment (attach manually after deploy if your account does not auto-assign). |
+| `metastore_id` | **(Optional)** UUID of an **existing** Unity Catalog metastore to assign to the workspace (account API; requires account admin). Azure allows one metastore per region per account, so the regional metastore usually already exists — list them with `databricks account metastores list`. This template only *assigns* a metastore; to create catalogs/external locations with private storage use the `azure-vnet-injection-uc` template. Default `""` skips assignment (attach later in the account console if your account does not auto-assign). |
 | `tags` | **(Optional)** Tags applied to Azure resources that support tags. Default `{}` applies no tags (no built-in `Project` or `owner`). |
 
 ## Deploy

@@ -61,9 +61,22 @@ subnets_service_endpoints = []
 # Databricks account ID (from account console URL: .../accounts/<account_id>)
 databricks_account_id = "your-databricks-account-id"
 
-# Optional: Unity Catalog metastore UUID to assign to the workspace (account-level).
-# Leave "" to skip—it is common to use auto-assignment.
-# metastore_id = "00000000-0000-0000-0000-000000000000"
+# =============================================================================
+# Unity Catalog (optional)
+# =============================================================================
+# Attach an EXISTING Unity Catalog metastore to this workspace (account-level API,
+# requires account admin). Azure allows one metastore per region per account, so in
+# most orgs the regional metastore already exists — set its UUID here to attach it.
+# Leave "" to skip (attach later in the account console, or rely on auto-assignment
+# if your org configures a regional default).
+#
+# This template only ASSIGNS a metastore; it does not create catalogs/external
+# locations. To create those with private storage, use the azure-vnet-injection-uc
+# template or add them separately.
+#
+# Find metastore IDs with:
+#   databricks account metastores list   (account auth; filter by "region")
+metastore_id = ""
 
 # =============================================================================
 # Tags

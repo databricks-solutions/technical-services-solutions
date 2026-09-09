@@ -11,7 +11,7 @@
 locals {
   # DBFS storage account resource ID (same as used by pe_dbfs.tf).
   dbfs_storage_resource_id = "${azurerm_databricks_workspace.dp_workspace.managed_resource_group_id}/providers/Microsoft.Storage/storageAccounts/${local.dbfsname}"
-  ncc_description         = "NCC: ${databricks_mws_network_connectivity_config.ncc.name} (${databricks_mws_network_connectivity_config.ncc.network_connectivity_config_id})"
+  ncc_description          = "NCC: ${databricks_mws_network_connectivity_config.ncc.name} (${databricks_mws_network_connectivity_config.ncc.network_connectivity_config_id})"
   pe_approval_body = {
     properties = {
       privateLinkServiceConnectionState = {
@@ -35,19 +35,19 @@ resource "databricks_mws_network_connectivity_config" "ncc" {
 # Attach NCC to this workspace
 # -----------------------------------------------------------------------------
 resource "databricks_mws_ncc_binding" "ncc_binding" {
-  provider                      = databricks.account
+  provider                       = databricks.account
   network_connectivity_config_id = databricks_mws_network_connectivity_config.ncc.network_connectivity_config_id
-  workspace_id                  = azurerm_databricks_workspace.dp_workspace.workspace_id
+  workspace_id                   = azurerm_databricks_workspace.dp_workspace.workspace_id
 }
 
 # -----------------------------------------------------------------------------
 # Private endpoint rule: DBFS Blob
 # -----------------------------------------------------------------------------
 resource "databricks_mws_ncc_private_endpoint_rule" "dbfs_blob" {
-  provider                      = databricks.account
+  provider                       = databricks.account
   network_connectivity_config_id = databricks_mws_network_connectivity_config.ncc.network_connectivity_config_id
-  resource_id                   = local.dbfs_storage_resource_id
-  group_id                      = "blob"
+  resource_id                    = local.dbfs_storage_resource_id
+  group_id                       = "blob"
 }
 
 # Brief pause after blob rule so the dfs rule creation starts without overloading the account API.
@@ -60,11 +60,11 @@ resource "time_sleep" "after_ncc_blob_rule" {
 # Private endpoint rule: DBFS DFS
 # -----------------------------------------------------------------------------
 resource "databricks_mws_ncc_private_endpoint_rule" "dbfs_dfs" {
-  provider                      = databricks.account
+  provider                       = databricks.account
   network_connectivity_config_id = databricks_mws_network_connectivity_config.ncc.network_connectivity_config_id
-  resource_id                   = local.dbfs_storage_resource_id
-  group_id                      = "dfs"
-  depends_on                    = [time_sleep.after_ncc_blob_rule]
+  resource_id                    = local.dbfs_storage_resource_id
+  group_id                       = "dfs"
+  depends_on                     = [time_sleep.after_ncc_blob_rule]
 }
 
 # -----------------------------------------------------------------------------
@@ -72,8 +72,8 @@ resource "databricks_mws_ncc_private_endpoint_rule" "dbfs_dfs" {
 # -----------------------------------------------------------------------------
 data "azapi_resource" "dbfs_storage" {
   type                   = "Microsoft.Storage/storageAccounts@2024-01-01"
-  resource_id             = local.dbfs_storage_resource_id
-  response_export_values  = ["properties.privateEndpointConnections"]
+  resource_id            = local.dbfs_storage_resource_id
+  response_export_values = ["properties.privateEndpointConnections"]
   depends_on = [
     databricks_mws_ncc_private_endpoint_rule.dbfs_blob,
     databricks_mws_ncc_private_endpoint_rule.dbfs_dfs

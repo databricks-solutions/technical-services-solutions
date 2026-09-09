@@ -9,12 +9,6 @@
 # Naming
 # =============================================================================
 
-variable "prefix" {
-  description = "Prefix for Databricks workspace and display names"
-  type        = string
-  default     = "databricks-workspace"
-}
-
 variable "resource_prefix" {
   description = "Prefix for Azure resource names (VNet, NSG, subnets, resource group). Used to derive DBFS storage account name (alphanumeric only, 3-24 chars)."
   type        = string
@@ -90,6 +84,20 @@ variable "subnets_service_endpoints" {
   description = "List of Azure service endpoints to associate with the public and private subnets (e.g. [\"Microsoft.Storage\"])"
   type        = list(string)
   default     = []
+}
+
+variable "nat_gateway_zones" {
+  description = "Availability zones for the NAT gateway and its public IP. Empty list [] (default) creates a non-zonal (regional) NAT gateway, preserving the original behavior. Provide a single zone (e.g. [\"1\"]) to pin the NAT gateway to that zone. Azure NAT gateway is a zonal resource and cannot span multiple zones, so supply at most one zone."
+  type        = list(string)
+  default     = []
+  validation {
+    condition     = length(var.nat_gateway_zones) <= 1
+    error_message = "nat_gateway_zones accepts at most one zone. An Azure NAT gateway is either non-zonal (empty list) or pinned to a single zone; it cannot span zones. For zone resilience, deploy a NAT gateway per zone manually."
+  }
+  validation {
+    condition     = alltrue([for z in var.nat_gateway_zones : contains(["1", "2", "3"], z)])
+    error_message = "nat_gateway_zones values must each be one of \"1\", \"2\", or \"3\"."
+  }
 }
 
 # =============================================================================

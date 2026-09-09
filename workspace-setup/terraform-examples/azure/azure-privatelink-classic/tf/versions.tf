@@ -10,9 +10,10 @@ terraform {
 
   required_providers {
     # Azure API provider for auto-approving NCC private endpoint connections on storage.
+    # 2.x: azapi_update_resource.body takes an HCL object (as used in ncc.tf); 1.x expected a JSON string.
     azapi = {
       source  = "Azure/azapi"
-      version = "~> 1.0"
+      version = ">= 2.0.0, < 3.0"
     }
     # Azure RM provider for resource group, VNet, workspace, NAT, private endpoints, DNS.
     azurerm = {
@@ -22,7 +23,7 @@ terraform {
     # Databricks account-level provider for NCC (serverless private endpoints).
     databricks = {
       source  = "databricks/databricks"
-      version = ">= 1.28.0, < 2.0"
+      version = ">= 1.84.0, < 2.0"
     }
     # Delay between NCC rule creations so the account API is not overloaded (avoids timeout on second rule).
     time = {

@@ -9,9 +9,6 @@
 # Naming
 # =============================================================================
 
-# Prefix for Databricks workspace name (display)
-prefix = "my-databricks-workspace"
-
 # Prefix for Azure resources (VNet, NSG, subnets, resource group). Also used to derive DBFS storage account name.
 resource_prefix = "my-databricks-workspace"
 
@@ -45,6 +42,11 @@ subnet_workspace_cidrs = ["10.0.0.0/24", "10.0.1.0/24"]
 
 # Private Link subnet for control plane and DBFS private endpoints (e.g. /26)
 subnet_private_endpoint_cidr = "10.0.2.0/26"
+
+# NAT gateway availability zone(s). [] (default) = non-zonal (regional) NAT gateway.
+# Provide a single zone (e.g. ["1"]) to pin the NAT gateway + its public IP to that zone.
+# Azure NAT gateway cannot span multiple zones.
+nat_gateway_zones = []
 
 # Optional: Service endpoints for the public and private subnets (e.g. ["Microsoft.Storage"])
 subnets_service_endpoints = []

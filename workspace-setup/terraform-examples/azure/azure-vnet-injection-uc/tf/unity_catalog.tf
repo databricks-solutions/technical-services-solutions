@@ -3,6 +3,7 @@ resource "azurerm_databricks_access_connector" "db_mi" {
   name                = "${var.workspace_name}-uc-mi"
   resource_group_name = azurerm_resource_group.this.name
   location            = azurerm_resource_group.this.location
+  tags                = var.tags
   identity {
     type = "SystemAssigned"
   }
@@ -17,6 +18,11 @@ resource "azurerm_storage_account" "db_uc_catalog" {
   account_tier             = "Standard"
   account_replication_type = "LRS"
   is_hns_enabled           = true
+
+  // Security hardening (infrastructure_encryption_enabled is create-time only).
+  min_tls_version                   = "TLS1_2"
+  allow_nested_items_to_be_public   = false
+  infrastructure_encryption_enabled = true
 }
 
 // Create a container in storage account to be used by unity catalog metastore as root storage

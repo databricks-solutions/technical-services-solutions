@@ -28,7 +28,9 @@ resource "azurerm_public_ip" "dp_nat" {
   resource_group_name = local.dp_rg_name
   allocation_method   = "Static"
   sku                 = "Standard"
-  tags                = local.tags
+  # [] = non-zonal (default); must match the NAT gateway. `zones` is ForceNew.
+  zones = var.nat_gateway_zones
+  tags  = local.tags
 }
 
 # NAT gateway; associated with public IP below and with subnets via subnet_nat_gateway_association.
@@ -38,7 +40,9 @@ resource "azurerm_nat_gateway" "dp_nat" {
   resource_group_name     = local.dp_rg_name
   sku_name                = "Standard"
   idle_timeout_in_minutes = 10
-  tags                    = local.tags
+  # [] = non-zonal (default); a single zone pins the NAT gateway.
+  zones = var.nat_gateway_zones
+  tags  = local.tags
 }
 
 resource "azurerm_nat_gateway_public_ip_association" "dp_nat" {

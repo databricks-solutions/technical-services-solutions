@@ -9,12 +9,6 @@
 # Naming
 # =============================================================================
 
-variable "prefix" {
-  description = "Prefix for Databricks workspace and display names"
-  type        = string
-  default     = "databricks-workspace"
-}
-
 variable "resource_prefix" {
   description = "Prefix for Azure resource names (VNet, NSG, subnets, resource group). Used to derive DBFS storage account name (alphanumeric only, 3-24 chars)."
   type        = string
@@ -92,6 +86,20 @@ variable "subnets_service_endpoints" {
   default     = []
 }
 
+variable "nat_gateway_zones" {
+  description = "Availability zones for the NAT gateway and its public IP. Empty list [] (default) creates a non-zonal (regional) NAT gateway, which survives a single-AZ outage. Pinning to a single zone (e.g. [\"1\"]) makes all workspace outbound (SNAT) traffic depend on that one AZ — lower availability than the default. Azure NAT gateway cannot span zones; for zone resilience deploy a NAT gateway per zone. Supply at most one zone."
+  type        = list(string)
+  default     = []
+  validation {
+    condition     = length(var.nat_gateway_zones) <= 1
+    error_message = "nat_gateway_zones accepts at most one zone. An Azure NAT gateway is either non-zonal (empty list) or pinned to a single zone; it cannot span zones. For zone resilience, deploy a NAT gateway per zone manually."
+  }
+  validation {
+    condition     = alltrue([for z in var.nat_gateway_zones : contains(["1", "2", "3"], z)])
+    error_message = "nat_gateway_zones values must each be one of \"1\", \"2\", or \"3\"."
+  }
+}
+
 # =============================================================================
 # Databricks account (for serverless NCC)
 # =============================================================================
@@ -105,9 +113,13 @@ variable "databricks_account_id" {
 }
 
 variable "metastore_id" {
-  description = "Unity Catalog metastore ID (UUID) to assign to this workspace via the account API. Leave empty to skip—attach manually after deploy or use account/regional defaults if your org configures them."
+  description = "Unity Catalog metastore ID (UUID) of an existing metastore to assign to this workspace via the account API. Leave empty to skip—attach manually after deploy or use account/regional defaults if your org configures them."
   type        = string
   default     = ""
+  validation {
+    condition     = var.metastore_id == "" || can(regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", var.metastore_id))
+    error_message = "metastore_id must be empty or a valid UUID (e.g. aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee). Find IDs with: databricks account metastores list."
+  }
 }
 
 # =============================================================================

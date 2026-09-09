@@ -9,9 +9,6 @@
 # Naming
 # =============================================================================
 
-# Prefix for Databricks workspace name (display)
-prefix = "my-databricks-workspace"
-
 # Prefix for Azure resources (VNet, NSG, subnets, resource group). Also used to derive DBFS storage account name.
 resource_prefix = "my-databricks-workspace"
 
@@ -46,6 +43,9 @@ subnet_workspace_cidrs = ["10.0.0.0/24", "10.0.1.0/24"]
 # Private Link subnet for control plane and DBFS private endpoints (e.g. /26)
 subnet_private_endpoint_cidr = "10.0.2.0/26"
 
+# NAT gateway zone: [] (default) = non-zonal; a single zone (e.g. ["1"]) pins it.
+nat_gateway_zones = []
+
 # Optional: Service endpoints for the public and private subnets (e.g. ["Microsoft.Storage"])
 subnets_service_endpoints = []
 
@@ -59,9 +59,12 @@ subnets_service_endpoints = []
 # Databricks account ID (from account console URL: .../accounts/<account_id>)
 databricks_account_id = "your-databricks-account-id"
 
-# Optional: Unity Catalog metastore UUID to assign to the workspace (account-level).
-# Leave "" to skip—it is common to use auto-assignment.
-# metastore_id = "00000000-0000-0000-0000-000000000000"
+# =============================================================================
+# Unity Catalog (optional)
+# =============================================================================
+# Assign an existing metastore (requires account admin); "" to skip. This template
+# only assigns — use azure-vnet-injection-uc to create catalogs. IDs: databricks account metastores list
+metastore_id = ""
 
 # =============================================================================
 # Tags

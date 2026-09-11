@@ -11,9 +11,11 @@ This playbook walks through enabling **Databricks Data Classification** to autom
 | Requirement | Details |
 | --- | --- |
 | Workspace | Unity Catalog enabled with serverless compute available |
-| Runtime | Databricks Runtime 16.4+ (or serverless) for ABAC enforcement |
+| Runtime | Databricks Runtime 16.4+ (or serverless) for ABAC enforcement — see [ABAC requirements](https://docs.databricks.com/data-governance/unity-catalog/abac/) for the authoritative, current list |
 | Permissions | `MANAGE` or catalog owner to enable classification; account admin to manage governed tags |
 | Demo tables | Run the **[setup.sql](demo/setup.sql)** script first to create the initial demo dataset |
+
+> For ABAC requirements and limitations, and Data Classification supported tags, quotas, and cost, defer to the Databricks docs (linked throughout and under [Further Reading](#further-reading)) rather than the summaries here — those details change over time.
 
 ---
 
@@ -140,8 +142,7 @@ CREATE GOVERNED TAG abac_demo_rls
 ```
 
 **Notes:**
-- You can create a maximum of **1,000 governed tags per account**.
-- Tag keys and values cannot contain the characters `* . / < > % & ? \ =` or control characters, and cannot begin or end with whitespace.
+- Per-account governed-tag quotas and the tag key/value naming constraints are documented in [Governed tags](https://docs.databricks.com/data-governance/unity-catalog/tags) — refer to it rather than relying on numbers restated here, which can change.
 
 ---
 

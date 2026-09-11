@@ -141,7 +141,6 @@ CREATE GOVERNED TAG abac_demo_rls
 **Notes:**
 - You can create a maximum of **1,000 governed tags per account**.
 - Tag keys and values cannot contain the characters `* . / < > % & ? \ =` or control characters, and cannot begin or end with whitespace.
-<!-- - Once created, apply the tag to a table or column (see Step 4), then reference it in an ABAC policy with `has_tag(...)` exactly as you would a `class.*` tag in Step 6. -->
 
 ---
 
@@ -158,8 +157,6 @@ Creating a governed tag only defines the tag policy - it does not attach the tag
 3. Next to the target column (`tenant_name`), click **Add tags** (or the edit/pencil icon if tags already exist).
 4. Choose the governed tag key **`abac_demo_rls`** and select the allowed value **`tenant`**.
 5. Click **Save**.
-
-![](assets/governed_tag_apply.png)
 
 ### Via SQL
 

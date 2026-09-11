@@ -144,6 +144,8 @@ SELECT * FROM abac_demo.user;
 -- - Age shows as 0
 ```
 
+> **Expect zero rows on your first run — this is the RLS policy working, not a broken demo.** `filter_users_rls` returns rows only to members of `abac_demo_group_1` (and only `tenantB` rows). Anyone else — including the operator who just ran `terraform apply` — sees an empty table. Terraform adds the current user to `abac_demo_group_1`, but account group membership can take a few minutes to propagate before rows appear.
+
 ### As an Admin (with except_principals)
 
 To exempt admins from policies, modify the policies:

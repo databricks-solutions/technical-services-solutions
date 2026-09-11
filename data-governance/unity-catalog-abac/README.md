@@ -305,6 +305,8 @@ Query the table to see enforcement in action:
 SELECT * FROM <YOUR_CATALOG>.abac_demo.user;
 ```
 
+> **Expect zero rows on your first run — this is the RLS policy working, not a broken demo.** `filter_users_rls` returns rows only to members of `abac_demo_group_1` (and only `tenantB` rows). Anyone else — including whoever just set up the demo — sees an empty table. To see the `tenantB` rows below, make sure you are a member of `abac_demo_group_1`; note that account group membership can take a few minutes to propagate before rows appear.
+
 **Expected results for a member of `abac_demo_group_1`:**
 
 | id | user_name | email | age | tenant_name |

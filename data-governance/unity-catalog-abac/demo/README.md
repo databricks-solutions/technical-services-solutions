@@ -1,10 +1,15 @@
 # Databricks Attribute-Based Access Control (ABAC) Demo
 
-## Note
+## Playbook vs. this demo
 
-The Data Classification Terraform resource contains a bug at the moment, so this demo doesn't rely on the automated data classification tags. The two system tags (age and email address) are assigned in the Terraform project. At a later stage, when Data Classification can be enabled via Terraform, these manual assignments will be dropped from this demo.
+The [ABAC playbook](../README.md) and this Terraform demo differ in **how the `class.*` classification tags get onto the columns**:
 
-If you want to enable automatic Data Classification in the UI, refer to the ABAC playbook.
+- **Playbook** — enables **automatic Data Classification** on the catalog through the UI, which discovers PII and applies the `class.age` / `class.email_address` system tags for you.
+- **This demo** — assigns those two `class.*` tags **manually** in Terraform (`governed_tags.tf`), because the Data Classification Terraform resource currently has a bug and cannot enable auto-classification.
+
+Everything downstream (the ABAC masking/RLS policies that match on those tags) is identical either way — only the tag-application step differs.
+
+When the Data Classification Terraform resource is fixed, the manual `class.*` assignments in this demo will be dropped and it will rely on auto-classification like the playbook. If you want auto-classification today, enable it in the UI per the playbook.
 
 ## About the demo
 
@@ -107,7 +112,7 @@ This will create:
 
 ### Column Masking
 
-1. The system tags `class.age` and `class.email_address` are automatically applied to respective columns via the automatic Data Classification on the catalog
+1. The system tags `class.age` and `class.email_address` are assigned to the `age` and `email` columns by this demo's Terraform (`governed_tags.tf`) — see the note above on why the demo does this manually rather than via automatic Data Classification
 2. The `mask_classified_ages` policy matches columns tagged with `class.age`
 3. The `mask_classified_emails` policy matches columns tagged with `class.email_address`
 4. Masking functions replace actual values with:

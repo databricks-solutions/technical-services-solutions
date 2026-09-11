@@ -197,10 +197,11 @@ Before creating policies, define **what governance rules the classified data req
 | `class.name` | Names are visible and don't require any policy to hide them | None |
 | `abac_demo_rls.tenant` | Return only specific tenants in the queries | Row Level Security on the tenant name |
 
-These rules map directly to the masking and filter functions already created in the **ABAC Demo Setup** notebook:
+These rules map directly to the masking and filter functions already created by the [`demo/setup.sql`](demo/setup.sql) script:
 
 - `filter_email(email STRING) → '***@***'`
 - `filter_age(age INT) → 0`
+- `filter_users_rls(tenant STRING) → BOOLEAN` (row filter — returns `TRUE` only for `abac_demo_group_1` members on `tenantB` rows)
 
 ---
 

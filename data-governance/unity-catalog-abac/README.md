@@ -385,4 +385,4 @@ DROP GOVERNED TAG abac_demo_rls;
 - [Data Classification documentation](https://docs.databricks.com/data-governance/unity-catalog/data-classification/)
 - [Supported classification tags](https://docs.databricks.com/data-governance/unity-catalog/data-classification-tags/)
 - [ABAC policies in Unity Catalog](https://docs.databricks.com/data-governance/unity-catalog/abac/)
-- [Governed tags](https://docs.databricks.com/data-governance/unity-catalog/tags/governed-tags.html)
+- [Governed tags](https://docs.databricks.com/data-governance/unity-catalog/tags)

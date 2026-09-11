@@ -374,8 +374,8 @@ DROP GOVERNED TAG abac_demo_rls;
 | **Data Classification** | Agentic AI that scans catalogs and applies `class.*` governed tags to sensitive columns |
 | **Governed Tags** | Account-level tags with enforced allowed values (e.g. `class.email_address`, `class.age`) |
 | **ABAC Policy** | A rule that dynamically applies row filters or column masks based on tag conditions |
-| **`MATCH COLUMNS has_tag(...)`** | Identifies columns to mask by their governed tag, not by column name |
-| **`WHEN has_tag_value(...)`** | Optional table-level condition — policy only applies to tables with a specific tag |
+| **`MATCH COLUMNS has_tag(...)`** | Identifies columns to mask by their governed tag, not by column name (see Steps 6a/6b) |
+| **`MATCH COLUMNS has_tag_value(...)`** | Matches columns whose tag has a specific value — e.g. the RLS policy in Step 6c uses `has_tag_value('abac_demo_rls','tenant')` |
 | **Policy inheritance** | Catalog-level policies inherit to all schemas/tables; schema-level to all tables |
 
 ---

@@ -121,7 +121,7 @@ This will create:
 
 ### Policy Application
 
-Policies are applied at the catalog level and automatically affect all tables within the catalog that match the policy conditions. The policies use:
+Policies are applied at the schema level and automatically affect all tables within that schema that match the policy conditions. The policies use:
 
 - `to_principals = ["account users"]`: Applies to all users
 - `match_columns`: Targets columns based on tag conditions

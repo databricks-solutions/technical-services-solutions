@@ -1,0 +1,5 @@
+aws_account_id = "332745928618"
+databricks_account_id = "0d26daa6-5e44-4c97-a497-ef015f91254a"
+dev_databricks_host = "https://dbc-9ba8e9be-3123.cloud.databricks.com/"
+prod_databricks_host = "https://dbc-9ba8e9be-3123.cloud.databricks.com/"
+region = "eu-west-1"

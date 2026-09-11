@@ -1,0 +1,8 @@
+#!/bin/bash
+
+export AWS_ACCESS_KEY_ID="your-aws-access-key-id"
+export AWS_SECRET_ACCESS_KEY="your-aws-secret-access-key"
+export AWS_SESSION_TOKEN="your-aws-session-token"
+
+export DATABRICKS_CLIENT_ID="your-databricks-sp-client-id"
+export DATABRICKS_CLIENT_SECRET="your-databricks-sp-secret"

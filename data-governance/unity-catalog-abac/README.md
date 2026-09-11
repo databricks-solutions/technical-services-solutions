@@ -153,7 +153,7 @@ Creating a governed tag only defines the tag policy - it does not attach the tag
 
 ### How to apply (UI)
 
-1. Click the **Catalog** icon in the left navigation and select your table (e.g. `<YOUR_CATALOG>.default.users_demo`).
+1. Click the **Catalog** icon in the left navigation and select your table (e.g. `<YOUR_CATALOG>.abac_demo.user`).
 2. Open the **Overview** page and locate the **Columns** section (or select the table itself to tag it at the table level).
 3. Next to the target column (`tenant_name`), click **Add tags** (or the edit/pencil icon if tags already exist).
 4. Choose the governed tag key **`abac_demo_rls`** and select the allowed value **`tenant`**.
@@ -278,14 +278,16 @@ USING COLUMNS (tenant_col);
 ### Check which policies are active
 
 ```sql
--- Show policies defined on the schema
-SHOW POLICIES ON SCHEMA <YOUR_CATALOG>.abac_demo;
+USE CATALOG <YOUR_CATALOG>;
 
--- Show all effective policies on the users_demo table (including inherited)
-SHOW EFFECTIVE POLICIES ON TABLE <YOUR_CATALOG>.abac_demo.user;
+-- Show policies defined on the schema
+SHOW POLICIES ON SCHEMA abac_demo;
+
+-- Show all effective policies on the user table (including inherited)
+SHOW EFFECTIVE POLICIES ON TABLE abac_demo.user;
 
 -- Describe a specific policy
-DESCRIBE POLICY mask_classified_emails ON SCHEMA <YOUR_CATALOG>.abac_demo;
+DESCRIBE POLICY mask_classified_emails ON SCHEMA abac_demo;
 ```
 
 ### Test as a governed user

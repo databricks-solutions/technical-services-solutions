@@ -268,6 +268,16 @@ USING COLUMNS (tenant_col);
 
 > Note: To see actual `tenantB` data, you need to be a member of an account group `abac_demo_group_1` that has access to the workspace and the `abac_demo` schema.
 
+### Optional: exempt an admin group from the policies
+
+Each policy above has a commented-out `EXCEPT ``Governance_Admins``` clause. This is **opt-in and not enabled by default** — the `Governance_Admins` group is not created anywhere in this playbook. To let a group of admins bypass masking and row filtering:
+
+1. Create the group and add the intended members, e.g. via **Catalog** → **Govern**, the account console, or SQL/Terraform. Substitute your own group name if you don't want to use `Governance_Admins`.
+2. Uncomment the `EXCEPT` line (and remove the leading `--`) in each of the three policies above, matching the group name you created.
+3. Re-run the `CREATE OR REPLACE POLICY` statements so the exemption takes effect.
+
+Without these steps, all `account users` — admins included — are subject to the policies.
+
 ---
 
 ## Step 7: Verify Policy Enforcement
@@ -308,9 +318,9 @@ SELECT * FROM <YOUR_CATALOG>.abac_demo.user;
 - **Age mask**: All age values show `0`
 - **Name**: Visible (no mask policy on `class.name`)
 
-**Expected results for a member of the Governance_Admins group (if they are exempt from the policies):**
+**Expected results for an exempt admin** — *only if you completed the optional exemption step in Step 6* (created a `Governance_Admins` group and uncommented the `EXCEPT` clause in each policy):
 
-All 10 rows with full, unmasked data.
+A member of that group sees all 10 rows with full, unmasked data. If you did not enable the exemption, admins are governed just like any other `account users` member and see the masked, row-filtered result above.
 
 ---
 

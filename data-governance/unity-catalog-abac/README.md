@@ -43,9 +43,10 @@ Data Classification uses an agentic AI system to automatically scan tables in a 
 ### How it works
 
 - The classification engine leverages an LLM-assisted agent to inspect column names, metadata, and sample values.
-- Scanning is **incremental and optimized** - only new or changed data is re-scanned.
-- Results are stored using default storage at no additional billing cost.
+- Scanning is incremental — only new or changed data is re-scanned.
 - Tags are applied as **system governed tags** (prefixed with `class.`).
+
+For scanning behavior, storage, billing, and current limitations, see the [Data Classification documentation](https://docs.databricks.com/data-governance/unity-catalog/data-classification/) — the source of truth as these details change.
 
 ### What gets tagged
 

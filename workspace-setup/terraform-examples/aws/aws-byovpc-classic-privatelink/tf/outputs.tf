@@ -42,7 +42,7 @@ output "public_subnet_ids" {
 }
 
 output "nat_gateway_ids" {
-  description = "IDs of the NAT Gateways (standard mode only)"
+  description = "IDs of the NAT Gateways selected by nat_gateway_mode (standard mode only)"
   value       = var.network_configuration == "standard" ? module.vpc[0].natgw_ids : []
 }
 

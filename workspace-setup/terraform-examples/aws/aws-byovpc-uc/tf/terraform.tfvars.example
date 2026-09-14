@@ -34,6 +34,7 @@ region = "us-west-2"
 
 # Option 1: Create new VPC (leave vpc_id empty and specify network config)
 vpc_id              = ""
+nat_gateway_mode     = "single" # "single" or "per_az"
 vpc_cidr_range      = "10.0.0.0/16"
 availability_zones  = ["us-west-2a", "us-west-2b"]
 private_subnets_cidr = ["10.0.1.0/24", "10.0.2.0/24"]
@@ -96,5 +97,3 @@ new_cluster = false
 
 # Optional: override the cluster default (only used when new_cluster = true)
 # cluster_autotermination_minutes = 10
-
-

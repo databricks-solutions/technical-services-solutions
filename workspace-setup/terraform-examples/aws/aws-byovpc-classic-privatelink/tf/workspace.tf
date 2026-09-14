@@ -81,4 +81,3 @@ resource "time_sleep" "wait_2_minutes" {
   depends_on      = [databricks_mws_workspaces.this]
   create_duration = "120s"
 }
-

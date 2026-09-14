@@ -254,7 +254,7 @@ This policy restricts row visibility based on the user's group membership and te
 ```sql
 CREATE OR REPLACE POLICY tenant_row_isolation
 ON SCHEMA <YOUR_CATALOG>.abac_demo
-COMMENT 'Restrict rows by tenant membership using group mapping table'
+COMMENT 'Restrict rows by tenant membership via the filter_users_rls function'
 ROW FILTER <YOUR_CATALOG>.abac_demo.filter_users_rls
 TO `account users`
 -- EXCEPT  `Governance_Admins`

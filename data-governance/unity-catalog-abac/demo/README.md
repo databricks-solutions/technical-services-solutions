@@ -105,7 +105,7 @@ This will create:
 1. The `abac_demo_rls` tag with value `tenant` is applied to the `tenant_name` column
 2. The `tenant_row_isolation` policy matches columns with this tag
 3. For matched columns, the policy calls `filter_users_rls(tenant_name)`
-4. The function checks if the user belongs to a group mapped to that tenant
+4. The function checks the user's group membership (hardcoded in this demo: members of `abac_demo_group_1` are allowed `tenantB` rows)
 5. Users only see rows for their assigned tenant(s)
 
 **Example**: Users in `abac_demo_group_1` only see rows where `tenant_name = 'tenantB'`
@@ -127,7 +127,6 @@ Policies are applied at the schema level and automatically affect all tables wit
 - `match_columns`: Targets columns based on tag conditions
 - `row_filter` or `column_mask`: Specifies the function to apply
 
-# TODO:
 ## Testing the Demo
 
 ### As a Group Member
@@ -151,7 +150,7 @@ SELECT * FROM abac_demo.user;
 To exempt admins from policies, modify the policies:
 
 ```hcl
-resource "databricks_policy_info" "tenant_rls" {
+resource "databricks_policy_info" "tenant_row_isolation" {
   # ... other config ...
   except_principals = ["your-admin-group"]
 }
@@ -196,8 +195,8 @@ Policies use conditions to determine which columns/tables they apply to:
 
 ## References
 
-- [Databricks Unity Catalog ABAC Documentation](https://docs.databricks.com/en/data-governance/unity-catalog/abac.html)
-- [Row and Column Filters](https://docs.databricks.com/en/data-governance/unity-catalog/manage-privileges/row-and-column-filters.html)
+- [Databricks Unity Catalog ABAC Documentation](https://docs.databricks.com/data-governance/unity-catalog/abac/)
+- [Row filters and column masks](https://docs.databricks.com/data-governance/unity-catalog/row-and-column-filters)
 - [Terraform Provider - databricks_policy_info](https://registry.terraform.io/providers/databricks/databricks/latest/docs/resources/policy_info)
 
 ## Troubleshooting

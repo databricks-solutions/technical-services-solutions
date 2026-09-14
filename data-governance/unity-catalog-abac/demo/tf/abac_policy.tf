@@ -2,7 +2,7 @@ resource "databricks_policy_info" "tenant_row_isolation" {
   on_securable_type     = "SCHEMA"
   on_securable_fullname = "${var.catalog_name}.${var.schema_name}"
   name                  = "tenant_row_isolation"
-  comment = "Restrict rows by tenant membership using group mapping table"
+  comment = "Restrict rows by tenant membership via the filter_users_rls function"
 
   policy_type           = "POLICY_TYPE_ROW_FILTER"
   for_securable_type    = "TABLE"

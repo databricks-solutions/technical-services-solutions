@@ -74,4 +74,11 @@ resource "databricks_metastore_assignment" "this" {
   provider     = databricks.accounts
   workspace_id = azurerm_databricks_workspace.this.workspace_id
   metastore_id = var.existing_metastore_id == "" ? databricks_metastore.this[0].id : var.existing_metastore_id
+
+  lifecycle {
+    precondition {
+      condition     = (var.existing_metastore_id != "") != (var.new_metastore_name != "")
+      error_message = "Set exactly one of existing_metastore_id (attach) or new_metastore_name (create), not both and not neither."
+    }
+  }
 }

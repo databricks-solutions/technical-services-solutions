@@ -111,11 +111,11 @@ The code provisions:
    - **Public subnet** – CIDR from `subnet_public_cidr`. Delegated to `Microsoft.Databricks/workspaces` for cluster host IPs.
    - **Private subnet** – CIDR from `subnet_private_cidr`. Delegated to `Microsoft.Databricks/workspaces` for cluster container IPs.
 3. **Network security group (NSG)** – Attached to both public and private subnets.
-4. **NAT Gateway** – With a static public IP, associated to both subnets for outbound connectivity (Secure Cluster Connectivity / No Public IP).
+4. **NAT Gateway** – Standard SKU with a static Standard-SKU public IP, associated to both subnets for outbound connectivity (Secure Cluster Connectivity / No Public IP). Placed in the availability zone(s) from `nat_gateway_zones` (default `["1"]`).
 5. **Databricks workspace** – Premium SKU, VNet-injected into the public/private subnets with No Public IP enabled. Root DBFS storage uses a named storage account (`root_storage_name`).
 6. **Unity Catalog metastore** – Either creates a new metastore (when `existing_metastore_id` is empty) with an admin group and owner assignment, or uses an existing one. The metastore is assigned to the workspace.
 7. **Workspace access** – Grants ADMIN permissions to the specified `admin_user` on the workspace.
-8. **Managed identity and storage** – An Azure Databricks Access Connector (system-assigned managed identity), a storage account and container for the catalog, and a Storage Blob Data Contributor role assignment on the storage account.
+8. **Managed identity and storage** – An Azure Databricks Access Connector (system-assigned managed identity), a hardened storage account (TLS 1.2, infrastructure encryption, no public blob access) and container for the catalog, and a Storage Blob Data Contributor role assignment on the storage account. See [Unity Catalog storage security](#unity-catalog-storage-security).
 9. **Storage credential** – A Unity Catalog storage credential backed by the managed identity.
 10. **External location** – Points to the storage container using the storage credential.
 11. **User-defined catalog** – A Unity Catalog catalog backed by the external location's storage.
@@ -154,6 +154,17 @@ Copy `terraform.tfvars.example` to `terraform.tfvars` in the `tf/` directory and
 | `cidr` | **(Optional)** CIDR for the VNet address space. Default: `10.0.0.0/20`. |
 | `subnet_public_cidr` | **(Required)** CIDR for the public (host) subnet. Must be within the VNet. |
 | `subnet_private_cidr` | **(Required)** CIDR for the private (container) subnet. Must be within the VNet. |
+| `nat_gateway_zones` | **(Optional)** Availability zone(s) for the NAT gateway and its public IP. Azure NAT gateway is a zonal resource, so provide at most one zone. Default: `["1"]`. Use `[]` for regions without availability-zone support. For zone-redundant egress, deploy one NAT gateway per zone (not covered by this example). |
+
+### Unity Catalog storage security
+
+The UC external-location storage account is created with TLS 1.2 minimum, infrastructure (double) encryption, and public blob access disabled. This is a VNet-injection (non-Private Link) example, so the account keeps its public endpoint. For production, restrict it with an [Azure Storage account firewall](https://learn.microsoft.com/en-us/azure/storage/common/storage-network-security) (allowlist your networks and enable trusted-service access for the Databricks access connector).
+
+> **Note:** `infrastructure_encryption_enabled` is applied at storage-account creation only. Enabling it on an account that already exists from a previous deploy forces the account to be replaced — plan a migration for existing state, or accept the recreation on a throwaway sandbox.
+
+### Provider authentication
+
+The `databricks` providers do not pin `auth_type`, so authentication is auto-detected: Azure CLI (`az login`) for interactive use, or a service principal via `ARM_CLIENT_ID` / `ARM_CLIENT_SECRET` / `ARM_TENANT_ID` for CI/CD (see [Option 2](#option-2-service-principal-login-for-automation-cicd) above).
 
 ## Deploy
 

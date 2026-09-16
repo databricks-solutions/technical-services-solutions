@@ -43,11 +43,19 @@ subnet_workspace_cidrs = ["10.0.0.0/24", "10.0.1.0/24"]
 # Private Link subnet for control plane and DBFS private endpoints (e.g. /26)
 subnet_private_endpoint_cidr = "10.0.2.0/26"
 
-# NAT gateway zone: [] (default) = non-zonal; a single zone (e.g. ["1"]) pins it.
-nat_gateway_zones = []
+# NAT gateway: set to false when service endpoints cover all required Azure traffic and
+# no general internet egress from cluster nodes is needed (fully private / NVA-routed deployments).
+create_nat_gateway = true
 
-# Optional: Service endpoints for the public and private subnets (e.g. ["Microsoft.Storage"])
-subnets_service_endpoints = []
+# Additional storage accounts to allow through the service endpoint policy (beyond Databricks-managed storage).
+# Use full resource IDs for Unity Catalog external locations, data lake accounts, etc.
+# Example:
+# service_endpoint_policy_storage_accounts = [
+#   "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Storage/storageAccounts/<name>",
+# ]
+
+# NAT gateway zone: [] (default) = non-zonal; a single zone (e.g. ["1"]) pins it. Only used when create_nat_gateway = true.
+nat_gateway_zones = []
 
 # =============================================================================
 # Serverless NCC (required)

@@ -80,14 +80,22 @@ variable "subnet_private_endpoint_cidr" {
   type        = string
 }
 
-variable "subnets_service_endpoints" {
-  description = "List of Azure service endpoints to associate with the public and private subnets (e.g. [\"Microsoft.Storage\"])"
+
+
+variable "create_nat_gateway" {
+  description = "When true, creates a NAT gateway and attaches it to the workspace subnets, providing outbound internet access for cluster nodes (e.g. installing packages from PyPI or Maven). Set to false when Microsoft.Storage and Microsoft.EventHub service endpoints cover all required Azure traffic and no general internet egress is needed — for example, in fully private deployments or when a network virtual appliance handles egress. When false, nat_gateway_zones has no effect."
+  type        = bool
+  default     = true
+}
+
+variable "service_endpoint_policy_storage_accounts" {
+  description = "Additional Azure Storage account resource IDs to allow through the service endpoint policy, alongside the built-in /services/Azure/Databricks alias. Use this for storage accounts that cluster nodes must reach via the Microsoft.Storage service endpoint — for example, Unity Catalog external location storage accounts or data lake accounts. Each entry must be a full resource ID: /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Storage/storageAccounts/<name>. Leave empty (default) when only Databricks-managed storage is required."
   type        = list(string)
   default     = []
 }
 
 variable "nat_gateway_zones" {
-  description = "Availability zones for the NAT gateway and its public IP. Empty list [] (default) creates a non-zonal (regional) NAT gateway, which survives a single-AZ outage. Pinning to a single zone (e.g. [\"1\"]) makes all workspace outbound (SNAT) traffic depend on that one AZ — lower availability than the default. Azure NAT gateway cannot span zones; for zone resilience deploy a NAT gateway per zone. Supply at most one zone."
+  description = "Availability zones for the NAT gateway and its public IP. Only used when create_nat_gateway is true. Empty list [] (default) creates a non-zonal (regional) NAT gateway, which survives a single-AZ outage. Pinning to a single zone (e.g. [\"1\"]) makes all workspace outbound (SNAT) traffic depend on that one AZ — lower availability than the default. Azure NAT gateway cannot span zones; for zone resilience deploy a NAT gateway per zone. Supply at most one zone."
   type        = list(string)
   default     = []
   validation {

@@ -2,8 +2,8 @@
 # network.tf - Data plane VNet, NAT gateway, NSG, and subnets
 # =============================================================================
 # Creates the workspace VNet with three subnets: public and private (Databricks
-# delegated, with NSG and NAT gateway) and a dedicated Private Link subnet for
-# control plane and DBFS private endpoints. Includes outbound NSG rules for
+# delegated, with optional NAT gateway and NSG) and a dedicated Private Link subnet
+# for control plane and DBFS private endpoints. Includes outbound NSG rules for
 # AAD and Azure Front Door.
 # =============================================================================
 
@@ -19,10 +19,13 @@ resource "azurerm_virtual_network" "dp_vnet" {
 }
 
 # -----------------------------------------------------------------------------
-# NAT Gateway - outbound internet for public and private workspace subnets
+# NAT Gateway - optional outbound internet for public and private workspace subnets
 # -----------------------------------------------------------------------------
+# Omit (create_nat_gateway = false) when service endpoints cover all required Azure
+# traffic and no general internet egress is needed (fully private or NVA-routed).
 # Static public IP used by the NAT gateway for SNAT.
 resource "azurerm_public_ip" "dp_nat" {
+  count               = var.create_nat_gateway ? 1 : 0
   name                = "pip-${local.prefix}-dp-nat"
   location            = local.dp_rg_location
   resource_group_name = local.dp_rg_name
@@ -35,6 +38,7 @@ resource "azurerm_public_ip" "dp_nat" {
 
 # NAT gateway; associated with public IP below and with subnets via subnet_nat_gateway_association.
 resource "azurerm_nat_gateway" "dp_nat" {
+  count                   = var.create_nat_gateway ? 1 : 0
   name                    = "ng-${local.prefix}-dp-nat"
   location                = local.dp_rg_location
   resource_group_name     = local.dp_rg_name
@@ -46,8 +50,9 @@ resource "azurerm_nat_gateway" "dp_nat" {
 }
 
 resource "azurerm_nat_gateway_public_ip_association" "dp_nat" {
-  nat_gateway_id       = azurerm_nat_gateway.dp_nat.id
-  public_ip_address_id = azurerm_public_ip.dp_nat.id
+  count                = var.create_nat_gateway ? 1 : 0
+  nat_gateway_id       = azurerm_nat_gateway.dp_nat[0].id
+  public_ip_address_id = azurerm_public_ip.dp_nat[0].id
 }
 
 # -----------------------------------------------------------------------------
@@ -95,12 +100,13 @@ resource "azurerm_network_security_rule" "dp_azfrontdoor" {
 # Public subnet - Databricks public cluster nodes
 # -----------------------------------------------------------------------------
 # CIDR from var.subnet_workspace_cidrs[0]. Delegation required for VNet injection.
-# Service endpoints (e.g. Microsoft.Storage) via var.subnets_service_endpoints.
+# Service endpoints (Microsoft.Storage, Microsoft.EventHub) via var.subnets_service_endpoints.
 resource "azurerm_subnet" "dp_public" {
-  name                 = "snet-${local.prefix}-dp-public"
-  resource_group_name  = local.dp_rg_name
-  virtual_network_name = azurerm_virtual_network.dp_vnet.name
-  address_prefixes     = [var.subnet_workspace_cidrs[0]]
+  name                            = "snet-${local.prefix}-dp-public"
+  resource_group_name             = local.dp_rg_name
+  virtual_network_name            = azurerm_virtual_network.dp_vnet.name
+  address_prefixes                = [var.subnet_workspace_cidrs[0]]
+  default_outbound_access_enabled = false
 
   delegation {
     name = "databricks"
@@ -113,7 +119,8 @@ resource "azurerm_subnet" "dp_public" {
     }
   }
 
-  service_endpoints = var.subnets_service_endpoints
+  service_endpoints           = ["Microsoft.Storage", "Microsoft.EventHub"]
+  service_endpoint_policy_ids = [azurerm_subnet_service_endpoint_storage_policy.dp.id]
 }
 
 resource "azurerm_subnet_network_security_group_association" "dp_public" {
@@ -122,19 +129,21 @@ resource "azurerm_subnet_network_security_group_association" "dp_public" {
 }
 
 resource "azurerm_subnet_nat_gateway_association" "dp_public" {
+  count          = var.create_nat_gateway ? 1 : 0
   subnet_id      = azurerm_subnet.dp_public.id
-  nat_gateway_id = azurerm_nat_gateway.dp_nat.id
+  nat_gateway_id = azurerm_nat_gateway.dp_nat[0].id
 }
 
 # -----------------------------------------------------------------------------
 # Private subnet - Databricks private cluster nodes
 # -----------------------------------------------------------------------------
-# CIDR from var.subnet_workspace_cidrs[1]. Service endpoints (e.g. Microsoft.Storage) via var.subnets_service_endpoints.
+# CIDR from var.subnet_workspace_cidrs[1]. Service endpoints (Microsoft.Storage, Microsoft.EventHub) via var.subnets_service_endpoints.
 resource "azurerm_subnet" "dp_private" {
-  name                 = "snet-${local.prefix}-dp-private"
-  resource_group_name  = local.dp_rg_name
-  virtual_network_name = azurerm_virtual_network.dp_vnet.name
-  address_prefixes     = [var.subnet_workspace_cidrs[1]]
+  name                            = "snet-${local.prefix}-dp-private"
+  resource_group_name             = local.dp_rg_name
+  virtual_network_name            = azurerm_virtual_network.dp_vnet.name
+  address_prefixes                = [var.subnet_workspace_cidrs[1]]
+  default_outbound_access_enabled = false
 
   private_endpoint_network_policies = "Enabled"
 
@@ -149,7 +158,8 @@ resource "azurerm_subnet" "dp_private" {
     }
   }
 
-  service_endpoints = var.subnets_service_endpoints
+  service_endpoints           = ["Microsoft.Storage", "Microsoft.EventHub"]
+  service_endpoint_policy_ids = [azurerm_subnet_service_endpoint_storage_policy.dp.id]
 }
 
 resource "azurerm_subnet_network_security_group_association" "dp_private" {
@@ -158,8 +168,9 @@ resource "azurerm_subnet_network_security_group_association" "dp_private" {
 }
 
 resource "azurerm_subnet_nat_gateway_association" "dp_private" {
+  count          = var.create_nat_gateway ? 1 : 0
   subnet_id      = azurerm_subnet.dp_private.id
-  nat_gateway_id = azurerm_nat_gateway.dp_nat.id
+  nat_gateway_id = azurerm_nat_gateway.dp_nat[0].id
 }
 
 # -----------------------------------------------------------------------------
@@ -171,5 +182,6 @@ resource "azurerm_subnet" "dp_plsubnet" {
   resource_group_name               = local.dp_rg_name
   virtual_network_name              = azurerm_virtual_network.dp_vnet.name
   address_prefixes                  = [var.subnet_private_endpoint_cidr]
+  default_outbound_access_enabled   = false
   private_endpoint_network_policies = "Enabled"
 }

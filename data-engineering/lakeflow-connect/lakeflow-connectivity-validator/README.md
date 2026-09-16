@@ -16,7 +16,7 @@ The validator runs four checks in sequence. Each check only proceeds if the prev
 
 1. **DNS Resolution** — Can the hostname be resolved to one or more IP addresses?
 2. **TCP Connectivity** — Can a socket connection be opened to `host:port`? Distinguishes silent timeouts, active refusals, and network-unreachable errors with detailed troubleshooting hints.
-3. **TLS Handshake** *(optional, enabled by default)* — Can a full SSL/TLS handshake complete with certificate verification? Reports cipher, subject, issuer, SANs, and expiry.
+3. **TLS** *(optional, enabled by default)* — SQL Server, PostgreSQL, and MySQL negotiate TLS *inside* their wire protocol (STARTTLS-style), not as implicit TLS on the port, so a raw port handshake would report false results. This step therefore emits an informational note and defers real TLS validation to the Application Probe (PostgreSQL `sslmode=require`, MySQL SSL, SQL Server TDS-wrapped TLS).
 4. **Application Probe** *(optional, disabled by default)* — Can the notebook authenticate to the database and run a trivial query (`SELECT 1`)? Requires credentials.
 
 Additionally, the validator gathers **network context**:
@@ -36,6 +36,7 @@ Additionally, the validator gathers **network context**:
    - `run_app_probe` — `true` to test real DB login; `false` (default) for network-only
    - `username` / `database` — Only needed when `run_app_probe` is `true`
    - `secret_catalog` / `secret_schema` / `secret_key` — UC secret coordinates for the DB password (app probe only)
+   - `secret_scope` — legacy workspace secret scope, used as a fallback when UC secret coordinates aren't provided (app probe only)
    - `timeout_seconds` — Connection timeout (default `5`)
 3. Click **Run All**.
 
@@ -49,7 +50,13 @@ db_pwd = dbutils.secrets.get(catalog="<catalog_name>", schema="<schema_name>", k
 
 Fill in the `secret_catalog`, `secret_schema`, and `secret_key` widgets with the coordinates of your pre-created secret. The `username` and `database` are provided via regular widgets. Credentials are masked in the printed config output so the notebook is safe to demo or share.
 
-> **Note:** Creating UC secrets is currently supported only via the **UI** or the **REST API** — not SQL or the CLI. See [Create a secret](https://docs.databricks.com/aws/en/security/secrets/unity-catalog-secrets#create-a-secret) for setup instructions.
+If your workspace uses a **legacy secret scope** instead of UC secrets, leave the catalog/schema/key blank and set the `secret_scope` and `secret_key` widgets — the notebook falls back to:
+
+```python
+db_pwd = dbutils.secrets.get(scope="<scope_name>", key="<secret_key>")
+```
+
+> **Note:** Creating UC secrets is currently supported only via the **UI** or the **REST API** — not SQL or the CLI. See [Create a secret](https://docs.databricks.com/aws/en/security/secrets/unity-catalog-secrets#create-a-secret) for setup instructions. Legacy secret scopes can also be created via the Databricks CLI or Terraform.
 
 ## Notebook Structure
 

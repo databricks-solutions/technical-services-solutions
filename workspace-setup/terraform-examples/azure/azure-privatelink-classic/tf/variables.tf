@@ -9,12 +9,6 @@
 # Naming
 # =============================================================================
 
-variable "prefix" {
-  description = "Prefix for Databricks workspace and display names"
-  type        = string
-  default     = "databricks-workspace"
-}
-
 variable "resource_prefix" {
   description = "Prefix for Azure resource names (VNet, NSG, subnets, resource group). Used to derive DBFS storage account name (alphanumeric only, 3-24 chars)."
   type        = string
@@ -86,10 +80,32 @@ variable "subnet_private_endpoint_cidr" {
   type        = string
 }
 
-variable "subnets_service_endpoints" {
-  description = "List of Azure service endpoints to associate with the public and private subnets (e.g. [\"Microsoft.Storage\"])"
+
+
+variable "create_nat_gateway" {
+  description = "When true, creates a NAT gateway and attaches it to the workspace subnets, providing outbound internet access for cluster nodes (e.g. installing packages from PyPI or Maven). Set to false when Microsoft.Storage and Microsoft.EventHub service endpoints cover all required Azure traffic and no general internet egress is needed — for example, in fully private deployments or when a network virtual appliance handles egress. When false, nat_gateway_zones has no effect."
+  type        = bool
+  default     = true
+}
+
+variable "service_endpoint_policy_storage_accounts" {
+  description = "Additional Azure Storage account resource IDs to allow through the service endpoint policy, alongside the built-in /services/Azure/Databricks alias. Use this for storage accounts that cluster nodes must reach via the Microsoft.Storage service endpoint — for example, Unity Catalog external location storage accounts or data lake accounts. Each entry must be a full resource ID: /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Storage/storageAccounts/<name>. Leave empty (default) when only Databricks-managed storage is required."
   type        = list(string)
   default     = []
+}
+
+variable "nat_gateway_zones" {
+  description = "Availability zones for the NAT gateway and its public IP. Only used when create_nat_gateway is true. Empty list [] (default) creates a non-zonal (regional) NAT gateway, which survives a single-AZ outage. Pinning to a single zone (e.g. [\"1\"]) makes all workspace outbound (SNAT) traffic depend on that one AZ — lower availability than the default. Azure NAT gateway cannot span zones; for zone resilience deploy a NAT gateway per zone. Supply at most one zone."
+  type        = list(string)
+  default     = []
+  validation {
+    condition     = length(var.nat_gateway_zones) <= 1
+    error_message = "nat_gateway_zones accepts at most one zone. An Azure NAT gateway is either non-zonal (empty list) or pinned to a single zone; it cannot span zones. For zone resilience, deploy a NAT gateway per zone manually."
+  }
+  validation {
+    condition     = alltrue([for z in var.nat_gateway_zones : contains(["1", "2", "3"], z)])
+    error_message = "nat_gateway_zones values must each be one of \"1\", \"2\", or \"3\"."
+  }
 }
 
 # =============================================================================
@@ -105,9 +121,13 @@ variable "databricks_account_id" {
 }
 
 variable "metastore_id" {
-  description = "Unity Catalog metastore ID (UUID) to assign to this workspace via the account API. Leave empty to skip—attach manually after deploy or use account/regional defaults if your org configures them."
+  description = "Unity Catalog metastore ID (UUID) of an existing metastore to assign to this workspace via the account API. Leave empty to skip—attach manually after deploy or use account/regional defaults if your org configures them."
   type        = string
   default     = ""
+  validation {
+    condition     = var.metastore_id == "" || can(regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", var.metastore_id))
+    error_message = "metastore_id must be empty or a valid UUID (e.g. aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee). Find IDs with: databricks account metastores list."
+  }
 }
 
 # =============================================================================

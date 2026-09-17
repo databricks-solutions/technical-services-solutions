@@ -125,11 +125,11 @@ them** (on AWS/Azure; GCP is read-only):
 **Cleanup behavior (what's actually guaranteed):**
 - All temporary resources are named with the prefix `dbxprecheck-*` or
   `dbx-precheck-temp-*`, so they're easy to identify.
-- Teardown is **requested at the end of the run, and also in a `finally` block**
-  — so a failure part-way through still triggers cleanup rather than leaking.
-- On **Azure** deletion is asynchronous: the tool *requests* the resource-group
-  delete (which cascades to everything inside it) and does not block waiting for
-  the cloud to finish removing it.
+- Teardown runs **at the end of the run, and also in a `finally` block** — so a
+  failure part-way through still triggers cleanup rather than leaking.
+- On **Azure**, the tool waits for the asynchronous resource-group deletion to
+  complete. If Azure reports that deletion failed, the report flags the resource
+  group as leaked instead of claiming cleanup succeeded.
 - On **AWS**, if any temporary resource cannot be deleted, the report flags it as
   a blocker (a leaked resource is never silently reported as a clean run).
 - On **GCP** nothing is ever created — the checks are read-only.

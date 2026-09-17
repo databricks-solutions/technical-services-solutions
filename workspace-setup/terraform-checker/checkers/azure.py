@@ -181,7 +181,10 @@ class AzureChecker(BaseChecker):
         failures = []
         for cleanup_func, resource_name in reversed(self._cleanup_tasks):
             try:
-                cleanup_func()
+                cleanup_result = cleanup_func()
+                wait_for_completion = getattr(cleanup_result, "result", None)
+                if callable(wait_for_completion):
+                    wait_for_completion()
             except Exception as e:
                 failures.append((resource_name, str(e)))
         self._cleanup_tasks = []
@@ -1525,6 +1528,7 @@ class AzureChecker(BaseChecker):
                     remediation="Run: --cleanup-orphans --cloud azure",
                 ))
             else:
+                had_cleanup_tasks = bool(self._cleanup_tasks)
                 cleanup_failures = self._cleanup_test_resources()
                 if cleanup_failures:
                     for res_name, err in cleanup_failures:
@@ -1537,12 +1541,17 @@ class AzureChecker(BaseChecker):
                                 f"--cleanup-orphans --cloud azure"
                             ),
                         ))
+                elif had_cleanup_tasks:
+                    cleanup_cat.add_result(CheckResult(
+                        name="  🗑️  Resource Group deletion completed",
+                        status=CheckStatus.OK,
+                        message=f"DELETED: {test_rg} (cascaded to all temporary resources).",
+                    ))
                 else:
                     cleanup_cat.add_result(CheckResult(
-                        name="  🗑️  Resource Group deletion",
+                        name="  No cleanup needed",
                         status=CheckStatus.OK,
-                        message=f"DELETE REQUESTED: {test_rg} (async, cascades to all temp resources). "
-                                f"Run --cleanup-orphans --cloud azure to confirm nothing was left behind.",
+                        message="No temporary Resource Group was created.",
                     ))
             self._report.add_category(cleanup_cat)
 

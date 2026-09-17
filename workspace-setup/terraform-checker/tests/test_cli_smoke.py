@@ -6,10 +6,26 @@ These guard two regressions found in review:
   2. `--dry-run` was AWS-only and `--format markdown` did not exist.
 """
 
+import json
+
 from click.testing import CliRunner
 
+import main as main_module
+from checkers.base import CheckCategory, CheckReport, CheckResult, CheckStatus
 from cli import cli
 from main import main
+
+
+def _successful_report() -> CheckReport:
+    report = CheckReport(cloud="AWS", region="us-east-1")
+    category = CheckCategory(name="CREDENTIALS")
+    category.add_result(CheckResult(
+        name="Credential check",
+        status=CheckStatus.OK,
+        message="Valid credentials",
+    ))
+    report.add_category(category)
+    return report
 
 
 def test_entry_point_symbol_exists():
@@ -63,6 +79,34 @@ def test_progress_goes_to_stderr_not_stdout(capsys):
     captured = capsys.readouterr()
     assert "hello-progress" in captured.err
     assert "hello-progress" not in captured.out
+
+
+def test_format_json_is_parseable_without_quiet(monkeypatch):
+    monkeypatch.setattr(
+        main_module,
+        "run_aws_checks",
+        lambda *args, **kwargs: (_successful_report(), None),
+    )
+
+    result = CliRunner().invoke(main, ["--cloud", "aws", "--format", "json"])
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["cloud"] == "AWS"
+    assert "DATABRICKS TERRAFORM PRE-CHECK" not in result.stdout
+
+
+def test_quiet_suppresses_progress(monkeypatch):
+    monkeypatch.setattr(
+        main_module,
+        "run_aws_checks",
+        lambda *args, **kwargs: (_successful_report(), None),
+    )
+
+    result = CliRunner().invoke(main, ["--cloud", "aws", "--json", "--quiet"])
+
+    assert result.exit_code == 0
+    assert result.stderr == ""
+    assert json.loads(result.stdout)["cloud"] == "AWS"
 
 
 def test_cleanup_orphans_gcp_is_read_only_message():

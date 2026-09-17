@@ -47,6 +47,10 @@ def _progress(message: str, *, fg: Optional[str] = None, bold: bool = False) -> 
     stdout is piped to a file or a CI step, while a human running interactively
     still sees the progress (stderr also goes to the terminal).
     """
+    context = click.get_current_context(silent=True)
+    if context and context.params.get("quiet"):
+        return
+
     text = click.style(message, fg=fg, bold=bold) if (fg or bold) else message
     click.echo(text, err=True)
 
@@ -727,6 +731,12 @@ def main(
       # Debug mode with log file
       python main.py --cloud aws --log-level debug --log-file debug.log
     """
+    # Normalize output format before emitting anything. In particular,
+    # `--format json` must be as machine-readable as the `--json` shortcut.
+    fmt = "json" if json_output else output_format.lower()
+    if fmt == "md":
+        fmt = "markdown"
+
     # Load the config file BEFORE setting up logging, so a config-file log_level
     # / log_file can actually take effect (review H10: setup_logging used to run
     # first, and log_file/log_level/verbose/skip_cleanup were never applied).
@@ -774,8 +784,8 @@ def main(
     if config and file_config:
         logger.info("Loaded configuration from %s", config)
 
-    # Print banner (unless quiet mode or JSON output)
-    if not quiet and not json_output:
+    # Print banner unless quiet mode or either JSON spelling was requested.
+    if not quiet and fmt != "json":
         print_banner()
     
     # Handle cleanup-orphans mode
@@ -893,13 +903,6 @@ def main(
         total_not_ok, total_warning, total_not_verified, strict
     )
     
-    # Normalize the requested output format (--json is a shortcut for --format json).
-    fmt = output_format.lower()
-    if json_output:
-        fmt = "json"
-    elif fmt == "md":
-        fmt = "markdown"
-
     # Markdown output mode (customer-friendly report)
     if fmt == "markdown":
         md_reporter = MarkdownReporter()

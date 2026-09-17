@@ -136,3 +136,54 @@ def test_azure_cleanup_failures_surface_as_not_ok(monkeypatch):
               if "Leaked resource" in r.name]
     assert leaked, "a failed RG delete must be surfaced, not swallowed"
     assert all(r.status == CheckStatus.NOT_OK for r in leaked)
+
+
+def test_azure_cleanup_waits_for_async_delete_completion():
+    c = AzureChecker(region="eastus", subscription_id="sub-123")
+
+    class _FailedPoller:
+        def result(self):
+            raise RuntimeError("asynchronous RG deletion failed")
+
+    c._cleanup_tasks.append((lambda: _FailedPoller(), "rg-test"))
+
+    failures = c._cleanup_test_resources()
+
+    assert failures == [("rg-test", "asynchronous RG deletion failed")]
+
+
+def test_azure_failed_rg_creation_does_not_claim_delete_requested(monkeypatch):
+    c = AzureChecker(region="eastus", subscription_id="sub-123")
+
+    ok_cat = CheckCategory(name="CREDENTIALS")
+    ok_cat.add_result(CheckResult(
+        name="Azure Credentials",
+        status=CheckStatus.OK,
+        message="ok",
+    ))
+    monkeypatch.setattr(c, "check_credentials", lambda: ok_cat)
+    monkeypatch.setattr(
+        c,
+        "check_resource_providers",
+        lambda: CheckCategory(name="RESOURCE PROVIDERS"),
+    )
+    monkeypatch.setattr(c, "_get_resource_client", lambda: object())
+    monkeypatch.setattr(c, "_run_full_checks", lambda resource_client, test_rg: False)
+    monkeypatch.setattr(
+        c,
+        "check_databricks_permissions",
+        lambda: CheckCategory(name="DATABRICKS WORKSPACE PERMISSIONS"),
+    )
+    monkeypatch.setattr(c, "check_quotas", lambda: CheckCategory(name="QUOTAS & LIMITS"))
+    monkeypatch.setattr(
+        c,
+        "_compute_deployment_compatibility",
+        lambda: CheckCategory(name="DEPLOYMENT COMPATIBILITY"),
+    )
+
+    report = c.run_all_checks()
+    cleanup = next(category for category in report.categories if category.name == "CLEANUP")
+
+    assert cleanup.results[0].status == CheckStatus.OK
+    assert cleanup.results[0].message == "No temporary Resource Group was created."
+    assert "DELETE REQUESTED" not in cleanup.results[0].message

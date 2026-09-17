@@ -61,6 +61,13 @@ fi
 if [ "$#" -gt 0 ]; then
   # Advanced mode: forward whatever flags the caller passed, untouched.
   ARGS=("$@")
+  RUN_MODE="advanced"
+  for arg in "${ARGS[@]}"; do
+    if [ "$arg" = "--dry-run" ]; then
+      RUN_MODE="dryrun"
+      break
+    fi
+  done
 else
   echo
   echo "Which cloud is your Databricks workspace being deployed to?"
@@ -157,6 +164,9 @@ elif [ -f report.md ]; then
     echo "  Note: the pre-check found blockers (exit code $RUN_EXIT). The report"
     echo "  lists exactly what to fix — send it back and we'll help."
   fi
+elif [ "$RUN_EXIT" -eq 0 ]; then
+  echo "✓ Pre-check completed successfully."
+  echo "  No report.md was requested; review the output above."
 else
   echo "⚠️  The run did not finish cleanly (exit code $RUN_EXIT) and no report.md"
   echo "   was produced — check the output above."

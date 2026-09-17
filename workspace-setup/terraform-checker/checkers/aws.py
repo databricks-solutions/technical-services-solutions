@@ -401,7 +401,7 @@ class AWSChecker(BaseChecker):
                 status=CheckStatus.OK,
                 message="VERIFIED - Applied bucket policy"
             ))
-            
+
             # Delete the policy
             try:
                 s3.delete_bucket_policy(Bucket=bucket_name)

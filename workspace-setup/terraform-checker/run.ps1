@@ -60,6 +60,7 @@ if ($needInstall) {
 if ($args.Count -gt 0) {
     # Advanced mode: forward whatever flags the caller passed, untouched.
     $runArgs = $args
+    $runMode = if ($runArgs -contains "--dry-run") { "dryrun" } else { "advanced" }
 } else {
     Write-Host ""
     $cloud = (Read-Host "Which cloud? aws / azure / gcp").ToLower().Trim()
@@ -146,6 +147,9 @@ if ($runMode -eq "dryrun") {
         Write-Host "Note: the pre-check found blockers (exit code $runExit). The report lists"
         Write-Host "exactly what to fix - send it back and we'll help."
     }
+} elseif ($runExit -eq 0) {
+    Write-Host "Pre-check completed successfully." -ForegroundColor Green
+    Write-Host "No report.md was requested; review the output above."
 } else {
     Write-Host "The run did not finish cleanly (exit code $runExit) and no report.md was produced - check the output above." -ForegroundColor Yellow
 }

@@ -6,6 +6,118 @@ Entries are reverse-chronological. Each entry: date, what changed, **why** (with
 
 ---
 
+## 2026-08-12 — Kill the read-side retries on alert/dashboard/genie
+
+**Change:** A migration run (15 resources, live Azure workspace) retried repeatedly while *reading assets out of the workspace* — not while authoring YAML. Once the reads were clean, the existing resource-doc rules produced valid output first try. The retries had three root causes, all now documented so the next agent gets clean reads on the first attempt:
+
+1. **Proxied-CLI stderr corrupts piped JSON.** With a CLI proxy (RTK) in front of `databricks`, `... -o json 2>&1 | jq` merges the proxy's stderr banner into the JSON stream, and `jq` dies with `parse error: Invalid numeric literal at line 1, column 6`. Intermittently it also surfaced as "empty" reads that looked like the asset didn't exist → retry loop. Fix: always `2>/dev/null` before `jq` (or read to a file once and query the file). This hits every resource but bites hardest on alert/dashboard/genie because they need several chained reads.
+
+2. **Genie `serialized_space` is not returned by `databricks genie get-space`.** That subcommand returns only `title`/`description`/`warehouse_id`/`parent_path`. An agent that reads it sees no body and either retries or emits an empty space. The body requires `databricks bundle generate genie-space --existing-id <id>` or `databricks api get ".../genie/spaces/<id>?include_serialized_space=true"`. (Verified directly: `get-space` → `has("serialized_space") == false`.) The dashboard GET, by contrast, *does* include `serialized_dashboard` inline.
+
+3. **Name → ID resolution differs per type.** Each of the three uses a different list command, response shape, and id field (`alerts-v2 list-alerts` → array/`id`; `lakeview list` → array/`dashboard_id`; `genie list-spaces` → `.spaces[]`/`space_id`). Probing this per run wasted attempts. Fix: a per-type resolve table.
+
+**Why it matters:** these are *read-path* failures, distinct from the validate-time (2026-08-06) and deploy-time (2026-08-07) classes. The generated YAML was already correct; the agent just couldn't reliably get the source data. Documenting the read commands removes the retries at their source.
+
+**Where:**
+- `SKILL.md` — new "Reading assets out of the workspace" section (stderr rule, per-type resolve table, genie serialized-body retrieval).
+- `resources/genie_spaces.md` — "Retrieving the serialized body" with the two working commands + the `get-space` gotcha.
+- `resources/dashboards.md` — "Retrieving it" (resolve id → `lakeview get` returns `serialized_dashboard` inline).
+- `resources/alerts.md` — resolve + `get-alert` commands at the top of Migration guidance.
+- This entry.
+
+---
+
+## 2026-08-07 — Three deploy-time defects from actually deploying the migrated bundle
+
+**Change:** Continuing the end-to-end test, we didn't stop at `bundle validate` — we ran `bundle deploy -t dev` against the migrated output. All resources passed validation, but three *create* calls failed at the API. These are a distinct class from the 2026-08-06 findings: those were caught (or catchable) by validation; these pass validation and only surface on deploy. Fixed each in the rules/docs:
+
+1. **Alert emitted an empty `evaluation.notification: {}`.** A live read returns the `notification` key even when the alert has no subscriptions, so the naive copy produced an empty object. Validate accepts it; create rejects it: `evaluation.notification is provided but doesn't contain any value, please remove this field (400 INVALID_PARAMETER_VALUE)`. Fix: `SKILL.md` hard rule + `resources/alerts.md` note — drop any optional sub-object that would serialize as `{}`; only emit `notification` when it carries real content.
+
+2. **Dashboard `.lvdash.json` used API resource paths as `name`s and dropped widget `position`.** The migrator reconstructed the dashboard JSON from per-collection API reads, so dataset/page/widget `name`s came out as `dashboards/<id>/datasets/<id>` (contain `/`, exceed the 63-char limit) and `layout[].position` was empty. Create failed with `resource names should only contain alphanumeric characters …` and `layout[0].position should not be empty`. Fix: `SKILL.md` hard rule + `resources/dashboards.md` "Export the serialized dashboard, not the raw API resource tree" — use `serialized_dashboard` (from `databricks bundle generate dashboard` or the Lakeview GET field) verbatim; it already uses short slug names and carries `position`.
+
+3. **Genie `serialized_space` used placeholder ids (`q1`).** `sample_questions[].id` was `q1`; the create API requires a lowercase 32-hex UUID: `Invalid id for sample_question.id: 'q1'. Expected lowercase 32-hex UUID without hyphens`. (Note: the `serialized_space` itself was now present — the 2026-08-06 fix landed; this is the next layer.) Fix: `SKILL.md` hard rule + `resources/genie_spaces.md` — every `id` in the body must be 32-hex; keep exported ids verbatim, generate 32-hex when authoring.
+
+**Why it matters for correctness:** `databricks bundle validate` is necessary but not sufficient. All three defects sailed through validation and only failed when the resource was actually created. A migration isn't "done" at validate — it's done at deploy. Added a callout in `SKILL.md` marking these four rules (these three plus the genie `serialized_space` rule) as deploy-time failures.
+
+**Where:**
+- `SKILL.md` — three new "Hard rules" (empty optional sub-objects; dashboard serialized-vs-resource-tree; genie 32-hex ids) + a note flagging the deploy-time class.
+- `resources/alerts.md` — omit empty `evaluation.notification`.
+- `resources/dashboards.md` — "Export the serialized dashboard, not the raw API resource tree".
+- `resources/genie_spaces.md` — 32-hex id requirement for `serialized_space`.
+- This entry.
+
+---
+
+## 2026-08-06 — Fixes from an end-to-end migration test across 14 resource types
+
+**Change:** Ran the skill against a live seed bundle (14 resource types deployed to a real workspace), migrated them back into a fresh DABs project, and validated the output. `bundle validate -t dev` passed for all 14 types, but the exercise surfaced four defects. Fixed each in the template / rules:
+
+1. **Undeclared `run_as` service-principal variables broke `staging` and `prod`.** `templates/databricks.yml.tmpl` wired `run_as.service_principal_name: ${var.staging_sp_app_id}` (and `${var.prod_sp_app_id}`) but never declared those variables, and `workspace.host: ${var.workspace_host}` was declared only per-target. `bundle validate -t staging` failed with `Error: reference does not exist: ${var.staging_sp_app_id}`. `-t dev` passed because dev uses none of them — so the break shipped silently until someone validated a non-dev target. Fix: declare `workspace_host`, `staging_sp_app_id`, and `prod_sp_app_id` under top-level `variables:` with placeholder defaults; added a `SKILL.md` hard rule that every `${var.*}` referenced in `databricks.yml` must be declared.
+
+2. **Genie space migrated empty.** The generated `genie_spaces` resource dropped `serialized_space` entirely, keeping only `title`/`description`/`warehouse_id`. That validates but deploys a space with no tables, instructions, or sample questions. Fix: `SKILL.md` hard rule + `resources/genie_spaces.md` "Migration must preserve the serialized space" section requiring `serialized_space` (or `file_path`) on migration, with the JSON-string shape documented.
+
+3. **Concrete IDs copied verbatim from live reads.** `warehouse_id` was emitted as the raw ID (`3d885699…`, `18fdd549…`) in the alert and genie space, and the alert's `query_text` hardcoded `catalog.schema` — both contradict the existing "no hardcoded IDs" rule, which only spoke to authored YAML, not the migration *read* path. Fix: new `SKILL.md` hard rule covering resolved values returned by live reads (including IDs inside SQL strings), plus a `resources/alerts.md` "Migration guidance" note.
+
+4. **Alert `schedule.pause_status` dropped.** The source alert was `PAUSED`; the migrated one omitted `pause_status`, which flips it active on deploy. Fix: called out in the `resources/alerts.md` migration guidance (preserve `pause_status` exactly).
+
+**Why it matters for correctness:** the skill's promise is a first-try-valid, faithful migration. Defect 1 breaks two of the three default targets; defects 2–4 pass `validate` but silently change behavior (empty Genie space, hardcoded/shared IDs that won't move across environments, a re-activated alert) — exactly the "validates but wrong" class the fidelity check is meant to catch.
+
+**Where:**
+- `templates/databricks.yml.tmpl` — `workspace_host`, `staging_sp_app_id`, `prod_sp_app_id` declared under top-level `variables:`.
+- `SKILL.md` — three new "Hard rules": declare every referenced `${var.*}`; convert live-read concrete IDs/catalog/schema to variables; never emit a `genie_spaces` resource without its `serialized_space`.
+- `resources/genie_spaces.md` — "Migration must preserve the serialized space" section.
+- `resources/alerts.md` — "Migration guidance" (variabilize `warehouse_id` + `query_text`, preserve `pause_status`).
+- This entry.
+
+---
+
+## 2026-07-01 — Fixed `pipelines.md` stale/misplaced schema block; documented the safe refresh procedure
+
+**Change:** Repaired `resources/pipelines.md` after the 2026-06-30 CLI v1.5.0 refresh corrupted it, and recorded the procedure future refreshes must follow (below).
+
+**The failure mode:** the v1.5.0 refresh replaced each doc's schema block by matching *the first* ```` ```yaml ```` block in the file. That anchor is positional, not semantic. It holds for 29 of the 30 resource docs because they contain exactly one ```` ```yaml ```` block, which happens to be the one under `## Complete schema reference`. But `pipelines.md` is the sole exception: it has a **second** ```` ```yaml ```` block earlier in the file — a small "Mixed example" `libraries:` snippet under `## Library entry kind`. The "first block wins" logic therefore (1) overwrote that teaching snippet with the full ~200-line schema dump, and (2) left the real `## Complete schema reference` block untouched — i.e. still on the **v0.298.0** schema. The stale block mis-described three fields: `auto_full_refresh_policy.enabled` (`<...(nested)>` instead of `<bool>`), `restart_window.days_of_week` (`array[enum]` instead of `array[string]`), and `gateway_storage_catalog` (missing its `PRIVATE PREVIEW` flag). A user generating a pipeline from the stale block would write `enabled:` as a nested object and fail `databricks bundle validate` — the exact failure this skill exists to prevent. Nothing errored during the refresh, so it shipped silently.
+
+**Why it matters for correctness:** the skill's core promise is that generated YAML validates first try because every field comes from the live `databricks bundle schema`. A positional edit anchor breaks that promise the moment a doc grows a second code block.
+
+**The rule — how to refresh the schema reference safely (any future CLI bump):**
+
+1. **Anchor on the heading, never on position.** Replace only the ```` ```yaml ```` block that lives inside the `## Complete schema reference` section. Split the file at that heading, bound the edit by the *next* `## ` heading, and replace the single fenced block within that section (`count=1`). Do **not** use "first ```` ```yaml ```` block in the file" — `pipelines.md` (and any future doc with an example snippet) will be edited in the wrong place.
+2. **Fail loud.** Assert the `## Complete schema reference` heading exists and that exactly one ```` ```yaml ```` block is found inside that section. If either is false, stop with an error rather than editing the wrong block.
+3. **Validate after refreshing.** For every doc, re-extract the block under `## Complete schema reference` and confirm it equals what the generator produces from the current schema. Any mismatch = a stale/misplaced block; treat it as a hard failure. This check alone would have caught the `pipelines.md` regression immediately.
+4. **Preserve all other prose and code blocks.** Teaching snippets (e.g. the `pipelines.md` `libraries:` "Mixed example"), `## Common variations`, `## Source code`, and every `Required fields:` line are hand-written and must survive the refresh untouched.
+
+**Where:**
+- `resources/pipelines.md` — "Mixed example" snippet restored under `## Library entry kind`; `## Complete schema reference` block regenerated against the v1.5.0 schema.
+- This entry — the refresh procedure and the failure mode that motivates it.
+
+---
+
+## 2026-06-30 — Schema reference upgraded to Databricks CLI v1.5.0; 7 new resource types added
+
+**Change:** Regenerated the authoritative bundle schema with Databricks CLI v1.5.0 (`databricks bundle schema`) and refreshed `dabs-schema.json` (was v0.298.0). Added reference docs for the 7 resource types that v1.5.0 introduces and the v0.298.0 schema lacked:
+
+- `genie_spaces` — AI/BI Genie spaces (`resources/genie_spaces.md`)
+- `postgres_catalogs` — Lakebase Postgres catalog → UC catalog (`resources/postgres_catalogs.md`)
+- `postgres_databases` — logical Postgres database on a branch (`resources/postgres_databases.md`)
+- `postgres_roles` — Databricks-managed identity → Postgres role (`resources/postgres_roles.md`)
+- `postgres_synced_tables` — UC table → Lakebase Postgres sync (`resources/postgres_synced_tables.md`)
+- `vector_search_endpoints` — Vector Search serving endpoint (`resources/vector_search_endpoints.md`)
+- `vector_search_indexes` — Delta Sync / Direct Access vector index (`resources/vector_search_indexes.md`)
+
+The `## Complete schema reference` block in all 23 pre-existing resource docs was also regenerated against the v1.5.0 schema. This pulled in newer fields and flags — e.g. `jobs` now lists `dbt_platform_task`, `power_bi_task`, and `usage_policy_id`, and `pipelines.target` is now explicitly flagged `DEPRECATED` (reinforcing the existing "use `schema:` not `target:`" hard rule). All hand-written prose sections (`## Source code`, `## Common variations`, `## What to ask the user`, etc.) and every `Required fields:` line were preserved unchanged — the required-field sets in the v1.5.0 schema matched the existing prose exactly, so no required-field drift occurred.
+
+**Why:** The skill's core promise is that generated YAML passes `databricks bundle validate` on the first try because every field is taken from the live bundle schema. Users running newer CLI versions (v1.5.0 ships these 7 resource types) would otherwise hit "unknown resource type" or miss fields the skill could not describe. Keeping the schema docs pinned to v0.298.0 silently eroded that guarantee as the CLI moved on.
+
+**How the blocks were produced:** the existing schema blocks were originally emitted by a generator (the format — flattened YAML, `# REQUIRED | DEPRECATED | PRIVATE PREVIEW | <type> | <description truncated to 80 chars>` comments, `<...(nested)>` / `<...(circular)>` / `<any>` collapse markers — is mechanical). The legacy blocks were internally inconsistent about *when* a complex type collapses to `<...(nested)>` (e.g. `alerts.subscriptions` collapsed while the structurally identical `jobs.depends_on` expanded), so byte-for-byte reproduction was impossible. The refresh standardizes on one uniform nesting cap. The block content (field names, types, required/deprecated/preview flags, enums, descriptions) is the part that matters for validation and is fully v1.5.0-accurate; the collapse depth is only a readability aid.
+
+**Where:**
+- `dabs-schema.json` — replaced in place with the v1.5.0 `databricks bundle schema` output.
+- `resources/` — 7 new files added; `## Complete schema reference` block refreshed in all 23 existing files.
+- `SKILL.md` — supported-resource-types table extended with the 7 new YAML keys.
+- `README.md` — supported-assets table grown to 30 rows, CLI version column bumped to v1.5.0, changelog-summary row added.
+
+---
+
 ## 2026-05-06 — CI/CD variable naming: environment-scoped host and short bundle var names
 
 **Change:** Across all 6 CI/CD reference files, the stored variable names were simplified. `DATABRICKS_HOST_STAGING` and `DATABRICKS_HOST_PROD` were replaced by a single `DATABRICKS_HOST` that is scoped per CI/CD environment (GitHub environment secrets, Azure DevOps environment-scoped variable groups, GitLab environment-scoped variables, Bitbucket deployment variables, etc.). `BUNDLE_VAR_catalog` and `BUNDLE_VAR_schema` in the secret store were renamed to `catalog` and `schema` — the `BUNDLE_VAR_` prefix is applied only at the pipeline mapping level (e.g. `BUNDLE_VAR_catalog: $(catalog)`).

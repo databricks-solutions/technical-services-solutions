@@ -14,17 +14,17 @@ resources:
     <volume_name>:
       catalog_name: <string>  # REQUIRED | string | The name of the catalog where the schema and the volume are
       comment: <string>  # string | The comment attached to the volume
-      grants:  # array[object]
+      grants:  # array[object] | The Unity Catalog privileges to grant to principals on this securable.
         -
           principal: <string>  # string | The principal (user email address or group name).
-          privileges:  # array[enum] | The privileges assigned to the principal.
+          privileges:  # array[string] | The privileges assigned to the principal.
             - <value>
-      lifecycle:  # object | Lifecycle is a struct that contains the lifecycle settings for a resource. It co
+      lifecycle:  # object | Settings that control the deployment lifecycle of the resource, such as preventi
         prevent_destroy: <bool>  # bool | Lifecycle setting to prevent the resource from being destroyed.
       name: <string>  # REQUIRED | string | The name of the volume
       schema_name: <string>  # REQUIRED | string | The name of the schema where the volume is
       storage_location: <string>  # string | The storage location on the cloud
-      volume_type: MANAGED  # enum: MANAGED, EXTERNAL
+      volume_type: MANAGED  # enum: MANAGED, EXTERNAL | The type of the volume. An external volume is located in the specified external
 ```
 
 ## What to ask the user

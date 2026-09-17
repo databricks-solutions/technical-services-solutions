@@ -1,0 +1,47 @@
+######################################################
+# Authentication / Project
+######################################################
+google_service_account_email = "<sa>@<project>.iam.gserviceaccount.com"
+google_project_name          = "<databricks-service-project>"
+google_region                = "us-central1"
+
+######################################################
+# Existing (BYO) Network
+######################################################
+# Set vpc_network_project_id == google_project_name if the VPC is in the same project.
+vpc_network_project_id = "<vpc-host-project>"
+vpc_name               = "<existing-vpc-name>"
+subnet_name            = "<existing-node-subnet-name>"
+psc_subnet_name        = "<existing-psc-endpoint-subnet-name>" # may equal subnet_name
+
+######################################################
+# Databricks Account / Workspace
+######################################################
+databricks_account_id     = "<account-id>"
+databricks_workspace_name = "<workspace-name>"
+databricks_admin_user     = "<admin-user-email>"
+
+# Optional Unity Catalog metastore. Leave empty for auto-create/auto-assign.
+metastore_id = ""
+
+######################################################
+# Backend Private Service Connect
+######################################################
+# Region-specific service attachment URIs — see the region table in the README.
+# The example values below are for us-central1.
+workspace_service_attachment = "projects/gcp-prod-general/regions/us-central1/serviceAttachments/plproxy-psc-endpoint-all-ports"
+relay_service_attachment     = "projects/prod-gcp-us-central1/regions/us-central1/serviceAttachments/ngrok-psc-endpoint"
+
+# Optional endpoint names (defaults are fine for a single workspace)
+# workspace_pe_name = "dbx-backend-rest-ep"
+# relay_pe_name     = "dbx-backend-relay-ep"
+
+# Backend-only PSC: front-end/user access remains over the public internet.
+public_access_enabled = true
+
+######################################################
+# Private DNS (required so the compute plane resolves to the PSC endpoints)
+######################################################
+create_private_dns = true
+private_zone_name  = "databricks-psc"
+dns_name           = "gcp.databricks.com." # trailing dot is required

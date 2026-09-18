@@ -7,10 +7,6 @@ Provisions a Databricks workspace on GCP in a **customer-managed VPC created by 
 | 1 | **REST API** endpoint | `plproxy-psc-endpoint-all-ports` | Data plane → control plane **REST APIs** (`rest_api`) |
 | 2 | **SCC relay** endpoint | `ngrok-psc-endpoint` | Data plane → **secure cluster connectivity (SCC) relay** (`dataplane_relay`) |
 
-> **Scope:** This example implements **backend PSC only**. Front-end (user → workspace) traffic still uses the public internet. To also lock down front-end access, add a front-end PSC endpoint and set `public_access_enabled = false` — out of scope here.
->
-> **Network:** Unlike the shared-VPC example, this module **creates its own VPC, subnets, and Cloud NAT** (like `gcp-byovpc-standalone`). The VPC is still customer-managed ("BYO VPC" in Databricks terms) — it's just provisioned here rather than referenced.
-
 Reference: [Enable Private Service Connect for your workspace (classic compute)](https://docs.databricks.com/gcp/en/security/network/classic/private-service-connect).
 
 ---
@@ -297,4 +293,3 @@ This removes the workspace, the Databricks network / private access settings / V
 - [Enable Private Service Connect for your workspace (classic compute)](https://docs.databricks.com/gcp/en/security/network/classic/private-service-connect)
 - [PSC attachment URIs and project numbers](https://docs.databricks.com/gcp/en/resources/ip-domain-region#psc)
 - [Customer-managed VPC role requirements](https://docs.databricks.com/gcp/en/security/network/classic/customer-managed-vpc#role-requirements)
-- [`databricks_mws_vpc_endpoint`](https://registry.terraform.io/providers/databricks/databricks/latest/docs/resources/mws_vpc_endpoint) · [`databricks_mws_networks`](https://registry.terraform.io/providers/databricks/databricks/latest/docs/resources/mws_networks) · [`databricks_mws_private_access_settings`](https://registry.terraform.io/providers/databricks/databricks/latest/docs/resources/mws_private_access_settings)

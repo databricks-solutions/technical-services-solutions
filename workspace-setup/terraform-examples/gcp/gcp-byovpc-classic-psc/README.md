@@ -40,18 +40,23 @@ Reference: [Enable Private Service Connect for your workspace (classic compute)]
 
 ### Repository Structure
 
-| File | Description |
-|------|-------------|
-| `versions.tf` | Required Terraform providers and versions |
-| `providers.tf` | Google + Databricks (accounts + workspace) providers |
-| `variables.tf` | All input variable definitions |
-| `network.tf` | VPC, node subnet, PSC subnet, Cloud Router + NAT |
-| `psc.tf` | The two backend PSC endpoints (internal IPs + forwarding rules) |
-| `databricks.tf` | VPC endpoint registration, private access settings, network config, workspace, metastore, admin user |
-| `dns.tf` | Private DNS zone + A records pointing the compute plane at the PSC endpoint IPs |
-| `outputs.tf` | Output values (workspace URL, PSC connection statuses, endpoint IPs, network names) |
-| `terraform.tfvars.example` | Template for variable values |
-| `service-account-impersonation.md` | Guide for service account setup + impersonation (incl. backend-PSC permissions) |
+The Terraform lives in the `tf/` subdirectory; run all `terraform` commands from there.
+
+```
+gcp-byovpc-classic-psc/
+├── README.md                        # This guide
+├── service-account-impersonation.md # Service account setup + impersonation (incl. backend-PSC permissions)
+└── tf/
+    ├── versions.tf                  # Required Terraform providers and versions
+    ├── providers.tf                 # Google + Databricks (accounts + workspace) providers
+    ├── variables.tf                 # All input variable definitions
+    ├── network.tf                   # VPC, node subnet, PSC subnet, Cloud Router + NAT
+    ├── psc.tf                       # The two backend PSC endpoints (internal IPs + forwarding rules)
+    ├── databricks.tf                # VPC endpoint registration, private access settings, network config, workspace, metastore, admin user
+    ├── dns.tf                       # Private DNS zone + A records pointing the compute plane at the PSC endpoint IPs
+    ├── outputs.tf                   # Output values (workspace URL, PSC connection statuses, endpoint IPs, network names)
+    └── terraform.tfvars.example     # Template for variable values
+```
 
 ---
 
@@ -151,9 +156,10 @@ Then add the GSA to your Databricks Account Console as an **account admin**:
 
 ### Configuration
 
-Copy the example file and fill in your values:
+Copy the example file and fill in your values (from the `tf/` directory):
 
 ```bash
+cd tf/
 cp terraform.tfvars.example terraform.tfvars
 ```
 
@@ -198,6 +204,7 @@ The per-region `tunnel.*` record is shared by all workspaces in the region; the 
 #### 1. Initialize and deploy
 
 ```bash
+cd tf/
 terraform init
 terraform validate
 terraform plan
@@ -275,6 +282,7 @@ Metastores are **region-specific** — one per region per Databricks account.
 ### Teardown
 
 ```bash
+cd tf/
 terraform destroy
 ```
 

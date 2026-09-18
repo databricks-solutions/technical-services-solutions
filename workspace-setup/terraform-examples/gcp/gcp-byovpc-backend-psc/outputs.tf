@@ -11,6 +11,21 @@ output "workspace_id" {
   description = "Databricks workspace ID."
 }
 
+output "vpc_name" {
+  value       = google_compute_network.databricks_vpc.name
+  description = "Name of the created VPC network."
+}
+
+output "node_subnet_name" {
+  value       = google_compute_subnetwork.node_subnet.name
+  description = "Name of the created Databricks node subnet."
+}
+
+output "psc_subnet_name" {
+  value       = google_compute_subnetwork.psc_subnet.name
+  description = "Name of the created PSC endpoint subnet."
+}
+
 output "rest_api_psc_status" {
   value       = google_compute_forwarding_rule.rest_api_psc_ep.psc_connection_status
   description = "PSC connection status of the backend REST API endpoint (expected: ACCEPTED)."

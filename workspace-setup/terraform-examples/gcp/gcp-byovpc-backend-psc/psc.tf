@@ -1,8 +1,8 @@
 ######################################################
 # Backend Private Service Connect Endpoints
 #
-# Backend PSC uses TWO consumer endpoints, both created
-# in the VPC host project and living in the PSC subnet:
+# Backend PSC uses TWO consumer endpoints, both living in
+# the PSC subnet:
 #
 #   1. REST API endpoint  -> workspace service attachment
 #      (plproxy-psc-endpoint-all-ports). Data plane -> control
@@ -19,20 +19,18 @@
 
 # --- Backend REST API endpoint (workspace / control plane) ---
 resource "google_compute_address" "rest_api_ip" {
-  provider     = google.vpc_host
   name         = "${var.workspace_pe_name}-ip"
-  project      = var.vpc_network_project_id
+  project      = var.google_project_name
   region       = var.google_region
-  subnetwork   = data.google_compute_subnetwork.psc_subnet.id
+  subnetwork   = google_compute_subnetwork.psc_subnet.id
   address_type = "INTERNAL"
 }
 
 resource "google_compute_forwarding_rule" "rest_api_psc_ep" {
-  provider              = google.vpc_host
   name                  = var.workspace_pe_name
-  project               = var.vpc_network_project_id
+  project               = var.google_project_name
   region                = var.google_region
-  network               = data.google_compute_network.existing_vpc.id
+  network               = google_compute_network.databricks_vpc.id
   ip_address            = google_compute_address.rest_api_ip.id
   target                = var.workspace_service_attachment
   load_balancing_scheme = "" # Required to be "" when target is a service attachment URI.
@@ -40,20 +38,18 @@ resource "google_compute_forwarding_rule" "rest_api_psc_ep" {
 
 # --- Backend SCC relay endpoint ---
 resource "google_compute_address" "relay_ip" {
-  provider     = google.vpc_host
   name         = "${var.relay_pe_name}-ip"
-  project      = var.vpc_network_project_id
+  project      = var.google_project_name
   region       = var.google_region
-  subnetwork   = data.google_compute_subnetwork.psc_subnet.id
+  subnetwork   = google_compute_subnetwork.psc_subnet.id
   address_type = "INTERNAL"
 }
 
 resource "google_compute_forwarding_rule" "relay_psc_ep" {
-  provider              = google.vpc_host
   name                  = var.relay_pe_name
-  project               = var.vpc_network_project_id
+  project               = var.google_project_name
   region                = var.google_region
-  network               = data.google_compute_network.existing_vpc.id
+  network               = google_compute_network.databricks_vpc.id
   ip_address            = google_compute_address.relay_ip.id
   target                = var.relay_service_attachment
   load_balancing_scheme = "" # Required to be "" when target is a service attachment URI.

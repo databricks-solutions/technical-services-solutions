@@ -22,8 +22,7 @@ locals {
 
 resource "google_dns_managed_zone" "databricks_private_zone" {
   count       = var.create_private_dns ? 1 : 0
-  provider    = google.vpc_host
-  project     = var.vpc_network_project_id
+  project     = var.google_project_name
   name        = var.private_zone_name
   dns_name    = var.dns_name
   description = "Databricks backend PSC private DNS zone"
@@ -31,7 +30,7 @@ resource "google_dns_managed_zone" "databricks_private_zone" {
 
   private_visibility_config {
     networks {
-      network_url = data.google_compute_network.existing_vpc.id
+      network_url = google_compute_network.databricks_vpc.id
     }
   }
 }
@@ -39,8 +38,7 @@ resource "google_dns_managed_zone" "databricks_private_zone" {
 # <workspace_id>.gcp.databricks.com -> REST API endpoint IP
 resource "google_dns_record_set" "workspace_url" {
   count        = var.create_private_dns ? 1 : 0
-  provider     = google.vpc_host
-  project      = var.vpc_network_project_id
+  project      = var.google_project_name
   managed_zone = google_dns_managed_zone.databricks_private_zone[0].name
   name         = "${local.workspace_id}.${var.dns_name}"
   type         = "A"
@@ -51,8 +49,7 @@ resource "google_dns_record_set" "workspace_url" {
 # dp-<workspace_id>.gcp.databricks.com -> REST API endpoint IP
 resource "google_dns_record_set" "workspace_dp" {
   count        = var.create_private_dns ? 1 : 0
-  provider     = google.vpc_host
-  project      = var.vpc_network_project_id
+  project      = var.google_project_name
   managed_zone = google_dns_managed_zone.databricks_private_zone[0].name
   name         = "dp-${local.workspace_id}.${var.dns_name}"
   type         = "A"
@@ -63,8 +60,7 @@ resource "google_dns_record_set" "workspace_dp" {
 # tunnel.<region>.gcp.databricks.com -> SCC relay endpoint IP
 resource "google_dns_record_set" "relay_tunnel" {
   count        = var.create_private_dns ? 1 : 0
-  provider     = google.vpc_host
-  project      = var.vpc_network_project_id
+  project      = var.google_project_name
   managed_zone = google_dns_managed_zone.databricks_private_zone[0].name
   name         = "tunnel.${var.google_region}.${var.dns_name}"
   type         = "A"

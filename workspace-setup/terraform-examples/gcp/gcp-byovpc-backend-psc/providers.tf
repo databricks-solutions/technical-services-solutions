@@ -1,17 +1,7 @@
-# Google provider for the service (consumer) project — where the Databricks
-# data plane (GCE) and DBFS storage live.
+# Google provider for the project that holds the VPC, PSC endpoints, DNS, and
+# the Databricks data plane (GCE) / DBFS storage.
 provider "google" {
   project = var.google_project_name
-  region  = var.google_region
-}
-
-# Google provider aliased to the VPC host project. PSC endpoints and the
-# private DNS zone are created here. For a same-project (non-shared) VPC,
-# set vpc_network_project_id equal to google_project_name and this points
-# at the same project.
-provider "google" {
-  alias   = "vpc_host"
-  project = var.vpc_network_project_id
   region  = var.google_region
 }
 

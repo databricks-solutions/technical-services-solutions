@@ -11,8 +11,8 @@ llm-genai-caller-sa.json
 crash.log
 crash.*.log
 
-# # Exclude all .tfvars files (sensitive data like creds)
-# *.tfvars
+# Exclude the concrete tfvars (may contain account/project identifiers)
+terraform.tfvars
 # *.tfvars.json
 
 # Ignore override files

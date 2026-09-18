@@ -2,17 +2,14 @@
 # Authentication / Project
 ######################################################
 google_service_account_email = "<sa>@<project>.iam.gserviceaccount.com"
-google_project_name          = "<databricks-service-project>"
+google_project_name          = "<gcp-project-id>"
 google_region                = "us-central1"
 
 ######################################################
-# Existing (BYO) Network
+# Network (created by this module)
 ######################################################
-# Set vpc_network_project_id == google_project_name if the VPC is in the same project.
-vpc_network_project_id = "<vpc-host-project>"
-vpc_name               = "<existing-vpc-name>"
-subnet_name            = "<existing-node-subnet-name>"
-psc_subnet_name        = "<existing-psc-endpoint-subnet-name>" # may equal subnet_name
+subnet_cidr     = "10.10.0.0/22" # Databricks node subnet
+psc_subnet_cidr = "10.10.4.0/28" # PSC endpoint subnet (must not overlap subnet_cidr)
 
 ######################################################
 # Databricks Account / Workspace

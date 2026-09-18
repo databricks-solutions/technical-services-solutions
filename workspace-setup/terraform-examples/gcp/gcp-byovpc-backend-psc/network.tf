@@ -1,7 +1,7 @@
 data "google_client_openid_userinfo" "me" {}
 data "google_client_config" "current" {}
 
-# Random suffix for unique Databricks-side resource naming
+# Random suffix for unique resource naming
 resource "random_string" "databricks_suffix" {
   special = false
   upper   = false
@@ -9,25 +9,49 @@ resource "random_string" "databricks_suffix" {
 }
 
 ######################################################
-# Reference Existing (BYO / Shared) VPC and Subnets
-# Nothing here is created — the VPC and subnets are
-# referenced as-is and left untouched on destroy.
+# VPC, Subnets, Router, NAT (created by this module)
+#
+# - databricks_vpc : custom-mode VPC for the workspace
+# - node_subnet    : primary subnet for the Databricks GCE data plane
+# - psc_subnet     : subnet holding the two backend PSC endpoint IPs
+# - router + NAT   : egress for nodes (which have no public IPs under SCC)
 ######################################################
-data "google_compute_network" "existing_vpc" {
-  name    = var.vpc_name
-  project = var.vpc_network_project_id
+resource "google_compute_network" "databricks_vpc" {
+  name                    = "dbx-psc-vpc-${random_string.databricks_suffix.result}"
+  project                 = var.google_project_name
+  auto_create_subnetworks = false
 }
 
-# Subnet used by the Databricks GCE nodes.
-data "google_compute_subnetwork" "node_subnet" {
-  name    = var.subnet_name
-  region  = var.google_region
-  project = var.vpc_network_project_id
+resource "google_compute_subnetwork" "node_subnet" {
+  name                     = "dbx-node-subnet-${random_string.databricks_suffix.result}"
+  project                  = var.google_project_name
+  region                   = var.google_region
+  network                  = google_compute_network.databricks_vpc.id
+  ip_cidr_range            = var.subnet_cidr
+  private_ip_google_access = true
 }
 
-# Subnet in which the two backend PSC endpoint internal IPs are allocated.
-data "google_compute_subnetwork" "psc_subnet" {
-  name    = var.psc_subnet_name
+resource "google_compute_subnetwork" "psc_subnet" {
+  name                     = "dbx-psc-subnet-${random_string.databricks_suffix.result}"
+  project                  = var.google_project_name
+  region                   = var.google_region
+  network                  = google_compute_network.databricks_vpc.id
+  ip_cidr_range            = var.psc_subnet_cidr
+  private_ip_google_access = true
+}
+
+resource "google_compute_router" "databricks_router" {
+  name    = "dbx-router-${random_string.databricks_suffix.result}"
+  project = var.google_project_name
   region  = var.google_region
-  project = var.vpc_network_project_id
+  network = google_compute_network.databricks_vpc.id
+}
+
+resource "google_compute_router_nat" "databricks_nat" {
+  name                               = "dbx-nat-${random_string.databricks_suffix.result}"
+  project                            = var.google_project_name
+  router                             = google_compute_router.databricks_router.name
+  region                             = var.google_region
+  nat_ip_allocate_option             = "AUTO_ONLY"
+  source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
 }

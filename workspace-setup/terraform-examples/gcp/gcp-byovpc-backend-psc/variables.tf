@@ -2,12 +2,12 @@
 # Authentication / Project
 ######################################################
 variable "google_service_account_email" {
-  description = "Email of the Google Service Account used by the providers (must be an account admin in Databricks and hold the customer-managed VPC role requirements)."
+  description = "Email of the Google Service Account used by the providers (must be an account admin in Databricks and hold the customer-managed VPC role requirements plus PSC/DNS permissions)."
   type        = string
 }
 
 variable "google_project_name" {
-  description = "GCP project ID where the Databricks workspace data plane (GCE) will be created (service / consumer project)."
+  description = "GCP project ID where the VPC, PSC endpoints, DNS, and the Databricks workspace data plane (GCE) are created."
   type        = string
 }
 
@@ -17,26 +17,18 @@ variable "google_region" {
 }
 
 ######################################################
-# Existing (BYO) Network
+# Network (created by this module)
 ######################################################
-variable "vpc_network_project_id" {
-  description = "GCP project ID where the existing VPC resides (host project). Set equal to google_project_name if the VPC is in the same project as the workspace."
+variable "subnet_cidr" {
+  description = "Primary CIDR range for the Databricks node subnet (GCE data plane)."
   type        = string
+  default     = "10.10.0.0/22"
 }
 
-variable "vpc_name" {
-  description = "Name of the existing VPC network to attach the workspace to."
+variable "psc_subnet_cidr" {
+  description = "CIDR range for the subnet that holds the two backend PSC endpoint IP addresses. Must not overlap subnet_cidr."
   type        = string
-}
-
-variable "subnet_name" {
-  description = "Name of the existing subnet used by the Databricks GCE nodes (the workspace 'node' subnet)."
-  type        = string
-}
-
-variable "psc_subnet_name" {
-  description = "Name of the existing subnet in which the two backend PSC endpoint IP addresses are allocated. May be the same as subnet_name."
-  type        = string
+  default     = "10.10.4.0/28"
 }
 
 ######################################################

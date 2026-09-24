@@ -11,6 +11,13 @@ google_region                = "us-central1"
 subnet_cidr     = "10.10.0.0/22" # Databricks node subnet
 psc_subnet_cidr = "10.10.4.0/28" # PSC endpoint subnet (must not overlap subnet_cidr)
 
+# NAT gateway for outbound egress from the (no-public-IP) nodes.
+#   true  = deploy Cloud Router + Cloud NAT (default; nodes reach the internet).
+#   false = fully-private / NVA-routed; no general internet egress. Private Google
+#           Access still covers Google APIs, but public pip/Maven installs and
+#           public data sources will fail.
+create_nat_gateway = true
+
 ######################################################
 # Databricks Account / Workspace
 ######################################################

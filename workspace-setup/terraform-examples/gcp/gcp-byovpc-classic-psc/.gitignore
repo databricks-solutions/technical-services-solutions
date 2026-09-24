@@ -2,6 +2,10 @@
 */.terraform/*
 */.terraform
 
+# Provider lock file — let users generate their own on `terraform init`
+.terraform.lock.hcl
+*/.terraform.lock.hcl
+
 # .tfstate files
 *.tfstate
 *.tfstate.*

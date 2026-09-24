@@ -12,6 +12,7 @@ Here is the repo structure:
 - [**Data Engineering**](data-engineering)
 - [**Data Governance**](data-governance)
 - [**Data Warehousing**](data-warehousing)
+- [**AI/BI Migration**](aibi-migration)
 - [**ML & GenAI**](genai-ml)
 - [**Launch Accelerator**](launch-accelerator)
 - [**Workspace Setup**](workspace-setup)

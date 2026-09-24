@@ -1,0 +1,43 @@
+# Local .terraform directories
+*/.terraform/*
+*/.terraform
+
+# Provider lock file — let users generate their own on `terraform init`
+.terraform.lock.hcl
+*/.terraform.lock.hcl
+
+# .tfstate files
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Crash log files
+crash.log
+crash.*.log
+
+# Ignore CLI configuration files
+.terraformrc
+terraform.rc
+
+# Ignore .tfvars files that contain secrets / environment-specific values
+# Keep .tfvars.example as template
+terraform.tfvars
+*auto.tfvars
+*.auto.tfvars
+
+# Ignore override files as they are usually used to override resources locally and so
+# are not checked in
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Include tfplan files to ignore the plan output of command: terraform plan -out=tfplan
+# example: *tfplan*
+
+# MAC Control
+.DS_Store
+
+# IntelliJ
+.idea/
+*.swp

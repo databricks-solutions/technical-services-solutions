@@ -84,6 +84,7 @@ This naming helps you quickly identify the right scenario for your needs.
 | Scenario | Description |
 |----------|-------------|
 | [gcp-byovpc-standalone](./gcp/gcp-byovpc-standalone/) | Deploy a Databricks workspace with Customer-managed VPC on Google Cloud. Includes VPC, subnet, Cloud Router, and Cloud NAT setup with service account impersonation support. |
+| [gcp-byovpc-classic-psc](./gcp/gcp-byovpc-classic-psc/) | Deploy a Databricks workspace with classic-compute backend Private Service Connect (PSC): the two backend endpoints (REST API + SCC relay), a customer-managed VPC (VPC, subnets, Cloud Router/NAT), private access settings, and a private Cloud DNS zone. Region-specific service attachment URIs included; optional Unity Catalog metastore assignment. |
 
 ## Prerequisites
 

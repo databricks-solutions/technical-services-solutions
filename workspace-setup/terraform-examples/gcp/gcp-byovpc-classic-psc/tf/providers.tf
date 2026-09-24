@@ -12,6 +12,7 @@ provider "databricks" {
   host                   = "https://accounts.gcp.databricks.com"
   google_service_account = var.google_service_account_email
   account_id             = var.databricks_account_id
+  auth_type              = "google-id" # required, else the SDKv2 path drops SA impersonation → "Failed to get oauth access token"
 }
 
 # Databricks Workspace-level provider — used to manage in-workspace resources
@@ -20,4 +21,5 @@ provider "databricks" {
   alias                  = "workspace"
   host                   = databricks_mws_workspaces.databricks_workspace.workspace_url
   google_service_account = var.google_service_account_email
+  auth_type              = "google-id"
 }

@@ -31,6 +31,12 @@ variable "psc_subnet_cidr" {
   default     = "10.10.4.0/28"
 }
 
+variable "create_nat_gateway" {
+  description = "Create a Cloud Router + Cloud NAT for outbound internet egress from the (no-public-IP) nodes. Set false for a fully-private / NVA-routed deployment where no general internet egress is needed. Private Google Access (enabled on the subnets) still covers Google APIs; note that public package installs (pip/Maven) and public data sources will fail with NAT disabled."
+  type        = bool
+  default     = true
+}
+
 ######################################################
 # Databricks Account / Workspace
 ######################################################

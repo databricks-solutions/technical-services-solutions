@@ -41,6 +41,7 @@ resource "google_compute_subnetwork" "psc_subnet" {
 }
 
 resource "google_compute_router" "databricks_router" {
+  count   = var.create_nat_gateway ? 1 : 0
   name    = "dbx-router-${random_string.databricks_suffix.result}"
   project = var.google_project_name
   region  = var.google_region
@@ -48,9 +49,10 @@ resource "google_compute_router" "databricks_router" {
 }
 
 resource "google_compute_router_nat" "databricks_nat" {
+  count                              = var.create_nat_gateway ? 1 : 0
   name                               = "dbx-nat-${random_string.databricks_suffix.result}"
   project                            = var.google_project_name
-  router                             = google_compute_router.databricks_router.name
+  router                             = google_compute_router.databricks_router[0].name
   region                             = var.google_region
   nat_ip_allocate_option             = "AUTO_ONLY"
   source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"

@@ -81,6 +81,10 @@ else
       read -rp "  AWS region (e.g. us-east-1): " REGION
       while [ -z "$REGION" ]; do read -rp "  Region cannot be empty. AWS region: " REGION; done
       ARGS+=(--region "$REGION")
+      read -rp "  Databricks account ID (optional — press Enter to skip): " DBX_ACCT_ID
+      [ -n "$DBX_ACCT_ID" ] && ARGS+=(--databricks-account-id "$DBX_ACCT_ID")
+      read -rp "  VPC ID for customer-managed VPC validation (optional — press Enter to skip): " VPC_ID
+      [ -n "$VPC_ID" ] && ARGS+=(--vpc-id "$VPC_ID")
       ;;
     azure)
       read -rp "  Azure subscription ID: " SUB

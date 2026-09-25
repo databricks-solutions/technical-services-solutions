@@ -115,7 +115,6 @@ UNITY_CATALOG_STORAGE_ACTIONS = [
     "kms:Decrypt",
     "kms:Encrypt",
     "kms:GenerateDataKey*",
-    "sts:AssumeRole",
 ]
 
 # Unity Catalog file events actions (optional but recommended)

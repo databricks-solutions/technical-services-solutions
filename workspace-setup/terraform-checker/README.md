@@ -35,6 +35,26 @@ a couple of values, then asks whether you want a **dry run** or a **full run**. 
 full run writes **`report.md`** next to this file — **send that back to your
 Databricks contact. That's the whole job.**
 
+### Before you run
+
+1. **Python 3.10 or newer** installed ([python.org/downloads](https://www.python.org/downloads/)).
+2. **Logged in to your cloud** from this machine, using an identity that has
+   permission to deploy the workspace:
+
+   | Cloud | Log in with |
+   |-------|-------------|
+   | AWS   | `aws configure` (or set `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`) |
+   | Azure | `az login` |
+   | GCP   | `gcloud auth application-default login` |
+
+3. Know a couple of values you'll be asked for — nothing to configure in advance:
+
+   | Cloud | You'll be asked for |
+   |-------|---------------------|
+   | AWS   | Region (e.g. `us-east-1`) · Databricks account ID *(optional — enables trust-policy content check)* · VPC ID *(optional — enables subnet, NAT gateway, and VPC endpoint checks for customer-managed VPC deployments)* |
+   | Azure | Subscription ID + region (e.g. `eastus`) |
+   | GCP   | Project ID + region (e.g. `us-central1`) |
+
 ### Two ways to run it (the runner asks you to pick one)
 
 1. **Dry run — creates nothing.** Shows exactly what the full run *would* create and
@@ -52,26 +72,6 @@ Databricks contact. That's the whole job.**
    - On **GCP**, nothing is ever created — it's read-only in *both* modes.
 
 **A typical path:** dry run once to see what it does → full run to produce the report.
-
-### Before you run
-
-1. **Python 3.10 or newer** installed ([python.org/downloads](https://www.python.org/downloads/)).
-2. **Logged in to your cloud** from this machine, using an identity that has
-   permission to deploy the workspace:
-
-   | Cloud | Log in with |
-   |-------|-------------|
-   | AWS   | `aws configure` (or set `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`) |
-   | Azure | `az login` |
-   | GCP   | `gcloud auth application-default login` |
-
-3. Know a couple of values you'll be asked for — nothing to configure in advance:
-
-   | Cloud | You'll be asked for |
-   |-------|---------------------|
-   | AWS   | Region (e.g. `us-east-1`) |
-   | Azure | Subscription ID + region (e.g. `eastus`) |
-   | GCP   | Project ID + region (e.g. `us-central1`) |
 
 ### What the report tells you
 
@@ -237,10 +237,6 @@ python main.py --cloud aws --region us-east-1 --databricks-account-id <databrick
 # Validate an existing VNet for VNet injection, incl. cross-subscription (Azure)
 python main.py --cloud azure --subscription-id <id> --vnet-id "<resource-group>/<vnet-name>"
 
-# READ-ONLY Databricks account-console check (token valid + account-admin + reachable)
-export DATABRICKS_ACCOUNT_TOKEN=<account-level-token>
-python main.py --cloud aws --region us-east-1 \
-  --databricks-account-id <databricks-account-uuid> --databricks-account-token "$DATABRICKS_ACCOUNT_TOKEN"
 ```
 
 ### Targeted / BYO-network validation
@@ -251,27 +247,6 @@ python main.py --cloud aws --region us-east-1 \
 | `--sg-id` | AWS | Validates an existing security group's rules (intra-SG all-traffic ingress/egress + control-plane egress). |
 | `--databricks-account-id` | AWS | Validates the cross-account role *trust* content (Databricks signing principal `414351767826` + your account as ExternalId), not just that you can create the role. |
 | `--vnet-id` | Azure | Validates an existing VNet for VNet injection: Databricks-delegated subnets, NSG association, and subnet sizing. Accepts a full ARM id or `<rg>/<vnet-name>`. |
-| `--databricks-account-token` | all | **Read-only** account-console check: confirms the Databricks Account API is reachable, the token authenticates, and the principal is an **account admin**. Requires `--databricks-account-id`. Also reads `DATABRICKS_ACCOUNT_TOKEN`. Creates nothing. |
-| `--databricks-account-host` | all | Override the Account API host for gov/custom control planes (defaults per `--cloud`). |
-
-### Databricks account-console check (read-only)
-
-The cloud checkers validate the *cloud-side* prerequisites. The `databricks_mws_*`
-Terraform resources authenticate against the Databricks **Account API** instead.
-Most of those can't be fully pre-checked (registering `databricks_mws_credentials`
-/ `networks` / `customer_managed_keys` validates the underlying cloud resource,
-which doesn't exist yet before `terraform apply`), but the cheap, early-failing
-slice can be — **read-only**:
-
-- **Reachability** of the account console from this environment (proxy/egress).
-- The account **token authenticates** (not expired/malformed).
-- The principal is an **account admin** (a 403 means "authenticated but not admin").
-
-It maps HTTP `200 → admin`, `401 → invalid token`, `403 → not an admin`, network
-error → reachability blocker; anything else is reported as unverified (never a
-false pass). Dependency-free (stdlib `urllib`), all `GET`s. It does **not** create
-workspaces or register any `mws_*` resource — the report's "Not validated" section
-says so explicitly.
 
 ### Output formats
 

@@ -70,6 +70,10 @@ if ($args.Count -gt 0) {
         "aws" {
             $region = Read-Host "AWS region (e.g. us-east-1)"
             $runArgs += @("--region", $region)
+            $dbxAcctId = (Read-Host "Databricks account ID (optional — press Enter to skip)").Trim()
+            if ($dbxAcctId) { $runArgs += @("--databricks-account-id", $dbxAcctId) }
+            $vpcId = (Read-Host "VPC ID for customer-managed VPC validation (optional — press Enter to skip)").Trim()
+            if ($vpcId) { $runArgs += @("--vpc-id", $vpcId) }
         }
         "azure" {
             $sub = Read-Host "Azure subscription ID"

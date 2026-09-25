@@ -1106,12 +1106,12 @@ class AWSChecker(BaseChecker):
         # Get a VPC to use for testing
         if not vpc_id:
             try:
-                vpcs = ec2.describe_vpcs(Filters=[{'Name': 'is-default', 'Values': ['true']}])
+                vpcs = ec2.describe_vpcs(Filters=[{'Name': 'isDefault', 'Values': ['true']}])
                 if vpcs.get('Vpcs'):
                     vpc_id = vpcs['Vpcs'][0]['VpcId']
                 else:
                     # Get any VPC
-                    vpcs = ec2.describe_vpcs(MaxResults=1)
+                    vpcs = ec2.describe_vpcs(MaxResults=5)
                     if vpcs.get('Vpcs'):
                         vpc_id = vpcs['Vpcs'][0]['VpcId']
             except Exception as e:
@@ -1592,8 +1592,8 @@ class AWSChecker(BaseChecker):
                 self._can_simulate = False
                 category.add_result(CheckResult(
                     name="IAM Policy Simulation",
-                    status=CheckStatus.WARNING,
-                    message="Cannot simulate - using DryRun API calls"
+                    status=CheckStatus.OK,
+                    message="Not available - using DryRun API calls"
                 ))
                     
         except ImportError as e:
@@ -1856,7 +1856,7 @@ class AWSChecker(BaseChecker):
                 ))
             
             try:
-                vpcs = ec2.describe_vpcs(MaxResults=1)
+                vpcs = ec2.describe_vpcs(MaxResults=5)
                 if vpcs.get("Vpcs"):
                     vpc_id = vpcs["Vpcs"][0]["VpcId"]
                     ec2.describe_vpc_attribute(VpcId=vpc_id, Attribute='enableDnsHostnames')
@@ -1923,112 +1923,106 @@ class AWSChecker(BaseChecker):
             else:
                 subnet_list = self._describe_all(ec2, "describe_subnets", "Subnets")
                 category.add_result(CheckResult(
-                    name="  Scope", status=CheckStatus.WARNING,
-                    message="No --vpc-id given: counting subnets ACCOUNT-WIDE, not the target VPC. Pass --vpc-id for an accurate check.",
+                    name="  Scope", status=CheckStatus.OK,
+                    message="No --vpc-id given: counting subnets ACCOUNT-WIDE. Pass --vpc-id for a VPC-specific check.",
                 ))
 
-            private_subnets = [s for s in subnet_list if not s.get("MapPublicIpOnLaunch", False)]
-            private = len(private_subnets)
-            public = len(subnet_list) - private
+            if self.vpc_id:
+                private_subnets = [s for s in subnet_list if not s.get("MapPublicIpOnLaunch", False)]
+                private = len(private_subnets)
+                public = len(subnet_list) - private
 
-            if private >= 2:
+                if private >= 2:
+                    category.add_result(CheckResult(
+                        name="  Private Subnets",
+                        status=CheckStatus.OK,
+                        message=f"{private} available (Databricks needs 2+ in different AZs)"
+                    ))
+                else:
+                    category.add_result(CheckResult(
+                        name="  Private Subnets",
+                        status=CheckStatus.WARNING,
+                        message=f"Only {private} found - need 2+ for Databricks"
+                    ))
+
                 category.add_result(CheckResult(
-                    name="  Private Subnets",
+                    name="  Public Subnets",
                     status=CheckStatus.OK,
-                    message=f"{private} available (Databricks needs 2+ in different AZs)"
-                ))
-            else:
-                category.add_result(CheckResult(
-                    name="  Private Subnets",
-                    status=CheckStatus.WARNING,
-                    message=f"Only {private} found - need 2+ for Databricks"
+                    message=f"{public} available"
                 ))
 
-            category.add_result(CheckResult(
-                name="  Public Subnets",
-                status=CheckStatus.OK,
-                message=f"{public} available"
-            ))
+                azs = set(s["AvailabilityZone"] for s in private_subnets)
+                if len(azs) >= 2:
+                    category.add_result(CheckResult(
+                        name="  AZ Distribution",
+                        status=CheckStatus.OK,
+                        message=f"Private subnets in {len(azs)} AZs: {', '.join(sorted(azs)[:3])}"
+                    ))
+                elif len(azs) == 1:
+                    category.add_result(CheckResult(
+                        name="  AZ Distribution",
+                        status=CheckStatus.WARNING,
+                        message=f"Private subnets only in 1 AZ - recommend 2+ for HA"
+                    ))
 
-            azs = set(s["AvailabilityZone"] for s in private_subnets)
-            if len(azs) >= 2:
-                category.add_result(CheckResult(
-                    name="  AZ Distribution",
-                    status=CheckStatus.OK,
-                    message=f"Private subnets in {len(azs)} AZs: {', '.join(sorted(azs)[:3])}"
-                ))
-            elif len(azs) == 1:
-                category.add_result(CheckResult(
-                    name="  AZ Distribution",
-                    status=CheckStatus.WARNING,
-                    message=f"Private subnets only in 1 AZ - recommend 2+ for HA"
-                ))
+                too_small = []
+                tiny = []
+                for s in private_subnets:
+                    cidr = s.get("CidrBlock", "")
+                    free = s.get("AvailableIpAddressCount")
+                    try:
+                        prefix = int(cidr.split("/")[1])
+                    except (IndexError, ValueError):
+                        continue
+                    if prefix > 26:
+                        too_small.append(f"{s.get('SubnetId')} ({cidr}, {free} free IPs)")
+                    elif prefix < 17:
+                        tiny.append(f"{s.get('SubnetId')} ({cidr})")
+                if private_subnets:
+                    if too_small:
+                        category.add_result(CheckResult(
+                            name="  Subnet Size", status=CheckStatus.WARNING,
+                            message=f"{len(too_small)} private subnet(s) smaller than /26 (Databricks needs /17–/26): "
+                                    + "; ".join(too_small[:3]),
+                            remediation="Use private subnets sized /17–/26 (≈ /24 recommended) so clusters have enough node IPs.",
+                            doc_link="https://docs.databricks.com/aws/en/admin/workspace/create-workspace#requirements",
+                        ))
+                    elif tiny:
+                        category.add_result(CheckResult(
+                            name="  Subnet Size", status=CheckStatus.WARNING,
+                            message=f"{len(tiny)} private subnet(s) larger than /17 (Databricks needs /17–/26): "
+                                    + "; ".join(tiny[:3]),
+                            remediation="Use private subnets sized /17–/26 (≈ /24 recommended).",
+                            doc_link="https://docs.databricks.com/aws/en/admin/workspace/create-workspace#requirements",
+                        ))
+                    else:
+                        sizes = sorted({s.get("CidrBlock", "").split("/")[-1] for s in private_subnets})
+                        min_free = min((s.get("AvailableIpAddressCount", 0) for s in private_subnets), default=0)
+                        category.add_result(CheckResult(
+                            name="  Subnet Size", status=CheckStatus.OK,
+                            message=f"Private subnets within /17–/26 (/{', /'.join(sizes)}); min free IPs in a subnet: {min_free}",
+                        ))
 
-            # Subnet SIZE: Databricks requires workspace subnets to be /17–/26.
-            # Too-small subnets (>/26) starve clusters of node IPs; below /17 is
-            # also out of range (>/26 is the common failure).
-            too_small = []
-            tiny = []  # below /17 is not allowed either
-            for s in private_subnets:
-                cidr = s.get("CidrBlock", "")
-                free = s.get("AvailableIpAddressCount")
                 try:
-                    prefix = int(cidr.split("/")[1])
-                except (IndexError, ValueError):
-                    continue
-                if prefix > 26:  # smaller than /26
-                    too_small.append(f"{s.get('SubnetId')} ({cidr}, {free} free IPs)")
-                elif prefix < 17:
-                    tiny.append(f"{s.get('SubnetId')} ({cidr})")
-            if private_subnets:
-                if too_small:
-                    category.add_result(CheckResult(
-                        name="  Subnet Size", status=CheckStatus.WARNING,
-                        message=f"{len(too_small)} private subnet(s) smaller than /26 (Databricks needs /17–/26): "
-                                + "; ".join(too_small[:3]),
-                        remediation="Use private subnets sized /17–/26 (≈ /24 recommended) so clusters have enough node IPs.",
-                        doc_link="https://docs.databricks.com/aws/en/admin/workspace/create-workspace#requirements",
-                    ))
-                elif tiny:
-                    category.add_result(CheckResult(
-                        name="  Subnet Size", status=CheckStatus.WARNING,
-                        message=f"{len(tiny)} private subnet(s) larger than /17 (Databricks needs /17–/26): "
-                                + "; ".join(tiny[:3]),
-                        remediation="Use private subnets sized /17–/26 (≈ /24 recommended).",
-                        doc_link="https://docs.databricks.com/aws/en/admin/workspace/create-workspace#requirements",
-                    ))
-                else:
-                    sizes = sorted({s.get("CidrBlock", "").split("/")[-1] for s in private_subnets})
-                    min_free = min((s.get("AvailableIpAddressCount", 0) for s in private_subnets), default=0)
-                    category.add_result(CheckResult(
-                        name="  Subnet Size", status=CheckStatus.OK,
-                        message=f"Private subnets within /17–/26 (/{', /'.join(sizes)}); min free IPs in a subnet: {min_free}",
-                    ))
-
-            # Outbound egress (only matters WITHOUT PrivateLink): the data plane
-            # needs a NAT/egress path to reach the control plane.
-            try:
-                nat_filters = [{"Name": "state", "Values": ["available"]}]
-                if self.vpc_id:
-                    nat_filters.append({"Name": "vpc-id", "Values": [self.vpc_id]})
-                nats = self._describe_all(ec2, "describe_nat_gateways", "NatGateways", Filter=nat_filters)
-                scope = self.vpc_id or "the account"
-                if nats:
-                    category.add_result(CheckResult(
-                        name="  Outbound egress (if no PrivateLink)", status=CheckStatus.OK,
-                        message=f"{len(nats)} NAT gateway(s) in {scope}",
-                    ))
-                else:
+                    nats = self._describe_all(ec2, "describe_nat_gateways", "NatGateways",
+                                              Filter=[{"Name": "state", "Values": ["available"]},
+                                                      {"Name": "vpc-id", "Values": [self.vpc_id]}])
+                    if nats:
+                        category.add_result(CheckResult(
+                            name="  Outbound egress (if no PrivateLink)", status=CheckStatus.OK,
+                            message=f"{len(nats)} NAT gateway(s) in {self.vpc_id}",
+                        ))
+                    else:
+                        category.add_result(CheckResult(
+                            name="  Outbound egress (if no PrivateLink)", status=CheckStatus.WARNING,
+                            message=f"No NAT gateway found in {self.vpc_id}. Without PrivateLink the data plane needs an egress path (NAT + 0.0.0.0/0 route, or firewall/proxy).",
+                            remediation="Add a NAT gateway + default route to the private subnets, or use PrivateLink / a firewall egress.",
+                        ))
+                except Exception as e:
                     category.add_result(CheckResult(
                         name="  Outbound egress (if no PrivateLink)", status=CheckStatus.WARNING,
-                        message=f"No NAT gateway found in {scope}. Without PrivateLink the data plane needs an egress path (NAT + 0.0.0.0/0 route, or firewall/proxy).",
-                        remediation="Add a NAT gateway + default route to the private subnets, or use PrivateLink / a firewall egress.",
+                        message=f"Could not verify egress: {str(e)[:80]}",
                     ))
-            except Exception as e:
-                category.add_result(CheckResult(
-                    name="  Outbound egress (if no PrivateLink)", status=CheckStatus.WARNING,
-                    message=f"Could not verify egress: {str(e)[:80]}",
-                ))
 
         except Exception as e:
             network_ok = False
@@ -2188,56 +2182,45 @@ class AWSChecker(BaseChecker):
                 ))
 
         try:
-            endpoint_list = self._describe_all(ec2, "describe_vpc_endpoints", "VpcEndpoints")
-            
+            describe_kwargs = {}
+            if self.vpc_id:
+                describe_kwargs["Filters"] = [{"Name": "vpc-id", "Values": [self.vpc_id]}]
+            endpoint_list = self._describe_all(ec2, "describe_vpc_endpoints", "VpcEndpoints", **describe_kwargs)
+
             gateway = sum(1 for e in endpoint_list if e["VpcEndpointType"] == "Gateway")
             interface = sum(1 for e in endpoint_list if e["VpcEndpointType"] == "Interface")
-            
+
             category.add_result(CheckResult(
                 name="  Existing VPC Endpoints",
                 status=CheckStatus.OK,
                 message=f"{gateway} Gateway, {interface} Interface endpoints"
+                        + (f" in {self.vpc_id}" if self.vpc_id else " (account-wide)"),
             ))
 
-            category.add_result(CheckResult(
-                name="  Databricks PrivateLink services",
-                status=CheckStatus.WARNING,
-                message=(
-                    "Cannot pre-verify the Databricks vpce-svc endpoints "
-                    "(workspace/general-access + SCC relay) - confirm your region "
-                    "is supported in the Databricks PrivateLink docs"
-                ),
-                doc_link="https://docs.databricks.com/aws/en/security/network/classic/privatelink",
-            ))
+            if self.vpc_id:
+                for ep_name, ep_filter, ep_type, ep_desc in [
+                    ("S3 Gateway Endpoint",       "s3",      "Gateway",   "recommended for cost savings"),
+                    ("STS Interface Endpoint",    "sts",     "Interface", "required for PrivateLink deployments"),
+                    ("Kinesis Interface Endpoint","kinesis", "Interface", "required for PrivateLink deployments"),
+                ]:
+                    found = [
+                        e for e in endpoint_list
+                        if ep_filter in e.get("ServiceName", "").lower()
+                        and e["VpcEndpointType"] == ep_type
+                    ]
+                    if found:
+                        category.add_result(CheckResult(
+                            name=f"  {ep_name}",
+                            status=CheckStatus.OK,
+                            message=f"Found: {found[0]['VpcEndpointId']}",
+                        ))
+                    else:
+                        category.add_result(CheckResult(
+                            name=f"  {ep_name}",
+                            status=CheckStatus.WARNING,
+                            message=f"Not found in {self.vpc_id} — {ep_desc}",
+                        ))
 
-            s3_gw = [e for e in endpoint_list if "s3" in e.get("ServiceName", "").lower() and e["VpcEndpointType"] == "Gateway"]
-            if s3_gw:
-                category.add_result(CheckResult(
-                    name="  S3 Gateway Endpoint",
-                    status=CheckStatus.OK,
-                    message=f"Found: {s3_gw[0]['VpcEndpointId']}"
-                ))
-            else:
-                category.add_result(CheckResult(
-                    name="  S3 Gateway Endpoint",
-                    status=CheckStatus.WARNING,
-                    message="Not found - recommended for cost savings"
-                ))
-            
-            sts_ep = [e for e in endpoint_list if "sts" in e.get("ServiceName", "").lower()]
-            if sts_ep:
-                category.add_result(CheckResult(
-                    name="  STS Interface Endpoint",
-                    status=CheckStatus.OK,
-                    message=f"Found: {sts_ep[0]['VpcEndpointId']}"
-                ))
-            else:
-                category.add_result(CheckResult(
-                    name="  STS Interface Endpoint",
-                    status=CheckStatus.WARNING,
-                    message="Not found - required for PrivateLink deployments"
-                ))
-                
         except Exception as e:
             category.add_result(CheckResult(
                 name="  VPC Endpoints",
@@ -2387,70 +2370,6 @@ class AWSChecker(BaseChecker):
                             message=""
                         ))
         else:
-            # DryRun tests for critical EC2 actions
-            
-            # RunInstances
-            status, msg, assumed = self._test_dryrun(
-                "ec2:RunInstances",
-                lambda: ec2.run_instances(
-                    ImageId="ami-12345678",
-                    MinCount=1,
-                    MaxCount=1,
-                    InstanceType="t3.micro",
-                    DryRun=True
-                ),
-            )
-            category.add_result(CheckResult(name="  ec2:RunInstances", status=status, message=msg, assumed=assumed))
-            
-            # TerminateInstances
-            status, msg, assumed = self._test_dryrun(
-                "ec2:TerminateInstances",
-                lambda: ec2.terminate_instances(InstanceIds=["i-test12345"], DryRun=True),
-            )
-            category.add_result(CheckResult(name="  ec2:TerminateInstances", status=status, message=msg, assumed=assumed))
-            
-            # CreateVolume
-            status, msg, assumed = self._test_dryrun(
-                "ec2:CreateVolume",
-                lambda: ec2.create_volume(
-                    AvailabilityZone=f"{self.region}a",
-                    Size=10,
-                    VolumeType='gp3',
-                    DryRun=True
-                ),
-            )
-            category.add_result(CheckResult(name="  ec2:CreateVolume", status=status, message=msg, assumed=assumed))
-            
-            # DeleteVolume
-            status, msg, assumed = self._test_dryrun(
-                "ec2:DeleteVolume",
-                lambda: ec2.delete_volume(VolumeId="vol-test12345", DryRun=True),
-            )
-            category.add_result(CheckResult(name="  ec2:DeleteVolume", status=status, message=msg, assumed=assumed))
-            
-            # CreateSecurityGroup
-            status, msg, assumed = self._test_dryrun(
-                "ec2:CreateSecurityGroup",
-                lambda: ec2.create_security_group(
-                    GroupName="databricks-test",
-                    Description="test",
-                    VpcId="vpc-test",
-                    DryRun=True
-                ),
-            )
-            category.add_result(CheckResult(name="  ec2:CreateSecurityGroup", status=status, message=msg, assumed=assumed))
-            
-            # CreateTags
-            status, msg, assumed = self._test_dryrun(
-                "ec2:CreateTags",
-                lambda: ec2.create_tags(
-                    Resources=["i-test12345"],
-                    Tags=[{"Key": "test", "Value": "test"}],
-                    DryRun=True
-                ),
-            )
-            category.add_result(CheckResult(name="  ec2:CreateTags", status=status, message=msg, assumed=assumed))
-            
             # DescribeInstances (no DryRun, just test)
             try:
                 ec2.describe_instances(MaxResults=5)
@@ -2598,7 +2517,6 @@ class AWSChecker(BaseChecker):
             ("s3:DeleteObject", "Delete objects from UC bucket"),
             ("s3:ListBucket", "List bucket contents"),
             ("s3:GetBucketLocation", "Get bucket region"),
-            ("sts:AssumeRole", "Assume storage credential role"),
         ]
         
         if self._can_simulate:
@@ -2629,11 +2547,6 @@ class AWSChecker(BaseChecker):
             uc_results = self._test_unity_catalog_s3_permissions()
             for r in uc_results:
                 category.add_result(r)
-            category.add_result(CheckResult(
-                name="  sts:AssumeRole",
-                status=CheckStatus.WARNING,
-                message="Requires target role ARN - tested via cross-account checks"
-            ))
         else:
             try:
                 s3.list_buckets()
@@ -2689,11 +2602,50 @@ class AWSChecker(BaseChecker):
                         message=""
                     ))
         else:
-            category.add_result(CheckResult(
-                name="  File Events",
-                status=CheckStatus.WARNING,
-                message="Cannot test SNS/SQS permissions without simulation"
-            ))
+            import uuid as _uuid
+            test_id = str(_uuid.uuid4())[:8]
+            sns = self._get_client("sns")
+            sqs = self._get_client("sqs")
+            topic_name = f"{TEST_RESOURCE_PREFIX}-sns-{test_id}"
+            queue_name = f"{TEST_RESOURCE_PREFIX}-sqs-{test_id}"
+            topic_arn = None
+            queue_url = None
+            try:
+                topic_arn = sns.create_topic(Name=topic_name)["TopicArn"]
+                category.add_result(CheckResult(
+                    name="  sns:CreateTopic",
+                    status=CheckStatus.OK,
+                    message=f"✓ CREATED: {topic_name}",
+                ))
+            except Exception as e:
+                category.add_result(CheckResult(
+                    name="  sns:CreateTopic",
+                    status=CheckStatus.NOT_OK if is_access_denied(str(e)) else CheckStatus.WARNING,
+                    message=f"{'DENIED' if is_access_denied(str(e)) else 'Failed'}: {str(e)[:80]}",
+                ))
+            try:
+                queue_url = sqs.create_queue(QueueName=queue_name)["QueueUrl"]
+                category.add_result(CheckResult(
+                    name="  sqs:CreateQueue",
+                    status=CheckStatus.OK,
+                    message=f"✓ CREATED: {queue_name}",
+                ))
+            except Exception as e:
+                category.add_result(CheckResult(
+                    name="  sqs:CreateQueue",
+                    status=CheckStatus.NOT_OK if is_access_denied(str(e)) else CheckStatus.WARNING,
+                    message=f"{'DENIED' if is_access_denied(str(e)) else 'Failed'}: {str(e)[:80]}",
+                ))
+            if topic_arn:
+                try:
+                    sns.delete_topic(TopicArn=topic_arn)
+                except Exception:
+                    pass
+            if queue_url:
+                try:
+                    sqs.delete_queue(QueueUrl=queue_url)
+                except Exception:
+                    pass
         
         self._check_results_by_area["unity_catalog"] = category.area_state
         

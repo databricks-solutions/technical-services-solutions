@@ -1,0 +1,359 @@
+# Azure Permissions for Databricks Terraform Pre-Check
+#
+# This file defines the RBAC permissions required for deploying Databricks workspaces.
+# Update this file when Databricks documentation changes.
+#
+# Reference: https://learn.microsoft.com/en-us/azure/databricks/
+# Last updated: 2025-01
+
+# =============================================================================
+# RESOURCE PROVIDERS
+# =============================================================================
+
+resource_providers:
+  required:
+    - namespace: Microsoft.Databricks
+      description: "Azure Databricks workspaces"
+    - namespace: Microsoft.Network
+      description: "VNets, subnets, NSGs, NAT gateways"
+    - namespace: Microsoft.Storage
+      description: "Storage accounts for Unity Catalog"
+    - namespace: Microsoft.Compute
+      description: "Virtual machines for clusters"
+    - namespace: Microsoft.KeyVault
+      description: "Key vaults for secrets and CMK"
+    - namespace: Microsoft.ManagedIdentity
+      description: "Managed identities for Unity Catalog"
+    - namespace: Microsoft.Authorization
+      description: "Role assignments"
+
+  privatelink_additional:
+    - namespace: Microsoft.Network
+      description: "Private endpoints and DNS zones"
+
+# =============================================================================
+# PRIVATE DNS ZONES
+# =============================================================================
+
+private_dns_zones:
+  databricks:
+    zone: "privatelink.azuredatabricks.net"
+    description: "DNS zone for Databricks workspace Private Link"
+    
+  blob_storage:
+    zone: "privatelink.blob.core.windows.net"
+    description: "DNS zone for Blob Storage Private Link"
+    
+  dfs_storage:
+    zone: "privatelink.dfs.core.windows.net"
+    description: "DNS zone for ADLS Gen2 Private Link"
+
+# =============================================================================
+# TERRAFORM RESOURCE PERMISSIONS
+# =============================================================================
+
+resources:
+  resource_group:
+    name: "Resource Group"
+    terraform_type: "azurerm_resource_group"
+    description: "Resource group to contain Databricks resources"
+    actions:
+      - Microsoft.Resources/resourceGroups/read
+      - Microsoft.Resources/resourceGroups/write
+      - Microsoft.Resources/resourceGroups/delete
+
+  databricks_workspace:
+    name: "Databricks Workspace"
+    terraform_type: "azurerm_databricks_workspace"
+    description: "Azure Databricks workspace resource"
+    actions:
+      - Microsoft.Databricks/workspaces/read
+      - Microsoft.Databricks/workspaces/write
+      - Microsoft.Databricks/workspaces/delete
+
+  virtual_network:
+    name: "Virtual Network"
+    terraform_type: "azurerm_virtual_network"
+    description: "VNet for Databricks VNet injection"
+    deployment_modes: ["vnet", "privatelink", "full"]
+    actions:
+      - Microsoft.Network/virtualNetworks/read
+      - Microsoft.Network/virtualNetworks/write
+      - Microsoft.Network/virtualNetworks/delete
+      - Microsoft.Network/virtualNetworks/subnets/read
+      - Microsoft.Network/virtualNetworks/subnets/write
+      - Microsoft.Network/virtualNetworks/subnets/delete
+      - Microsoft.Network/virtualNetworks/subnets/join/action
+
+  network_security_group:
+    name: "Network Security Group"
+    terraform_type: "azurerm_network_security_group"
+    description: "NSG for Databricks subnet security"
+    deployment_modes: ["vnet", "privatelink", "full"]
+    actions:
+      - Microsoft.Network/networkSecurityGroups/read
+      - Microsoft.Network/networkSecurityGroups/write
+      - Microsoft.Network/networkSecurityGroups/delete
+      - Microsoft.Network/networkSecurityGroups/join/action
+      - Microsoft.Network/networkSecurityGroups/securityRules/read
+      - Microsoft.Network/networkSecurityGroups/securityRules/write
+      - Microsoft.Network/networkSecurityGroups/securityRules/delete
+
+  nat_gateway:
+    name: "NAT Gateway"
+    terraform_type: "azurerm_nat_gateway"
+    description: "NAT gateway for Secure Cluster Connectivity (SCC)"
+    deployment_modes: ["privatelink", "full"]
+    actions:
+      - Microsoft.Network/natGateways/read
+      - Microsoft.Network/natGateways/write
+      - Microsoft.Network/natGateways/delete
+      - Microsoft.Network/natGateways/join/action
+      - Microsoft.Network/publicIPAddresses/read
+      - Microsoft.Network/publicIPAddresses/write
+      - Microsoft.Network/publicIPAddresses/delete
+      - Microsoft.Network/publicIPAddresses/join/action
+
+  private_endpoint:
+    name: "Private Endpoint"
+    terraform_type: "azurerm_private_endpoint"
+    description: "Private endpoint for Databricks Private Link"
+    deployment_modes: ["privatelink", "full"]
+    actions:
+      - Microsoft.Network/privateEndpoints/read
+      - Microsoft.Network/privateEndpoints/write
+      - Microsoft.Network/privateEndpoints/delete
+      - Microsoft.Databricks/workspaces/privateEndpointConnectionsApproval/action
+
+  private_dns_zone:
+    name: "Private DNS Zone"
+    terraform_type: "azurerm_private_dns_zone"
+    description: "Private DNS zones for Private Link resolution"
+    deployment_modes: ["privatelink", "full"]
+    actions:
+      - Microsoft.Network/privateDnsZones/read
+      - Microsoft.Network/privateDnsZones/write
+      - Microsoft.Network/privateDnsZones/delete
+      - Microsoft.Network/privateDnsZones/virtualNetworkLinks/read
+      - Microsoft.Network/privateDnsZones/virtualNetworkLinks/write
+      - Microsoft.Network/privateDnsZones/virtualNetworkLinks/delete
+      - Microsoft.Network/privateDnsZones/A/read
+      - Microsoft.Network/privateDnsZones/A/write
+
+  storage_account:
+    name: "Storage Account (ADLS Gen2)"
+    terraform_type: "azurerm_storage_account"
+    description: "ADLS Gen2 storage for Unity Catalog metastore"
+    deployment_modes: ["unity", "full"]
+    actions:
+      - Microsoft.Storage/storageAccounts/read
+      - Microsoft.Storage/storageAccounts/write
+      - Microsoft.Storage/storageAccounts/delete
+      - Microsoft.Storage/storageAccounts/listKeys/action
+      - Microsoft.Storage/storageAccounts/blobServices/read
+      - Microsoft.Storage/storageAccounts/blobServices/containers/read
+      - Microsoft.Storage/storageAccounts/blobServices/containers/write
+      - Microsoft.Storage/storageAccounts/blobServices/containers/delete
+
+  access_connector:
+    name: "Access Connector for Azure Databricks"
+    terraform_type: "azurerm_databricks_access_connector"
+    description: "Access connector with managed identity for Unity Catalog"
+    deployment_modes: ["unity", "full"]
+    reference: "https://learn.microsoft.com/en-us/azure/databricks/connect/unity-catalog/cloud-storage/azure-managed-identities"
+    actions:
+      - Microsoft.Databricks/accessConnectors/read
+      - Microsoft.Databricks/accessConnectors/write
+      - Microsoft.Databricks/accessConnectors/delete
+
+  key_vault:
+    name: "Key Vault"
+    terraform_type: "azurerm_key_vault"
+    description: "Key Vault for secret-backed scopes and CMK"
+    deployment_modes: ["full"]
+    actions:
+      - Microsoft.KeyVault/vaults/read
+      - Microsoft.KeyVault/vaults/write
+      - Microsoft.KeyVault/vaults/delete
+      - Microsoft.KeyVault/vaults/secrets/read
+      - Microsoft.KeyVault/vaults/secrets/write
+      - Microsoft.KeyVault/vaults/keys/read
+      - Microsoft.KeyVault/vaults/keys/write
+      - Microsoft.KeyVault/vaults/accessPolicies/write
+
+  managed_identity:
+    name: "User-Assigned Managed Identity"
+    terraform_type: "azurerm_user_assigned_identity"
+    description: "Managed identity for Unity Catalog access"
+    deployment_modes: ["unity", "full"]
+    actions:
+      - Microsoft.ManagedIdentity/userAssignedIdentities/read
+      - Microsoft.ManagedIdentity/userAssignedIdentities/write
+      - Microsoft.ManagedIdentity/userAssignedIdentities/delete
+      - Microsoft.ManagedIdentity/userAssignedIdentities/assign/action
+
+  role_assignment:
+    name: "Role Assignment"
+    terraform_type: "azurerm_role_assignment"
+    description: "RBAC role assignments for Unity Catalog"
+    deployment_modes: ["unity", "full"]
+    actions:
+      - Microsoft.Authorization/roleAssignments/read
+      - Microsoft.Authorization/roleAssignments/write
+      - Microsoft.Authorization/roleAssignments/delete
+      - Microsoft.Authorization/roleDefinitions/read
+
+# =============================================================================
+# UNITY CATALOG RBAC ROLES
+# =============================================================================
+
+unity_catalog_roles:
+  storage_blob_data_contributor:
+    name: "Storage Blob Data Contributor"
+    description: "Read/write data in blob containers"
+    scope: "Storage Account"
+    required: true
+    
+  storage_queue_data_contributor:
+    name: "Storage Queue Data Contributor"
+    description: "For file events (optional but recommended)"
+    scope: "Storage Account"
+    required: false
+    
+  storage_account_contributor:
+    name: "Storage Account Contributor"
+    description: "For automatic file event configuration"
+    scope: "Storage Account"
+    required: false
+    
+  eventgrid_eventsubscription_contributor:
+    name: "EventGrid EventSubscription Contributor"
+    description: "For automatic file event subscriptions"
+    scope: "Resource Group"
+    required: false
+
+# =============================================================================
+# DEPLOYMENT PROFILES
+# =============================================================================
+
+deployment_profiles:
+  standard:
+    description: "Databricks-managed VNet and storage (simplest deployment)"
+    what_you_create:
+      - "managed_resource_group_name only"
+    what_databricks_creates:
+      - "VNet"
+      - "Subnets"
+      - "NSG"
+      - "Storage Account (DBFS)"
+    resources:
+      - resource_group
+      - databricks_workspace
+
+  vnet:
+    description: "Customer-managed VNet (VNet injection)"
+    what_you_create:
+      - "VNet with 2 subnets (public/private)"
+      - "Subnet delegation to Microsoft.Databricks/workspaces"
+      - "NSG"
+    what_databricks_creates:
+      - "Storage Account (DBFS) in Managed RG"
+    resources:
+      - resource_group
+      - databricks_workspace
+      - virtual_network
+      - network_security_group
+
+  unity:
+    description: "With Unity Catalog metastore storage"
+    what_you_create:
+      - "ADLS Gen2 Storage Account"
+      - "Container for Unity Catalog data"
+      - "Access Connector for Azure Databricks"
+      - "Role assignments on storage"
+    resources:
+      - resource_group
+      - databricks_workspace
+      - storage_account
+      - access_connector
+      - managed_identity
+      - role_assignment
+
+  privatelink:
+    description: "Private Link with Secure Cluster Connectivity"
+    what_you_create:
+      - "VNet with subnets"
+      - "NAT Gateway with Public IP (required for SCC)"
+      - "Private Endpoints (frontend/backend)"
+      - "Private DNS Zones"
+    resources:
+      - resource_group
+      - databricks_workspace
+      - virtual_network
+      - network_security_group
+      - nat_gateway
+      - private_endpoint
+      - private_dns_zone
+
+  full:
+    description: "All features: VNet + Unity Catalog + Private Link"
+    resources:
+      - resource_group
+      - databricks_workspace
+      - virtual_network
+      - network_security_group
+      - nat_gateway
+      - private_endpoint
+      - private_dns_zone
+      - storage_account
+      - access_connector
+      - key_vault
+      - managed_identity
+      - role_assignment
+
+# =============================================================================
+# QUOTAS
+# =============================================================================
+
+quotas:
+  virtual_networks:
+    name: "Virtual Networks"
+    default_limit: 1000
+    
+  public_ip_addresses:
+    name: "Public IP Addresses"
+    default_limit: 1000
+    
+  network_security_groups:
+    name: "Network Security Groups"
+    default_limit: 5000
+    
+  network_interfaces:
+    name: "Network Interfaces"
+    default_limit: 65536
+    
+  private_endpoints:
+    name: "Private Endpoints"
+    default_limit: 65536
+
+# =============================================================================
+# MINIMUM RBAC REQUIREMENTS
+# =============================================================================
+
+minimum_rbac:
+  read_only:
+    role: "Reader"
+    scope: "Subscription"
+    use_case: "View resources and run read-only checks"
+    
+  full_testing:
+    role: "Contributor"
+    scope: "Subscription"
+    use_case: "Create temporary resources for permission testing"
+    
+  unity_catalog:
+    role: "Owner"
+    scope: "Subscription"
+    use_case: "Create role assignments for Unity Catalog"
+    note: "Or User Access Administrator + Contributor"
+

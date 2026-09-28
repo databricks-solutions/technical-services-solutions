@@ -144,7 +144,6 @@ class GCPChecker(BaseChecker):
                 "iam.serviceAccounts.getIamPolicy",
                 "iam.serviceAccounts.setIamPolicy",
                 "iam.serviceAccounts.getOpenIdToken",
-                "iam.serviceAccounts.getAccessToken",
             ],
             "deploy_blocking": [
                 "iam.serviceAccounts.create",

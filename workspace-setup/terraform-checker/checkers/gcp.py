@@ -144,6 +144,7 @@ class GCPChecker(BaseChecker):
                 "iam.serviceAccounts.getIamPolicy",
                 "iam.serviceAccounts.setIamPolicy",
                 "iam.serviceAccounts.getOpenIdToken",
+                "iam.serviceAccounts.getAccessToken",
             ],
             "deploy_blocking": [
                 "iam.serviceAccounts.create",
@@ -947,9 +948,9 @@ class GCPChecker(BaseChecker):
             else:
                 category.add_result(CheckResult(
                     name=perm,
-                    status=CheckStatus.NOT_OK if perm.endswith("getAccessToken") else CheckStatus.WARNING,
-                    message="MISSING — required for SA token minting during deploy."
-                    if perm.endswith("getAccessToken") else "Missing (needed for OIDC token flows).",
+                    status=CheckStatus.WARNING,
+                    message="Missing (needed for SA impersonation flows — only required "
+                            "when using impersonate_service_account in the Google provider).",
                     remediation="Grant via the SRA workspace_creator custom role "
                                 "or roles/iam.serviceAccountTokenCreator.",
                     doc_link=_PERMISSIONS_DOC,

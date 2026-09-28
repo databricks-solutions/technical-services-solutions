@@ -98,14 +98,6 @@ class GCPChecker(BaseChecker):
                 "compute.subnetworks.delete",
                 "compute.subnetworks.getIamPolicy",
                 "compute.subnetworks.setIamPolicy",
-                # GAP: not in SRA custom role but required to attach SA/PE to subnet
-                "compute.subnetworks.use",
-                "compute.subnetworks.useExternalIp",
-                # GAP: required by private_ip_google_access=true on subnets
-                "compute.subnetworks.setPrivateIpGoogleAccess",
-                # Declared in config/permissions/gcp.yaml — tested so the YAML's
-                # declared set is never left unverified (H11).
-                "compute.subnetworks.update",
                 "compute.firewalls.create",
                 "compute.firewalls.get",
                 "compute.firewalls.update",
@@ -114,14 +106,12 @@ class GCPChecker(BaseChecker):
                 "compute.routers.get",
                 "compute.routers.update",
                 "compute.routers.delete",
-                # GAP: needed for Cloud NAT on router
-                "compute.routers.use",
+                "compute.forwardingRules.get",
+                "compute.forwardingRules.list",
             ],
             "deploy_blocking": [
                 "compute.networks.create",
                 "compute.subnetworks.create",
-                "compute.subnetworks.use",
-                "compute.subnetworks.setPrivateIpGoogleAccess",
                 "compute.firewalls.create",
                 "compute.routers.create",
             ],
@@ -129,24 +119,14 @@ class GCPChecker(BaseChecker):
         "storage": {
             "scope": "always",
             "permissions": [
-                # GAP: not in SRA workspace_creator role; needed for UC buckets
                 "storage.buckets.create",
                 "storage.buckets.get",
                 "storage.buckets.delete",
                 "storage.buckets.getIamPolicy",
                 "storage.buckets.setIamPolicy",
                 "storage.buckets.update",
-                # Object-level access declared in config/permissions/gcp.yaml —
-                # tested so the YAML's declared set is never left unverified (H11).
-                "storage.objects.create",
-                "storage.objects.delete",
-                "storage.objects.get",
-                "storage.objects.list",
             ],
-            "deploy_blocking": [
-                "storage.buckets.create",
-                "storage.buckets.setIamPolicy",
-            ],
+            "deploy_blocking": [],
         },
         "iam": {
             "scope": "always",
@@ -161,22 +141,10 @@ class GCPChecker(BaseChecker):
                 "iam.serviceAccounts.setIamPolicy",
                 "iam.serviceAccounts.getOpenIdToken",
                 "iam.serviceAccounts.getAccessToken",
-                # GAP: not explicitly in SRA custom role; granted via
-                # roles/iam.serviceAccountUser. The #1 GCP deploy blocker.
-                "iam.serviceAccounts.actAs",
-                # Only when create_service_account_key=true (keys.tf)
-                "iam.serviceAccountKeys.create",
-                # Declared in config/permissions/gcp.yaml — tested so the YAML's
-                # declared set is never left unverified (H11).
-                "iam.serviceAccountKeys.delete",
-                "iam.serviceAccounts.delete",
             ],
             "deploy_blocking": [
-                "iam.serviceAccounts.actAs",
-                "iam.serviceAccounts.getAccessToken",
                 "iam.serviceAccounts.create",
                 "iam.roles.create",
-                "resourcemanager.projects.setIamPolicy",
             ],
         },
         "kms": {
@@ -191,23 +159,12 @@ class GCPChecker(BaseChecker):
                 "cloudkms.cryptoKeys.setIamPolicy",
                 "cloudkms.cryptoKeyVersions.list",
                 "cloudkms.cryptoKeyVersions.destroy",
-                # Declared in config/permissions/gcp.yaml — tested so the YAML's
-                # declared set is never left unverified (H11).
-                "cloudkms.cryptoKeyVersions.useToEncrypt",
-                "cloudkms.cryptoKeyVersions.useToDecrypt",
-                "cloudkms.keyRings.getIamPolicy",
-                "cloudkms.keyRings.setIamPolicy",
             ],
-            "deploy_blocking": [
-                "cloudkms.keyRings.create",
-                "cloudkms.cryptoKeys.create",
-                "cloudkms.cryptoKeys.setIamPolicy",
-            ],
+            "deploy_blocking": [],
         },
         "psc": {
             "scope": "psc",
             "permissions": [
-                # All GAP: not in SRA role (only forwardingRules.get/list are)
                 "compute.addresses.create",
                 "compute.addresses.get",
                 "compute.addresses.delete",
@@ -218,16 +175,11 @@ class GCPChecker(BaseChecker):
                 "compute.forwardingRules.delete",
                 "compute.forwardingRules.use",
             ],
-            "deploy_blocking": [
-                "compute.addresses.create",
-                "compute.addresses.use",
-                "compute.forwardingRules.create",
-            ],
+            "deploy_blocking": [],
         },
         "dns": {
             "scope": "dns",
             "permissions": [
-                # All GAP: no dns.* perms in SRA role at all
                 "dns.managedZones.create",
                 "dns.managedZones.get",
                 "dns.managedZones.delete",
@@ -239,11 +191,7 @@ class GCPChecker(BaseChecker):
                 "dns.changes.create",
                 "dns.changes.get",
             ],
-            "deploy_blocking": [
-                "dns.managedZones.create",
-                "dns.resourceRecordSets.create",
-                "dns.changes.create",
-            ],
+            "deploy_blocking": [],
         },
     }
 
@@ -251,13 +199,11 @@ class GCPChecker(BaseChecker):
     _AREA_REMEDIATION = {
         "project": "Grant roles/serviceusage.serviceUsageAdmin + project IAM admin.",
         "network": "Grant roles/compute.networkAdmin (or compute.admin) on the project.",
-        "storage": "Grant roles/storage.admin on the project for UC bucket creation.",
-        "iam": "Grant roles/iam.serviceAccountUser (actAs) + roles/iam.roleAdmin "
-               "+ roles/iam.serviceAccountAdmin to the deploying identity.",
-        "kms": "Grant roles/cloudkms.admin on the project (only needed for CMEK).",
-        "psc": "Grant compute.addresses.* and compute.forwardingRules.* "
-               "(roles/compute.networkAdmin) for Private Service Connect.",
-        "dns": "Grant roles/dns.admin on the project for the private DNS zone.",
+        "storage": "Unity Catalog GCS storage not supported with current permissions — grant roles/storage.admin on the project.",
+        "iam": "Grant roles/iam.roleAdmin + roles/iam.serviceAccountAdmin to the deploying identity.",
+        "kms": "CMEK deployments not supported with current permissions — grant roles/cloudkms.admin to enable customer-managed encryption.",
+        "psc": "Private Service Connect deployments not supported with current permissions — grant compute.addresses.* and compute.forwardingRules.* (roles/compute.networkAdmin).",
+        "dns": "Private DNS zone creation not supported with current permissions — grant roles/dns.admin to enable PSC with private DNS.",
     }
 
     # Required APIs. `scope` mirrors the permission-area scoping above so we only

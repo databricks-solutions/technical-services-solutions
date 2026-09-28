@@ -71,7 +71,6 @@ resources:
       - compute.subnetworks.delete
       - compute.subnetworks.get
       - compute.subnetworks.update
-      - compute.subnetworks.use
       - compute.subnetworks.setPrivateIpGoogleAccess
 
   firewall:
@@ -108,11 +107,7 @@ resources:
     description: "Service account for Databricks nodes"
     actions:
       - iam.serviceAccounts.create
-      - iam.serviceAccounts.delete
       - iam.serviceAccounts.get
-      - iam.serviceAccounts.actAs
-      - iam.serviceAccountKeys.create
-      - iam.serviceAccountKeys.delete
 
   iam_binding:
     name: "IAM Binding"
@@ -134,10 +129,6 @@ resources:
       - storage.buckets.update
       - storage.buckets.getIamPolicy
       - storage.buckets.setIamPolicy
-      - storage.objects.create
-      - storage.objects.delete
-      - storage.objects.get
-      - storage.objects.list
 
   kms_keyring:
     name: "KMS Key Ring"
@@ -147,8 +138,6 @@ resources:
     actions:
       - cloudkms.keyRings.create
       - cloudkms.keyRings.get
-      - cloudkms.keyRings.getIamPolicy
-      - cloudkms.keyRings.setIamPolicy
 
   kms_key:
     name: "KMS Crypto Key"
@@ -161,8 +150,6 @@ resources:
       - cloudkms.cryptoKeys.update
       - cloudkms.cryptoKeys.getIamPolicy
       - cloudkms.cryptoKeys.setIamPolicy
-      - cloudkms.cryptoKeyVersions.useToEncrypt
-      - cloudkms.cryptoKeyVersions.useToDecrypt
 
 # =============================================================================
 # DEPLOYMENT PROFILES

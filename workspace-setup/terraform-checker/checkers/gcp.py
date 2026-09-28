@@ -179,7 +179,11 @@ class GCPChecker(BaseChecker):
                 "compute.forwardingRules.delete",
                 "compute.forwardingRules.use",
             ],
-            "deploy_blocking": [],
+            "deploy_blocking": [
+                "compute.addresses.create",
+                "compute.addresses.use",
+                "compute.forwardingRules.create",
+            ],
         },
         "dns": {
             "scope": "dns",

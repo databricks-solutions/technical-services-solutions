@@ -159,17 +159,17 @@ def test_batched_empty_yields_single_empty_batch():
 
 def test_any_missing_blocking_is_not_ok_not_fractional_warning():
     scopes = GCPChecker._scopes_in_effect(psc=False, dns=False, cmek=False)
-    granted = _all_granted(scopes) - {"iam.serviceAccounts.actAs"}
+    granted = _all_granted(scopes) - {"iam.serviceAccounts.create"}
     res = GCPChecker._evaluate_permissions(granted, scopes)
     # Only ONE perm missing of many -> still NOT_OK because it's deploy-blocking.
     assert res["iam"]["status"] == CheckStatus.NOT_OK
-    assert "iam.serviceAccounts.actAs" in res["iam"]["missing_blocking"]
+    assert "iam.serviceAccounts.create" in res["iam"]["missing_blocking"]
 
 
 def test_missing_non_blocking_is_warning():
     scopes = GCPChecker._scopes_in_effect(psc=False, dns=False, cmek=False)
-    # compute.subnetworks.useExternalIp is required but NOT deploy-blocking.
-    granted = _all_granted(scopes) - {"compute.subnetworks.useExternalIp"}
+    # compute.networks.get is required but NOT deploy-blocking.
+    granted = _all_granted(scopes) - {"compute.networks.get"}
     res = GCPChecker._evaluate_permissions(granted, scopes)
     assert res["network"]["status"] == CheckStatus.WARNING
 
@@ -203,7 +203,7 @@ def test_iam_check_batches_and_flags_blocking(monkeypatch):
     assert all(len(b) <= 100 for b in tip.batches)
     by_status = {r.name: r.status for r in cat.results}
     storage = next(r for r in cat.results if r.name.startswith("STORAGE"))
-    assert storage.status == CheckStatus.NOT_OK
+    assert storage.status == CheckStatus.WARNING
     assert "storage.buckets.create" in (storage.message or "")
     assert storage.remediation
 

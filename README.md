@@ -8,13 +8,12 @@ The repository is organized into the following categories:
 
 Here is the repo structure:
 
-- [**Core Platform**](core-platform)
-- [**Data Engineering**](data-engineering)
-- [**Data Governance**](data-governance)
-- [**Data Warehousing**](data-warehousing)
-- [**ML & GenAI**](genai-ml)
+- [**AIBI Migration**](aibi-migration)
+- [**DW Migration**](dw-migration)
+- [**Genie**](genie)
+- [**Production Readiness**](production-readiness)
+- [**Unified Governance**](unified-governance)
 - [**Launch Accelerator**](launch-accelerator)
-- [**Workspace Setup**](workspace-setup)
 
 Each project within these categories should follow a consistent naming convention and include its own README with specific installation and usage instructions.
 

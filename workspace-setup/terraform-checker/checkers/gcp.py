@@ -231,8 +231,8 @@ class GCPChecker(BaseChecker):
          "description": "UC metastore + external GCS buckets"},
         {"api": "container.googleapis.com", "scope": "always",
          "description": "GKE — Databricks classic data plane"},
-        {"api": "deploymentmanager.googleapis.com", "scope": "always",
-         "description": "Databricks provisions workspace project resources via Deployment Manager"},
+        {"api": "servicenetworking.googleapis.com", "scope": "psc",
+         "description": "Service networking for PSC endpoint peering (only when use_psc=true)"},
         {"api": "cloudkms.googleapis.com", "scope": "kms",
          "description": "CMEK keyrings/keys (only when use_cmek=true)"},
         {"api": "dns.googleapis.com", "scope": "dns",
@@ -1170,6 +1170,37 @@ class GCPChecker(BaseChecker):
                     message=f"Could not check: {self._error_reason(e)}",
                     assumed=True,
                 ))
+
+            if self.check_psc:
+                try:
+                    psc_quotas = [
+                        ("INTERNAL_FORWARDING_RULES_PER_NETWORK", "PSC Forwarding Rules"),
+                        ("INTERNAL_ADDRESSES", "Internal IP Addresses"),
+                    ]
+                    region_info = compute.regions().get(
+                        project=self.project_id,
+                        region=self.region or "us-central1"
+                    ).execute()
+                    quotas_by_metric = {q["metric"]: q for q in region_info.get("quotas", [])}
+                    for metric, label in psc_quotas:
+                        q = quotas_by_metric.get(metric)
+                        if q:
+                            usage = q.get("usage", 0)
+                            limit = q.get("limit", 0)
+                            pct = (usage / limit * 100) if limit > 0 else 0
+                            status = CheckStatus.NOT_OK if pct >= 90 else (CheckStatus.WARNING if pct >= 75 else CheckStatus.OK)
+                            category.add_result(CheckResult(
+                                name=f"  {label} (PSC)",
+                                status=status,
+                                message=f"{usage}/{limit} used",
+                            ))
+                except Exception as e:
+                    category.add_result(CheckResult(
+                        name="PSC Quotas",
+                        status=CheckStatus.WARNING,
+                        message=f"Could not check PSC quotas: {self._error_reason(e)}",
+                        assumed=True,
+                    ))
 
         except Exception as e:
             category.add_result(CheckResult(

@@ -32,9 +32,6 @@ required_apis:
   - api: container.googleapis.com
     description: "GKE — Databricks classic data plane runs on GKE in the customer project"
 
-  - api: deploymentmanager.googleapis.com
-    description: "Databricks provisions workspace project resources via Deployment Manager"
-
   - api: cloudkms.googleapis.com
     description: "Cloud KMS API for CMEK keyrings/keys (only when use_cmek=true)"
 
@@ -45,7 +42,7 @@ required_apis:
     description: "Cloud Logging API for audit logs"
 
   - api: servicenetworking.googleapis.com
-    description: "Service Networking API for Private Google Access"
+    description: "Service Networking API for PSC endpoint peering (only when use_psc=true)"
 
 # =============================================================================
 # TERRAFORM RESOURCE PERMISSIONS
@@ -257,13 +254,17 @@ minimum_iam:
       - roles/compute.admin
       - roles/storage.admin
       - roles/iam.serviceAccountAdmin
+      - roles/iam.roleAdmin
+      - roles/resourcemanager.projectIamAdmin
     use_case: "Create temporary resources for permission testing"
-    
+
   unity_catalog:
     roles:
       - roles/compute.admin
       - roles/storage.admin
       - roles/iam.serviceAccountAdmin
+      - roles/iam.roleAdmin
+      - roles/resourcemanager.projectIamAdmin
       - roles/cloudkms.admin
     use_case: "Full deployment with Unity Catalog and CMEK"
 

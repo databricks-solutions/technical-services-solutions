@@ -98,6 +98,9 @@ class GCPChecker(BaseChecker):
                 "compute.subnetworks.delete",
                 "compute.subnetworks.getIamPolicy",
                 "compute.subnetworks.setIamPolicy",
+                # Not in SRA custom role but required by private_ip_google_access=true on subnets
+                "compute.subnetworks.setPrivateIpGoogleAccess",
+                "compute.subnetworks.update",
                 "compute.firewalls.create",
                 "compute.firewalls.get",
                 "compute.firewalls.update",
@@ -112,6 +115,7 @@ class GCPChecker(BaseChecker):
             "deploy_blocking": [
                 "compute.networks.create",
                 "compute.subnetworks.create",
+                "compute.subnetworks.setPrivateIpGoogleAccess",
                 "compute.firewalls.create",
                 "compute.routers.create",
             ],

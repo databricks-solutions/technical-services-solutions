@@ -1,0 +1,7 @@
+# Shell scripts must use LF endings — CRLF (introduced by a Windows checkout or
+# editor) makes bash fail with cryptic "\r: command not found" errors on
+# macOS/Linux. Force LF regardless of the committer's platform.
+*.sh text eol=lf
+
+# PowerShell scripts are Windows-facing; CRLF is the safe default there.
+*.ps1 text eol=crlf

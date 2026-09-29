@@ -8,6 +8,17 @@ migration agent), and estimates the automation uplift from applying
 
 It **does not convert anything** — no datasets, no widgets, no dashboards are created.
 
+## User journey
+
+1. Install the `tableau-migration-assessment` folder (see
+   [Adding the skill in Genie Code](#adding-the-skill-in-genie-code)).
+2. Open a new dashboard page.
+3. In Genie Code: *"assess the Tableau workbook with my tableau-migration-assessment
+   skill"* (attach the file, or point to the volume).
+4. Review the result in the chat.
+5. (optional) Switch to the user folder and *"save results in MD and HTML format in
+   my user folder"*.
+
 ## Supported file types
 
 | Type | What it is | Profiled as |

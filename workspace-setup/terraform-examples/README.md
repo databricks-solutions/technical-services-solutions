@@ -72,6 +72,8 @@ This naming helps you quickly identify the right scenario for your needs.
 | [aws-byovpc](./aws/aws-byovpc/) | **(Deprecated — use [aws-byovpc-uc](./aws/aws-byovpc-uc/))** Legacy "Bring Your Own VPC" (BYOVPC) deployment with Unity Catalog Metastore. Kept temporarily for existing users; no longer the recommended path. |
 | [aws-byovpc-uc](./aws/aws-byovpc-uc/) | **(Recommended)** Deploy a Databricks workspace using "Bring Your Own VPC" (BYOVPC) with Unity Catalog. Create a new VPC or reuse an existing one, with full control over network infrastructure, plus an optional user-defined catalog (dedicated S3, storage credential, external location) and an optional UC-compatible single-node cluster. |
 | [aws-byovpc-classic-privatelink](./aws/aws-byovpc-classic-privatelink/) | Deploy a Databricks workspace with classic Private Link (REST API and SCC relay). Choose **standard** (template creates VPC with NAT/IGW and S3/STS/Kinesis endpoints), **fully_private** (no NAT/IGW, dedicated endpoint subnet), or **custom** (you supply VPC, subnets, security groups, and backend VPC endpoint IDs; no AWS networking created). Optional Unity Catalog metastore creation or attachment. |
+| [aws-serverless-uc](./aws/aws-serverless-uc/) | Deploy a serverless Databricks workspace without customer-managed networking or NCC, with a new or existing Unity Catalog metastore and an optional dedicated S3-backed catalog. |
+| [aws-serverless-ncc](./aws/aws-serverless-ncc/) | Deploy or reuse a serverless Databricks workspace with NCC private connectivity to an existing S3 bucket and a Unity Catalog external location. |
 
 ### Azure
 | Scenario | Description |
@@ -172,4 +174,3 @@ See the [LICENSE.md](../../LICENSE.md) file in the root of this repository.
 ---
 
 **Note**: These examples are provided as starting points. Always review and customize them according to your organization's security policies, compliance requirements, and operational standards before deploying to production environments.
-

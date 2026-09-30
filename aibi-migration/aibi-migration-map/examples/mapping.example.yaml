@@ -1,0 +1,461 @@
+# Example curated mapping — FULLY SYNTHETIC (fictional 'Acme Retail', invented artifact names).
+# This is the polished END STATE: render.py turns it into example_report.html.
+# Produce your own starter with parse_twbx.py / parse_pbit.py (or route.py), then curate to look like this.
+
+meta:
+  title: Acme Retail — Tableau → Databricks Migration Map
+  account: Acme Retail
+  source_tool: Tableau
+  subtitle: Every workbook in the retail analytics estate mapped to the Databricks asset that
+    replaces it, the mirror back, and the semantic layer underneath. (Fully synthetic example —
+    fictional account, invented workbook and table names.)
+  assumptions:
+  - label: Assumption 1
+    text: All reports assumed in use — nothing retired for low usage. Duplicates still fold in.
+  - label: Assumption 2
+    text: All data assumed movable to Databricks — external/opaque sources are targets, not blockers.
+      Routing is purpose-only.
+  why: <b>Why this layer is load-bearing.</b> Metric logic today is copy-pasted across the estate and
+    drifting — <code>Gross Margin</code> alone is defined 4 different ways across 8 workbooks, and
+    <code>Net Revenue</code> 3. Two people asking "what was margin last quarter?" get different answers.
+    Each Metric View below is the one place a definition lives, so a dashboard, a Genie space, and an
+    App all return the same number. <b>YoY and the 4-5-4 fiscal calendar are defined once here</b>
+    instead of re-derived in dozens of workbooks.
+  source_note: Fully synthetic example bundled with the aibi-migration-map skill — fictional account,
+    invented artifact names. Produce your own with parse_twbx.py / parse_pbit.py, then curate.
+groups:
+  A: Sales & Revenue
+  B: Inventory & Supply Chain
+  C: Customer & Loyalty
+  D: Marketing & Campaigns
+  E: Store Operations
+  F: Finance & Margin
+  G: Misc / One-offs
+metric_views:
+  MV-SALES:
+    title: MV_Sales
+    load_bearing: true
+    core_source: retail.sales_fct
+    purpose: Net revenue, units and basket economics off the estate's most-shared fact table
+      (sales_fct, 8 workbooks touch it). Defines what 'net revenue', 'comparable sales' and
+      'average order value' mean once, for every channel.
+    grain: store · channel · category · SKU · fiscal week
+    metrics:
+    - Net revenue $
+    - Units sold
+    - Average order value (AOV)
+    - Comparable (comp) sales %
+    - Basket size
+    - Return rate %
+    time_dimension: WoW · YoY · YTD · QTD as reusable time dimensions (shared with Margin).
+    drift:
+    - - Net Revenue
+      - 6 wb / 3 formulas — gross-vs-net and returns handling differ across workbooks
+    - - Comp Sales
+      - 4 wb / 3 formulas — comparable-store window (52 wk vs same-store-13-mo) defined inconsistently
+    shared:
+    - 4-5-4 fiscal retail calendar date derivation (5 wb)
+    - Region → District rollup CASE (4 wb)
+    owner: Sales Analytics lead.
+  MV-INV:
+    title: MV_Inventory
+    load_bearing: true
+    core_source: retail.inventory_fct
+    purpose: On-hand, sell-through and supply health off inventory_fct (7 wb). Backs the Inventory
+      dashboard, the stock-out Alert group, AND the Assortment Planner App — so 'weeks of supply'
+      means the same thing in a report, an alert threshold, and a planning tool.
+    grain: store · SKU · day (on-hand snapshot)
+    metrics:
+    - On-hand units
+    - Sell-through %
+    - Weeks of supply
+    - Days of inventory
+    - Stock-out rate %
+    - Inventory value $
+    time_dimension: Daily snapshot + WoW.
+    drift:
+    - - Weeks of Supply
+      - 5 wb / 3 formulas — demand denominator (trailing 4-wk vs 8-wk sell rate) drifted
+    - - Sell-through
+      - 4 wb / 2 formulas — receipts-based vs on-hand-based denominator
+    shared:
+    - Store × SKU on-hand snapshot join (every Group B workbook)
+    owner: Supply Chain / Merch Planning lead.
+  MV-CUST:
+    title: MV_Customer
+    load_bearing: true
+    core_source: retail.customer_dim + orders_fct
+    purpose: Active customers, retention and lifetime value. Backs the Customer & Loyalty dashboard
+      and the Customer Q&A Genie space — the one place 'active customer' and 'retention' are defined.
+    grain: customer · household · channel · fiscal month
+    metrics:
+    - Active customers
+    - Retention rate %
+    - Churn rate %
+    - Customer lifetime value (LTV)
+    - Repeat purchase rate
+    - Loyalty enrollment %
+    time_dimension: Monthly cohorts + YoY.
+    drift:
+    - - Active Customer
+      - 5 wb / 4 formulas — 'active' window (30 / 90 / 365-day) inconsistent across workbooks
+    - - Customer LTV
+      - 3 wb / 2 formulas — margin-based vs revenue-based LTV
+    shared:
+    - Customer → household resolution (3 wb)
+    owner: CRM / Loyalty lead.
+  MV-MKTG:
+    title: MV_Marketing
+    load_bearing: false
+    core_source: retail.campaign_fct
+    purpose: Campaign spend, ROAS and attributed revenue (campaign_fct, 5 wb). Backs the single
+      Marketing Performance dashboard; small footprint but heavy attribution drift.
+    grain: campaign · channel · audience · fiscal week
+    metrics:
+    - Campaign spend $
+    - Return on ad spend (ROAS)
+    - Conversion rate %
+    - Attributed revenue $
+    - Cost per acquisition (CPA)
+    - Incremental lift %
+    time_dimension: Campaign-to-date + WoW.
+    drift:
+    - - Attributed Revenue
+      - 4 wb / 3 formulas — attribution model differs (last-touch vs 7-day vs data-driven)
+    shared:
+    - Channel taxonomy mapping (3 wb)
+    - 2024 media-spend Excel files (land to UC)
+    owner: Marketing Analytics lead.
+  MV-MARGIN:
+    title: MV_Margin
+    load_bearing: true
+    core_source: retail.sales_fct + cost_dim
+    purpose: The single definition of gross margin, COGS and markdown. Backs the Margin dashboard,
+      the Finance Q&A Genie space, AND the Pricing & Promo Planner App. Highest-stakes MV —
+      leadership reads margin daily, so a drifting definition here is the most exposed.
+    grain: category · brand · channel · fiscal week / month
+    metrics:
+    - Gross margin $
+    - Gross margin %
+    - COGS $
+    - Markdown $
+    - Vendor funding $
+    - Net margin %
+    time_dimension: YoY · YTD · MTD; margin-bridge periods (shares the Sales time dims).
+    drift:
+    - - Gross Margin
+      - 8 wb / 4 formulas — the worst offender; COGS inclusion (freight, vendor funding, markdown)
+        differs; needs a finance ruling
+    - - Markdown
+      - 4 wb / 3 formulas — permanent vs promotional markdown mixed together
+    shared:
+    - Landed-cost dimension join (unit cost + freight)
+    - 4-5-4 fiscal calendar (shares the Sales time dims)
+    owner: Merch Finance lead — must adjudicate Gross Margin before Phase 2.
+  MV-OPS:
+    title: MV_StoreOps
+    load_bearing: true
+    core_source: retail.store_ops_fct
+    purpose: Store traffic, labor productivity and exception state (store_ops_fct, 6 wb). Backs both
+      the Store Operations dashboard and the Ops Alert group — the same 'exception' definition
+      triggers an alert and shows on a dashboard.
+    grain: store · day · hour
+    metrics:
+    - Store traffic
+    - Conversion rate %
+    - Labor hours
+    - Sales per labor hour
+    - Shrink %
+    - Exception counts
+    time_dimension: Daily + hourly.
+    drift:
+    - - Conversion Rate
+      - 3 wb / 2 formulas — traffic denominator (door counter vs transactions) differs
+    - - error / status monitoring
+      - 4 wb — exception thresholds defined ad-hoc; standardize as alert conditions
+    shared:
+    - Store × day traffic + labor join
+    owner: Store Operations lead.
+  MV-MISC:
+    title: (triage per report)
+    load_bearing: false
+    core_source: mixed
+    purpose: Group G leftovers that don't share a fact table. NOT a Metric View — listed for
+      completeness. Each is triaged individually; the cross-domain Executive Scorecard may reuse
+      several of the MVs above rather than spawn its own.
+    grain: varies per report
+    metrics:
+    - (report-specific)
+    time_dimension: varies
+    drift: []
+    shared:
+    - No conformed fact — reverse-engineer sources individually
+    owner: Assign per report at triage.
+assets:
+  DASH-SALES:
+    name: Sales & Revenue
+    kind: dashboard
+    metric_view: MV-SALES
+  DASH-INV:
+    name: Inventory Health
+    kind: dashboard
+    metric_view: MV-INV
+  DASH-CUST:
+    name: Customer & Loyalty
+    kind: dashboard
+    metric_view: MV-CUST
+  DASH-MKTG:
+    name: Marketing Performance
+    kind: dashboard
+    metric_view: MV-MKTG
+  DASH-MARGIN:
+    name: Margin & Profitability
+    kind: dashboard
+    metric_view: MV-MARGIN
+  DASH-STORE:
+    name: Store Operations
+    kind: dashboard
+    metric_view: MV-OPS
+  DASH-MISC:
+    name: Cross-Domain & Misc Reporting
+    kind: dashboard
+    metric_view: MV-MISC
+  GENIE-SALES:
+    name: Sales Ad-Hoc Q&A
+    kind: genie
+    metric_view: MV-SALES
+  GENIE-CUST:
+    name: Customer Q&A
+    kind: genie
+    metric_view: MV-CUST
+  GENIE-FIN:
+    name: Finance & Margin Q&A
+    kind: genie
+    metric_view: MV-MARGIN
+  ALERT-INV:
+    name: Stock-out & Low-Stock Alerts
+    kind: alert
+    metric_view: MV-INV
+  ALERT-OPS:
+    name: Store Ops Exception Alerts
+    kind: alert
+    metric_view: MV-OPS
+  APP-ASSORT:
+    name: Assortment Planning Tool
+    kind: app
+    metric_view: MV-INV
+  APP-PRICING:
+    name: Pricing & Promo Planner
+    kind: app
+    metric_view: MV-MARGIN
+workbooks:
+- name: RevenueYoYTrend
+  group: A
+  worksheets: 34
+  source: redshift
+  target: DASH-SALES
+- name: WeeklySalesByRegion
+  group: A
+  worksheets: 28
+  source: redshift
+  target: DASH-SALES
+- name: SalesByCategoryAndBrand
+  group: A
+  worksheets: 22
+  source: snowflake
+  target: DASH-SALES
+- name: OnlineVsInStoreSales
+  group: A
+  worksheets: 18
+  source: snowflake
+  target: DASH-SALES
+- name: RevenueYoYTrend_V2
+  group: A
+  worksheets: 34
+  source: redshift
+  target: RETIRE
+  survivor: DASH-SALES
+- name: SalesFlashDaily
+  group: A
+  worksheets: 12
+  source: redshift
+  target: GENIE-SALES
+- name: StoreSalesRanking
+  group: A
+  worksheets: 9
+  source: redshift
+  target: GENIE-SALES
+- name: DailySalesLedger
+  group: A
+  worksheets: 6
+  source: redshift
+  target: GENIE-SALES
+- name: InventoryOnHandByStore
+  group: B
+  worksheets: 24
+  source: snowflake
+  target: DASH-INV
+- name: SellThroughAndWeeksOfSupply
+  group: B
+  worksheets: 20
+  source: snowflake
+  target: DASH-INV
+- name: SellThroughAndWeeksOfSupply_test
+  group: B
+  worksheets: 20
+  source: snowflake
+  target: RETIRE
+  survivor: DASH-INV
+- name: InventoryAgingReport
+  group: B
+  worksheets: 11
+  source: snowflake
+  target: DASH-INV
+- name: AssortmentPlanningTool
+  group: B
+  worksheets: 62
+  source: snowflake+file
+  target: APP-ASSORT
+- name: OutOfStockMonitor
+  group: B
+  worksheets: 5
+  source: snowflake
+  target: ALERT-INV
+- name: LowStockAlertReport
+  group: B
+  worksheets: 4
+  source: snowflake
+  target: ALERT-INV
+- name: CustomerRetentionCohorts
+  group: C
+  worksheets: 26
+  source: bigquery
+  target: DASH-CUST
+- name: LoyaltyProgramOverview
+  group: C
+  worksheets: 19
+  source: bigquery
+  target: DASH-CUST
+- name: LoyaltyProgramOverview_2024Q4
+  group: C
+  worksheets: 19
+  source: bigquery
+  target: RETIRE
+  survivor: DASH-CUST
+- name: ChurnRiskSegments
+  group: C
+  worksheets: 14
+  source: bigquery
+  target: DASH-CUST
+- name: ActiveCustomersByChannel
+  group: C
+  worksheets: 8
+  source: bigquery
+  target: GENIE-CUST
+- name: CustomerLookupTable
+  group: C
+  worksheets: 3
+  source: bigquery
+  target: GENIE-CUST
+- name: CampaignPerformanceWeekly
+  group: D
+  worksheets: 30
+  source: bigquery+file
+  target: DASH-MKTG
+- name: PaidMediaROAS
+  group: D
+  worksheets: 22
+  source: bigquery
+  target: DASH-MKTG
+- name: CampaignPerformanceWeekly_copy
+  group: D
+  worksheets: 30
+  source: bigquery
+  target: RETIRE
+  survivor: DASH-MKTG
+- name: EmailAndPushEngagement
+  group: D
+  worksheets: 16
+  source: bigquery
+  target: DASH-MKTG
+- name: PromoLiftAnalysis
+  group: D
+  worksheets: 13
+  source: snowflake
+  target: DASH-MKTG
+- name: StoreTrafficAndConversion
+  group: E
+  worksheets: 21
+  source: redshift
+  target: DASH-STORE
+- name: LaborHoursVsSales
+  group: E
+  worksheets: 15
+  source: redshift
+  target: DASH-STORE
+- name: ShrinkAndLossPrevention
+  group: E
+  worksheets: 12
+  source: redshift
+  target: DASH-STORE
+- name: DataQualityHealthCheck
+  group: E
+  worksheets: 6
+  source: redshift
+  target: ALERT-OPS
+- name: PaymentReconciliationExceptions
+  group: E
+  worksheets: 5
+  source: redshift
+  target: ALERT-OPS
+- name: POSSyncErrorMonitor
+  group: E
+  worksheets: 4
+  source: redshift
+  target: ALERT-OPS
+- name: GrossMarginByCategory
+  group: F
+  worksheets: 29
+  source: snowflake
+  target: DASH-MARGIN
+- name: PandLByBusinessUnit
+  group: F
+  worksheets: 25
+  source: snowflake
+  target: DASH-MARGIN
+- name: MarginBridgeYoY
+  group: F
+  worksheets: 17
+  source: snowflake
+  target: DASH-MARGIN
+- name: GrossMarginByCategory_OLD
+  group: F
+  worksheets: 29
+  source: snowflake
+  target: RETIRE
+  survivor: DASH-MARGIN
+- name: MarkdownAndPriceOptimization
+  group: F
+  worksheets: 58
+  source: snowflake+file
+  target: APP-PRICING
+- name: VendorFundingAndRebates
+  group: F
+  worksheets: 10
+  source: snowflake
+  target: GENIE-FIN
+- name: ExecutiveScorecard
+  group: G
+  worksheets: 20
+  source: mixed
+  target: DASH-MISC
+- name: AdHocRegionalDeepDive
+  group: G
+  worksheets: 14
+  source: mixed
+  target: DASH-MISC
+- name: SustainabilityAndPackaging
+  group: G
+  worksheets: 8
+  source: file
+  target: DASH-MISC

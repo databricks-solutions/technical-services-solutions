@@ -4,4 +4,7 @@ Solutions and accelerators for migrating business intelligence and analytics wor
 
 ## Projects
 
-New work in this track lands here.
+- **[aibi-migration-map](./aibi-migration-map/)** — Turn a raw Tableau or Power BI estate into a
+  single self-contained HTML migration map: every workbook routed to the Databricks AI/BI asset that
+  replaces it (Lakeview dashboard / Genie space / App / SQL Alert), the mirror view, and a Metric
+  View blueprint for the shared semantic layer.

@@ -53,3 +53,21 @@ governed by their respective licenses as resolved at install time.
 - **Apache License 2.0** — https://www.apache.org/licenses/LICENSE-2.0
 - **MIT License** — https://opensource.org/license/mit
 - **BSD 3-Clause License** — https://opensource.org/license/bsd-3-clause
+
+---
+
+## aibi-migration/aibi-migration-map
+
+Direct runtime dependencies (declared in
+[`requirements.txt`](./aibi-migration/aibi-migration-map/requirements.txt)):
+
+| Dependency | Purpose | License |
+|------------|---------|---------|
+| [PyYAML](https://github.com/yaml/pyyaml) | Read/write the `mapping.yaml` migration model | MIT |
+
+Parsing otherwise uses only the Python standard library (`zipfile`, `xml.etree`,
+`csv`, `json`) — no other third-party dependencies.
+
+### License texts
+
+- **MIT License** — https://opensource.org/license/mit

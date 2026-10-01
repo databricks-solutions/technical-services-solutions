@@ -13,7 +13,22 @@ It answers the two questions every BI migration starts with:
 The output is a **target design**, not a sizing estimate — it deliberately does not score migration
 complexity, effort, or compatibility.
 
-## Quick start
+## User journey (in Databricks)
+
+- **Install the skill.** Add a Git folder for `technical-services-solutions` under
+  `/Workspace/Users/<your-email>/.assistant/`, enable **Sparse Checkout**, and set the cone pattern
+  to `aibi-migration/aibi-migration-map` (pulls just this skill). See
+  [Installing a skill](https://docs.databricks.com/aws/en/genie-code/skills).
+- **Upload your estate.** Put your `.twbx`/`.tdsx` (Tableau) or `.pbit`/`.pbix` (Power BI) files in a
+  Unity Catalog **Volume**.
+- **Open Genie Code** anywhere in the workspace (new session).
+- **Ask for the map:** *"Build a migration map for my `<Tableau | Power BI>` reports — files are in
+  `<volume-path>`."* Add *"walk me through it interactively"* to review the grouping + routing before
+  it renders.
+- **Use the output.** The skill writes `mapping.yaml` + a self-contained `report.html`. Hand
+  `report.html` to Genie Code as a conversion guide during `/importBI`.
+
+## Quick start (local CLI)
 
 ```bash
 pip install pyyaml

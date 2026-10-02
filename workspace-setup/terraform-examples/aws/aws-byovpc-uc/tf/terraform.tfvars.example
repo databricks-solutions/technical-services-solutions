@@ -73,6 +73,7 @@ metastore_name = "my-unity-catalog-metastore"
 # Unity Catalog Storage Configuration
 # =============================================================================
 
+# Required only when new_catalog = true; omit when the catalog bundle is disabled.
 # AWS account ID where Unity Catalog IAM role and S3 bucket will be created
 aws_account_id = "your-aws-account-id"
 

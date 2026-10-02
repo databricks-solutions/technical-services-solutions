@@ -71,7 +71,22 @@ This naming helps you quickly identify the right scenario for your needs.
 |----------|-------------|
 | [aws-byovpc](./aws/aws-byovpc/) | **(Deprecated — use [aws-byovpc-uc](./aws/aws-byovpc-uc/))** Legacy "Bring Your Own VPC" (BYOVPC) deployment with Unity Catalog Metastore. Kept temporarily for existing users; no longer the recommended path. |
 | [aws-byovpc-uc](./aws/aws-byovpc-uc/) | **(Recommended)** Deploy a Databricks workspace using "Bring Your Own VPC" (BYOVPC) with Unity Catalog. Create a new VPC or reuse an existing one, with full control over network infrastructure, plus an optional user-defined catalog (dedicated S3, storage credential, external location) and an optional UC-compatible single-node cluster. |
-| [aws-byovpc-classic-privatelink](./aws/aws-byovpc-classic-privatelink/) | Deploy a Databricks workspace with classic Private Link (REST API and SCC relay). Choose **standard** (template creates VPC with NAT/IGW and S3/STS/Kinesis endpoints), **fully_private** (no NAT/IGW, dedicated endpoint subnet), or **custom** (you supply VPC, subnets, security groups, and backend VPC endpoint IDs; no AWS networking created). Optional Unity Catalog metastore creation or attachment. |
+| [aws-byovpc-classic-privatelink](./aws/aws-byovpc-classic-privatelink/) | Deploy a Databricks workspace with classic Private Link (REST API and SCC relay). Choose **standard**, **fully_private**, or **custom** networking. Includes metastore creation/attachment and an optional user-defined catalog bundle (S3, IAM, credential, external location), disabled by default. |
+
+#### Optional Catalog Bundles
+
+In the AWS templates, `new_catalog` controls the entire catalog/storage bundle,
+independently of the metastore. It defaults to `true` in `aws-byovpc-uc` and `false`
+in `aws-byovpc-classic-privatelink`. The optional test cluster in `aws-byovpc-uc`
+is controlled separately by `new_cluster`.
+
+When disabled, omit the bundle-specific inputs. Enabling requires a 12-digit
+`aws_account_id`. Both templates expose nullable catalog, storage-credential,
+external-location name, and external-location URL outputs.
+
+**Changing an existing bundle to `false` plans its destruction, not detachment from
+Terraform.** Review the plan carefully before applying; the catalog, external
+location, and bucket retain `force_destroy = true`.
 
 ### Azure
 | Scenario | Description |

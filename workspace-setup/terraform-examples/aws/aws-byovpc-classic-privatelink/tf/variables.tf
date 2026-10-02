@@ -176,6 +176,40 @@ variable "metastore_name" {
 }
 
 # =============================================================================
+# Optional Catalog Bundle
+# =============================================================================
+
+variable "new_catalog" {
+  description = "Create a catalog with a dedicated S3 bucket, IAM role/policy, storage credential, and external location. Does not control the metastore."
+  type        = bool
+  default     = false
+}
+
+variable "aws_account_id" {
+  description = "AWS account ID where UC resources are deployed. Required only when new_catalog is true."
+  type        = string
+  default     = ""
+}
+
+variable "catalog_name" {
+  description = "Catalog name. Empty uses {prefix}-catalog; only used when new_catalog is true."
+  type        = string
+  default     = ""
+}
+
+variable "external_location_name" {
+  description = "External location name. Empty uses {resource_prefix}-external-location; only used when new_catalog is true."
+  type        = string
+  default     = ""
+}
+
+variable "storage_credential_name" {
+  description = "Storage credential name. Empty uses {resource_prefix}-storage-credential; only used when new_catalog is true."
+  type        = string
+  default     = ""
+}
+
+# =============================================================================
 # Private Link Configuration
 # =============================================================================
 

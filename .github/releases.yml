@@ -1,0 +1,124 @@
+# Assets released by .github/workflows/release-assets.yml.
+# On every push to main, each entry whose folder changed since its latest
+# <slug>-vN tag gets a new <slug>-v(N+1) release (entries with no tag get v1).
+# dabs-migrator is intentionally absent: it has its own release.yml.
+
+- slug: customer-360-lakehouse-genie
+  name: "Customer 360 Lakehouse Genie"
+  kind: "Declarative Automation Bundle"
+  path: "core-platform/cicd/customer-360-lakehouse-genie"
+
+- slug: orderflow-app-lakebase
+  name: "Orderflow App on Lakebase"
+  kind: "Declarative Automation Bundle + Databricks App"
+  path: "core-platform/cicd/orderflow-app-lakebase"
+
+- slug: lakeflow-connectivity-validator
+  name: "Lakeflow Connectivity Validator"
+  kind: "Notebook"
+  path: "data-engineering/lakeflow-connect/lakeflow-connectivity-validator"
+
+- slug: sql-server-cdc
+  name: "SQL Server CDC"
+  kind: "Declarative Automation Bundle"
+  path: "data-engineering/lakeflow-connect/sql-server-cdc"
+
+- slug: sdp-evolution
+  name: "SDP Evolution"
+  kind: "Declarative Automation Bundle"
+  path: "data-engineering/sdp-evolution"
+
+- slug: unity-catalog-abac
+  name: "Unity Catalog ABAC"
+  kind: "Terraform demo"
+  path: "data-governance/unity-catalog-abac"
+
+- slug: dbrx-business-semantics
+  name: "Databricks Business Semantics"
+  kind: "Notebooks + dashboard/Genie"
+  path: "data-warehousing/dbrx-business-semantics"
+
+- slug: pbi-aibi-converter
+  name: "Power BI to AI/BI Converter"
+  kind: "Databricks App"
+  path: "data-warehousing/pbi-aibi-converter"
+
+- slug: aim-user-ownership-inventory
+  name: "AIM User Ownership Inventory"
+  kind: "Python script"
+  path: "workspace-setup/aim-user-ownership-inventory"
+
+- slug: managed-vnet-to-vnet-injection
+  name: "Managed VNet to VNet Injection"
+  kind: "PowerShell scripts"
+  path: "workspace-setup/powershell-examples/managed-vnet-to-vnet-injection"
+
+- slug: azure-hybrid
+  name: "Azure Hybrid (Pulumi)"
+  kind: "Pulumi"
+  path: "workspace-setup/pulumi-examples/azure/azure-hybrid"
+
+- slug: s3-policy-migration
+  name: "S3 Policy Migration"
+  kind: "Terraform"
+  path: "workspace-setup/temp-tools/S3 Policy Migration"
+
+- slug: aws-byovpc
+  name: "AWS BYOVPC"
+  kind: "Terraform"
+  path: "workspace-setup/terraform-examples/aws/aws-byovpc"
+
+- slug: aws-byovpc-classic-privatelink
+  name: "AWS BYOVPC Classic PrivateLink"
+  kind: "Terraform"
+  path: "workspace-setup/terraform-examples/aws/aws-byovpc-classic-privatelink"
+
+- slug: aws-byovpc-uc
+  name: "AWS BYOVPC with Unity Catalog"
+  kind: "Terraform"
+  path: "workspace-setup/terraform-examples/aws/aws-byovpc-uc"
+
+- slug: aws-serverless-ncc
+  name: "AWS Serverless NCC"
+  kind: "Terraform"
+  path: "workspace-setup/terraform-examples/aws/aws-serverless-ncc"
+
+- slug: azure-privatelink-classic
+  name: "Azure Private Link Classic"
+  kind: "Terraform"
+  path: "workspace-setup/terraform-examples/azure/azure-privatelink-classic"
+
+- slug: azure-vnet-injection
+  name: "Azure VNet Injection"
+  kind: "Terraform"
+  path: "workspace-setup/terraform-examples/azure/azure-vnet-injection"
+
+- slug: azure-vnet-injection-uc
+  name: "Azure VNet Injection with Unity Catalog"
+  kind: "Terraform"
+  path: "workspace-setup/terraform-examples/azure/azure-vnet-injection-uc"
+
+- slug: gcp-byovpc-classic-psc
+  name: "GCP BYOVPC Classic PSC"
+  kind: "Terraform"
+  path: "workspace-setup/terraform-examples/gcp/gcp-byovpc-classic-psc"
+
+- slug: gcp-byovpc-shared-vpc
+  name: "GCP BYOVPC Shared VPC"
+  kind: "Terraform"
+  path: "workspace-setup/terraform-examples/gcp/gcp-byovpc-shared-vpc"
+
+- slug: gcp-byovpc-standalone
+  name: "GCP BYOVPC Standalone"
+  kind: "Terraform"
+  path: "workspace-setup/terraform-examples/gcp/gcp-byovpc-standalone"
+
+- slug: terraform-checker
+  name: "Terraform Pre-Check"
+  kind: "Python CLI"
+  path: "workspace-setup/terraform-checker"
+
+- slug: pbi-migration-assessment
+  name: "PBI Migration Assessment"
+  kind: "Agent skill"
+  path: "aibi-migration/Assessment skills/pbi-migration-assessment"

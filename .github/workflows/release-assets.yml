@@ -1,0 +1,33 @@
+name: Release changed assets
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Serialize runs so back-to-back merges can't compute the same next tag.
+concurrency:
+  group: release-assets
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need full history + tags to diff against the last release
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install pyyaml
+
+      - name: Release assets whose folder changed
+        run: python .github/scripts/release_assets.py
+        env:
+          GH_TOKEN: ${{ github.token }}

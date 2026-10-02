@@ -10,6 +10,7 @@ This configuration creates:
 - **VPC Infrastructure**: Customer-managed VPC with public/private subnets (or use existing VPC)
 - **Security**: IAM roles, workspace and Private Link security groups, S3 bucket policies
 - **Unity Catalog**: Optional metastore creation or attachment to existing metastore
+- **Catalog/storage bundle (optional)**: Dedicated S3 bucket, IAM role and policies, storage credential, external location, and catalog (`new_catalog = false` by default)
 - **Additional VPC Endpoints**: STS and Kinesis (for Databricks services over Private Link)
 
 ## Prerequisites
@@ -32,6 +33,7 @@ This configuration creates:
 ### Databricks Permissions
 - Account Admin access to create workspaces and Private Access Settings
 - Ability to create credentials, storage configs, networks, and VPC endpoint configs
+- When `new_catalog = true`, Unity Catalog privileges to create storage credentials, external locations, and catalogs on the assigned metastore
 
 ## Quick Start
 
@@ -178,6 +180,26 @@ metastore_id   = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 metastore_name = ""  # Not required when using existing
 ```
 
+#### Optional Catalog/Storage Bundle
+
+The bundle is disabled by default, preserving existing PrivateLink deployments. To enable it:
+
+```hcl
+new_catalog    = true
+aws_account_id = "123456789012"
+
+# Optional overrides; empty values use prefix-based defaults.
+catalog_name            = "my_catalog"
+storage_credential_name = "my-storage-credential"
+external_location_name  = "my-external-location"
+```
+
+`aws_account_id` must be a 12-digit ID when enabled; it is not automatically detected. It and the three name inputs default to `""` and can be omitted when disabled. Default names are `{prefix}-catalog`, `{resource_prefix}-storage-credential`, and `{resource_prefix}-external-location`.
+
+`new_catalog` controls the full S3/IAM/credential/location/catalog bundle, including its policy data sources and propagation delay. It does not change metastore or network configuration. Catalog-related outputs are null when disabled. No test cluster is created by this scenario.
+
+Disabling a previously created bundle plans its destruction. The bundle follows the AWS standard template's `force_destroy = true` behavior for catalog/external-location/S3 resources; back up data and review the plan before changing the switch.
+
 ## File Structure
 
 This project uses a flat, organized structure with purpose-specific files:
@@ -196,7 +218,8 @@ tf/
 ├── endpoints.tf             # S3/STS/Kinesis VPC endpoints (template-owned only)
 ├── root_bucket.tf           # S3 bucket for workspace root storage
 ├── workspace.tf             # Databricks workspace, MWS networks, PAS, VPC endpoint configs
-└── metastore.tf             # Unity Catalog metastore
+├── metastore.tf             # Unity Catalog metastore
+└── unity_catalog.tf         # Optional catalog/storage bundle
 ```
 
 Terraform loads all `.tf` files in the directory; the structure is organizational only.

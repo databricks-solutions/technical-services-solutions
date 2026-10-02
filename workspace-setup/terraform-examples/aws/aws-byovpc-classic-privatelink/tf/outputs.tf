@@ -84,6 +84,26 @@ output "metastore_name" {
   value       = var.metastore_id == "" ? databricks_metastore.metastore[0].name : var.metastore_name
 }
 
+output "catalog_name" {
+  description = "Name of the user-defined catalog (null when new_catalog is false)"
+  value       = one(databricks_catalog.uc_quickstart[*].name)
+}
+
+output "storage_credential_name" {
+  description = "Name of the UC storage credential (null when new_catalog is false)"
+  value       = one(databricks_storage_credential.uc_storage_cred[*].name)
+}
+
+output "external_location_name" {
+  description = "Name of the UC external location (null when new_catalog is false)"
+  value       = one(databricks_external_location.uc_external_location[*].name)
+}
+
+output "external_location_url" {
+  description = "URL of the UC external location (null when new_catalog is false)"
+  value       = one(databricks_external_location.uc_external_location[*].url)
+}
+
 # =============================================================================
 # Databricks Account Objects Outputs
 # =============================================================================

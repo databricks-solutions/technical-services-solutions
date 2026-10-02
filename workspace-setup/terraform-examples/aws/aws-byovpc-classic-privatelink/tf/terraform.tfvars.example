@@ -73,3 +73,12 @@ metastore_name = "my-unity-catalog-metastore"
 
 # Option 2: Use existing metastore (uncomment and specify ID)
 # metastore_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+# Optional catalog bundle; metastore creation/assignment above is independent.
+new_catalog = false
+# Required only when new_catalog = true:
+# aws_account_id = "123456789012"
+# Optional name overrides (otherwise prefix-based names are generated):
+# catalog_name            = "my_catalog"
+# storage_credential_name = "my-storage-credential"
+# external_location_name  = "my-external-location"

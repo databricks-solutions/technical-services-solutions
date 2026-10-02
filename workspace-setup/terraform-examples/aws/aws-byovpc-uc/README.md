@@ -16,13 +16,17 @@ This Terraform example deploys a Databricks workspace on AWS using the "Bring Yo
 - Databricks account created (E2 account)
 - Databricks account admin access
 - AWS permissions to create VPC, IAM, S3, and Security Group resources
-- When using an existing metastore (i.e. `metastore_id` is set), the identity used by Terraform (typically the Databricks **service principal** configured via `DATABRICKS_CLIENT_ID` / `DATABRICKS_CLIENT_SECRET`) must be able to create external locations on that metastore (for example `CREATE EXTERNAL LOCATION` on the metastore, or equivalent metastore-level permissions your organization grants). Metastores created by this template configure admin principals as part of this flow; attaching to an existing metastore often requires an account admin to grant this explicitly.
+- When `new_catalog = true`, the identity used by Terraform needs Unity Catalog permissions to create storage credentials, external locations, and catalogs on the assigned metastore. Attaching to an existing metastore often requires an administrator to grant these explicitly.
 
 ## Before you begin
 
 Configuration values (Databricks account ID, AWS region, VPC and subnet CIDRs, availability zones, metastore options) are defined as variables. Copy `tf/terraform.tfvars.example` to `tf/terraform.tfvars` and set your values there. Terraform loads `terraform.tfvars` automatically. You can also use a file ending in `.auto.tfvars` or pass variables via the command line.
 
 You can either create a new VPC (leave `vpc_id` empty and provide the CIDR/AZ values) or reuse an existing VPC by setting `vpc_id` and `subnet_ids`. The user-defined catalog (`new_catalog`) is created by default; the optional single-node cluster (`new_cluster`) is disabled by default.
+
+Set `new_catalog = false` to omit the entire catalog/storage bundle, including its IAM resources and policy lookups. `aws_account_id` and UC name inputs can then be omitted or left empty. Metastore behavior and `new_cluster` remain independent, and UC outputs are null.
+
+Disabling a previously deployed bundle plans its destruction, not just removal from management. This template retains `force_destroy = true` on catalog/external-location/S3 resources; back up data and review the plan first.
 
 ## Authenticate
 
@@ -106,7 +110,7 @@ Copy `terraform.tfvars.example` to `terraform.tfvars` in the `tf/` directory and
 | `security_group_ids` | **(Optional)** Existing security group IDs to use. If empty, a dedicated security group is created. Default: `[]`. |
 | `new_security_group_name` | **(Optional)** Name for the new security group. If empty, defaults to `{resource_prefix}-databricks-sg`. Default: `""`. |
 | `sg_egress_ports` | **(Optional)** List of egress ports to allow in security group rules. Default: `[443, 3306, 2443, 5432, 8443, 8444, 8445, 8446, 8447, 8448, 8449, 8450, 8451]`. |
-| `aws_account_id` | **(Required)** AWS account ID where resources are deployed (used to construct IAM role ARNs for Unity Catalog). |
+| `aws_account_id` | **(Required only when `new_catalog = true`)** 12-digit AWS account ID used for Unity Catalog IAM ARNs. Default: `""`; not automatically detected. |
 | `metastore_id` | **(Optional)** Existing Unity Catalog metastore ID. Leave empty to create a new one. Default: `""`. |
 | `metastore_name` | **(Optional)** Name for the Unity Catalog metastore. Required when `metastore_id` is empty. Default: `""`. |
 | `new_catalog` | **(Optional)** Whether to create a user-defined catalog (storage credential, IAM role, S3 bucket, external location, and catalog). Default: `true`. |

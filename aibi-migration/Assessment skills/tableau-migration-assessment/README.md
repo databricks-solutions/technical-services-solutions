@@ -15,9 +15,10 @@ It **does not convert anything** — no datasets, no widgets, no dashboards are 
 2. Open a new dashboard page.
 3. In Genie Code: *"assess the Tableau workbook with my tableau-migration-assessment
    skill"* (attach the file, or point to the volume).
-4. Review the result in the chat.
-5. (optional) Switch to the user folder and *"save results in MD and HTML format in
-   my user folder"*.
+4. Review the result in the chat — a single report, Migration Summary first, then
+   the per-file detail sections.
+5. The skill then stores an **HTML version** of the report to a Databricks workspace
+   path. If you didn't give one, it asks where to save it before writing.
 
 ## Supported file types
 
@@ -105,24 +106,35 @@ skill in your prompt:
 1. **Enumerate** — lists all `.twb` / `.twbx` / `.tds` / `.tdsx` files at the path
    (or uses attached files) and reports the count before proceeding.
 2. **Prerequisites check** — flags connection strings/parameters to resolve,
-   non-Databricks sources, `.hyper` extracts, and the source-table inventory.
+   non-Databricks sources (and their in-source transforms — custom SQL, unions,
+   cross-DB joins, filters — to rebuild as source views), `.hyper` extracts, the
+   source-table inventory, source dependencies (never drop a source another object
+   uses), and relationship/join quality (disconnected sources, fact-to-fact,
+   mismatched keys, many-to-many, cardinality overrides).
 3. **Profile** — hands each file to the `/importBI` specialist in **profile-only**
    mode. With **2+ files, profiling runs in parallel batches of up to 4 at a time**;
    a single file is profiled directly.
-4. **Report** — produces one **Individual Workbook Report** per file, then one
-   **Migration Summary Report** rolling them all up.
+4. **Report** — produces ONE report that opens with the **Migration Summary Report**
+   and is followed by one **Individual Workbook Report** section per file. Runs a
+   pre-print hygiene check (counts reconcile and stay consistent across the report).
+5. **Export HTML** — stores an HTML version of the report to a Databricks workspace
+   path, asking for the path first if one wasn't provided.
 
 ## Output
 
-- **Individual Workbook Report** (per file): metrics, prerequisites, executive
-  overview + complexity drivers, feature inventory, Automation Classification
-  (✅ Auto / ⚠️ Auto + workaround / 🔧 Manual), Automation Uplift with reference
-  patterns, and a readiness summary.
-- **Migration Summary Report** (one overall): portfolio totals, complexity
+ONE report, in this order:
+
+- **Migration Summary Report** (opens the report): portfolio totals, complexity
   distribution, per-file summary, cross-cutting findings, and a recommended
   migration sequence.
+- **Individual Workbook Report** (one section per file, after the summary): metrics,
+  prerequisites, executive overview + complexity drivers, feature inventory,
+  Automation Classification (✅ Auto / ⚠️ Auto + workaround / 🔧 Manual), Automation
+  Uplift with reference patterns, and a readiness summary that **names the 🔧 Manual
+  items** (top 10, with a one-line reason) so you can plan the manual rebuild.
 
-All reports are returned in chat (individual reports first, then the summary).
+The report is returned in chat (summary first, then the per-file sections) and also
+saved as an HTML file to a workspace path you supply.
 
 ## Skill definition (`SKILL.md`)
 
@@ -133,18 +145,22 @@ an overview. Anyone installing, running, or adapting the skill should read
 - **Trigger & scope** — the `description` frontmatter that auto-loads the skill,
   and the supported file types.
 - **Workflow** — enumerate → prerequisites check → profile (read-only, via
-  `/importBI` in profile-only mode, parallel batches of up to 4) → produce reports.
+  `/importBI` in profile-only mode, parallel batches of up to 4) → produce one report
+  (hygiene-checked) → export the HTML to a workspace path.
 - **Mandatory report structure** — the exact headings and tables for **Template A
-  (Individual Workbook Report, one per file)** and **Template B (Migration Summary
-  Report, one overall)**. These formats are required, not examples.
+  (Migration Summary Report, opens the report)** and **Template B (Individual
+  Workbook Report, one section per file, after the summary)**. These formats are
+  required, not examples.
 - **Deduplication & Empty Report Handling** rules.
 - **Automation Classification Legend** (✅ Auto / ⚠️ Auto + workaround / 🔧 Manual)
   and the **Complexity Rating Criteria** (Low / Medium / High).
 - **Guardrails** — read-only, `/importBI`-anchored classification, no unevidenced
-  claims, Tableau-only terminology, and the mandatory Automation Classification +
-  Automation Uplift sections.
-- **Reference Patterns** — the uc-semantics-patterns catalog, LOD-decomposition and
-  table-calculation recipes that drive the Automation Uplift section.
+  claims, Tableau-only terminology, group ✅/⚠️ but name 🔧 items, the pre-print
+  hygiene check, source-dependency handling, and the mandatory Automation
+  Classification + Automation Uplift sections.
+- **Reference Patterns** — the uc-semantics-patterns catalog, plus LOD-decomposition,
+  table-calculation, and cross-datasource / blend-ratio (fact ÷ dimension vs
+  fact ÷ fact) recipes that drive the Automation Uplift section.
 
 If the behavior described in this README ever diverges from `SKILL.md`, `SKILL.md`
 wins.

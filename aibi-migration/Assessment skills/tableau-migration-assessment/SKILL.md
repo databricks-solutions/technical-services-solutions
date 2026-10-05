@@ -12,29 +12,33 @@ description: >
 
 This skill guides a **read-only profiling pass** over one or more Tableau files
 — workbooks (`.twb` / `.twbx`) and data sources (`.tds` / `.tdsx`).
-It produces, for a batch of files, **one individual Migration Assessment Report per file**
-plus **one Migration Summary Report** that rolls the individual reports up into a
-high-level cross-file view. The **automation estimate is anchored to the `/importBI`
-migration agent** — the intended execution path for Tableau → Databricks AI/BI
-conversions. Every ✅/⚠️/🔧 classification reflects what `/importBI` can handle today.
-The **Automation Uplift** section in each individual report then shows how applying
+It produces, for a batch of files, **one single Migration Report**. That one report
+**opens with a Migration Summary Report** (a high-level cross-file roll-up —
+**Template A**) and is **followed by the individual per-file report details**
+(one Individual Workbook Report section per file — **Template B**). The **automation
+estimate is anchored to the `/importBI` migration agent** — the intended execution
+path for Tableau → Databricks AI/BI conversions. Every ✅/⚠️/🔧 classification reflects
+what `/importBI` can handle today. The **Automation Uplift** section in each individual
+report section then shows how applying
 [uc-semantics-patterns](https://github.com/databricks-solutions/uc-semantics-patterns)
 recipes during migration can raise the automatable share further.
 
 The reports focus on blockers, frictions, and the auto vs. manual split — without
 performing any conversion.
 
-> **CRITICAL — MANDATORY REPORT FORMAT**: You MUST produce the reports using the
+> **CRITICAL — MANDATORY REPORT FORMAT**: You MUST produce the report using the
 > EXACT section headings and table structures defined in the "Report Structure"
 > section below. Do NOT invent your own numbered sections (Part 1, Part 2, 1, 2, 3…),
 > do NOT add sections not in the template, and do NOT omit required sections.
 > The Automation Classification and Automation Uplift sections are MANDATORY in
-> every individual report. Violation of this format makes the reports unusable.
+> every individual report section. Violation of this format makes the report unusable.
 >
-> **TWO KINDS OF REPORT**: Produce (1) an **Individual Workbook Report** for EACH
-> file, and (2) a single **Migration Summary Report** that summarizes all of them
-> at a high level. Never fold individual detail into the summary, and never make the
-> summary the only output.
+> **ONE REPORT, SUMMARY FIRST**: Produce a SINGLE Migration Report. It MUST begin
+> with ONE **Migration Summary Report** (Template A — the high-level cross-file
+> roll-up), and that is **followed by** one **Individual Workbook Report** section
+> per file (Template B — the detailed per-file analysis). Summary first, then the
+> individual details. Never fold individual detail into the summary, and never make
+> the summary the only output.
 >
 > **CONCISENESS RULE**: Reports must be SHORT. Summarize counts by category
 > (e.g. "Simple aggregations (SUM, AVG, etc.) | 18 | ✅ Auto"). NEVER list
@@ -110,14 +114,38 @@ handoff (no batching needed).
 > widgets, or perform any conversion. This is a read-only assessment, whether run
 > sequentially or in parallel.
 
-### Step 4 — Produce Reports
+### Step 4 — Produce the Report
 
-1. For EACH file, produce a self-contained **Individual Workbook Report** using
-   the template below.
-2. After all individual reports, produce ONE **Migration Summary Report** that
-   summarizes every file at a high level (no re-inventory of features).
+Produce ONE single Migration Report, in this order:
 
-Return all reports in the chat: the individual reports first, then the summary.
+1. **First**, ONE **Migration Summary Report** (Template A) that summarizes every
+   file at a high level (no re-inventory of features).
+2. **Then**, for EACH file, a self-contained **Individual Workbook Report** section
+   (Template B) appended after the summary.
+
+Return the report in the chat as one document: the summary first, then the
+individual per-file detail sections.
+
+### Step 5 — Export the HTML Version to a Workspace Path
+
+After the report is produced, store an **HTML version of the single report** (the
+Migration Summary Report followed by every Individual Workbook Report section, in
+that order) to a Databricks workspace path.
+
+1. **Determine the destination.** If the user already provided a workspace path for
+   the HTML, use it. **If not, ASK the user** for the workspace path where the HTML
+   version of the report should be stored, and wait for their answer before writing.
+   Do NOT guess a path or write anywhere by default.
+2. **Render** the complete combined report to a single self-contained HTML file
+   (one `.html`, summary section first then the per-file sections; keep all ✅/⚠️/🔧
+   markers and tables intact).
+3. **Write it to the given path**:
+   - For a `/Workspace/...` path, import it with
+     `databricks workspace import <path> --format HTML --file <local.html>`
+     (add `--overwrite` only if the user asks to replace an existing file).
+   - For a Volume path (`/Volumes/...`) or local path, write the `.html` file
+     directly to that location.
+4. Confirm the stored location back to the user.
 
 ## Deduplication Rules
 
@@ -134,10 +162,11 @@ Each fact or feature appears in exactly ONE place.
 3. **Automation Classification** references Inventory rows by feature name and
    adds the auto/manual column — no re-description.
 
-**Across reports:**
-4. The **Migration Summary Report** contains ONLY high-level cross-file roll-ups
-   and one-line-per-file summaries. It NEVER re-inventories features or repeats
-   an individual report's tables — it references each file by name.
+**Across the report's sections:**
+4. The **Migration Summary Report** (the opening section) contains ONLY high-level
+   cross-file roll-ups and one-line-per-file summaries. It NEVER re-inventories
+   features or repeats an individual report section's tables — it references each
+   file by name.
 
 ## Empty Report Handling
 
@@ -166,18 +195,83 @@ details belong INSIDE the tables below.
 - ❌ Listing individual LOD expressions with full formula text
 - ❌ Using ✅/⚠️/❌ — use ✅/⚠️/🔧 (Auto / Auto+workaround / Manual)
 - ❌ Producing > 400 lines per individual report
-- ❌ Omitting the Automation Classification or Automation Uplift sections from an individual report
-- ❌ Skipping individual reports and returning only the summary
+- ❌ Omitting the Automation Classification or Automation Uplift sections from an individual report section
+- ❌ Skipping the per-file individual detail sections and returning only the summary
+- ❌ Putting the individual detail sections before the Migration Summary Report (summary MUST come first)
 
 **Correct patterns**:
 - ✅ "Simple aggregations (SUM, AVG, etc.) | 18 | ✅ Auto"
 - ✅ "Relationships (physical joins) | 13 | ✅ Auto | Direct metric-view joins"
 - ✅ "INCLUDE/EXCLUDE LODs | 6 | 🔧 Manual | Context-dependent, redesign"
 
-### Template A — Individual Workbook Report (produce one per file)
+### Template A — Migration Summary Report (produce one, FIRST)
+
+This is the opening section of the single report. High-level roll-up ONLY.
+Reference each file by name; never re-inventory features or repeat an individual
+report section's detailed tables.
 
 ```markdown
-# Migration Assessment Report — <Workbook Name>
+# Migration Report
+
+## Migration Summary Report
+
+**Date scanned**: <date> | **Files**: <count> | **File type(s)**: <.twb / .twbx / .tds / .tdsx>
+
+### Portfolio Totals
+
+| Metric | Count |
+|---|---|
+| Workbooks | ... |
+| Worksheets | ... |
+| Dashboards | ... |
+| Data sources | ... |
+| Calculated fields | ... |
+| LOD expressions | ... |
+| Table calculations | ... |
+
+### Complexity Distribution
+
+| Complexity | Workbooks | % of Total |
+|---|---|---|
+| Low | ... | ...% |
+| Medium | ... | ...% |
+| High | ... | ...% |
+
+**Overall portfolio complexity**: <Low / Medium / High> — <1–2 sentence rationale>
+
+### Per-File Summary
+
+One row per file. Automation % is the ✅ + ⚠️ share of that file's calcs.
+
+| Workbook | File Type | Complexity | Automation % | Top Drivers | Key Blockers |
+|---|---|---|---|---|---|
+| ... | .twb / .twbx / .tds / .tdsx | Low/Med/High | ...% | ... | ... |
+
+### Cross-Cutting Findings
+
+**Common blockers** (🔧 appearing across multiple files):
+- <blocker> — affects <N> workbooks
+
+**Aggregate data prerequisites** (Unity Catalog):
+- <UC tables/sources required across the portfolio; extracts to re-point>
+
+**Non-Databricks sources across portfolio**:
+- <list or "None">
+
+### Recommended Migration Sequence
+
+1. <e.g. Start with Low-complexity, all-Databricks workbooks (quick wins)>
+2. <e.g. Resolve shared prerequisites / source access>
+3. <e.g. Tackle Medium workbooks after ⚠️ workarounds validated>
+4. <e.g. Plan manual redesign effort for High-complexity workbooks>
+```
+
+### Template B — Individual Workbook Report (produce one section per file, AFTER the summary)
+
+One per file, appended after the Migration Summary Report above.
+
+```markdown
+## Migration Assessment Report — <Workbook Name>
 
 **Date scanned**: <date> | **Source path**: <path> | **File type**: <.twb / .twbx / .tds / .tdsx>
 
@@ -191,42 +285,42 @@ details belong INSIDE the tables below.
 | LOD expressions | ... |
 | Table calculations | ... |
 
-## Prerequisites
+### Prerequisites
 
-### Connections & Parameters
+#### Connections & Parameters
 
 | Connection / Parameter | Status | Action |
 |---|---|---|
 | catalog (workbook parameter) | Unresolved | Resolve to concrete catalog |
 | .hyper extract | Point-in-time | Informational — identify live source |
 
-### Source Tables
+#### Source Tables
 
 | Schema.Table | Used By | Accessible |
 |---|---|---|
 | catalog.schema.table | Orders (data source) | To verify |
 
-### Non-Databricks Sources
+#### Non-Databricks Sources
 
 <list or "None — all sources are Databricks">
 
-## Executive Overview
+### Executive Overview
 
 **Complexity**: <Low / Medium / High>
 
 **Rationale**: <2–3 sentences>
 
-### Complexity Drivers (ranked by impact)
+#### Complexity Drivers (ranked by impact)
 
 | # | Driver | Count | Impact | Resolution |
 |---|---|---|---|---|
 | 1 | ... | ... | 🔴/🟠/🟡 | ... |
 
-## Feature Inventory
+### Feature Inventory
 
 Each feature appears ONCE. Only list features that have non-zero occurrences.
 
-### Data Sources
+#### Data Sources
 
 | Connection Type | Count | Databricks? | Migration Impact |
 |---|---|---|---|
@@ -239,7 +333,7 @@ Each feature appears ONCE. Only list features that have non-zero occurrences.
 > groupings** (relationships/noodle model): count physical joins separately from
 > logical relationships.
 
-### Data Modeling
+#### Data Modeling
 
 | Feature | Count | Classification | Note |
 |---|---|---|---|
@@ -257,7 +351,7 @@ Each feature appears ONCE. Only list features that have non-zero occurrences.
 | Field / value-level aliases | ... | ⚠️ Workaround | Map in source or dashboard |
 | ... only list features with count > 0 ... |
 
-### Visualizations
+#### Visualizations
 
 | Visual / Mark Type | Count | AI/BI Equivalent | Issues |
 |---|---|---|---|
@@ -270,7 +364,7 @@ Each feature appears ONCE. Only list features that have non-zero occurrences.
 
 If model-only: use Empty Report Handling callout.
 
-### Interactivity & Filters
+#### Interactivity & Filters
 
 | Feature | Count | Status |
 |---|---|---|
@@ -285,7 +379,7 @@ If model-only: use Empty Report Handling callout.
 
 If model-only: use Empty Report Handling callout.
 
-## Automation Classification
+### Automation Classification
 
 <!-- MANDATORY — do NOT omit this section -->
 Classify every Inventory feature into one of three buckets (see Legend in the
@@ -293,13 +387,13 @@ skill). The classification reflects `/importBI`'s current capabilities as the
 migration execution path — not theoretical possibility. Only classify ✅ or ⚠️
 if `/importBI` has a documented, tested pattern for it; otherwise 🔧 Manual.
 
-### Feature Classification
+#### Feature Classification
 
 | Feature (from Inventory) | Count | Bucket | /importBI Behavior |
 |---|---|---|---|
 | ... | ... | ✅/⚠️/🔧 | One-line description of what happens |
 
-### Automation Summary
+#### Automation Summary
 
 | Bucket | Features | Calculated fields / LODs / table calcs | % of Calcs |
 |---|---|---|---|
@@ -307,7 +401,7 @@ if `/importBI` has a documented, tested pattern for it; otherwise 🔧 Manual.
 | ⚠️ Auto + workaround | ... | ... | ... |
 | 🔧 Manual | ... | ... | ... |
 
-## Automation Uplift with Reference Patterns
+### Automation Uplift with Reference Patterns
 
 <!-- MANDATORY — do NOT omit this section -->
 The baseline above reflects what `/importBI` handles today. Some 🔧 Manual items
@@ -340,7 +434,7 @@ automation achievable beyond `/importBI`'s built-in capabilities.
 > **<with-patterns>%** (a **+<delta>pp** improvement), potentially shifting the
 > complexity from <baseline rating> to <new rating>.
 
-## Readiness Summary
+### Readiness Summary
 
 **Primary blockers** (🔧 only):
 - <list>
@@ -361,70 +455,11 @@ automation achievable beyond `/importBI`'s built-in capabilities.
 4. Verify ⚠️ workaround results
 5. Build net-new visuals if model-only workbook
 
-### Specific Risks
+#### Specific Risks
 - <workbook-specific list>
 
-### Validation Checks
+#### Validation Checks
 - <list of things to verify after conversion>
-```
-
-### Template B — Migration Summary Report (produce one overall)
-
-High-level roll-up ONLY. Reference each file by name; never re-inventory features
-or repeat an individual report's detailed tables.
-
-```markdown
-# Migration Summary Report
-
-**Date scanned**: <date> | **Files**: <count> | **File type(s)**: <.twb / .twbx / .tds / .tdsx>
-
-## Portfolio Totals
-
-| Metric | Count |
-|---|---|
-| Workbooks | ... |
-| Worksheets | ... |
-| Dashboards | ... |
-| Data sources | ... |
-| Calculated fields | ... |
-| LOD expressions | ... |
-| Table calculations | ... |
-
-## Complexity Distribution
-
-| Complexity | Workbooks | % of Total |
-|---|---|---|
-| Low | ... | ...% |
-| Medium | ... | ...% |
-| High | ... | ...% |
-
-**Overall portfolio complexity**: <Low / Medium / High> — <1–2 sentence rationale>
-
-## Per-File Summary
-
-One row per file. Automation % is the ✅ + ⚠️ share of that file's calcs.
-
-| Workbook | File Type | Complexity | Automation % | Top Drivers | Key Blockers |
-|---|---|---|---|---|---|
-| ... | .twb / .twbx / .tds / .tdsx | Low/Med/High | ...% | ... | ... |
-
-## Cross-Cutting Findings
-
-**Common blockers** (🔧 appearing across multiple files):
-- <blocker> — affects <N> workbooks
-
-**Aggregate data prerequisites** (Unity Catalog):
-- <UC tables/sources required across the portfolio; extracts to re-point>
-
-**Non-Databricks sources across portfolio**:
-- <list or "None">
-
-## Recommended Migration Sequence
-
-1. <e.g. Start with Low-complexity, all-Databricks workbooks (quick wins)>
-2. <e.g. Resolve shared prerequisites / source access>
-3. <e.g. Tackle Medium workbooks after ⚠️ workarounds validated>
-4. <e.g. Plan manual redesign effort for High-complexity workbooks>
 ```
 
 > **REMINDER**: The markdown above defines the COMPLETE reports. Do NOT add any
@@ -481,9 +516,14 @@ Used by the Automation Classification section of every individual report.
 
 - **MANDATORY FORMAT**: Use the exact report structures above. Do NOT invent
   your own sections. Do NOT use numbered headings (## Part 1, ## 1., ## 2.).
-- **TWO REPORT KINDS**: Always produce an individual report per file AND a single
-  Migration Summary Report. The Automation Classification and Automation Uplift
-  sections MUST appear in every individual report.
+- **ONE REPORT, SUMMARY FIRST**: Always produce a SINGLE Migration Report that
+  OPENS with the Migration Summary Report (Template A) and is FOLLOWED by one
+  Individual Workbook Report section per file (Template B). The Automation
+  Classification and Automation Uplift sections MUST appear in every individual
+  report section.
+- **HTML EXPORT**: After producing the report, store an HTML version at the
+  Databricks workspace path the user supplies — and ASK for that path first if it
+  was not already provided (see Step 5). Never guess the path.
 - **CONCISE — NO INDIVIDUAL LISTINGS**: Never list individual calculated-field
   names, individual relationships/joins, or individual LOD/table-calc formulas.
   Always group and count (e.g. "Simple aggregations | 18 | ✅ Auto"). Target

@@ -41,9 +41,14 @@ performing any conversion.
 > the summary the only output.
 >
 > **CONCISENESS RULE**: Reports must be SHORT. Summarize counts by category
-> (e.g. "Simple aggregations (SUM, AVG, etc.) | 18 | ✅ Auto"). NEVER list
-> individual calculated-field names — no field-by-field listings. NEVER list
-> individual relationships or joins one by one. Group and count.
+> (e.g. "Simple aggregations (SUM, AVG, etc.) | 18 | ✅ Auto"). For ✅ Auto and
+> ⚠️ Auto + workaround items, NEVER list individual calculated-field names — group
+> and count. NEVER list individual relationships or joins one by one.
+>
+> **EXCEPTION — name the 🔧 Manual items**: 🔧 Manual calculated fields / LODs /
+> table calcs are the handful the user must actually plan and rebuild, so NAME them
+> (up to the top 10 by impact) with a one-line reason each — e.g. "`Profit Ratio` —
+> cross-datasource blend (fact ÷ fact)". Only 🔧 items are named; ✅/⚠️ stay grouped.
 
 ## When to Use
 
@@ -81,12 +86,28 @@ Before profiling, scan data-source connections and flag blocking prerequisites:
   (server hostname, HTTP path, catalog, initial SQL). Flag which must resolve.
 - **Non-Databricks sources**: Flag any SQL Server, Oracle, Snowflake, Excel/CSV,
   Google Sheets, published/extract data sources, or other non-Databricks
-  connections requiring data migration, federation, or upload.
+  connections requiring data migration, federation, or upload. For each
+  non-Databricks source, also capture its **in-source transformation logic** —
+  custom SQL / Initial SQL, unions, cross-database joins, pivots, and data-source
+  filters — because that logic must be rebuilt as a UC source view, not just the
+  connection. (This is Tableau's equivalent of a Power Query / M dataflow; profile
+  it, do not improvise a count.)
+- **Source dependency rule**: NEVER mark a data source as unused or omittable if
+  anything references it — a worksheet, a data blend (as primary or secondary), a
+  dashboard action, a parameter, or another (published) data source that is built
+  on it. Only a source referenced by nothing is omittable.
 - **Extracts (.hyper)**: Flag `.hyper` extracts — they are point-in-time snapshots;
   AI/BI dashboards query live UC data, so extracts are informational only and the
   underlying live source must be identified.
 - **Source table inventory**: List UC schema.table references (and non-UC tables)
   so the user can verify accessibility.
+- **Relationship / join quality flags**: Do not just count relationships — flag the
+  ones that need attention: data sources / tables with **no relationship at all**
+  (disconnected — usually blend helpers or parameter-driven), **fact-to-fact**
+  relationships or blends, relationships/joins on **differently named or mismatched
+  key fields** (join calculations), **many-to-many** relationships, and any
+  non-default **cardinality / referential-integrity** overrides. Report each as a
+  flagged count, not a silent zero.
 
 ### Step 3 — Profile Each File
 
@@ -122,6 +143,20 @@ Produce ONE single Migration Report, in this order:
    file at a high level (no re-inventory of features).
 2. **Then**, for EACH file, a self-contained **Individual Workbook Report** section
    (Template B) appended after the summary.
+
+**Hygiene check — run BEFORE printing.** Before returning the report, validate it
+for internal consistency and fix any failure:
+
+- The three bucket counts (✅ + ⚠️ + 🔧) **add up to the total calculated fields /
+  LODs / table calcs** for that file (minus any unused/disabled calcs, which must
+  be stated separately — never silently dropped).
+- Every count is **identical everywhere it appears** (the file's header metrics
+  table, Feature Inventory, Automation Classification, and the summary's roll-up).
+- **No dimension or plain (non-calculated) field is counted as a calculated field**,
+  and a calculated field is never double-counted as both a measure and a dimension.
+- **Every 🔧 Manual item named in the Readiness Summary also appears in the
+  Automation Classification table** (and vice versa) — names and buckets match.
+- **Portfolio Totals in the summary equal the sum of the per-file counts.**
 
 Return the report in the chat as one document: the summary first, then the
 individual per-file detail sections.
@@ -190,7 +225,7 @@ add sections like "Fact-Domain Grouping" or "Relationship Analysis" — those
 details belong INSIDE the tables below.
 
 **Anti-patterns (DO NOT do these)**:
-- ❌ Listing individual calculated-field names (e.g. "`Profit Ratio`, `Sales YTD`…")
+- ❌ Listing individual ✅ Auto / ⚠️ workaround calculated-field names (group and count those)
 - ❌ Listing individual relationships/joins one by one
 - ❌ Listing individual LOD expressions with full formula text
 - ❌ Using ✅/⚠️/❌ — use ✅/⚠️/🔧 (Auto / Auto+workaround / Manual)
@@ -203,6 +238,7 @@ details belong INSIDE the tables below.
 - ✅ "Simple aggregations (SUM, AVG, etc.) | 18 | ✅ Auto"
 - ✅ "Relationships (physical joins) | 13 | ✅ Auto | Direct metric-view joins"
 - ✅ "INCLUDE/EXCLUDE LODs | 6 | 🔧 Manual | Context-dependent, redesign"
+- ✅ Naming 🔧 Manual items in the Readiness Summary: "`Profit Ratio` — fact ÷ fact blend; aggregate each side then divide"
 
 ### Template A — Migration Summary Report (produce one, FIRST)
 
@@ -344,7 +380,8 @@ Each feature appears ONCE. Only list features that have non-zero occurrences.
 | FIXED LODs | ... | ⚠️ Workaround | Precompute in source view |
 | INCLUDE / EXCLUDE LODs | ... | 🔧 Manual | Context-dependent redesign |
 | Table calculations | ... | ⚠️/🔧 | Window functions where possible |
-| Data blending / cross-datasource calcs | ... | 🔧 Manual | ... |
+| Cross-datasource calc — fact ÷ dimension/lookup | ... | ⚠️ Workaround | Metric-view join on the shared key |
+| Cross-datasource calc — fact ÷ fact (blend) | ... | ⚠️/🔧 | Aggregate each side to the shared grain, then divide — ⚠️ at best |
 | Parameters / parameterized calcs | ... | ⚠️ Workaround | Dashboard variables |
 | Sets / groups / bins | ... | ⚠️ Workaround | CASE bands / precompute |
 | Hierarchies | ... | ✅ Auto | ... |
@@ -442,8 +479,12 @@ automation achievable beyond `/importBI`'s built-in capabilities.
 **Data prerequisites** (Unity Catalog):
 - <UC tables/sources that must exist before conversion; extracts to re-point at live sources>
 
-**Semantic-model remediation** (🔧 only, before conversion):
-- <LODs/blends/table calcs that must be redesigned before /importBI can process the rest>
+**Semantic-model remediation** (🔧 only, before conversion) — NAME each item (top 10
+by impact) with a one-line reason, since these are what the user must plan and rebuild:
+
+| 🔧 Manual Item (name) | Type | Why Manual |
+|---|---|---|
+| `<Calc / LOD / table-calc name>` | LOD / table calc / blend | <one-line reason, e.g. EXCLUDE LOD with nested context> |
 
 **Visualization / interaction redesign** (🔧 visuals/interaction):
 - <unsupported visuals, custom geocoding, parameter/highlight/URL actions, analytics objects>
@@ -480,10 +521,11 @@ Used by the Automation Classification section of every individual report.
   function, decomposition). User should verify but does not build anything
   manually. (FIXED LODs, simple table calcs — running total, percent of total,
   rank — parameters → dashboard variables, static sets/groups/bins, field/value
-  aliases, context filters, dual-axis layering.)
+  aliases, context filters, dual-axis layering, cross-datasource calcs where the
+  secondary is a dimension/lookup — fact ÷ dimension via a metric-view join.)
 - 🔧 **Manual** — /importBI cannot convert this. Must be redesigned after
   automated conversion completes. (INCLUDE/EXCLUDE LODs with nested context,
-  data blending / cross-datasource calcs, complex table calcs with custom
+  fact ÷ fact data blends — aggregate each side then divide — complex table calcs with custom
   addressing/partitioning, parameter actions, highlight/URL/navigation actions,
   custom geocoding, analytics objects — forecast, cluster, trend/distribution
   bands — sheet swapping / dynamic zone visibility.)
@@ -524,10 +566,20 @@ Used by the Automation Classification section of every individual report.
 - **HTML EXPORT**: After producing the report, store an HTML version at the
   Databricks workspace path the user supplies — and ASK for that path first if it
   was not already provided (see Step 5). Never guess the path.
-- **CONCISE — NO INDIVIDUAL LISTINGS**: Never list individual calculated-field
-  names, individual relationships/joins, or individual LOD/table-calc formulas.
-  Always group and count (e.g. "Simple aggregations | 18 | ✅ Auto"). Target
-  < 300 lines per individual report; keep the summary shorter still.
+- **CONCISE — GROUP ✅/⚠️, NAME 🔧**: For ✅ Auto and ⚠️ workaround items, never list
+  individual calculated-field names or relationship/join formulas — group and count
+  (e.g. "Simple aggregations | 18 | ✅ Auto"). But DO name the 🔧 Manual calcs/LODs/
+  table calcs (top 10, with a one-line reason each) in the Readiness Summary — those
+  are the handful the user must plan. Target < 300 lines per individual report.
+- **HYGIENE CHECK**: Before printing, run the Step 4 hygiene check — bucket counts
+  reconcile to the total calcs (minus unused), every count is identical everywhere it
+  appears, no non-calculated field is counted as a calc, portfolio totals equal the
+  per-file sums, and every 🔧 item named in the Readiness Summary also appears in the
+  Automation Classification table.
+- **SOURCE DEPENDENCIES**: Capture each non-Databricks source's transformation logic
+  (custom SQL, unions, cross-DB joins, data-source filters) as a source view to
+  rebuild, and never mark a data source omittable if a worksheet, blend, action,
+  parameter, or dependent published source references it.
 - **USE ✅/⚠️/🔧 ONLY**: Do NOT use ❌. The three buckets are:
   ✅ Auto, ⚠️ Auto + workaround, 🔧 Manual.
 - **Read-only**: Never convert, create datasets, or create widgets.
@@ -593,6 +645,20 @@ Table calculations map onto UC metric-view **window functions**:
 - `LOOKUP(..., -1)` prior-period → `offset` window measures (Period-over-period).
 - `RANK` / `INDEX` → `rank` window measures (Ranking).
 - Custom addressing/partitioning that does not map to a fixed partition → 🔧 Manual.
+
+### Cross-Datasource / Blend Ratio Recipe
+
+Data blending and cross-datasource ratios are not a single bucket — split them by
+the grain of the two sides before classifying:
+
+1. **Fact ÷ dimension / lookup** — the secondary source is a lookup at a coarser or
+   equal grain (rates, targets, attributes). A **metric-view join on the shared key**
+   reproduces it → ⚠️ Auto + workaround.
+2. **Fact ÷ fact** (two fact-grain sources) — a direct join fans out the rows and
+   gives the wrong ratio. **Aggregate each side separately to the shared level**
+   (a pre-aggregated source view, or two metric views at that grain), **then divide**.
+   Classify ⚠️ at best, often 🔧 when the shared grain is ambiguous. Never advise
+   "just join them in the metric view" for this case.
 
 ### How to Use in the Report
 

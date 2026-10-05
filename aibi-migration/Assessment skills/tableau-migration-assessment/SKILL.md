@@ -161,27 +161,6 @@ for internal consistency and fix any failure:
 Return the report in the chat as one document: the summary first, then the
 individual per-file detail sections.
 
-### Step 5 — Export the HTML Version to a Workspace Path
-
-After the report is produced, store an **HTML version of the single report** (the
-Migration Summary Report followed by every Individual Workbook Report section, in
-that order) to a Databricks workspace path.
-
-1. **Determine the destination.** If the user already provided a workspace path for
-   the HTML, use it. **If not, ASK the user** for the workspace path where the HTML
-   version of the report should be stored, and wait for their answer before writing.
-   Do NOT guess a path or write anywhere by default.
-2. **Render** the complete combined report to a single self-contained HTML file
-   (one `.html`, summary section first then the per-file sections; keep all ✅/⚠️/🔧
-   markers and tables intact).
-3. **Write it to the given path**:
-   - For a `/Workspace/...` path, import it with
-     `databricks workspace import <path> --format HTML --file <local.html>`
-     (add `--overwrite` only if the user asks to replace an existing file).
-   - For a Volume path (`/Volumes/...`) or local path, write the `.html` file
-     directly to that location.
-4. Confirm the stored location back to the user.
-
 ## Deduplication Rules
 
 Each fact or feature appears in exactly ONE place.
@@ -563,9 +542,6 @@ Used by the Automation Classification section of every individual report.
   Individual Workbook Report section per file (Template B). The Automation
   Classification and Automation Uplift sections MUST appear in every individual
   report section.
-- **HTML EXPORT**: After producing the report, store an HTML version at the
-  Databricks workspace path the user supplies — and ASK for that path first if it
-  was not already provided (see Step 5). Never guess the path.
 - **CONCISE — GROUP ✅/⚠️, NAME 🔧**: For ✅ Auto and ⚠️ workaround items, never list
   individual calculated-field names or relationship/join formulas — group and count
   (e.g. "Simple aggregations | 18 | ✅ Auto"). But DO name the 🔧 Manual calcs/LODs/

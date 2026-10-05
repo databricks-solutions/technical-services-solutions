@@ -17,8 +17,8 @@ It **does not convert anything** — no datasets, no widgets, no dashboards are 
    skill"* (attach the file, or point to the volume).
 4. Review the result in the chat — a single report, Migration Summary first, then
    the per-file detail sections.
-5. The skill then stores an **HTML version** of the report to a Databricks workspace
-   path. If you didn't give one, it asks where to save it before writing.
+5. (optional) Switch to the user folder and *"save results in MD and HTML format in
+   my user folder"*.
 
 ## Supported file types
 
@@ -117,8 +117,6 @@ skill in your prompt:
 4. **Report** — produces ONE report that opens with the **Migration Summary Report**
    and is followed by one **Individual Workbook Report** section per file. Runs a
    pre-print hygiene check (counts reconcile and stay consistent across the report).
-5. **Export HTML** — stores an HTML version of the report to a Databricks workspace
-   path, asking for the path first if one wasn't provided.
 
 ## Output
 
@@ -133,8 +131,8 @@ ONE report, in this order:
   Uplift with reference patterns, and a readiness summary that **names the 🔧 Manual
   items** (top 10, with a one-line reason) so you can plan the manual rebuild.
 
-The report is returned in chat (summary first, then the per-file sections) and also
-saved as an HTML file to a workspace path you supply.
+The report is returned in chat (summary first, then the per-file sections). You can
+optionally ask to save the results in MD and HTML format in your user folder.
 
 ## Skill definition (`SKILL.md`)
 
@@ -146,7 +144,7 @@ an overview. Anyone installing, running, or adapting the skill should read
   and the supported file types.
 - **Workflow** — enumerate → prerequisites check → profile (read-only, via
   `/importBI` in profile-only mode, parallel batches of up to 4) → produce one report
-  (hygiene-checked) → export the HTML to a workspace path.
+  (hygiene-checked).
 - **Mandatory report structure** — the exact headings and tables for **Template A
   (Migration Summary Report, opens the report)** and **Template B (Individual
   Workbook Report, one section per file, after the summary)**. These formats are

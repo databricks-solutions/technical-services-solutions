@@ -1,7 +1,6 @@
 # Assets released by .github/workflows/release-assets.yml.
 # On every push to main, each entry whose folder changed since its latest
 # <slug>-vN tag gets a new <slug>-v(N+1) release (entries with no tag get v1).
-# dabs-migrator is intentionally absent: it has its own release.yml.
 
 - slug: customer-360-lakehouse-genie
   name: "Customer 360 Lakehouse Genie"
@@ -12,6 +11,11 @@
   name: "Orderflow App on Lakebase"
   kind: "Declarative Automation Bundle + Databricks App"
   path: "core-platform/cicd/orderflow-app-lakebase"
+
+- slug: dabs-migrator
+  name: "DABs Migrator"
+  kind: "Agent skill"
+  path: "core-platform/cicd/dabs-migrator/dabs-migrator"
 
 - slug: lakeflow-connectivity-validator
   name: "Lakeflow Connectivity Validator"

@@ -59,6 +59,11 @@ def main():
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        ref = os.environ.get("GITHUB_REF", "")
+        if ref != "refs/heads/main":
+            sys.exit(f"refusing to publish from {ref or '(unset)'}; only refs/heads/main is allowed")
+
     repo = os.environ.get("GITHUB_REPOSITORY", "databricks-solutions/technical-services-solutions")
     target = os.environ.get("GITHUB_SHA") or git("rev-parse", "HEAD").stdout.strip()
     with open(MANIFEST) as f:

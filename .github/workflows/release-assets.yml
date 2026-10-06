@@ -5,7 +5,7 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Serialize runs so back-to-back merges can't compute the same next tag.
+# Serialize runs so back-to-back merges cannot update the same releases concurrently.
 concurrency:
   group: release-assets
   cancel-in-progress: false
@@ -31,7 +31,7 @@ jobs:
 
       - run: pip install --require-hashes -r .github/workflows/requirements-release-assets.txt
 
-      - name: Release assets whose folder changed
+      - name: Update releases for changed assets
         run: python .github/scripts/release_assets.py
         env:
           GH_TOKEN: ${{ github.token }}

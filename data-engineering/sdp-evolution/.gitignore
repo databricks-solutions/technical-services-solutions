@@ -1,0 +1,5 @@
+# Dot-directories (local tooling, caches, IDE, agent scratch)
+.*/
+
+__pycache__/
+*.pyc

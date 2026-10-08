@@ -21,15 +21,15 @@ resources:
       keyvault_metadata:  # object | The metadata for the secret scope if the `backend_type` is `AZURE_KEYVAULT`
         dns_name: <string>  # REQUIRED | string | The DNS of the KeyVault
         resource_id: <string>  # REQUIRED | string | The resource id of the azure KeyVault that user wants to associate the scope wit
-      lifecycle:  # object | Lifecycle is a struct that contains the lifecycle settings for a resource. It co
+      lifecycle:  # object | Settings that control the deployment lifecycle of the resource, such as preventi
         prevent_destroy: <bool>  # bool | Lifecycle setting to prevent the resource from being destroyed.
       name: <string>  # REQUIRED | string | Scope name requested by the user. Scope names are unique.
       permissions:  # array[object] | The permissions to apply to the secret scope. Permissions are managed via secret
         -
-          group_name: <string>  # string | The name of the group that has the permission set in level. This field translate
-          level: READ  # REQUIRED | enum: READ, WRITE, MANAGE | The allowed permission for user, group, service principal defined for this permi
+          group_name: <string>  # string | The name of the group granted the permission level. This field translates to a `
+          level: READ  # REQUIRED | enum: READ, WRITE, MANAGE | The permission level to apply. The allowed levels depend on the resource type.
           service_principal_name: <string>  # string | The application ID of an active service principal. This field translates to a `p
-          user_name: <string>  # string | The name of the user that has the permission set in level. This field translates
+          user_name: <string>  # string | The name of the user granted the permission level. This field translates to a `p
 ```
 
 ## What to ask the user

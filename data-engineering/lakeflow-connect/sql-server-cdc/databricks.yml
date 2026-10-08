@@ -1,0 +1,19 @@
+bundle:
+  name: lfconnect-sql-server-cdc
+  uuid: a01e42c1-5b36-4106-ab34-be989fa1f9b3
+
+include:
+  - resources/*.yml
+  - variables.yml
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://YOUR_WORKSPACE.cloud.databricks.com/ # OR https://adb-XXXXXXXXXXXXXXX.XX.azuredatabricks.net/
+  
+  # prod:
+  #   mode: production
+  #   workspace:
+  #     host: https://<prod_workspace_host>

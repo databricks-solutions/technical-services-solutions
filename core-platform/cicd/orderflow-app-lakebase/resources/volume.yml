@@ -1,0 +1,11 @@
+# A Unity Catalog managed volume for OrderFlow file artifacts — e.g. the daily
+# gold snapshot exported as CSV for downstream/business consumers, or ad-hoc
+# uploads. Managed by the bundle so it is versioned alongside everything else.
+resources:
+  volumes:
+    orderflow_exports:
+      catalog_name: ${var.catalog}
+      schema_name: ${var.schema}
+      name: exports
+      volume_type: MANAGED
+      comment: "OrderFlow file exports (daily snapshots, reports)."

@@ -1,0 +1,83 @@
+# OrderFlow — end-to-end Databricks template
+# A realistic order & inventory management app built on the Databricks developer stack:
+#   Lakebase (Postgres OLTP)  →  Databricks App (React + FastAPI CRUD)
+#   Lakeflow pipeline (medallion: bronze/silver/gold)  →  Job (orchestration + rollups)
+#
+# Everything below deploys with a single `databricks bundle deploy`.
+# Customers: change the `variables` block and the profile in `targets`, then deploy.
+bundle:
+  name: orderflow
+
+# Variables are declared here (description only); concrete values are set
+# per-target below so each environment is explicit and self-contained.
+variables:
+  catalog:
+    description: Unity Catalog for pipeline analytics tables.
+  schema:
+    description: Schema holding the medallion (bronze/silver/gold) tables.
+  lakebase_endpoint_name:
+    description: Fully-qualified Lakebase endpoint path used for OAuth credential minting.
+  lakebase_host:
+    description: Lakebase Postgres endpoint hostname.
+  lakebase_database:
+    description: Postgres database name inside Lakebase.
+  notification_email:
+    description: Email for job failure alerts.
+  run_as_sp:
+    description: Service principal (application id) that prod jobs run as.
+    default: ""   # set per-target (prod); dev runs as the deploying user
+
+include:
+  - resources/*.yml
+
+# frontend/dist is a build artifact (git-ignored) but must ship with the app so
+# FastAPI can serve the SPA. Force it into the bundle upload. CI builds it first.
+sync:
+  include:
+    - app/frontend/dist/**
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://<your-workspace>.cloud.databricks.com
+    variables:
+      catalog: <your_catalog>
+      schema: orderflow
+      lakebase_endpoint_name: projects/orderflow-db/branches/production/endpoints/primary
+      lakebase_host: <your-lakebase-endpoint-host>.database.<region>.cloud.databricks.com
+      lakebase_database: orderflow
+      notification_email: <you@example.com>
+
+  prod:
+    mode: production
+    workspace:
+      host: https://<your-workspace>.cloud.databricks.com
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
+    # Point these at your production Lakebase instance / catalog before deploying.
+    variables:
+      catalog: <your_catalog>
+      schema: orderflow_prod
+      lakebase_endpoint_name: projects/orderflow-db/branches/production/endpoints/primary
+      lakebase_host: <your-lakebase-endpoint-host>.database.<region>.cloud.databricks.com
+      lakebase_database: orderflow
+      notification_email: <you@example.com>
+      # The CI/CD service principal that owns prod resources. Set to your prod SP
+      # application id; CI supplies it via BUNDLE_VAR_run_as_sp.
+      run_as_sp: <prod-service-principal-application-id>
+    # Explicit access control for all deployed resources in prod.
+    permissions:
+      - service_principal_name: ${var.run_as_sp}   # CI/CD deploy identity
+        level: CAN_MANAGE
+      - group_name: admins                          # workspace admins manage prod
+        level: CAN_MANAGE
+      - group_name: users                           # everyone else read-only
+        level: CAN_VIEW
+    # run_as is scoped to the job (not bundle-wide): apps must run as their owner,
+    # so a bundle-level run_as would fail. The job runs as the CI/CD service principal.
+    resources:
+      jobs:
+        orderflow_job:
+          run_as:
+            service_principal_name: ${var.run_as_sp}

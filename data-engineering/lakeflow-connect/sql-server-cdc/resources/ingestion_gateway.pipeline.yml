@@ -1,0 +1,10 @@
+resources:
+  pipelines:
+    ingestion_gateway:
+      name: ${var.ingestion_gateway_name}
+      gateway_definition:
+        connection_name: ${var.connection_name}
+        gateway_storage_catalog: ${var.staging_catalog}
+        gateway_storage_schema: ${var.staging_schema}
+        gateway_storage_name: ${var.ingestion_gateway_name}
+      clusters: ${var.gateway_cluster}

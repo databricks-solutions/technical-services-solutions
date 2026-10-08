@@ -1,0 +1,5 @@
+workspace_url = ""
+workspace_name = ""
+databricks_account_id = ""
+cloud_provider = "aws"
+catalog_name = ""

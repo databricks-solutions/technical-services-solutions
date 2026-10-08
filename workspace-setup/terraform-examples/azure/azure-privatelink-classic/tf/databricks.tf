@@ -26,16 +26,15 @@ resource "azurerm_databricks_access_connector" "dbfs" {
 }
 
 resource "azurerm_databricks_workspace" "dp_workspace" {
-  name                           = "dbw-${local.prefix}-dp"
-  resource_group_name            = local.dp_rg_name
-  location                       = local.dp_rg_location
-  sku                            = "premium"
-  tags                           = local.tags
-  public_network_access_enabled  = true
+  name                                  = "dbw-${local.prefix}-dp"
+  resource_group_name                   = local.dp_rg_name
+  location                              = local.dp_rg_location
+  sku                                   = "premium"
+  tags                                  = local.tags
+  public_network_access_enabled         = true
   network_security_group_rules_required = "NoAzureDatabricksRules"
-  customer_managed_key_enabled   = true
   # Named MRG (e.g. mrg-dbw-ts-privatelink-test-dp). Changing this forces workspace replacement.
-  managed_resource_group_name    = "mrg-dbw-${local.prefix}-dp"
+  managed_resource_group_name      = "mrg-dbw-${local.prefix}-dp"
   default_storage_firewall_enabled = true
   access_connector_id              = azurerm_databricks_access_connector.dbfs.id
 
@@ -58,7 +57,7 @@ resource "azurerm_databricks_workspace" "dp_workspace" {
 }
 
 resource "databricks_metastore_assignment" "dp_workspace" {
-  count = length(trimspace(var.metastore_id)) > 0 ? 1 : 0
+  count = var.metastore_id != "" ? 1 : 0
 
   provider     = databricks.account
   workspace_id = azurerm_databricks_workspace.dp_workspace.workspace_id

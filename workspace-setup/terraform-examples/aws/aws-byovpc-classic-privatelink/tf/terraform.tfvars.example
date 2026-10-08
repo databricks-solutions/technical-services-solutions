@@ -34,6 +34,9 @@ region = "us-west-2"
 #   - custom: You supply vpc_id, subnet_ids, security_group_ids, and the two backend VPC endpoint IDs; no AWS networking created.
 network_configuration = "standard"
 
+# NAT topology for standard mode: "single" or "per_az". Ignored in fully_private and custom modes.
+nat_gateway_mode = "single"
+
 # Pathway 1 (template-owned): use "standard" or "fully_private" and set the following
 vpc_cidr_range       = "10.0.0.0/16"
 availability_zones   = ["us-west-2a", "us-west-2b"]

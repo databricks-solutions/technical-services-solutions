@@ -1,4 +1,5 @@
 resource "time_sleep" "wait_30_seconds" {
+  depends_on      = [aws_iam_role_policy.this]
   create_duration = "30s"
 }
 
@@ -32,7 +33,7 @@ resource "databricks_mws_networks" "this" {
   provider           = databricks.mws
   account_id         = var.databricks_account_id
   network_name       = "${var.prefix}-network"
-  security_group_ids = length(var.security_group_ids) > 0 ? var.security_group_ids : aws_security_group.databricks[*].id
+  security_group_ids = var.vpc_id != "" && length(var.security_group_ids) > 0 ? var.security_group_ids : aws_security_group.databricks[*].id
   subnet_ids         = length(var.subnet_ids) > 0 ? var.subnet_ids : module.vpc[0].private_subnets
   vpc_id             = var.vpc_id == "" ? module.vpc[0].vpc_id : var.vpc_id
 
@@ -48,4 +49,3 @@ resource "time_sleep" "wait_2_minutes" {
   depends_on      = [databricks_mws_workspaces.this]
   create_duration = "120s"
 }
-

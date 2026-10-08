@@ -33,8 +33,8 @@ Production deploys run through CI only — never `databricks bundle deploy -t pr
 Before the first deploy, replace these in `databricks.yml`:
 
 - `${var.workspace_host}` for each target
-- `${var.catalog}` — the default Unity Catalog catalog (defaults to `dev`)
-- `${var.schema}` — the default Unity Catalog schema
+- `${var.catalog}` — the default Unity Catalog catalog, if catalog is used in the exported resource use that, if catalog is not being defined on the migrated resources, defaults to `dev`.
+- `${var.schema}` — the default Unity Catalog schema, use the schema defined in the resource user wants to migrate, if no schema is defined ask user what schema to use.
 - `${var.staging_sp_app_id}` and `${var.prod_sp_app_id}` if using service principals
 
 ## CI/CD secrets

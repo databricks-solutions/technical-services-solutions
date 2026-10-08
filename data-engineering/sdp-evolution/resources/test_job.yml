@@ -1,0 +1,8 @@
+resources:
+  jobs:
+    test_job:
+      name: sdp-evolution-tests-${bundle.target}
+      tasks:
+        - task_key: unit_tests
+          notebook_task:
+            notebook_path: ../tests/test_reconcile_notebook.py

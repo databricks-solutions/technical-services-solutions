@@ -1,0 +1,56 @@
+# Variable declarations
+variables:
+  # Ingestion gateway variables
+  ingestion_gateway_name:
+    description: Name of the ingestion gateway
+  connection_name:
+    description: SQL Server connection name
+  staging_catalog:
+    description: Destination catalog for ingestion gateway staged data
+  staging_schema:
+    description: Destination schema for ingestion gateway staged data
+  gateway_cluster:
+    description: Full cluster specification for the ingestion gateway (array)
+    type: complex
+  
+  # Ingestion pipeline variables
+  ingestion_pipeline_name:
+    description: Name of the ingestion pipeline
+  pipeline_log_catalog: 
+    description: Catalog for pipeline logs
+  pipeline_log_schema: 
+    description: Schema for pipeline logs
+  source_catalog:
+    description: Name of the catalog in the source database
+  source_schema:
+    description: Name of the schema in the source database
+  dest_catalog:
+    description: Destination Catalog
+  dest_schema:
+    description: Destination Schema
+
+# Variable values per target. Override these per environment (dev, prod, etc.).
+targets:
+  dev:
+    variables:
+      # Ingestion Gateway:
+      ingestion_gateway_name: <ingestion-gateway-name>
+      connection_name: <sql-server-connection-name>
+      staging_catalog: <staging-catalog>
+      staging_schema: <staging-schema>
+      gateway_cluster:
+        - driver_node_type_id: Standard_E4d_v4 #Default| Azure: Standard_E4d_v4 | AWS: r5n.xlarge | GCP: n2-highmem-4
+          node_type_id: Standard_F4s #Default| Azure: Standard_F4s | AWS: m5.large | GCP: n2-standard-4
+          autoscale:
+            min_workers: 1
+            max_workers: 5
+            mode: ENHANCED
+
+      # Ingestion Pipeline:
+      ingestion_pipeline_name: <ingestion-pipeline-name>
+      pipeline_log_catalog: <pipeline-log-catalog>
+      pipeline_log_schema: <pipeline-log-schema>
+      source_catalog: <source-catalog>
+      source_schema: <source-schema>
+      dest_catalog: <dest-catalog>
+      dest_schema: <dest-schema>

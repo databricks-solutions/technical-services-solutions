@@ -1,0 +1,54 @@
+resources:
+  # ──────────────────────────────────────────────────────────────────────────
+  # Setup job — runs AFTER `bundle deploy` created the resources. Tasks pass
+  # catalog/schema via base_parameters using the RESOLVED schema name. A weekly
+  # (paused) schedule reflects the Monday-exec-review orchestration story.
+  # ──────────────────────────────────────────────────────────────────────────
+  jobs:
+    customer360_setup:
+      name: "[${bundle.target}] Customer 360 Setup"
+      description: "data → pipeline → metric view + validate"
+      schedule:
+        quartz_cron_expression: "0 0 6 ? * MON"
+        timezone_id: "UTC"
+        pause_status: PAUSED
+      tasks:
+        - task_key: generate_data
+          notebook_task:
+            notebook_path: ../src/data_generation/generate_data.py
+            base_parameters:
+              catalog: ${resources.schemas.customer360_schema.catalog_name}
+              schema:  ${resources.schemas.customer360_schema.name}
+          environment_key: sdk_default
+
+        - task_key: run_pipeline
+          depends_on: [{ task_key: generate_data }]
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.customer360_pipeline.id}
+
+        # Metric views have no PySpark API — this notebook runs the
+        # `CREATE OR REPLACE VIEW … WITH METRICS LANGUAGE YAML` SQL inline.
+        - task_key: deploy_metric_view
+          depends_on: [{ task_key: run_pipeline }]
+          notebook_task:
+            notebook_path: ../src/metric_view/mv_customer_health.py
+            base_parameters:
+              catalog: ${resources.schemas.customer360_schema.catalog_name}
+              schema:  ${resources.schemas.customer360_schema.name}
+          environment_key: sdk_default
+
+        - task_key: validate_metrics
+          depends_on: [{ task_key: deploy_metric_view }]
+          notebook_task:
+            notebook_path: ../src/jobs/validate_metrics.py
+            base_parameters:
+              catalog: ${resources.schemas.customer360_schema.catalog_name}
+              schema:  ${resources.schemas.customer360_schema.name}
+          environment_key: sdk_default
+
+      environments:
+        - environment_key: sdk_default
+          spec:
+            client: "4"
+            dependencies:
+              - "numpy"

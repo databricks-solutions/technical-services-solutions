@@ -1,0 +1,426 @@
+{
+  "datasets": [
+    {
+      "name": "ds_metrics",
+      "displayName": "Customer health metrics",
+      "queryLines": [
+        "SELECT `date`, region, segment,\n",
+        "  MEASURE(`churn_risk_index`) AS churn_risk_index,\n",
+        "  MEASURE(`on_time_delivery_rate`) AS on_time_rate,\n",
+        "  MEASURE(`unresolved_cases`) AS unresolved_cases,\n",
+        "  MEASURE(`shipping_delay_cases`) AS shipping_delay_cases,\n",
+        "  MEASURE(`arr_at_risk`) AS arr_at_risk,\n",
+        "  MEASURE(`new_cases`) AS new_cases,\n",
+        "  MEASURE(`late_orders`) AS late_orders\n",
+        "FROM mv_customer_health\n",
+        "GROUP BY ALL"
+      ]
+    },
+    {
+      "name": "ds_accounts",
+      "displayName": "Account health",
+      "queryLines": [
+        "SELECT account_id, account_name, region, country, segment, industry,\n",
+        "  arr_usd, renewal_date, days_to_renewal, churn_risk_index, churn_risk_score,\n",
+        "  is_at_risk, open_cases_30d, late_orders_30d, on_time_rate_30d\n",
+        "FROM gold_account_health"
+      ],
+      "columns": [
+        {"displayName": "ARR at Risk", "description": "ARR of at-risk accounts", "expression": "SUM(CASE WHEN `is_at_risk` THEN `arr_usd` ELSE 0 END)"},
+        {"displayName": "Avg Churn Index", "description": "Average churn-risk index", "expression": "AVG(`churn_risk_index`)"}
+      ]
+    },
+    {
+      "name": "ds_at_risk",
+      "displayName": "At-risk EMEA Enterprise accounts",
+      "queryLines": [
+        "SELECT account_name, country, arr_usd, days_to_renewal, churn_risk_index,\n",
+        "  open_cases_30d, on_time_rate_30d\n",
+        "FROM gold_account_health\n",
+        "WHERE region = 'EMEA' AND segment = 'Enterprise' AND is_at_risk\n",
+        "ORDER BY arr_usd DESC"
+      ]
+    },
+    {
+      "name": "ds_cases",
+      "displayName": "EMEA cases by category",
+      "queryLines": [
+        "SELECT category, COUNT(*) AS case_count\n",
+        "FROM silver_cases\n",
+        "WHERE region = 'EMEA'\n",
+        "GROUP BY category ORDER BY case_count DESC"
+      ]
+    },
+    {
+      "name": "ds_forecast",
+      "displayName": "EMEA churn forecast",
+      "queryLines": [
+        "WITH actuals AS (\n",
+        "  SELECT date_trunc('WEEK', `date`) AS week, ROUND(MEASURE(`churn_risk_index`),3) AS churn\n",
+        "  FROM mv_customer_health\n",
+        "  WHERE region = 'EMEA' AND `date` >= date_sub(current_date(), 180)\n",
+        "    AND date_trunc('WEEK', `date`) < date_trunc('WEEK', current_date())\n",
+        "  GROUP BY 1\n",
+        "),\n",
+        "dates AS (SELECT MAX(week) AS max_d, MIN(week) AS min_d FROM actuals),\n",
+        "forecast AS (\n",
+        "  SELECT week, churn_forecast, churn_upper, churn_lower, CAST(NULL AS DOUBLE) AS churn\n",
+        "  FROM AI_FORECAST(TABLE(actuals),\n",
+        "    horizon => (SELECT max_d + MAKE_DT_INTERVAL(42,0,0,0) FROM dates),\n",
+        "    time_col => 'week', value_col => 'churn')\n",
+        "),\n",
+        "bridge AS (\n",
+        "  SELECT a.week, a.churn AS churn_forecast, a.churn AS churn_upper, a.churn AS churn_lower, a.churn\n",
+        "  FROM actuals a JOIN dates d ON a.week = d.max_d\n",
+        ")\n",
+        "SELECT week, CAST(NULL AS DOUBLE) AS churn_forecast, CAST(NULL AS DOUBLE) AS churn_upper, CAST(NULL AS DOUBLE) AS churn_lower, churn FROM actuals\n",
+        "UNION ALL SELECT week, churn_forecast, churn_upper, churn_lower, churn FROM bridge\n",
+        "UNION ALL SELECT week, churn_forecast, churn_upper, churn_lower, churn FROM forecast"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "executive",
+      "displayName": "Executive",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "exec-header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "# Customer 360 — Executive\n",
+                "**Maya Patel, VP Customer Experience.** An EMEA fulfillment slip (~5 weeks ago) blew out shipping times; late orders drove a support surge and pushed churn risk to ~3x. **A $1.4M renewal is exposed.** This page tracks the shape and the recovery — watch the orange EMEA line tower over the flat NA/APAC/LATAM lines."
+              ]
+            }
+          },
+          "position": {"x": 0, "y": 0, "width": 12, "height": 2}
+        },
+        {
+          "widget": {
+            "name": "kpi-churn",
+            "queries": [{"name": "main_query", "query": {"datasetName": "ds_metrics", "fields": [
+              {"name": "weekly(date)", "expression": "DATE_TRUNC(\"WEEK\", `date`)"},
+              {"name": "measure(churn)", "expression": "MEASURE(`churn_risk_index`)"}
+            ], "disaggregated": false, "orders": [{"direction": "DESC", "expression": "DATE_TRUNC(\"WEEK\", `date`)"}]}}],
+            "spec": {"version": 2, "widgetType": "counter", "frame": {"title": "Churn-risk index (weekly)", "showTitle": true},
+              "encodings": {
+                "value": {"fieldName": "measure(churn)", "displayName": "Churn-risk index", "rowNumber": 1, "format": {"type": "number", "decimalPlaces": {"type": "exact", "places": 2}}, "style": {"color": {"hex": "#FE9000"}}},
+                "period": {"fieldName": "weekly(date)"}
+              }}
+          },
+          "position": {"x": 0, "y": 2, "width": 3, "height": 3}
+        },
+        {
+          "widget": {
+            "name": "kpi-arr",
+            "queries": [{"name": "main_query", "query": {"datasetName": "ds_accounts", "fields": [
+              {"name": "measure(ARR at Risk)", "expression": "MEASURE(`ARR at Risk`)"}
+            ], "disaggregated": false}}],
+            "spec": {"version": 2, "widgetType": "counter", "frame": {"title": "ARR at risk", "showTitle": true},
+              "encodings": {"value": {"fieldName": "measure(ARR at Risk)", "displayName": "ARR at risk", "format": {"type": "number-currency", "currencyCode": "USD", "abbreviation": "compact", "decimalPlaces": {"type": "max", "places": 1}}, "style": {"color": {"hex": "#FE9000"}}}}}
+          },
+          "position": {"x": 3, "y": 2, "width": 3, "height": 3}
+        },
+        {
+          "widget": {
+            "name": "kpi-ontime",
+            "queries": [{"name": "main_query", "query": {"datasetName": "ds_metrics", "fields": [
+              {"name": "measure(on_time)", "expression": "MEASURE(`on_time_delivery_rate`)"}
+            ], "disaggregated": false}}],
+            "spec": {"version": 2, "widgetType": "counter", "frame": {"title": "On-time delivery", "showTitle": true},
+              "encodings": {"value": {"fieldName": "measure(on_time)", "displayName": "On-time delivery", "format": {"type": "number-percent", "decimalPlaces": {"type": "exact", "places": 1}}, "style": {"color": {"hex": "#094074"}}}}}
+          },
+          "position": {"x": 6, "y": 2, "width": 3, "height": 3}
+        },
+        {
+          "widget": {
+            "name": "kpi-cases",
+            "queries": [{"name": "main_query", "query": {"datasetName": "ds_metrics", "fields": [
+              {"name": "measure(unresolved)", "expression": "MEASURE(`unresolved_cases`)"}
+            ], "disaggregated": false}}],
+            "spec": {"version": 2, "widgetType": "counter", "frame": {"title": "Open cases (backlog-days)", "showTitle": true},
+              "encodings": {"value": {"fieldName": "measure(unresolved)", "displayName": "Unresolved cases", "format": {"type": "number", "abbreviation": "compact", "decimalPlaces": {"type": "max", "places": 1}}, "style": {"color": {"hex": "#094074"}}}}}
+          },
+          "position": {"x": 9, "y": 2, "width": 3, "height": 3}
+        },
+        {
+          "widget": {
+            "name": "hero-churn-by-region",
+            "queries": [{"name": "main_query", "query": {"datasetName": "ds_metrics", "fields": [
+              {"name": "weekly(date)", "expression": "DATE_TRUNC(\"WEEK\", `date`)"},
+              {"name": "measure(churn)", "expression": "MEASURE(`churn_risk_index`)"},
+              {"name": "region", "expression": "`region`"}
+            ], "disaggregated": false}}],
+            "spec": {"version": 3, "widgetType": "line", "frame": {"title": "Churn-risk index by region (weekly)", "showTitle": true},
+              "encodings": {
+                "x": {"fieldName": "weekly(date)", "scale": {"type": "temporal"}, "displayName": "Week"},
+                "y": {"fieldName": "measure(churn)", "scale": {"type": "quantitative"}, "displayName": "Churn-risk index"},
+                "color": {"fieldName": "region", "scale": {"type": "categorical", "mappings": [
+                  {"value": "EMEA", "color": "#FE9000"}, {"value": "NA", "color": "#094074"},
+                  {"value": "APAC", "color": "#3C6997"}, {"value": "LATAM", "color": "#5ADBFF"}
+                ]}, "displayName": "Region"}
+              }}
+          },
+          "position": {"x": 0, "y": 5, "width": 12, "height": 6}
+        },
+        {
+          "widget": {
+            "name": "ontime-by-region",
+            "queries": [{"name": "main_query", "query": {"datasetName": "ds_metrics", "fields": [
+              {"name": "weekly(date)", "expression": "DATE_TRUNC(\"WEEK\", `date`)"},
+              {"name": "measure(on_time)", "expression": "MEASURE(`on_time_delivery_rate`)"},
+              {"name": "region", "expression": "`region`"}
+            ], "disaggregated": false}}],
+            "spec": {"version": 3, "widgetType": "line", "frame": {"title": "On-time delivery rate by region (weekly)", "showTitle": true},
+              "encodings": {
+                "x": {"fieldName": "weekly(date)", "scale": {"type": "temporal"}, "displayName": "Week"},
+                "y": {"fieldName": "measure(on_time)", "scale": {"type": "quantitative"}, "format": {"type": "number-percent"}, "displayName": "On-time rate"},
+                "color": {"fieldName": "region", "scale": {"type": "categorical", "mappings": [
+                  {"value": "EMEA", "color": "#FE9000"}, {"value": "NA", "color": "#094074"},
+                  {"value": "APAC", "color": "#3C6997"}, {"value": "LATAM", "color": "#5ADBFF"}
+                ]}, "displayName": "Region"}
+              }}
+          },
+          "position": {"x": 0, "y": 11, "width": 6, "height": 6}
+        },
+        {
+          "widget": {
+            "name": "case-surge",
+            "queries": [{"name": "main_query", "query": {"datasetName": "ds_metrics", "fields": [
+              {"name": "weekly(date)", "expression": "DATE_TRUNC(\"WEEK\", `date`)"},
+              {"name": "measure(unresolved)", "expression": "MEASURE(`unresolved_cases`)"},
+              {"name": "measure(shipping)", "expression": "MEASURE(`shipping_delay_cases`)"}
+            ], "disaggregated": false}}],
+            "spec": {"version": 3, "widgetType": "line", "frame": {"title": "Unresolved & shipping-delay cases (weekly)", "showTitle": true},
+              "encodings": {
+                "x": {"fieldName": "weekly(date)", "scale": {"type": "temporal"}, "displayName": "Week"},
+                "y": {"scale": {"type": "quantitative"}, "displayName": "Cases (backlog-days)", "fields": [
+                  {"fieldName": "measure(unresolved)", "displayName": "Unresolved cases"},
+                  {"fieldName": "measure(shipping)", "displayName": "Shipping-delay cases"}
+                ]},
+                "color": {"scale": {"type": "categorical", "mappings": [
+                  {"value": "Unresolved cases", "color": "#094074"},
+                  {"value": "Shipping-delay cases", "color": "#FE9000"}
+                ]}}
+              }}
+          },
+          "position": {"x": 6, "y": 11, "width": 6, "height": 6}
+        },
+        {
+          "widget": {
+            "name": "churn-forecast",
+            "queries": [{"name": "main_query", "query": {"datasetName": "ds_forecast", "fields": [
+              {"name": "week", "expression": "`week`"},
+              {"name": "churn", "expression": "`churn`"},
+              {"name": "churn_forecast", "expression": "`churn_forecast`"},
+              {"name": "churn_upper", "expression": "`churn_upper`"},
+              {"name": "churn_lower", "expression": "`churn_lower`"}
+            ], "disaggregated": true}}],
+            "spec": {"version": 1, "widgetType": "forecast-line", "frame": {"title": "Churn-risk index — actuals + forecast (EMEA)", "showTitle": true},
+              "encodings": {
+                "x": {"fieldName": "week", "scale": {"type": "temporal"}, "displayName": "Week"},
+                "y": {"scale": {"type": "quantitative", "domainMin": 0},
+                  "original": {"fieldName": "churn", "displayName": "Churn-risk index (EMEA)"},
+                  "prediction": {"fieldName": "churn_forecast", "displayName": "Forecast"},
+                  "predictionUpper": {"fieldName": "churn_upper"},
+                  "predictionLower": {"fieldName": "churn_lower"}}
+              },
+              "annotations": [{"type": "vertical-line", "encodings": {
+                "x": {"dataValue": "2026-07-03T00:00:00.000", "dataType": "DATETIME"},
+                "label": {"value": "EMEA fulfillment slip begins"},
+                "color": {"value": {"hex": "#FE9000"}}
+              }}]}
+          },
+          "position": {"x": 0, "y": 17, "width": 12, "height": 6}
+        }
+      ]
+    },
+    {
+      "name": "investigation",
+      "displayName": "Investigation",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "inv-header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "# Investigation — why is churn risk up?\n",
+                "Same data split by the dimensions that matter: which regions/segments are exposed, which named accounts carry the ~$1.4M renewal risk, and what's driving the support cases. **EMEA separates from every other region; shipping-delay cases dominate.**"
+              ]
+            }
+          },
+          "position": {"x": 0, "y": 0, "width": 12, "height": 2}
+        },
+        {
+          "widget": {
+            "name": "churn-by-region-segment",
+            "queries": [{"name": "main_query", "query": {"datasetName": "ds_accounts", "fields": [
+              {"name": "region", "expression": "`region`"},
+              {"name": "measure(Avg Churn Index)", "expression": "MEASURE(`Avg Churn Index`)"},
+              {"name": "segment", "expression": "`segment`"}
+            ], "disaggregated": false}}],
+            "spec": {"version": 3, "widgetType": "bar", "frame": {"title": "Churn-risk index by region & segment", "showTitle": true},
+              "encodings": {
+                "x": {"fieldName": "region", "scale": {"type": "categorical"}, "displayName": "Region"},
+                "y": {"fieldName": "measure(Avg Churn Index)", "scale": {"type": "quantitative"}, "displayName": "Avg churn-risk index"},
+                "color": {"fieldName": "segment", "scale": {"type": "categorical", "mappings": [
+                  {"value": "Enterprise", "color": "#094074"}, {"value": "Mid-Market", "color": "#3C6997"}, {"value": "SMB", "color": "#5ADBFF"}
+                ]}, "displayName": "Segment"}
+              }}
+          },
+          "position": {"x": 0, "y": 2, "width": 6, "height": 6}
+        },
+        {
+          "widget": {
+            "name": "arr-at-risk-by-region",
+            "queries": [{"name": "main_query", "query": {"datasetName": "ds_accounts", "fields": [
+              {"name": "region", "expression": "`region`"},
+              {"name": "measure(ARR at Risk)", "expression": "MEASURE(`ARR at Risk`)"}
+            ], "disaggregated": false}}],
+            "spec": {"version": 3, "widgetType": "bar", "frame": {"title": "ARR at risk by region", "showTitle": true},
+              "encodings": {
+                "y": {"fieldName": "region", "scale": {"type": "categorical"}, "displayName": "Region"},
+                "x": {"fieldName": "measure(ARR at Risk)", "scale": {"type": "quantitative"}, "format": {"type": "number-currency", "currencyCode": "USD", "abbreviation": "compact"}, "displayName": "ARR at risk"},
+                "color": {"fieldName": "region", "scale": {"type": "categorical", "mappings": [
+                  {"value": "EMEA", "color": "#FE9000"}, {"value": "NA", "color": "#094074"},
+                  {"value": "APAC", "color": "#3C6997"}, {"value": "LATAM", "color": "#5ADBFF"}
+                ]}}
+              }}
+          },
+          "position": {"x": 6, "y": 2, "width": 6, "height": 6}
+        },
+        {
+          "widget": {
+            "name": "at-risk-table",
+            "queries": [{"name": "main_query", "query": {"datasetName": "ds_at_risk", "fields": [
+              {"name": "account_name", "expression": "`account_name`"},
+              {"name": "country", "expression": "`country`"},
+              {"name": "arr_usd", "expression": "`arr_usd`"},
+              {"name": "days_to_renewal", "expression": "`days_to_renewal`"},
+              {"name": "churn_risk_index", "expression": "`churn_risk_index`"},
+              {"name": "open_cases_30d", "expression": "`open_cases_30d`"},
+              {"name": "on_time_rate_30d", "expression": "`on_time_rate_30d`"}
+            ], "disaggregated": true}}],
+            "spec": {"version": 2, "widgetType": "table", "frame": {"title": "Top at-risk EMEA Enterprise accounts (~$1.4M ARR)", "showTitle": true},
+              "encodings": {"columns": [
+                {"fieldName": "account_name", "displayName": "Account"},
+                {"fieldName": "country", "displayName": "Country"},
+                {"fieldName": "arr_usd", "displayName": "ARR", "format": {"type": "number-currency", "currencyCode": "USD", "abbreviation": "compact", "decimalPlaces": {"type": "max", "places": 1}}},
+                {"fieldName": "days_to_renewal", "displayName": "Days to renewal"},
+                {"fieldName": "churn_risk_index", "displayName": "Churn index", "format": {"type": "number", "decimalPlaces": {"type": "exact", "places": 2}}},
+                {"fieldName": "open_cases_30d", "displayName": "Open cases (30d)"},
+                {"fieldName": "on_time_rate_30d", "displayName": "On-time (30d)", "format": {"type": "number-percent", "decimalPlaces": {"type": "exact", "places": 0}}}
+              ]}}
+          },
+          "position": {"x": 0, "y": 8, "width": 12, "height": 6}
+        },
+        {
+          "widget": {
+            "name": "cases-by-category",
+            "queries": [{"name": "main_query", "query": {"datasetName": "ds_cases", "fields": [
+              {"name": "category", "expression": "`category`"},
+              {"name": "case_count", "expression": "`case_count`"}
+            ], "disaggregated": true}}],
+            "spec": {"version": 3, "widgetType": "bar", "frame": {"title": "EMEA cases by category", "showTitle": true},
+              "encodings": {
+                "y": {"fieldName": "category", "scale": {"type": "categorical"}, "displayName": "Category"},
+                "x": {"fieldName": "case_count", "scale": {"type": "quantitative"}, "displayName": "Cases"},
+                "color": {"fieldName": "category", "scale": {"type": "categorical", "mappings": [
+                  {"value": "shipping_delay", "color": "#FE9000"}
+                ]}}
+              }}
+          },
+          "position": {"x": 0, "y": 14, "width": 6, "height": 6}
+        },
+        {
+          "widget": {
+            "name": "late-orders-by-region",
+            "queries": [{"name": "main_query", "query": {"datasetName": "ds_metrics", "fields": [
+              {"name": "weekly(date)", "expression": "DATE_TRUNC(\"WEEK\", `date`)"},
+              {"name": "measure(late)", "expression": "MEASURE(`late_orders`)"},
+              {"name": "region", "expression": "`region`"}
+            ], "disaggregated": false}}],
+            "spec": {"version": 3, "widgetType": "bar", "frame": {"title": "Late orders by region (weekly)", "showTitle": true},
+              "encodings": {
+                "x": {"fieldName": "weekly(date)", "scale": {"type": "temporal"}, "displayName": "Week"},
+                "y": {"fieldName": "measure(late)", "scale": {"type": "quantitative"}, "displayName": "Late orders"},
+                "color": {"fieldName": "region", "scale": {"type": "categorical", "mappings": [
+                  {"value": "EMEA", "color": "#FE9000"}, {"value": "NA", "color": "#094074"},
+                  {"value": "APAC", "color": "#3C6997"}, {"value": "LATAM", "color": "#5ADBFF"}
+                ]}, "displayName": "Region"}
+              }}
+          },
+          "position": {"x": 6, "y": 14, "width": 6, "height": 6}
+        }
+      ]
+    },
+    {
+      "name": "filters",
+      "displayName": "Filters",
+      "pageType": "PAGE_TYPE_GLOBAL_FILTERS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "filter-date",
+            "queries": [{"name": "f_date", "query": {"datasetName": "ds_metrics", "fields": [{"name": "date", "expression": "`date`"}], "disaggregated": false}}],
+            "spec": {"version": 2, "widgetType": "filter-date-range-picker", "frame": {"title": "Date range", "showTitle": true},
+              "encodings": {"fields": [{"fieldName": "date", "queryName": "f_date"}]}}
+          },
+          "position": {"x": 0, "y": 0, "width": 4, "height": 2}
+        },
+        {
+          "widget": {
+            "name": "filter-region",
+            "queries": [
+              {"name": "f_region_m", "query": {"datasetName": "ds_metrics", "fields": [{"name": "region", "expression": "`region`"}], "disaggregated": false}},
+              {"name": "f_region_a", "query": {"datasetName": "ds_accounts", "fields": [{"name": "region", "expression": "`region`"}], "disaggregated": false}}
+            ],
+            "spec": {"version": 2, "widgetType": "filter-multi-select", "frame": {"title": "Region", "showTitle": true},
+              "encodings": {"fields": [
+                {"fieldName": "region", "queryName": "f_region_m"},
+                {"fieldName": "region", "queryName": "f_region_a"}
+              ]}}
+          },
+          "position": {"x": 4, "y": 0, "width": 4, "height": 2}
+        },
+        {
+          "widget": {
+            "name": "filter-segment",
+            "queries": [
+              {"name": "f_segment_m", "query": {"datasetName": "ds_metrics", "fields": [{"name": "segment", "expression": "`segment`"}], "disaggregated": false}},
+              {"name": "f_segment_a", "query": {"datasetName": "ds_accounts", "fields": [{"name": "segment", "expression": "`segment`"}], "disaggregated": false}}
+            ],
+            "spec": {"version": 2, "widgetType": "filter-multi-select", "frame": {"title": "Segment", "showTitle": true},
+              "encodings": {"fields": [
+                {"fieldName": "segment", "queryName": "f_segment_m"},
+                {"fieldName": "segment", "queryName": "f_segment_a"}
+              ]}}
+          },
+          "position": {"x": 8, "y": 0, "width": 4, "height": 2}
+        }
+      ]
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "canvasBackgroundColor": {"light": "#F5F7FB", "dark": "#0F1419"},
+      "widgetBackgroundColor": {"light": "#FFFFFF", "dark": "#161B22"},
+      "widgetBorderColor": {"light": "#FFFFFF", "dark": "#161B22"},
+      "fontColor": {"light": "#1F2530", "dark": "#E8ECF0"},
+      "selectionColor": {"light": "#4F7CE3", "dark": "#8ACAFF"},
+      "visualizationColors": ["#094074", "#3C6997", "#5ADBFF", "#FFDD4A", "#FE9000"],
+      "widgetHeaderAlignment": "LEFT"
+    },
+    "genieSpace": {
+      "isEnabled": true,
+      "overrideId": "01f192a932571bb1a451e3f754313232",
+      "enablementMode": "ENABLED"
+    }
+  }
+}

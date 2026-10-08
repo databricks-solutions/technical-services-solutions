@@ -1,0 +1,20 @@
+# Lakeflow Declarative Pipeline: medallion transform of OrderFlow data.
+# Bronze reads the Lakebase OLTP tables (registered in UC), silver cleans/joins,
+# gold produces analytics aggregates the business team queries.
+resources:
+  pipelines:
+    orderflow_pipeline:
+      name: orderflow-medallion
+      catalog: ${var.catalog}
+      schema: ${var.schema}
+      serverless: true
+      continuous: false
+      # `development` is left to the bundle target mode: development targets set it
+      # true automatically, production targets set it false.
+      libraries:
+        # Plain Python source (pyspark.pipelines), referenced as a file, not a notebook.
+        - file:
+            path: ../pipeline/transformations.py
+      configuration:
+        source_catalog: ${var.catalog}
+        source_schema: ${var.schema}

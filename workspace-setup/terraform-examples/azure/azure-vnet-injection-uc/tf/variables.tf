@@ -191,3 +191,13 @@ variable "subnet_private_cidr" {
   description = "The CIDR address of the second subnet"
   type        = string
 }
+
+variable "nat_gateway_zones" {
+  description = "Availability zone(s) for the NAT gateway and its public IP. Azure NAT gateway is a zonal resource, so provide at most one zone (e.g. [\"1\"]). Use [] for regions without availability-zone support (non-zonal). Default [\"1\"] preserves prior behavior. For zone-redundant egress, deploy one NAT gateway per zone (not covered by this example)."
+  type        = list(string)
+  default     = ["1"]
+  validation {
+    condition     = length(var.nat_gateway_zones) <= 1 && alltrue([for z in var.nat_gateway_zones : contains(["1", "2", "3"], z)])
+    error_message = "nat_gateway_zones must be empty (non-zonal) or a single zone from [\"1\", \"2\", \"3\"]. Azure NAT gateway supports only one availability zone."
+  }
+}

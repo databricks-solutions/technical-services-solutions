@@ -1,0 +1,26 @@
+resources:
+  # ──────────────────────────────────────────────────────────────────────────
+  # Genie space — deployed as a NATIVE bundle resource (requires engine: direct,
+  # set above; CLI v1.3.0+). This is the headline of the example: a Genie Agent
+  # defined and deployed WITH DABs, not created imperatively via the SDK.
+  #
+  # NOTE — table binding is STATIC: genie_space.json ships with placeholder refs
+  # `<your_catalog>.customer_360_demo.*`. EDIT those identifiers to your catalog
+  # BEFORE deploying (and keep them in sync with the `catalog`/`schema` vars) —
+  # the CLI deploys a `file_path` JSON *verbatim* (no ${var} substitution inside
+  # it), and `genie_spaces` has no dataset_catalog/dataset_schema field to rebind
+  # tables per target (unlike the `dashboards` resource). Both dev and prod use
+  # that same catalog/schema (isolation is at the workspace level — see the
+  # targets block in databricks.yml).
+  #
+  # DEPLOY ORDERING: this resource validates that its bound tables EXIST at deploy
+  # time, but the setup job builds them at RUN time — so the bundle deploys in 3
+  # phases (all-except-Genie → run setup job → full deploy). See AGENTS.md / README
+  # "Known limitations".
+  # ──────────────────────────────────────────────────────────────────────────
+  genie_spaces:
+    customer360_genie:
+      title: "[${bundle.target}] Customer 360"
+      description: "Customer-360 analytics — walk the curated questions to trace the EMEA churn-risk spike back to the fulfillment slip."
+      file_path: ../src/genie/genie_space.json
+      warehouse_id: ${var.warehouse_id}

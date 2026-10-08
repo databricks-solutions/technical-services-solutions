@@ -98,7 +98,8 @@ resource "azurerm_public_ip" "this" {
   resource_group_name = local.vnet_resource_group.name
   location            = local.vnet.location
   allocation_method   = "Static"
-  zones               = ["1"]
+  sku                 = "Standard"
+  zones               = var.nat_gateway_zones
   tags                = var.tags
 }
 
@@ -108,7 +109,7 @@ resource "azurerm_nat_gateway" "this" {
   location                = local.vnet.location
   sku_name                = "Standard"
   idle_timeout_in_minutes = 10
-  zones                   = ["1"]
+  zones                   = var.nat_gateway_zones
   tags                    = var.tags
 }
 

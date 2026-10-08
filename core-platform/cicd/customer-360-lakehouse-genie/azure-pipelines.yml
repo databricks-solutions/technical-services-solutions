@@ -1,0 +1,74 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Azure DevOps CI/CD for the Customer 360 Lakehouse bundle.
+#
+# STRATEGY (same across all four CI platforms in this repo) — the full lifecycle:
+#   1. Push to a feature branch  → validate + DEPLOY to the DEV workspace
+#                                  (inner loop; dev + prod are separate workspaces).
+#   2. Pull request → main       → VALIDATE only (cheap, no-compute merge gate).
+#   3. Merge/push to main        → DEPLOY to PROD as a SERVICE PRINCIPAL.
+#
+# AUTH: OAuth M2M. The CLI reads DATABRICKS_HOST / DATABRICKS_CLIENT_ID /
+# DATABRICKS_CLIENT_SECRET. Store the *_CLIENT_ID / *_CLIENT_SECRET as SECRET
+# pipeline variables ("Keep this value secret"), one SP per environment. Secret
+# variables are mapped explicitly under each step's `env:` below.
+#
+# NOTE: adjust the feature-branch glob ('feature/*') to your team's convention.
+# ─────────────────────────────────────────────────────────────────────────────
+
+trigger:
+  branches:
+    include:
+      - main                # merge/push to main   → deploy to prod
+      - feature/*           # feature branch push  → validate + deploy to dev
+
+pr:
+  branches:
+    include: [main]         # PR targeting main     → validate-only merge gate
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  # Install the modern Databricks CLI (NOT the deprecated pip package).
+  - script: curl -fsSL https://raw.githubusercontent.com/databricks/cli/main/install.sh | sh
+    displayName: Install Databricks CLI
+
+  # 1. Feature-branch push → validate + 3-phase deploy to DEV ─────────────────
+  #    3-phase: deploy all-except-Genie → run setup job (builds tables) → full
+  #    deploy (adds Genie). Required because genie_spaces validates its tables at
+  #    deploy time but the job builds them at run time. See AGENTS.md.
+  - script: |
+      databricks bundle validate -t dev --var warehouse_id=$(DEV_WAREHOUSE_ID)
+      databricks bundle deploy   -t dev --var warehouse_id=$(DEV_WAREHOUSE_ID) --select schemas.customer360_schema,volumes.raw_data,pipelines.customer360_pipeline,dashboards.customer360_dashboard,jobs.customer360_setup
+      databricks bundle run      -t dev customer360_setup --var warehouse_id=$(DEV_WAREHOUSE_ID)
+      databricks bundle deploy   -t dev --var warehouse_id=$(DEV_WAREHOUSE_ID)
+    displayName: Validate + 3-phase Deploy (dev)
+    condition: and(ne(variables['Build.Reason'], 'PullRequest'), startsWith(variables['Build.SourceBranch'], 'refs/heads/feature/'))
+    env:
+      DATABRICKS_HOST: $(DEV_DATABRICKS_HOST)
+      DATABRICKS_CLIENT_ID: $(DEV_CLIENT_ID)
+      DATABRICKS_CLIENT_SECRET: $(DEV_CLIENT_SECRET)
+
+  # 2. Pull request → main → VALIDATE only (merge gate, no deploy) ─────────────
+  - script: databricks bundle validate -t dev --var warehouse_id=$(DEV_WAREHOUSE_ID)
+    displayName: Validate (merge gate)
+    condition: eq(variables['Build.Reason'], 'PullRequest')
+    env:
+      DATABRICKS_HOST: $(DEV_DATABRICKS_HOST)
+      DATABRICKS_CLIENT_ID: $(DEV_CLIENT_ID)
+      DATABRICKS_CLIENT_SECRET: $(DEV_CLIENT_SECRET)
+
+  # 3. Merge/push to main → 3-phase deploy to PROD as the service principal ───
+  #    run_as.service_principal_name must be the SP's application ID = its OAuth
+  #    client id (PROD_CLIENT_ID), passed via --var prod_service_principal.
+  - script: |
+      databricks bundle validate -t prod --var warehouse_id=$(PROD_WAREHOUSE_ID) --var prod_service_principal=$(PROD_CLIENT_ID)
+      databricks bundle deploy   -t prod --var warehouse_id=$(PROD_WAREHOUSE_ID) --var prod_service_principal=$(PROD_CLIENT_ID) --select schemas.customer360_schema,volumes.raw_data,pipelines.customer360_pipeline,dashboards.customer360_dashboard,jobs.customer360_setup
+      databricks bundle run      -t prod customer360_setup --var warehouse_id=$(PROD_WAREHOUSE_ID) --var prod_service_principal=$(PROD_CLIENT_ID)
+      databricks bundle deploy   -t prod --var warehouse_id=$(PROD_WAREHOUSE_ID) --var prod_service_principal=$(PROD_CLIENT_ID)
+    displayName: 3-phase Deploy (prod)
+    condition: and(ne(variables['Build.Reason'], 'PullRequest'), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    env:
+      DATABRICKS_HOST: $(PROD_DATABRICKS_HOST)
+      DATABRICKS_CLIENT_ID: $(PROD_CLIENT_ID)
+      DATABRICKS_CLIENT_SECRET: $(PROD_CLIENT_SECRET)

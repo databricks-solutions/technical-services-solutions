@@ -1,0 +1,8 @@
+resources:
+  volumes:
+    raw_data:
+      catalog_name: ${var.catalog}
+      schema_name: ${var.schema}
+      name: "raw_data"
+      volume_type: "MANAGED"
+      comment: "Raw CRM/order/case parquet — the Lakeflow Connect landing zone"

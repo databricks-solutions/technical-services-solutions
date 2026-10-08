@@ -1,0 +1,14 @@
+resources:
+  schemas:
+    demo_schema:
+      name: ${var.schema}
+      catalog_name: ${var.catalog}
+      comment: SDP schema evolution demo schema
+
+  volumes:
+    landing:
+      name: landing
+      catalog_name: ${var.catalog}
+      schema_name: ${resources.schemas.demo_schema.name}
+      volume_type: MANAGED
+      comment: Landing volume for orders JSON batches

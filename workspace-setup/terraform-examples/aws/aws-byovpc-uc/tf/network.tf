@@ -8,9 +8,10 @@ module "vpc" {
   azs  = var.availability_zones
 
   enable_dns_hostnames   = true
+  enable_dns_support     = true
   enable_nat_gateway     = true
-  single_nat_gateway     = true
-  one_nat_gateway_per_az = false
+  single_nat_gateway     = var.nat_gateway_mode == "single"
+  one_nat_gateway_per_az = var.nat_gateway_mode == "per_az"
   create_igw             = true
 
   private_subnet_names = [for az in var.availability_zones : format("%s-private-%s", var.resource_prefix, az)]
@@ -43,6 +44,8 @@ module "vpc_endpoints" {
 
   vpc_id = module.vpc[0].vpc_id
 
+  security_group_ids = aws_security_group.databricks[*].id
+
   endpoints = {
     s3 = {
       service         = "s3"
@@ -52,7 +55,7 @@ module "vpc_endpoints" {
         Name    = "${var.resource_prefix}-s3-vpc-endpoint"
         Project = var.resource_prefix
       }
-    },
+    }
     sts = {
       service             = "sts"
       private_dns_enabled = true
@@ -61,7 +64,7 @@ module "vpc_endpoints" {
         Name    = "${var.resource_prefix}-sts-vpc-endpoint"
         Project = var.resource_prefix
       }
-    },
+    }
     kinesis-streams = {
       service             = "kinesis-streams"
       private_dns_enabled = true
@@ -73,4 +76,3 @@ module "vpc_endpoints" {
     }
   }
 }
-

@@ -1,0 +1,74 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# GitLab CI/CD for the Customer 360 Lakehouse bundle.
+#
+# STRATEGY (same across all four CI platforms in this repo) — the full lifecycle:
+#   1. Push to a feature branch  → validate + DEPLOY to the DEV workspace
+#                                  (inner loop; dev + prod are separate workspaces).
+#   2. Merge request → main      → VALIDATE only (cheap, no-compute merge gate).
+#   3. Commit to main            → DEPLOY to PROD as a SERVICE PRINCIPAL.
+#
+# AUTH: OAuth M2M. The CLI reads DATABRICKS_HOST / DATABRICKS_CLIENT_ID /
+# DATABRICKS_CLIENT_SECRET. Store the *_CLIENT_ID / *_CLIENT_SECRET as MASKED +
+# PROTECTED CI/CD variables (Settings → CI/CD → Variables), one SP per env.
+#
+# NOTE: uses the official Databricks CLI Docker image — do NOT `pip install
+# databricks-cli` (deprecated legacy CLI). GitLab has no official Databricks
+# CI/CD reference page; this follows the standard CLI pattern. Adjust the
+# feature-branch pattern (/^feature\//) to your team's convention.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Every job runs in a container that already has the Databricks CLI installed.
+image: ghcr.io/databricks/cli:latest
+
+stages:
+  - dev
+  - validate
+  - prod
+
+# 1. Feature-branch push → validate + deploy to DEV ─────────────────────────
+deploy_dev:
+  stage: dev
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^feature\//
+  variables:
+    DATABRICKS_HOST: $DEV_DATABRICKS_HOST
+    DATABRICKS_CLIENT_ID: $DEV_CLIENT_ID
+    DATABRICKS_CLIENT_SECRET: $DEV_CLIENT_SECRET
+  # 3-phase deploy: all-except-Genie → run setup job (builds tables) → full
+  # deploy (adds Genie). genie_spaces validates tables at deploy; job builds
+  # them at run. See AGENTS.md.
+  script:
+    - databricks bundle validate -t dev --var warehouse_id=$DEV_WAREHOUSE_ID
+    - databricks bundle deploy   -t dev --var warehouse_id=$DEV_WAREHOUSE_ID --select schemas.customer360_schema,volumes.raw_data,pipelines.customer360_pipeline,dashboards.customer360_dashboard,jobs.customer360_setup
+    - databricks bundle run      -t dev customer360_setup --var warehouse_id=$DEV_WAREHOUSE_ID
+    - databricks bundle deploy   -t dev --var warehouse_id=$DEV_WAREHOUSE_ID
+
+# 2. Merge request → main → VALIDATE only (merge gate, no deploy) ────────────
+validate_mr:
+  stage: validate
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  variables:
+    DATABRICKS_HOST: $DEV_DATABRICKS_HOST
+    DATABRICKS_CLIENT_ID: $DEV_CLIENT_ID
+    DATABRICKS_CLIENT_SECRET: $DEV_CLIENT_SECRET
+  script:
+    - databricks bundle validate -t dev --var warehouse_id=$DEV_WAREHOUSE_ID
+
+# 3. Commit to main → deploy to PROD as the service principal ────────────────
+deploy_prod:
+  stage: prod
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  variables:
+    DATABRICKS_HOST: $PROD_DATABRICKS_HOST
+    DATABRICKS_CLIENT_ID: $PROD_CLIENT_ID
+    DATABRICKS_CLIENT_SECRET: $PROD_CLIENT_SECRET
+  # 3-phase deploy (see deploy_dev). run_as.service_principal_name must be the
+  # SP's application ID = its OAuth client id ($PROD_CLIENT_ID), passed via
+  # --var prod_service_principal.
+  script:
+    - databricks bundle validate -t prod --var warehouse_id=$PROD_WAREHOUSE_ID --var prod_service_principal=$PROD_CLIENT_ID
+    - databricks bundle deploy   -t prod --var warehouse_id=$PROD_WAREHOUSE_ID --var prod_service_principal=$PROD_CLIENT_ID --select schemas.customer360_schema,volumes.raw_data,pipelines.customer360_pipeline,dashboards.customer360_dashboard,jobs.customer360_setup
+    - databricks bundle run      -t prod customer360_setup --var warehouse_id=$PROD_WAREHOUSE_ID --var prod_service_principal=$PROD_CLIENT_ID
+    - databricks bundle deploy   -t prod --var warehouse_id=$PROD_WAREHOUSE_ID --var prod_service_principal=$PROD_CLIENT_ID

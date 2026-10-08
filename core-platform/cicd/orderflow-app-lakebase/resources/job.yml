@@ -1,0 +1,56 @@
+# Orchestration job: ingest Lakebase → run medallion pipeline → daily rollup.
+# Scheduled daily; also runnable on demand. Sends email on failure.
+resources:
+  jobs:
+    orderflow_job:
+      name: orderflow-daily
+      tags:
+        project: orderflow
+      schedule:
+        quartz_cron_expression: "0 0 6 * * ?"   # 06:00 daily
+        timezone_id: America/New_York
+        pause_status: PAUSED                      # customers unpause when ready
+      email_notifications:
+        on_failure:
+          - ${var.notification_email}
+      tasks:
+        # 1. Pull the current OLTP snapshot from Lakebase into UC bronze tables.
+        - task_key: ingest_lakebase
+          notebook_task:
+            notebook_path: ../jobs/ingest_lakebase.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              lakebase_endpoint: ${var.lakebase_endpoint_name}
+              lakebase_host: ${var.lakebase_host}
+              lakebase_database: ${var.lakebase_database}
+          environment_key: default
+
+        # 2. Build silver + gold from bronze via the declarative pipeline.
+        - task_key: run_pipeline
+          depends_on:
+            - task_key: ingest_lakebase
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.orderflow_pipeline.id}
+
+        # 3. Business rollup: write a dated sales/inventory summary table.
+        - task_key: daily_rollup
+          depends_on:
+            - task_key: run_pipeline
+          notebook_task:
+            notebook_path: ../jobs/daily_rollup.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+          environment_key: default
+
+      # Serverless compute environment for the notebook tasks.
+      environments:
+        - environment_key: default
+          spec:
+            client: "3"
+            dependencies:
+              - psycopg[binary]
+              # Serverless base image ships an older SDK without w.postgres;
+              # pin a version that has the Lakebase credential API.
+              - databricks-sdk==0.126.0

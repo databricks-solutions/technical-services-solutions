@@ -61,6 +61,17 @@ variable "network_configuration" {
   }
 }
 
+variable "nat_gateway_mode" {
+  description = "NAT gateway topology for standard template-owned networking: 'single' uses one shared NAT gateway; 'per_az' creates one NAT gateway per availability zone. Ignored for fully_private and custom networking."
+  type        = string
+  default     = "single"
+
+  validation {
+    condition     = contains(["single", "per_az"], var.nat_gateway_mode)
+    error_message = "nat_gateway_mode must be either 'single' or 'per_az'. Use network_configuration = 'fully_private' for no NAT gateway."
+  }
+}
+
 variable "vpc_id" {
   description = "Existing VPC ID. Required when network_configuration is 'custom'. Must be empty when 'standard' or 'fully_private' (template creates VPC)."
   type        = string
@@ -119,6 +130,11 @@ variable "public_subnets_cidr" {
   description = "List of public subnet CIDR blocks (only used if creating new VPC)"
   type        = list(string)
   default     = []
+
+  validation {
+    condition     = var.network_configuration != "standard" || var.nat_gateway_mode != "per_az" || length(var.public_subnets_cidr) >= length(var.availability_zones)
+    error_message = "nat_gateway_mode = \"per_az\" requires at least one public subnet CIDR per availability zone."
+  }
 }
 
 variable "private_route_table_ids" {

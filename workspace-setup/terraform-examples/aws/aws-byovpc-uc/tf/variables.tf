@@ -67,6 +67,17 @@ variable "vpc_id" {
   default     = ""
 }
 
+variable "nat_gateway_mode" {
+  description = "NAT gateway topology for a newly created VPC: 'single' uses one shared NAT gateway; 'per_az' creates one NAT gateway per availability zone. Existing VPC routing is user-managed."
+  type        = string
+  default     = "single"
+
+  validation {
+    condition     = contains(["single", "per_az"], var.nat_gateway_mode)
+    error_message = "nat_gateway_mode must be either 'single' or 'per_az'. This non-PrivateLink example requires NAT-based outbound connectivity."
+  }
+}
+
 variable "vpc_cidr_range" {
   description = "CIDR range for the VPC (only used if creating new VPC)"
   type        = string
@@ -95,10 +106,15 @@ variable "public_subnets_cidr" {
   description = "List of public subnet CIDR blocks (only used if creating new VPC)"
   type        = list(string)
   default     = []
+
+  validation {
+    condition     = var.vpc_id != "" || var.nat_gateway_mode != "per_az" || length(var.public_subnets_cidr) >= length(var.availability_zones)
+    error_message = "nat_gateway_mode = \"per_az\" requires at least one public subnet CIDR per availability zone."
+  }
 }
 
 variable "intra_subnet_cidr" {
-  description = "List of intra subnet CIDR blocks that contain the VPC endpoints (only used if creating new VPC)"
+  description = "List of intra subnet CIDR blocks that contain the STS and Kinesis VPC endpoints (only used if creating new VPC)"
   type        = list(string)
   default     = []
 }
@@ -108,7 +124,7 @@ variable "intra_subnet_cidr" {
 # =============================================================================
 
 variable "security_group_ids" {
-  description = "Existing security group IDs to use. If empty, a new dedicated security group will be created"
+  description = "Existing security group IDs to use with an existing VPC. For a newly created VPC, a dedicated security group is created."
   type        = list(string)
   default     = []
 }
@@ -153,7 +169,7 @@ variable "metastore_name" {
 # User Defined Catalog
 # =============================================================================
 variable "new_catalog" {
-  description = "Boolean flag to create a user-defined catalog (with its storage credential, IAM role, S3 bucket, and external location). Defaults to false."
+  description = "Boolean flag to create a user-defined catalog (with its storage credential, IAM role, S3 bucket, and external location). Defaults to true."
   type        = bool
   default     = true
 }
@@ -179,7 +195,7 @@ variable "storage_credential_name" {
 # =============================================================================
 # Cluster Configuration (Optional)
 # =============================================================================
-variable "new_cluster"{
+variable "new_cluster" {
   description = "Boolean flag to create a new cluster, defaults to false"
   type        = bool
   default     = false

@@ -1,0 +1,19 @@
+# The customer-facing Databricks App: React SPA + FastAPI, CRUD over Lakebase.
+#
+# Lakebase (Autoscaling) is attached as an app `postgres` resource. This grants
+# the app's service principal access to the branch/database AND auto-injects the
+# PGHOST/PGUSER/PGPORT/PGDATABASE env vars at runtime — so the app only needs to
+# mint a short-lived OAuth token per connection (via ENDPOINT_NAME in app.yaml).
+resources:
+  apps:
+    orderflow_app:
+      name: orderflow-app
+      description: "OrderFlow — order & inventory management (Lakebase-backed)."
+      source_code_path: ../app
+      resources:
+        - name: database
+          description: OrderFlow Lakebase Postgres (Autoscaling).
+          postgres:
+            branch: ${resources.postgres_branches.orderflow_production.id}
+            database: ${resources.postgres_databases.orderflow_db.id}
+            permission: CAN_CONNECT_AND_CREATE

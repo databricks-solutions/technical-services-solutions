@@ -1,0 +1,32 @@
+resources:
+  pipelines:
+    ingestion_pipeline:
+      name: ${var.ingestion_pipeline_name}
+      ingestion_definition:
+        ingestion_gateway_id: ${resources.pipelines.ingestion_gateway.id}
+        objects:
+          # Modify this with your tables. Copy the -table statement for multiple tables
+          - table:
+              source_catalog: ${var.source_catalog}
+              source_schema: ${var.source_schema}
+              source_table: <SOURCE_TABLE_NAME>
+              destination_catalog: ${var.dest_catalog}
+              destination_schema: ${var.dest_schema}
+              # Optional Table Configuration:
+              # table_configuration:
+              #   exclude_columns:
+              #     - col1
+              #   include_columns:
+              #     - col2
+              #   primary_keys:
+              #      - col3
+              #   sequence_by:
+              #      - col4  
+          # To ingest an entire schema, use the schema parameter
+          # - schema:
+          #     source_catalog: ${var.source_catalog}
+          #     source_schema: ${var.source_schema}
+          #     destination_catalog: ${var.dest_catalog}
+          #     destination_schema: ${var.dest_schema}
+      schema: ${var.pipeline_log_schema}
+      catalog: ${var.pipeline_log_catalog}

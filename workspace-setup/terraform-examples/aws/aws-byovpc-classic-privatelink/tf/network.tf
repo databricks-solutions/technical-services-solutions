@@ -13,10 +13,12 @@ module "vpc" {
   cidr = var.vpc_cidr_range
   azs  = var.availability_zones
 
-  enable_dns_hostnames   = true
+  enable_dns_hostnames = true
+  enable_dns_support   = true
+
   enable_nat_gateway     = var.network_configuration == "standard"
-  single_nat_gateway     = true
-  one_nat_gateway_per_az = false
+  single_nat_gateway     = var.network_configuration == "standard" && var.nat_gateway_mode == "single"
+  one_nat_gateway_per_az = var.network_configuration == "standard" && var.nat_gateway_mode == "per_az"
   create_igw             = var.network_configuration == "standard"
 
   private_subnet_names = [for az in var.availability_zones : format("%s-private-%s", var.resource_prefix, az)]

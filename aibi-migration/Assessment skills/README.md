@@ -8,6 +8,7 @@ its own subfolder and can be run independently from Databricks Assistant / Genie
 | Skill | Folder | Purpose |
 |---|---|---|
 | **pbi-migration-assessment** | [`pbi-migration-assessment/`](pbi-migration-assessment) | Bulk profiling & migration-readiness assessment for Power BI reports, as a wrapper around `/importBI`. |
+| **tableau-migration-assessment** | [`tableau-migration-assessment/`](tableau-migration-assessment) | Bulk profiling & migration-readiness assessment for Tableau workbooks and data sources, as a wrapper around `/importBI`. |
 
 ## Installing a skill
 
@@ -41,3 +42,24 @@ applying UC semantics patterns during migration.
 - In Genie Code: "assess the Power BI report with my pbi-migration-assessment skill" (attach the file, or point to the volume).
 - Review the result in the chat.
 - (optional) Switch to the user folder and "save results in MD and HTML format in my user folder".
+
+---
+
+## tableau-migration-assessment
+
+A custom skill that wraps `/importBI` to produce a consolidated Tableau migration
+assessment report.
+
+It runs a **read-only profiling pass** over one or more Tableau files
+(`.twb` / `.twbx` workbooks and `.tds` / `.tdsx` data sources) — either attached
+directly or bulk-loaded from a Unity Catalog Volume — without performing any
+conversion. For each file it profiles the data sources, data model, calculated
+fields, LOD expressions, table calculations, visualizations, filters, and
+interactivity, then consolidates the findings into a single Migration Report. The
+report flags prerequisites and blockers and classifies every feature into an
+automate-vs-manual split anchored to what `/importBI` reports today (✅ Auto /
+⚠️ Auto + workaround / 🔧 Manual), plus an automation-uplift estimate from applying
+UC semantics patterns during migration.
+
+See the [tableau-migration-assessment README](tableau-migration-assessment) for the
+full overview, install steps, and user journey.

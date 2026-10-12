@@ -18,7 +18,7 @@ It produces, for a batch of files, **one single Migration Report**. That one rep
 (one Individual Workbook Report section per file — **Template B**). The **automation
 estimate is anchored to the `/importBI` migration agent** — the intended execution
 path for Tableau → Databricks AI/BI conversions. Every ✅/⚠️/🔧 classification reflects
-what `/importBI` can handle today. The **Automation Uplift** section in each individual
+what `/importBI` reports it can handle. The **Automation Uplift** section in each individual
 report section then shows how applying
 [uc-semantics-patterns](https://github.com/databricks-solutions/uc-semantics-patterns)
 recipes during migration can raise the automatable share further.
@@ -41,14 +41,21 @@ performing any conversion.
 > the summary the only output.
 >
 > **CONCISENESS RULE**: Reports must be SHORT. Summarize counts by category
-> (e.g. "Simple aggregations (SUM, AVG, etc.) | 18 | ✅ Auto"). For ✅ Auto and
-> ⚠️ Auto + workaround items, NEVER list individual calculated-field names — group
-> and count. NEVER list individual relationships or joins one by one.
+> (e.g. "Simple aggregations (SUM, AVG, etc.) | 18 | ✅ Auto"). NEVER list
+> individual calculated-field names, and NEVER list individual relationships or
+> joins one by one — group and count. The only exception is the optional
+> **🔧 Manual Adjustment Report** (Step 6), produced on user request after the
+> main report.
 >
-> **EXCEPTION — name the 🔧 Manual items**: 🔧 Manual calculated fields / LODs /
-> table calcs are the handful the user must actually plan and rebuild, so NAME them
-> (up to the top 10 by impact) with a one-line reason each — e.g. "`Profit Ratio` —
-> cross-datasource blend (fact ÷ fact)". Only 🔧 items are named; ✅/⚠️ stay grouped.
+> **SOURCE-OF-TRUTH RULE — NO HALLUCINATION**: Every ✅/⚠️/🔧 bucket and every
+> "/importBI Behavior", "handling", or "resolution" cell MUST come from what
+> `/importBI` actually returned in the Step 3 profile. Never infer, assume, or
+> invent a `/importBI` capability. If `/importBI` did not state how it handles an
+> item, write `Not stated by /importBI — verify` and classify it 🔧 Manual.
+> The ONLY other allowed source is the
+> [uc-semantics-patterns](https://github.com/databricks-solutions/uc-semantics-patterns)
+> repo, used ONLY in the Automation Uplift section and read live (see
+> Reference Patterns).
 
 ## When to Use
 
@@ -118,15 +125,36 @@ For each Tableau file, hand off to the `/importBI` migration specialist on a
   of data sources, data model, calculated fields, LOD expressions, table
   calculations, visualizations, filters, and interactivity. Do not create any
   datasets or widgets."**
+- Asks `/importBI` to state **how it would handle each item** for:
+  - data-source transformations (custom SQL / Initial SQL, unions, cross-DB
+    joins, pivots, data-source filters) and dependent sources
+  - relationships, grouped by pattern: physical joins (M:1), logical
+    relationships (noodle model), many-to-many, date table on the many side,
+    fact-to-fact relationships / blends, data blends (primary / secondary links),
+    joins on differently named / mismatched keys (join calculations), disconnected
+    sources (blend helpers / parameter-driven), and cardinality /
+    referential-integrity overrides
+  - row-level (non-aggregate) calculated fields, groups, bins, and sets
+  - cross-datasource / blend ratios — distinguishing fact ÷ dimension from
+    fact ÷ fact
+  - calculated fields / LODs / table calcs it cannot convert, with the name and
+    the blocking construct (needed for the optional Manual Adjustment Report)
+  - unused / disabled calcs (not referenced by any worksheet or other calc)
 - Includes the file name or path
 
-**Parallelize when more than one file is present.** If the volume (or attachment
-set) contains **2 or more** files, profile them in **parallel batches of up to 4
-files at a time**: dispatch one profiling task per file (each an independent
-`/importBI` handoff) as concurrent subagents, up to 4 running at once. When a
-batch finishes, start the next batch until all files are profiled. Each subagent
-must carry the same read-only, profile-only `continueMessage` above and return
-its analysis output. Collect every batch's results before producing reports.
+**Parallelize when more than one file is present — if the environment supports
+it.** If the volume (or attachment set) contains **2 or more** files **and Genie
+Code can run concurrent `/importBI` handoffs**, profile them in **parallel batches
+of up to 4 files at a time**: dispatch one profiling task per file (each an
+independent `/importBI` handoff) as concurrent subagents, up to 4 running at once.
+When a batch finishes, start the next batch until all files are profiled. If
+concurrent handoffs are **not** supported in the current environment, **fall back
+to sequential profiling** — one `/importBI` handoff per file, collecting each
+file's analysis before the next (as the Power BI skill does). Either way, every
+file's handoff must carry the same read-only, profile-only `continueMessage` above
+(including the "state how you handle each item" asks), and all results must be
+collected before producing the reports. The profile output is the only source for
+classifications and handling text — keep it.
 
 If **only one** file is present, profile it directly with a single `/importBI`
 handoff (no batching needed).
@@ -135,7 +163,11 @@ handoff (no batching needed).
 > widgets, or perform any conversion. This is a read-only assessment, whether run
 > sequentially or in parallel.
 
-### Step 4 — Produce the Report
+### Step 4 — Consolidate
+
+After all files are profiled, consolidate findings into the report structure
+defined below. Before Step 5, read the uc-semantics-patterns repo live to build
+the Automation Uplift section (see Reference Patterns).
 
 Produce ONE single Migration Report, in this order:
 
@@ -144,22 +176,58 @@ Produce ONE single Migration Report, in this order:
 2. **Then**, for EACH file, a self-contained **Individual Workbook Report** section
    (Template B) appended after the summary.
 
-**Hygiene check — run BEFORE printing.** Before returning the report, validate it
-for internal consistency and fix any failure:
+### Step 5 — Consistency Check (mandatory, before printing)
 
-- The three bucket counts (✅ + ⚠️ + 🔧) **add up to the total calculated fields /
-  LODs / table calcs** for that file (minus any unused/disabled calcs, which must
-  be stated separately — never silently dropped).
-- Every count is **identical everywhere it appears** (the file's header metrics
-  table, Feature Inventory, Automation Classification, and the summary's roll-up).
-- **No dimension or plain (non-calculated) field is counted as a calculated field**,
-  and a calculated field is never double-counted as both a measure and a dimension.
-- **Every 🔧 Manual item named in the Readiness Summary also appears in the
-  Automation Classification table** (and vice versa) — names and buckets match.
-- **Portfolio Totals in the summary equal the sum of the per-file counts.**
+Silently verify the drafted report. Fix every mismatch before printing; do not
+print the check itself.
 
-Return the report in the chat as one document: the summary first, then the
-individual per-file detail sections.
+1. The three bucket counts (✅ + ⚠️ + 🔧) **equal the file's classified calc total**
+   — aggregate calculated fields + LOD expressions + table calculations +
+   cross-datasource ratio calcs — **minus** the unused / disabled calcs. Row-level
+   calcs, groups, bins, and sets are NOT part of this total (they are counted in
+   their own block, per check #3).
+2. Every count is **identical everywhere it appears** (the file's header metrics
+   table, Feature Inventory, Feature Classification, Automation Summary, Uplift
+   baseline, and the summary's Per-File roll-up).
+3. **No dimension or plain (non-calculated) field is counted as a calc**, a calc is
+   never double-counted as both a measure and a dimension, and **no row-level calc,
+   group, bin, set, parameter, alias, or hierarchy is counted in the calc %** (they
+   live in their own block or are flagged as model features).
+4. On every run, the **grouped 🔧 counts in the Readiness Summary reconcile with the
+   🔧 rows in the Feature Classification table** (same categories, same counts).
+   **When** the 🔧 Manual Adjustment Report is produced (Step 6), every 🔧 item it
+   names also appears in the Feature Classification table (and vice versa) and its
+   per-group counts match. Do NOT require named items on runs where the Manual
+   Adjustment Report was not produced.
+5. The Uplift **"Calcs (baseline)"** column equals the Automation Summary.
+6. **Portfolio Totals in the summary equal the sum of the per-file counts**, and
+   each Per-File Summary **"Automation %"** equals that file's Template B
+   Automation Summary.
+7. A calc that falls into **several 🔧 categories** is counted **once**, under its
+   primary (most blocking) category, with a note in the Feature Classification
+   row: "n calcs also involve <other category>".
+8. The **Unused / disabled calcs** row appears in the Template B header metrics
+   and in Template A Portfolio Totals — never silently dropped.
+9. Every bucket and every handling / resolution cell **traces to the `/importBI`
+   output**, or (Uplift only) to a cited uc-semantics-patterns folder. Anything
+   else → replace with `Not stated by /importBI — verify` and 🔧.
+
+Then return the full report in the chat: the summary first, then the individual
+per-file detail sections.
+
+### Step 6 — Offer Manual Adjustment Report
+
+After printing the main report, ask the user:
+
+> "Do you want a detailed 🔧 Manual Adjustment Report listing the calculated
+> fields / LODs / table calcs that need manual work?"
+
+Only if the user agrees, produce the report using the
+[Manual Adjustment Report Structure](#manual-adjustment-report-structure).
+
+If the user already requested the Manual Adjustment Report (or a detailed list of
+manual items) in the initial prompt, skip the question and print it directly after
+the main report.
 
 ## Deduplication Rules
 
@@ -170,7 +238,12 @@ Each fact or feature appears in exactly ONE place.
    resolution. No full technical detail — that belongs in the Inventory.
 2. **Feature Inventory** is the single detailed listing. Each feature lives in
    exactly one sub-section:
-   - LOD expressions, table calcs, sets/groups/bins/hierarchies, blends → Data Modeling only
+   - Data-source transformations and dependencies → Prerequisites / Data Source
+     Transformations only
+   - Relationships / joins / blends → the grouped Relationships table only
+   - LOD expressions, table calcs, aggregate calcs → Data Modeling only
+   - Row-level calculated fields, groups, bins, sets → Row-level Calculations
+     block only (never in Data Modeling or the calc counts)
    - Quick filters / filter controls → Filters only (not also Interactivity)
    - Dashboard actions (filter/highlight/URL/navigation/parameter) → Interactivity only
 3. **Automation Classification** references Inventory rows by feature name and
@@ -200,24 +273,26 @@ Do NOT print empty tables for each section.
 **You MUST use the EXACT headings and tables below.** These are not examples
 — they are the mandatory output formats. Copy the heading hierarchy verbatim.
 Do NOT use numbered sections (## Part 1, ## 1. Model Overview, etc.). Do NOT
-add sections like "Fact-Domain Grouping" or "Relationship Analysis" — those
-details belong INSIDE the tables below.
+add sections like "Fact-Domain Grouping" — those details belong INSIDE the tables
+below. Relationship details go ONLY in the grouped **Relationships** table; do not
+add a separate "Relationship Analysis" narrative section.
 
 **Anti-patterns (DO NOT do these)**:
 - ❌ Listing individual ✅ Auto / ⚠️ workaround calculated-field names (group and count those)
 - ❌ Listing individual relationships/joins one by one
 - ❌ Listing individual LOD expressions with full formula text
 - ❌ Using ✅/⚠️/❌ — use ✅/⚠️/🔧 (Auto / Auto+workaround / Manual)
+- ❌ Writing handling / resolution text that `/importBI` did not state
 - ❌ Producing > 400 lines per individual report
 - ❌ Omitting the Automation Classification or Automation Uplift sections from an individual report section
 - ❌ Skipping the per-file individual detail sections and returning only the summary
 - ❌ Putting the individual detail sections before the Migration Summary Report (summary MUST come first)
 
-**Correct patterns**:
+**Correct patterns** (formatting illustrations only — not statements of what
+`/importBI` supports):
 - ✅ "Simple aggregations (SUM, AVG, etc.) | 18 | ✅ Auto"
-- ✅ "Relationships (physical joins) | 13 | ✅ Auto | Direct metric-view joins"
-- ✅ "INCLUDE/EXCLUDE LODs | 6 | 🔧 Manual | Context-dependent, redesign"
-- ✅ Naming 🔧 Manual items in the Readiness Summary: "`Profit Ratio` — fact ÷ fact blend; aggregate each side then divide"
+- ✅ "Relationships (physical joins, M:1) | 13 | ✅ Auto | <resolution as stated by /importBI>"
+- ✅ "INCLUDE/EXCLUDE LODs | 6 | 🔧 Manual | <as stated by /importBI>"
 
 ### Template A — Migration Summary Report (produce one, FIRST)
 
@@ -240,9 +315,11 @@ report section's detailed tables.
 | Worksheets | ... |
 | Dashboards | ... |
 | Data sources | ... |
-| Calculated fields | ... |
+| Aggregate calcs | ... |
+| Row-level calcs / groups / bins / sets | ... |
 | LOD expressions | ... |
 | Table calculations | ... |
+| Unused / disabled calcs | ... |
 
 ### Complexity Distribution
 
@@ -256,7 +333,11 @@ report section's detailed tables.
 
 ### Per-File Summary
 
-One row per file. Automation % is the ✅ + ⚠️ share of that file's calcs.
+One row per file. Automation % is the ✅ + ⚠️ share of that file's **classified
+calc total** (aggregate calcs + LOD expressions + table calculations +
+cross-datasource ratio calcs; excludes unused/disabled calcs and the row-level
+calcs / groups / bins / sets block) — the same denominator as that file's
+Template B Automation Summary **% of Calcs**.
 
 | Workbook | File Type | Complexity | Automation % | Top Drivers | Key Blockers |
 |---|---|---|---|---|---|
@@ -271,7 +352,7 @@ One row per file. Automation % is the ✅ + ⚠️ share of that file's calcs.
 - <UC tables/sources required across the portfolio; extracts to re-point>
 
 **Non-Databricks sources across portfolio**:
-- <list or "None">
+- <source type + count per type, or "None">
 
 ### Recommended Migration Sequence
 
@@ -296,9 +377,11 @@ One per file, appended after the Migration Summary Report above.
 | Dashboards | ... |
 | Data sources | ... |
 | Physical data connections | ... |
-| Calculated fields | ... |
+| Aggregate calcs | ... |
+| Row-level calcs / groups / bins / sets | ... |
 | LOD expressions | ... |
 | Table calculations | ... |
+| Unused / disabled calcs | ... |
 
 ### Prerequisites
 
@@ -315,9 +398,21 @@ One per file, appended after the Migration Summary Report above.
 |---|---|---|
 | catalog.schema.table | Orders (data source) | To verify |
 
+#### Data Source Transformations
+
+| Source type | Count | Depends on / Used by | /importBI Handling |
+|---|---|---|---|
+| Direct connection (no transforms) | ... | ... | <as stated by /importBI> |
+| Databricks + custom SQL / Initial SQL / transforms | ... | ... | <as stated by /importBI> |
+| Non-Databricks source | ... | ... | <as stated by /importBI> |
+| Dependent source (published source built on another, union, cross-DB join, blend secondary, or referenced by a parameter / action) | ... | <source → source> | <as stated by /importBI> |
+
+A source referenced by anything (worksheet, blend, action, parameter, or dependent
+published source) is never omittable.
+
 #### Non-Databricks Sources
 
-<list or "None — all sources are Databricks">
+<source type + count per type, or "None — all sources are Databricks">
 
 ### Executive Overview
 
@@ -339,44 +434,76 @@ Each feature appears ONCE. Only list features that have non-zero occurrences.
 
 | Connection Type | Count | Databricks? | Migration Impact |
 |---|---|---|---|
-| Databricks (live, passthrough) | ... | Yes | No migration needed |
-| Databricks (with custom SQL / transforms) | ... | Yes | Source view needed |
-| Extract (.hyper) | ... | Depends | Identify & point at live source |
-| Non-Databricks (SQL Server, Excel, etc.) | ... | No | Requires migration / federation / upload |
+| Databricks (live, passthrough) | ... | Yes | <as stated by /importBI> |
+| Databricks (with custom SQL / transforms) | ... | Yes | <as stated by /importBI> |
+| Extract (.hyper) | ... | Depends | <as stated by /importBI> |
+| Non-Databricks (SQL Server, Excel, etc.) | ... | No | <as stated by /importBI> |
 
 > Clearly distinguish **physical connections** from Tableau **logical/federated
 > groupings** (relationships/noodle model): count physical joins separately from
 > logical relationships.
 
+#### Relationships
+
+Counts only — never list individual joins. Only list patterns with count > 0.
+
+| Pattern | Count | Bucket | /importBI Resolution |
+|---|---|---|---|
+| Physical joins (M:1) | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+| Logical relationships (noodle model) | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+| Many-to-many | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+| Date table on the many side | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+| Fact-to-fact relationships / blends | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+| Data blends (primary / secondary links) | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+| Joins on differently named / mismatched keys (join calculations) | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+| Disconnected sources (blend helpers / parameter-driven) | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+| Cardinality / referential-integrity overrides | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+
 #### Data Modeling
+
+The **calc rows** here — simple aggregations, LOD expressions, table calculations,
+and cross-datasource ratio calcs — are the ones counted in the ✅/⚠️/🔧 **calc
+total** that Step 5 reconciles. The **model-feature rows** (parameters, field/value
+aliases, hierarchies) are classified for migration effort but are **NOT** in the
+calc % — mark each `model feature — not in calc %` in the Note. Row-level calcs,
+groups, bins, and sets go in the next block, also outside the calc %.
 
 | Feature | Count | Classification | Note |
 |---|---|---|---|
-| Simple aggregations (SUM, AVG, etc.) | ... | ✅ Auto | ... |
-| Row-level calculated fields (arithmetic, IF/CASE) | ... | ✅ Auto | ... |
-| Measures / dimensions | ... / ... | ✅ Auto | ... |
-| Relationships / joins | ... / ... | ✅ Auto | Direct metric-view joins |
-| FIXED LODs | ... | ⚠️ Workaround | Precompute in source view |
-| INCLUDE / EXCLUDE LODs | ... | 🔧 Manual | Context-dependent redesign |
-| Table calculations | ... | ⚠️/🔧 | Window functions where possible |
-| Cross-datasource calc — fact ÷ dimension/lookup | ... | ⚠️ Workaround | Metric-view join on the shared key |
-| Cross-datasource calc — fact ÷ fact (blend) | ... | ⚠️/🔧 | Aggregate each side to the shared grain, then divide — ⚠️ at best |
-| Parameters / parameterized calcs | ... | ⚠️ Workaround | Dashboard variables |
-| Sets / groups / bins | ... | ⚠️ Workaround | CASE bands / precompute |
-| Hierarchies | ... | ✅ Auto | ... |
-| Field / value-level aliases | ... | ⚠️ Workaround | Map in source or dashboard |
+| Simple aggregations (SUM, AVG, etc.) | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+| FIXED LODs | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+| INCLUDE / EXCLUDE LODs | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+| Table calculations | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+| Cross-datasource calc — fact ÷ dimension/lookup | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+| Cross-datasource calc — fact ÷ fact (blend) | ... | ⚠️/🔧 (never ✅) | <as stated by /importBI> |
+| Parameters | ... | ✅/⚠️/🔧 | model feature — not in calc %; <as stated by /importBI> |
+| Field / value-level aliases | ... | ✅/⚠️/🔧 | model feature — not in calc %; <as stated by /importBI> |
+| Hierarchies | ... | ✅/⚠️/🔧 | model feature — not in calc %; <as stated by /importBI> |
 | ... only list features with count > 0 ... |
+
+#### Row-level Calculations, Groups, Bins & Sets
+
+Row-level (non-aggregate) calculated fields, groups, bins, and sets. These are NOT
+counted in the calc % — they are reported on their own line in the Automation
+Summary.
+
+| Pattern | Count | Bucket | /importBI Handling |
+|---|---|---|---|
+| Row-level calculated fields (arithmetic, IF/CASE, string/date) | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+| Groups | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+| Bins | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+| Sets | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
 
 #### Visualizations
 
 | Visual / Mark Type | Count | AI/BI Equivalent | Issues |
 |---|---|---|---|
 | ... only non-trivial or problematic visuals ... |
-| Dual-axis / combined multi-mark | ... | Layered chart | Verify axis sync |
-| Maps (filled / symbol / custom geocoding) | ... | Map viz | Custom geocoding = 🔧 |
-| KPI / counter (BAN) | ... | Counter | ... |
-| Reference lines / bands / annotations | ... | Partial | Some manual |
-| Custom / rare marks | ... | — | Manual redesign |
+| Dual-axis / combined multi-mark | ... | <as stated by /importBI> | <as stated by /importBI> |
+| Maps (filled / symbol / custom geocoding) | ... | <as stated by /importBI> | <as stated by /importBI> |
+| KPI / counter (BAN) | ... | <as stated by /importBI> | <as stated by /importBI> |
+| Reference lines / bands / annotations | ... | <as stated by /importBI> | <as stated by /importBI> |
+| Custom / rare marks | ... | <as stated by /importBI> | <as stated by /importBI> |
 
 If model-only: use Empty Report Handling callout.
 
@@ -384,13 +511,13 @@ If model-only: use Empty Report Handling callout.
 
 | Feature | Count | Status |
 |---|---|---|
-| Filter controls (quick filters) | ... | ✅/⚠️ |
-| Context filters | ... | ⚠️ |
-| Cascading / dependent filters | ... | ⚠️/🔧 |
-| Dashboard filter actions | ... | ⚠️ |
-| Highlight actions | ... | 🔧 |
-| URL / navigation / drill actions | ... | 🔧 |
-| Parameter actions | ... | 🔧 |
+| Filter controls (quick filters) | ... | ✅/⚠️/🔧 |
+| Context filters | ... | ✅/⚠️/🔧 |
+| Cascading / dependent filters | ... | ✅/⚠️/🔧 |
+| Dashboard filter actions | ... | ✅/⚠️/🔧 |
+| Highlight actions | ... | ✅/⚠️/🔧 |
+| URL / navigation / drill actions | ... | ✅/⚠️/🔧 |
+| Parameter actions | ... | ✅/⚠️/🔧 |
 | ... only features present, excluding items in Data Modeling ... |
 
 If model-only: use Empty Report Handling callout.
@@ -398,16 +525,20 @@ If model-only: use Empty Report Handling callout.
 ### Automation Classification
 
 <!-- MANDATORY — do NOT omit this section -->
-Classify every Inventory feature into one of three buckets (see Legend in the
-skill). The classification reflects `/importBI`'s current capabilities as the
-migration execution path — not theoretical possibility. Only classify ✅ or ⚠️
-if `/importBI` has a documented, tested pattern for it; otherwise 🔧 Manual.
+Classify every Inventory feature into one of three buckets (see the Automation
+Classification Legend in the skill). **The baseline classification reflects what
+`/importBI` reported in the Step 3 profile** — not theoretical possibility and not
+assumptions. Only classify ✅ or ⚠️ if `/importBI` stated it handles the item;
+otherwise 🔧 Manual with `Not stated by /importBI — verify`.
 
 #### Feature Classification
 
 | Feature (from Inventory) | Count | Bucket | /importBI Behavior |
 |---|---|---|---|
-| ... | ... | ✅/⚠️/🔧 | One-line description of what happens |
+| ... | ... | ✅/⚠️/🔧 | One line, as stated by /importBI (or "Not stated by /importBI — verify") |
+
+If a 🔧 calc belongs to several 🔧 categories, it is counted once under its
+primary category, with a note: "n calcs also involve <other category>".
 
 #### Automation Summary
 
@@ -417,24 +548,27 @@ if `/importBI` has a documented, tested pattern for it; otherwise 🔧 Manual.
 | ⚠️ Auto + workaround | ... | ... | ... |
 | 🔧 Manual | ... | ... | ... |
 
+**% of Calcs** = bucket calcs ÷ the classified calc total (aggregate calcs + LOD
+expressions + table calculations + cross-datasource ratio calcs; excludes the two
+lines below). This denominator is the same one the Per-File Summary uses.
+
+**Unused / disabled calcs (excluded)**: <n>
+**Row-level calcs, groups, bins & sets (not in calc %)**: ✅ <n> / ⚠️ <n> / 🔧 <n>
+
 ### Automation Uplift with Reference Patterns
 
 <!-- MANDATORY — do NOT omit this section -->
-The baseline above reflects what `/importBI` handles today. Some 🔧 Manual items
+The baseline above reflects what **`/importBI` reported**. Some 🔧 Manual items
 can be reclassified as ⚠️ Auto + workaround when the migration additionally applies
 documented UC semantics patterns from
-[uc-semantics-patterns](https://github.com/databricks-solutions/uc-semantics-patterns).
-These patterns are UC metric-view recipes (source-agnostic), so Tableau LODs, table
-calculations, and blends map onto them directly. This estimates the **additional**
-automation achievable beyond `/importBI`'s built-in capabilities.
+[uc-semantics-patterns](https://github.com/databricks-solutions/uc-semantics-patterns),
+read live at each run. These patterns are UC metric-view recipes (source-agnostic),
+so Tableau LODs, table calculations, and blends map onto them directly. This
+estimates the **additional** automation achievable beyond `/importBI`'s baseline.
 
 | 🔧 Feature | Calcs | Applicable Pattern | Reclassified To | Recipe |
 |---|---|---|---|---|
-| <e.g. YoY/prior-period table calcs> | <n> | Period-over-period growth | ⚠️ Auto + workaround | Explicit prior-period metric-view measures using `window` + `offset` |
-| <e.g. Running total / moving avg table calcs> | <n> | Moving calculations / Period-to-date totals | ⚠️ Auto + workaround | `range: period_to_date` / rolling `window` measures |
-| <e.g. RANK / INDEX table calcs> | <n> | Ranking | ⚠️ Auto + workaround | `rank` window measure |
-| <e.g. FIXED LOD segmentation> | <n> | Static segmentation | ⚠️ Auto + workaround | CASE-band dimension / precomputed metric-view column |
-| <e.g. currency-converted measures> | <n> | Currency conversion | ⚠️ Auto + workaround | FX-rate join + converted measure |
+| <🔧 feature from Classification> | <n> | <pattern name from repo> | ⚠️ Auto + workaround | <repo folder / recipe, short description> |
 
 **Revised Automation Summary (with patterns)**:
 
@@ -450,6 +584,10 @@ automation achievable beyond `/importBI`'s built-in capabilities.
 > **<with-patterns>%** (a **+<delta>pp** improvement), potentially shifting the
 > complexity from <baseline rating> to <new rating>.
 
+If the pattern repo cannot be read, keep this section with the single line
+"Pattern repo unavailable — uplift not computed; baseline applies." instead of the
+tables above.
+
 ### Readiness Summary
 
 **Primary blockers** (🔧 only):
@@ -458,12 +596,9 @@ automation achievable beyond `/importBI`'s built-in capabilities.
 **Data prerequisites** (Unity Catalog):
 - <UC tables/sources that must exist before conversion; extracts to re-point at live sources>
 
-**Semantic-model remediation** (🔧 only, before conversion) — NAME each item (top 10
-by impact) with a one-line reason, since these are what the user must plan and rebuild:
-
-| 🔧 Manual Item (name) | Type | Why Manual |
-|---|---|---|
-| `<Calc / LOD / table-calc name>` | LOD / table calc / blend | <one-line reason, e.g. EXCLUDE LOD with nested context> |
+**Semantic-model remediation** (🔧 only, before conversion):
+- <grouped 🔧 blockers by category with counts — e.g. "EXCLUDE LODs with nested context — 4", "fact ÷ fact blends — 2">
+- Names of each 🔧 item are available in the optional 🔧 Manual Adjustment Report (Step 6).
 
 **Visualization / interaction redesign** (🔧 visuals/interaction):
 - <unsupported visuals, custom geocoding, parameter/highlight/URL actions, analytics objects>
@@ -487,29 +622,68 @@ by impact) with a one-line reason, since these are what the user must plan and r
 > MANDATORY part of EVERY individual report. If you find yourself writing section
 > numbers (## Part 1, ## 1., ## 2.) you are violating the format.
 
+## Manual Adjustment Report Structure
+
+Produced ONLY after the user accepts the Step 6 offer (or asked for it up front).
+This is the only place where individual 🔧 item names are listed.
+
+- One `###` group per 🔧 feature, using the **same group names and order** as the
+  Feature Classification table and Readiness Summary.
+- Each item appears once, under its primary category (same rule as Step 5 check 7);
+  mention other involved categories in the Reason.
+- Reasons come from the `/importBI` output — the blocking construct it reported.
+- List **all** 🔧 items — there is no top-N cap in this report.
+
+```markdown
+# 🔧 Manual Adjustment Report
+
+## <🔧 Feature group name> — <n> items
+
+| Calculated field / LOD / table calc | Data source | Workbook (multi only) | Reason |
+|---|---|---|---|
+| `Profit Ratio` | Orders | Sales.twbx | Cross-datasource blend (fact ÷ fact) — aggregate each side then divide |
+
+## <next 🔧 group> — <n> items
+...
+
+**Consistency**: <total> items listed = 🔧 Manual calcs in the Automation Summary
+(<n>); group counts match the Feature Classification table (per file, and in the
+portfolio total for multi-file runs).
+```
+
+Before printing, verify that every group count equals the 🔧 count for that feature
+in the main report and that the total equals the 🔧 Manual calc count. If they
+differ, fix the discrepancy (and say which report was corrected) before printing.
+
 ## Automation Classification Legend
 
-Used by the Automation Classification section of every individual report.
+Used by the Automation Classification section of every individual report. These are
+bucket **definitions** only — the actual bucket for any feature comes from the
+`/importBI` profile, never from this list.
 
-- ✅ **Auto** — /importBI converts this with no user intervention.
-  (Simple aggregations, arithmetic/IF/CASE calculated fields, live Databricks
-  passthrough connections, physical joins, standard chart/mark types, basic
-  discrete/continuous filters, hierarchies.)
-- ⚠️ **Auto + workaround** — /importBI converts this by applying a known
-  workaround automatically (source SQL view, precomputed column, window
-  function, decomposition). User should verify but does not build anything
-  manually. (FIXED LODs, simple table calcs — running total, percent of total,
-  rank — parameters → dashboard variables, static sets/groups/bins, field/value
-  aliases, context filters, dual-axis layering, cross-datasource calcs where the
-  secondary is a dimension/lookup — fact ÷ dimension via a metric-view join.)
-- 🔧 **Manual** — /importBI cannot convert this. Must be redesigned after
-  automated conversion completes. (INCLUDE/EXCLUDE LODs with nested context,
-  fact ÷ fact data blends — aggregate each side then divide — complex table calcs with custom
-  addressing/partitioning, parameter actions, highlight/URL/navigation actions,
-  custom geocoding, analytics objects — forecast, cluster, trend/distribution
-  bands — sheet swapping / dynamic zone visibility.)
+- ✅ **Auto** — /importBI stated it converts this with no user intervention.
+- ⚠️ **Auto + workaround** — /importBI stated it converts this by applying a known
+  workaround automatically (source SQL view, precomputed column, window function,
+  decomposition). User should verify but does not build anything manually.
+- 🔧 **Manual** — /importBI cannot convert this, or did not state how it would.
+  Must be redesigned after automated conversion completes.
+
+**Cross-datasource / blend ratios** — always split into two cases:
+- **Fact ÷ dimension / lookup** — the secondary source is a lookup joinable to the
+  fact on a shared key (rates, targets, attributes). Bucket as reported by
+  `/importBI`.
+- **Fact ÷ fact** — a direct join fans out the rows and gives the wrong ratio. Each
+  side must be **aggregated separately to a shared grain** (a pre-aggregated source
+  view, or two metric views at that grain), **then divided**. Bucket as reported by
+  `/importBI`, **capped at ⚠️** (never ✅); 🔧 if there is no shared conformed
+  dimension. Never advise "just join them in the metric view". Describe the approach
+  only as `/importBI` suggested it; otherwise reference a uc-semantics-patterns
+  recipe in the Uplift section.
 
 ## Complexity Rating Criteria
+
+The "Expected automation" values below are rough guidance for rating complexity —
+they do **not** describe actual `/importBI` behavior.
 
 ### Low
 - < 5 calculated fields, all simple aggregations / arithmetic
@@ -542,33 +716,35 @@ Used by the Automation Classification section of every individual report.
   Individual Workbook Report section per file (Template B). The Automation
   Classification and Automation Uplift sections MUST appear in every individual
   report section.
-- **CONCISE — GROUP ✅/⚠️, NAME 🔧**: For ✅ Auto and ⚠️ workaround items, never list
-  individual calculated-field names or relationship/join formulas — group and count
-  (e.g. "Simple aggregations | 18 | ✅ Auto"). But DO name the 🔧 Manual calcs/LODs/
-  table calcs (top 10, with a one-line reason each) in the Readiness Summary — those
-  are the handful the user must plan. Target < 300 lines per individual report.
-- **HYGIENE CHECK**: Before printing, run the Step 4 hygiene check — bucket counts
-  reconcile to the total calcs (minus unused), every count is identical everywhere it
-  appears, no non-calculated field is counted as a calc, portfolio totals equal the
-  per-file sums, and every 🔧 item named in the Readiness Summary also appears in the
-  Automation Classification table.
+- **CONCISE — GROUP, DON'T NAME, IN THE MAIN REPORT**: Never list individual
+  calculated-field names or relationship/join formulas — group and count
+  (e.g. "Simple aggregations | 18 | ✅ Auto"). Individual 🔧 item names appear
+  only in the opt-in **🔧 Manual Adjustment Report** (Step 6). Target < 300 lines
+  per individual report.
+- **SOURCE OF TRUTH — `/importBI`**: Every bucket and every handling / resolution
+  cell comes only from the `/importBI` profile output. When `/importBI` did not
+  state handling, write `Not stated by /importBI — verify` and classify 🔧 Manual.
+  The only exception is uc-semantics-patterns, used in the Automation Uplift
+  section and read live.
+- **CONSISTENCY CHECK IS MANDATORY**: Run the Step 5 consistency check (silently)
+  before printing every report.
+- **ROW-LEVEL CALCS / GROUPS / BINS / SETS AND UNUSED CALCS ARE NOT IN THE CALC %**:
+  keep them in their own block / lines and out of the ✅/⚠️/🔧 calc counts.
+- **CROSS-DATASOURCE RATIOS SPLIT**: Always split fact ÷ dimension from fact ÷ fact;
+  cap fact ÷ fact at ⚠️ (never ✅), 🔧 when there is no shared conformed dimension.
 - **SOURCE DEPENDENCIES**: Capture each non-Databricks source's transformation logic
   (custom SQL, unions, cross-DB joins, data-source filters) as a source view to
   rebuild, and never mark a data source omittable if a worksheet, blend, action,
   parameter, or dependent published source references it.
 - **USE ✅/⚠️/🔧 ONLY**: Do NOT use ❌. The three buckets are:
   ✅ Auto, ⚠️ Auto + workaround, 🔧 Manual.
-- **Read-only**: Never convert, create datasets, or create widgets.
+- **Read-only**: Never convert, create datasets, or create widgets — this applies
+  to parallel subagents too.
 - **No duplication**: Each feature in exactly ONE section per Deduplication Rules;
   the summary never re-inventories features.
-- **Classification anchored on `/importBI`**: The ✅/⚠️/🔧 buckets reflect what
-  the `/importBI` migration agent handles today. Only classify ✅ or ⚠️ if
-  `/importBI` has a documented pattern for it. When uncertain, classify 🔧 Manual.
-  The Automation Uplift section then shows the delta from applying reference
-  patterns on top of `/importBI`'s baseline.
 - **No unevidenced claims**: Do not claim AI/BI support or provide an ETA for a
-  feature unless it is evidenced by the workbook context or supplied
-  documentation. When unsure, mark it 🔧 Manual / Unknown and say so.
+  feature unless `/importBI` stated it or it is supplied documentation. When
+  unsure, mark it 🔧 Manual / Unknown and say so.
 - **Tableau terminology**: calculated fields, LOD expressions (FIXED/INCLUDE/
   EXCLUDE), table calculations, marks, worksheets, dashboards, data blending,
   quick filters, context filters, dashboard actions — not Power BI/DAX terms.
@@ -578,69 +754,31 @@ Used by the Automation Classification section of every individual report.
 
 ## Reference Patterns
 
-When classifying 🔧 Manual items, check whether any can be reclassified as
-⚠️ Auto + workaround by applying patterns from the
-[UC Semantics Patterns](https://github.com/databricks-solutions/uc-semantics-patterns)
-reference repository. This repo provides tested, production-ready YAML
-templates for UC metric views. The patterns are source-agnostic, so Tableau
-LODs, table calculations, and blends map onto them directly.
+Do NOT rely on a remembered or cached pattern list — the repo is updated over time.
+At **each run**, read the
+[uc-semantics-patterns](https://github.com/databricks-solutions/uc-semantics-patterns)
+repository live and match 🔧 items to it by its current content only:
 
-### Pattern Catalog
+1. Read the root `README.md` of
+   `https://github.com/databricks-solutions/uc-semantics-patterns`.
+2. Follow its links to the pattern folders and read the recipe for any pattern
+   that may match a 🔧 item (e.g. period-over-period growth, period-to-date totals,
+   moving calculations, semi-additive calculations, ranking, static segmentation,
+   currency conversion, fact ÷ fact ratios). These are source-agnostic UC
+   metric-view recipes, so Tableau LODs, table calculations, and blends map onto
+   them directly.
+3. Match 🔧 items to patterns only by what the current repo content documents.
+   Cite the folder / recipe name in the Recipe column.
 
-| Pattern | Repo Folder | Unlocks Migration Of (Tableau) |
-|---|---|---|
-| **Period-over-period growth** (YoY, QoQ, MoM, WoW) | `Time Intelligence/Period-over-period growth/` | `LOOKUP`/`ZN(...) - LOOKUP(...)` prior-period table calcs; YoY calculated fields |
-| **Period-to-date totals** (YTD, QTD, MTD) | `Time Intelligence/Period-to-date totals/` | `RUNNING_SUM` within date partitions; YTD/MTD table calcs |
-| **Period-to-date growth** (YOYTD, QOQTD) | `Time Intelligence/Period-to-date growth/` | Combined period-to-date + prior-period table calcs |
-| **Moving calculations** (rolling 7d, 1m, 1q, 1y) | `Time Intelligence/Moving calculations/` | `WINDOW_AVG` / `WINDOW_SUM` rolling table calcs |
-| **Semi-additive calculations** (first/last date, opening/closing balance) | `Semi-additive calculations/` | `LAST()`/`FIRST()`-based balance snapshots; inventory levels |
-| **Ranking** (RANK, DENSE_RANK, NTILE, PERCENT_RANK) | `Ranking/` | `RANK`, `INDEX`, `RANK_DENSE`, `RANK_PERCENTILE` table calcs |
-| **Static segmentation** (CASE bands, config-table bands) | `Static segmentation/` | Static `IF`/`CASE` groups, bins, and FIXED-LOD segmentation |
-| **Currency conversion** (FX rates, multi-currency) | `Currency conversion/` | Multi-currency calculated fields with FX-rate blends |
-
-### LOD Decomposition Recipe
-
-LOD expressions are the most common high-impact Tableau blocker. Map them by type:
-
-1. **FIXED LODs** — precompute the fixed-grain aggregate as a metric-view
-   dimension-level measure or a source SQL view column. These become
-   ⚠️ Auto + workaround (Static segmentation pattern where the FIXED result
-   drives a band/classification).
-2. **INCLUDE LODs** — often expressible as a finer-grain measure aggregated up;
-   evaluate case-by-case. Frequently ⚠️ with a source view, sometimes 🔧.
-3. **EXCLUDE LODs** — depend on removing dimensions from the viz context;
-   these are context-sensitive and usually 🔧 Manual (redesign as explicit
-   partitioned window measures where the partition is known).
-
-### Table-Calculation Recipe
-
-Table calculations map onto UC metric-view **window functions**:
-
-- `RUNNING_SUM` / `RUNNING_AVG` → `window` cumulative measures (Period-to-date).
-- `WINDOW_SUM` / `WINDOW_AVG` over N rows → rolling `window` measures (Moving calculations).
-- `LOOKUP(..., -1)` prior-period → `offset` window measures (Period-over-period).
-- `RANK` / `INDEX` → `rank` window measures (Ranking).
-- Custom addressing/partitioning that does not map to a fixed partition → 🔧 Manual.
-
-### Cross-Datasource / Blend Ratio Recipe
-
-Data blending and cross-datasource ratios are not a single bucket — split them by
-the grain of the two sides before classifying:
-
-1. **Fact ÷ dimension / lookup** — the secondary source is a lookup at a coarser or
-   equal grain (rates, targets, attributes). A **metric-view join on the shared key**
-   reproduces it → ⚠️ Auto + workaround.
-2. **Fact ÷ fact** (two fact-grain sources) — a direct join fans out the rows and
-   gives the wrong ratio. **Aggregate each side separately to the shared level**
-   (a pre-aggregated source view, or two metric views at that grain), **then divide**.
-   Classify ⚠️ at best, often 🔧 when the shared grain is ambiguous. Never advise
-   "just join them in the metric view" for this case.
+If the repo cannot be read, keep the Automation Uplift section with this line
+instead of the table and revised summary:
+"Pattern repo unavailable — uplift not computed; baseline applies."
 
 ### How to Use in the Report
 
 In each individual report, after the baseline Automation Summary, always include
 an **Automation Uplift** section that:
-1. Lists each 🔧 item that has a matching pattern from the catalog above.
+1. Lists each 🔧 item that has a matching pattern from the repo.
 2. States the reclassified bucket and the recipe name.
 3. Shows a revised Automation Summary table (baseline vs. with-patterns).
 4. Calculates the percentage-point uplift and whether it changes the

@@ -14,6 +14,7 @@ Here is the repo structure:
 - [**Production Readiness**](production-readiness)
 - [**Unified Governance**](unified-governance)
 - [**Launch Accelerator**](launch-accelerator)
+- [**Workspace Setup**](workspace-setup)
 
 Each project within these categories should follow a consistent naming convention and include its own README with specific installation and usage instructions.
 

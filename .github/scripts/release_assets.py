@@ -2,15 +2,20 @@
 """Keep one current GitHub release per asset in .github/releases.yml.
 
 Each asset uses a stable <slug>-latest release. If its folder changed since that tag,
-move the tag to HEAD and replace the attached zip. On first migration, create the stable
-release and remove legacy <slug>-vN releases/tags. Zips contain only tracked asset files.
+the attached zip is replaced and the tag moves to HEAD. Zips contain only tracked asset files.
 
-Usage: release_assets.py [--dry-run]   (needs GH_TOKEN and GITHUB_REPOSITORY unless --dry-run)
+Runs in two steps so every zip is attested before it is published:
+  release_assets.py build     plan changed assets, zip them into dist/, write dist/plan.json
+  release_assets.py publish   upload the zips listed in dist/plan.json, then move each tag
+
+`build` only reads from GitHub, so running it locally is a dry run.
+Both steps need GH_TOKEN (or a logged-in gh) and use GITHUB_REPOSITORY when set.
 """
 
 import argparse
+import json
 import os
-import re
+import shutil
 import subprocess
 import sys
 from pathlib import PurePosixPath
@@ -19,6 +24,7 @@ import yaml
 
 MANIFEST = ".github/releases.yml"
 OUT_DIR = "dist"
+PLAN = os.path.join(OUT_DIR, "plan.json")
 
 BODY = """Current release of **{name}** ({kind}).
 
@@ -34,31 +40,18 @@ def git(*args, check=True):
     return subprocess.run(["git", *args], check=check, capture_output=True, text=True)
 
 
-def legacy_tags(slug):
-    """Return legacy version tags for an asset."""
-    pattern = re.compile(rf"^{re.escape(slug)}-v\d+(?:\.\d+)*$")
-    return [
-        tag
-        for tag in git("tag", "--list", f"{slug}-v*").stdout.split()
-        if pattern.match(tag)
-    ]
-
-
-def changed_since(tag, path):
-    return git("diff", "--quiet", tag, "HEAD", "--", path, check=False).returncode != 0
-
-
-def build_zip(slug, path):
-    out = os.path.join(OUT_DIR, f"{slug}.zip")
-    git("archive", "--format=zip", f"--prefix={PurePosixPath(path).name}/",
-        "-o", out, f"HEAD:{path}")
-    return out
-
-
 def gh(*args, check=True, capture_output=False):
     return subprocess.run(
         ["gh", *args], check=check, capture_output=capture_output, text=True
     )
+
+
+def is_ancestor(tag):
+    return git("merge-base", "--is-ancestor", tag, "HEAD", check=False).returncode == 0
+
+
+def changed_since(tag, path):
+    return git("diff", "--quiet", tag, "HEAD", "--", path, check=False).returncode != 0
 
 
 def release_exists(repo, tag):
@@ -77,27 +70,72 @@ def set_tag(repo, tag, target, exists):
            "-f", f"ref=refs/tags/{tag}", "-f", f"sha={target}")
 
 
-def delete_legacy(repo, tags):
-    for tag in tags:
-        # --cleanup-tag removes the tag when a release exists. The API call also
-        # cleans up orphaned tags; 404 is expected if --cleanup-tag removed it.
-        release_result = gh(
-            "release", "delete", tag, "--repo", repo, "--cleanup-tag", "--yes",
-            check=False, capture_output=True
-        )
-        tag_result = gh(
-            "api", "--method", "DELETE", f"repos/{repo}/git/refs/tags/{tag}",
-            check=False, capture_output=True
-        )
-        errors = f"{release_result.stderr}\n{tag_result.stderr}"
-        if release_result.returncode and tag_result.returncode and "Not Found" not in errors:
-            sys.exit(f"failed to remove legacy release/tag {tag}:\n{errors.strip()}")
-        print(f"removed legacy release/tag {tag}")
+def build(repo, target):
+    with open(MANIFEST) as f:
+        entries = yaml.safe_load(f)
+    slugs = [e["slug"] for e in entries]
+    if len(set(slugs)) != len(slugs):
+        sys.exit(f"{MANIFEST}: duplicate slugs are not allowed")
+
+    shutil.rmtree(OUT_DIR, ignore_errors=True)
+    os.makedirs(OUT_DIR)
+    planned = []
+    for e in entries:
+        slug, path = e["slug"], e["path"]
+        if not os.path.isdir(path):
+            sys.exit(f"{slug}: path does not exist: {path!r}")
+        tag = f"{slug}-latest"
+        tag_exists = tag in git("tag", "--list", tag).stdout.split()
+        # A tag that HEAD doesn't contain means this run is older than the last
+        # release (e.g. a re-run of an old workflow); publishing would roll it back.
+        if tag_exists and not is_ancestor(tag):
+            print(f"  {slug}: {tag} is not an ancestor of HEAD; skipping")
+            continue
+        has_release = release_exists(repo, tag)
+        if tag_exists and has_release and not changed_since(tag, path):
+            print(f"  {slug}: current at {tag}")
+            continue
+        zip_path = os.path.join(OUT_DIR, f"{slug}.zip")
+        git("archive", "--format=zip", f"--prefix={PurePosixPath(path).name}/",
+            "-o", zip_path, f"HEAD:{path}")
+        print(f"+ {slug}: {'update' if has_release else 'create'} {tag}")
+        planned.append({"entry": e, "tag": tag, "zip": zip_path,
+                        "tag_exists": tag_exists, "has_release": has_release})
+
+    with open(PLAN, "w") as f:
+        json.dump({"target": target, "assets": planned}, f, indent=2)
+    print(f"{len(planned)} release(s) planned in {PLAN}.")
+
+
+def publish(repo):
+    with open(PLAN) as f:
+        plan = json.load(f)
+    target = plan["target"]
+    for p in plan["assets"]:
+        e, tag, zip_path = p["entry"], p["tag"], p["zip"]
+        if not os.path.isfile(zip_path):
+            sys.exit(f"{e['slug']}: missing {zip_path}; run build first")
+        body = BODY.format(name=e["name"], kind=e["kind"], path=e["path"], repo=repo,
+                           tag=tag, slug=e["slug"], url_path=e["path"].replace(" ", "%20"))
+        if p["has_release"]:
+            gh("release", "upload", tag, zip_path, "--repo", repo, "--clobber")
+            gh("release", "edit", tag, "--repo", repo, "--title", e["name"], "--notes", body)
+            # The tag is the current-state marker, so move/create it only after
+            # the asset and release metadata were updated successfully.
+            set_tag(repo, tag, target, p["tag_exists"])
+            print(f"updated {tag}")
+        else:
+            gh("release", "create", tag, zip_path, "--repo", repo, "--target", target,
+               "--title", e["name"], "--notes", body, "--latest=false")
+            if p["tag_exists"]:
+                set_tag(repo, tag, target, exists=True)
+            print(f"created {tag}")
+    print(f"{len(plan['assets'])} release(s) published.")
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("command", choices=["build", "publish"])
     args = parser.parse_args()
 
     if os.environ.get("GITHUB_ACTIONS") == "true":
@@ -106,64 +144,11 @@ def main():
             sys.exit(f"refusing to publish from {ref or '(unset)'}; only refs/heads/main is allowed")
 
     repo = os.environ.get("GITHUB_REPOSITORY", "databricks-solutions/technical-services-solutions")
-    target = os.environ.get("GITHUB_SHA") or git("rev-parse", "HEAD").stdout.strip()
-    with open(MANIFEST) as f:
-        entries = yaml.safe_load(f)
-    slugs = [e["slug"] for e in entries]
-    if len(set(slugs)) != len(slugs):
-        sys.exit(f"{MANIFEST}: duplicate slugs are not allowed")
-
-    os.makedirs(OUT_DIR, exist_ok=True)
-    planned = []
-    cleanup = []
-    for e in entries:
-        slug, path = e["slug"], e["path"]
-        if not os.path.isdir(path):
-            sys.exit(f"{slug}: path does not exist: {path!r}")
-        tag = f"{slug}-latest"
-        old_tags = legacy_tags(slug)
-        if old_tags:
-            cleanup.append((slug, old_tags))
-        tag_exists = tag in git("tag", "--list", tag).stdout.split()
-        has_release = tag_exists if args.dry_run else release_exists(repo, tag)
-        if tag_exists and has_release and not changed_since(tag, path):
-            print(f"  {slug}: current at {tag}")
-            continue
-        action = "update" if has_release else "create"
-        print(f"+ {slug}: {action} {tag}")
-        planned.append((e, tag, tag_exists, has_release))
-
-    for e, tag, tag_exists, has_release in planned:
-        slug = e["slug"]
-        zip_path = build_zip(slug, e["path"])
-        if args.dry_run:
-            print(f"[dry-run] built {zip_path}")
-            continue
-        body = BODY.format(name=e["name"], kind=e["kind"], path=e["path"], repo=repo,
-                           tag=tag, slug=slug, url_path=e["path"].replace(" ", "%20"))
-        if has_release:
-            gh("release", "upload", tag, zip_path, "--repo", repo, "--clobber")
-            gh("release", "edit", tag, "--repo", repo, "--title", e["name"], "--notes", body)
-            # The tag is the current-state marker, so move/create it only after
-            # the asset and release metadata were updated successfully.
-            set_tag(repo, tag, target, tag_exists)
-            print(f"updated {tag}")
-        else:
-            gh("release", "create", tag, zip_path, "--repo", repo, "--target", target,
-               "--title", e["name"], "--notes", body, "--latest=false")
-            if tag_exists:
-                set_tag(repo, tag, target, exists=True)
-            print(f"created {tag}")
-
-    if args.dry_run:
-        for slug, tags in cleanup:
-            print(f"[dry-run] would remove legacy {slug} releases/tags: {', '.join(tags)}")
+    if args.command == "build":
+        target = os.environ.get("GITHUB_SHA") or git("rev-parse", "HEAD").stdout.strip()
+        build(repo, target)
     else:
-        for _, tags in cleanup:
-            delete_legacy(repo, tags)
-
-    verb = "planned" if args.dry_run else "updated"
-    print(f"{len(planned)} current release(s) {verb}.")
+        publish(repo)
 
 
 if __name__ == "__main__":

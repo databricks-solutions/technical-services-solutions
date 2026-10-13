@@ -31,8 +31,9 @@ jobs:
 
       - run: pip install --require-hashes -r .github/workflows/requirements-release-assets.txt
 
-      - name: Update releases for changed assets
-        run: python .github/scripts/release_assets.py
+      # Build, attest, then publish, so no zip goes public without an attestation.
+      - name: Build zips for changed assets
+        run: python .github/scripts/release_assets.py build
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -41,3 +42,9 @@ jobs:
         uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
         with:
           subject-path: dist/*.zip
+
+      - name: Publish releases
+        if: hashFiles('dist/*.zip') != ''
+        run: python .github/scripts/release_assets.py publish
+        env:
+          GH_TOKEN: ${{ github.token }}

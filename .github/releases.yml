@@ -126,3 +126,13 @@
   name: "PBI Migration Assessment"
   kind: "Agent skill"
   path: "aibi-migration/Assessment skills/pbi-migration-assessment"
+
+- slug: tableau-migration-assessment
+  name: "Tableau Migration Assessment"
+  kind: "Agent skill"
+  path: "aibi-migration/Assessment skills/tableau-migration-assessment"
+
+- slug: aibi-migration-map
+  name: "AI/BI Migration Map"
+  kind: "Agent skill"
+  path: "aibi-migration/aibi-migration-map"

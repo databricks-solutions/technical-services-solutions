@@ -99,6 +99,11 @@ output "external_location_url" {
   value       = one(databricks_external_location.uc_external_location[*].url)
 }
 
+output "uc_file_events_queue_url" {
+  description = "URL of the Terraform-managed SQS queue used for external location file events (null unless new_catalog is true and uc_file_events_mode is 'provided')"
+  value       = one(aws_sqs_queue.uc_file_events[*].url)
+}
+
 output "storage_credential_name" {
   description = "Name of the Unity Catalog storage credential (null when new_catalog is false)"
   value       = one(databricks_storage_credential.uc_storage_cred[*].name)

@@ -77,7 +77,7 @@ The code provisions:
 7. **Databricks workspace** -- An E2 workspace using the provisioned network, credentials, and storage configuration.
 8. **Unity Catalog metastore** -- Either creates a new metastore (when `metastore_id` is empty) or uses an existing one. The metastore is assigned to the workspace.
 9. **Unity Catalog IAM role and S3 bucket** _(optional, when `new_catalog = true`)_ -- A dedicated IAM role and S3 bucket for the Unity Catalog external location, with appropriate trust and access policies.
-10. **Storage credential and external location** _(optional, when `new_catalog = true`)_ -- A Unity Catalog storage credential backed by the IAM role, and an external location pointing to the catalog S3 bucket.
+10. **Storage credential and external location** _(optional, when `new_catalog = true`)_ -- A Unity Catalog storage credential backed by the IAM role, and an external location pointing to the catalog S3 bucket. By default (`uc_file_events_mode = "provided"`), file events are enabled using a Terraform-managed, tagged SQS queue -- see [File events and tag-enforcing SCPs](#file-events-and-tag-enforcing-scps).
 11. **User-defined catalog** _(optional, when `new_catalog = true`)_ -- A Unity Catalog catalog backed by the external location's storage.
 12. **Single-node cluster** _(optional, when `new_cluster = true`)_ -- A UC-compatible single-node cluster (`SINGLE_USER` mode) using the latest LTS runtime, intended to validate the deployment.
 
@@ -113,9 +113,31 @@ Copy `terraform.tfvars.example` to `terraform.tfvars` in the `tf/` directory and
 | `catalog_name` | **(Optional)** Unity Catalog catalog name. Default `""` uses `{prefix}-catalog`. |
 | `external_location_name` | **(Optional)** Unity Catalog external location name. Default `""` uses `{resource_prefix}-external-location`. |
 | `storage_credential_name` | **(Optional)** Unity Catalog storage credential name. Default `""` uses `{resource_prefix}-storage-credential`. |
+| `uc_file_events_mode` | **(Optional)** File events mode for the external location: `provided` (Terraform creates a tagged SQS queue, S3 bucket notification, and IAM access, and points the external location at the queue) or `disabled` (file events off). Default: `provided`. |
+| `uc_file_events_tags` | **(Optional)** Extra tags for the file events SQS queue, merged over `tags`. Default: `{}`. |
 | `new_cluster` | **(Optional)** Whether to create a UC-compatible single-node cluster. Default: `false`. |
 | `cluster_autotermination_minutes` | **(Optional)** Idle minutes before the cluster auto-terminates (minimum 10). Default: `10`. |
 
+### File events and tag-enforcing SCPs
+
+When a Unity Catalog external location is created without any file events configuration, Databricks enables managed file events in **Automatic** mode: it assumes the storage credential's IAM role and calls `sns:CreateTopic` / `sqs:CreateQueue` to create `csms-*` resources in your account. Automatic mode cannot add tags to these resources, so an AWS Service Control Policy (SCP) that denies untagged resource creation blocks those calls.
+
+To avoid this, the template defaults to `uc_file_events_mode = "provided"` (only applies when `new_catalog = true`):
+
+- **SQS queue** `{resource_prefix}-uc-file-events` -- tagged with `merge(tags, uc_file_events_tags)` at creation time, SSE-SQS encryption, 14-day message retention.
+- **Queue policy** -- allows `s3.amazonaws.com` to `sqs:SendMessage`, restricted to the catalog bucket (`aws:SourceArn`) and your account (`aws:SourceAccount`).
+- **S3 bucket notification** -- sends `s3:ObjectCreated:*` and `s3:ObjectRemoved:*` events from the catalog bucket to the queue.
+- **IAM inline policy** on the UC storage-credential role -- grants `sqs:ReceiveMessage`, `DeleteMessage`, `PurgeQueue`, `GetQueueAttributes`, `GetQueueUrl`, and `ChangeMessageVisibility` on the queue. The stock Databricks UC policy only covers `csms-*` queue names.
+- **External location** -- `enable_file_events = true` with `file_event_queue { provided_sqs { queue_url = ... } }`.
+
+Set `uc_file_events_mode = "disabled"` to turn file events off entirely. No SQS, notification, or IAM resources are created, and the external location is created with `enable_file_events = false`.
+
+> [!WARNING]
+> `aws_s3_bucket_notification` manages the bucket's **entire** notification configuration. Any notifications added to the catalog bucket outside this Terraform configuration will be removed on the next apply. Add extra notifications to the same resource instead.
+
+The SCP may also require tags on other resources this template creates (for example IAM roles, VPC resources, or buckets). `tags` is applied to the cross-account role, both S3 buckets, and the file events queue; review the remaining resources against your SCP.
+
+**Verify in the UI:** in the workspace, go to **Catalog** -> **Connect** -> **External Locations**, select the external location, then **⋮** -> **Edit** -> **Advanced options**. File events should be enabled and should use the provided SQS queue URL (`terraform output uc_file_events_queue_url`).
 
 ## Deploy
 

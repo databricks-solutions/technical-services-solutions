@@ -192,6 +192,22 @@ variable "storage_credential_name" {
   default     = ""
 }
 
+variable "uc_file_events_mode" {
+  description = "File events mode for the user-defined external location. 'provided' (default) has Terraform pre-create a tagged SQS queue, S3 bucket notification, and IAM access, and points the external location at that queue, so Databricks never auto-creates untagged csms-* SNS/SQS resources. 'disabled' turns file events off."
+  type        = string
+  default     = "provided"
+  validation {
+    condition     = contains(["provided", "disabled"], var.uc_file_events_mode)
+    error_message = "uc_file_events_mode must be either 'provided' or 'disabled'."
+  }
+}
+
+variable "uc_file_events_tags" {
+  description = "Additional tags for the file events SQS queue, merged over var.tags (e.g. tags required by an SCP)"
+  type        = map(string)
+  default     = {}
+}
+
 # =============================================================================
 # Cluster Configuration (Optional)
 # =============================================================================

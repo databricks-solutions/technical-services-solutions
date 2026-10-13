@@ -2,7 +2,7 @@
 # Databricks validates S3 read on external location creation.
 resource "time_sleep" "wait_60_seconds" {
   count           = var.new_catalog ? 1 : 0
-  depends_on      = [aws_iam_policy_attachment.unity_catalog_attach]
+  depends_on      = [aws_iam_policy_attachment.unity_catalog_attach, aws_iam_role_policy.uc_file_events]
   create_duration = "60s"
 }
 
@@ -15,6 +15,11 @@ locals {
   uc_catalog_name            = var.catalog_name != "" ? var.catalog_name : "${var.prefix}-catalog"
   uc_external_location_name  = var.external_location_name != "" ? var.external_location_name : "${var.resource_prefix}-external-location"
   uc_storage_credential_name = var.storage_credential_name != "" ? var.storage_credential_name : "${var.resource_prefix}-storage-credential"
+
+  # File events: in "provided" mode Terraform owns a tagged SQS queue instead of letting
+  # Databricks auto-create untagged csms-* SNS/SQS resources (which tag-enforcing SCPs deny).
+  uc_file_events_provided = var.new_catalog && var.uc_file_events_mode == "provided"
+  uc_file_events_tags     = merge(var.tags, var.uc_file_events_tags)
 }
 
 resource "random_string" "catalog_bucket_suffix" {
@@ -83,6 +88,7 @@ resource "aws_s3_bucket" "unity_catalog_bucket" {
   count         = var.new_catalog ? 1 : 0
   bucket        = local.catalog_bucket_name
   force_destroy = true
+  tags          = var.tags
 }
 
 resource "aws_s3_bucket_versioning" "unity_catalog_versioning" {
@@ -103,15 +109,102 @@ resource "aws_s3_bucket_public_access_block" "unity_catalog" {
   depends_on              = [aws_s3_bucket.unity_catalog_bucket]
 }
 
+# File events (Provided mode): tagged SQS queue fed by S3 notifications on the catalog bucket.
+# Tags are set on the resource itself so they are sent with the CreateQueue request.
+resource "aws_sqs_queue" "uc_file_events" {
+  count                     = local.uc_file_events_provided ? 1 : 0
+  name                      = "${var.resource_prefix}-uc-file-events"
+  message_retention_seconds = 1209600 # 14 days
+  sqs_managed_sse_enabled   = true
+  tags                      = local.uc_file_events_tags
+}
+
+resource "aws_sqs_queue_policy" "uc_file_events" {
+  count     = local.uc_file_events_provided ? 1 : 0
+  queue_url = aws_sqs_queue.uc_file_events[0].id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "AllowS3SendMessage"
+        Effect    = "Allow"
+        Principal = { Service = "s3.amazonaws.com" }
+        Action    = "sqs:SendMessage"
+        Resource  = aws_sqs_queue.uc_file_events[0].arn
+        Condition = {
+          ArnEquals    = { "aws:SourceArn" = aws_s3_bucket.unity_catalog_bucket[0].arn }
+          StringEquals = { "aws:SourceAccount" = var.aws_account_id }
+        }
+      }
+    ]
+  })
+}
+
+# NOTE: aws_s3_bucket_notification owns the bucket's ENTIRE notification configuration;
+# any other notifications on this bucket not declared here will be removed.
+resource "aws_s3_bucket_notification" "uc_file_events" {
+  count  = local.uc_file_events_provided ? 1 : 0
+  bucket = aws_s3_bucket.unity_catalog_bucket[0].id
+
+  queue {
+    queue_arn = aws_sqs_queue.uc_file_events[0].arn
+    events    = ["s3:ObjectCreated:*", "s3:ObjectRemoved:*"]
+  }
+
+  depends_on = [aws_sqs_queue_policy.uc_file_events]
+}
+
+# The stock databricks_aws_unity_catalog_policy only grants SQS access to csms-* queues,
+# so grant the UC role access to the Terraform-managed queue.
+resource "aws_iam_role_policy" "uc_file_events" {
+  count = local.uc_file_events_provided ? 1 : 0
+  name  = "${var.prefix}-uc-file-events-policy"
+  role  = aws_iam_role.unity_catalog[0].id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "UCFileEventsQueueAccess"
+        Effect = "Allow"
+        Action = [
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage",
+          "sqs:PurgeQueue",
+          "sqs:GetQueueAttributes",
+          "sqs:GetQueueUrl",
+          "sqs:ChangeMessageVisibility",
+        ]
+        Resource = aws_sqs_queue.uc_file_events[0].arn
+      }
+    ]
+  })
+}
+
 # External Location
 resource "databricks_external_location" "uc_external_location" {
-  count           = var.new_catalog ? 1 : 0
-  provider        = databricks.workspace
-  name            = local.uc_external_location_name
-  url             = "s3://${aws_s3_bucket.unity_catalog_bucket[0].id}"
-  credential_name = databricks_storage_credential.uc_storage_cred[0].id
-  force_destroy   = true
-  depends_on      = [time_sleep.wait_60_seconds]
+  count              = var.new_catalog ? 1 : 0
+  provider           = databricks.workspace
+  name               = local.uc_external_location_name
+  url                = "s3://${aws_s3_bucket.unity_catalog_bucket[0].id}"
+  credential_name    = databricks_storage_credential.uc_storage_cred[0].id
+  force_destroy      = true
+  enable_file_events = local.uc_file_events_provided
+
+  # Provided mode only; omitting the block with enable_file_events = false disables file events.
+  dynamic "file_event_queue" {
+    for_each = local.uc_file_events_provided ? [1] : []
+    content {
+      provided_sqs {
+        queue_url = aws_sqs_queue.uc_file_events[0].url
+      }
+    }
+  }
+
+  depends_on = [
+    time_sleep.wait_60_seconds,
+    aws_s3_bucket_notification.uc_file_events,
+    aws_iam_role_policy.uc_file_events,
+  ]
 }
 resource "databricks_catalog" "uc_quickstart" {
   count         = var.new_catalog ? 1 : 0

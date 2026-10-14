@@ -1,0 +1,9 @@
+# Input for requirements-terraform-checker-tests.txt (the hash-locked file CI installs).
+# Runtime deps come from workspace-setup/terraform-checker/pyproject.toml; this adds test-only deps.
+# Regenerate from the repo root after changing either file:
+#   uv pip compile workspace-setup/terraform-checker/pyproject.toml \
+#     .github/workflows/requirements-terraform-checker-tests.in \
+#     --generate-hashes --exclude-newer 2026-03-19T00:00:00Z \
+#     --python-version 3.10 --python-platform x86_64-manylinux_2_28 \
+#     -o .github/workflows/requirements-terraform-checker-tests.txt
+pytest>=7.4.0,<9.0.0

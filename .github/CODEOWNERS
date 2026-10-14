@@ -1,0 +1,10 @@
+# GitHub only reads CODEOWNERS, .github/CODEOWNERS, or docs/CODEOWNERS.
+# CODEOWNERS.txt at the repo root is not used for review gating.
+#
+# require_code_owner_review is enabled on main; this team must have write
+# access on the repo for those reviews to count.
+
+.github/releases.yml @databricks-solutions/shared-technical-services-write
+.github/scripts/ @databricks-solutions/shared-technical-services-write
+.github/workflows/ @databricks-solutions/shared-technical-services-write
+.github/CODEOWNERS @databricks-solutions/shared-technical-services-write

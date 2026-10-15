@@ -103,9 +103,27 @@ Before profiling, scan data-source connections and flag blocking prerequisites:
   anything references it — a worksheet, a data blend (as primary or secondary), a
   dashboard action, a parameter, or another (published) data source that is built
   on it. Only a source referenced by nothing is omittable.
-- **Extracts (.hyper)**: Flag `.hyper` extracts — they are point-in-time snapshots;
-  AI/BI dashboards query live UC data, so extracts are informational only and the
-  underlying live source must be identified.
+- **Extracts (.hyper) — live connection vs. extract**: For every data source, state
+  explicitly whether it is a **live connection** or a **`.hyper` extract**. Extracts
+  are point-in-time snapshots; AI/BI dashboards query live UC data, so extracts are
+  informational only and the underlying live source must be identified. Never assume
+  an extract's embedded connection is the live source without confirming it.
+- **Custom SQL target vs. connection catalog/schema**: When a source uses Custom SQL
+  or Initial SQL, check the `FROM` target (catalog.schema.table) **against the
+  connection's catalog/schema**. A mismatch (SQL reads from a different catalog/schema
+  than the connection points at) is a prerequisite to resolve before conversion —
+  flag it; do not silently trust the connection metadata.
+- **Trailing-space / near-duplicate aliases**: Flag field or value aliases that differ
+  only by trailing/leading whitespace or case (e.g. `"Region"` vs `"Region "`). They
+  silently split groups and break joins after conversion — report them, do not
+  normalize them away.
+- **Embedded parameter sources**: Flag sources that are embedded or driven by a
+  workbook parameter (parameter-selected tables, parameter-in-Custom-SQL). These must
+  resolve to a concrete source before conversion.
+- **Parameters datasource is NOT data blending**: Tableau's special *Parameters*
+  pseudo-datasource is a container for parameter controls, not a data source. Never
+  count it as a blend, a secondary source, or a relationship — exclude it from the
+  Relationships and Data Source tables.
 - **Source table inventory**: List UC schema.table references (and non-UC tables)
   so the user can verify accessibility.
 - **Relationship / join quality flags**: Do not just count relationships — flag the
@@ -211,6 +229,13 @@ print the check itself.
 9. Every bucket and every handling / resolution cell **traces to the `/importBI`
    output**, or (Uplift only) to a cited uc-semantics-patterns folder. Anything
    else → replace with `Not stated by /importBI — verify` and 🔧.
+10. **Calc-family completeness**: every calculated field is assigned to exactly one
+    calculation family (aggregate / row-level / FIXED LOD / INCLUDE-EXCLUDE LOD /
+    each table-calc family / cross-datasource ratio), and the family counts **sum to
+    the total calculated-field count**. Groups, bins, sets, and parameters are not
+    calculated fields and are reconciled separately. (This completeness check spans
+    all families, including row-level, and is broader than check #1's calc-%
+    denominator.)
 
 Then return the full report in the chat: the summary first, then the individual
 per-file detail sections.
@@ -468,12 +493,26 @@ aliases, hierarchies) are classified for migration effort but are **NOT** in the
 calc % — mark each `model feature — not in calc %` in the Note. Row-level calcs,
 groups, bins, and sets go in the next block, also outside the calc %.
 
+> **Table calculations are split by family** — never collapse them into one row.
+> **Constant LOOKUP** (fixed offset, e.g. `LOOKUP(SUM([x]), -1)`) and
+> **dynamic LOOKUP** (parameter-/field-driven offset) are different migration risks
+> and must not be conflated. **Analytical windows** (`RUNNING_*`, `WINDOW_*`, `RANK`,
+> moving/period calcs) map to window measures; **mark-positioning windows**
+> (`INDEX`, `SIZE`, `FIRST`, `LAST` used to drive layout/placement, not analytics)
+> usually require manual redesign — they are not ordinary analytics.
+> **Parameter-dependent ratios** are classified as ratio calcs (cross-datasource or
+> complex), **never as simple aggregations**, and are distinct from the Parameters
+> model-feature row below.
+
 | Feature | Count | Classification | Note |
 |---|---|---|---|
 | Simple aggregations (SUM, AVG, etc.) | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
 | FIXED LODs | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
 | INCLUDE / EXCLUDE LODs | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
-| Table calculations | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+| Table calc — constant LOOKUP (fixed offset) | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+| Table calc — dynamic LOOKUP (parameter/field-driven offset) | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+| Table calc — analytical windows (running / moving / rank / period) | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+| Table calc — mark-positioning windows (INDEX/SIZE/FIRST/LAST for layout) | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
 | Cross-datasource calc — fact ÷ dimension/lookup | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
 | Cross-datasource calc — fact ÷ fact (blend) | ... | ⚠️/🔧 (never ✅) | <as stated by /importBI> |
 | Parameters | ... | ✅/⚠️/🔧 | model feature — not in calc %; <as stated by /importBI> |
@@ -509,6 +548,20 @@ If model-only: use Empty Report Handling callout.
 
 #### Interactivity & Filters
 
+Report filter volume as **three distinct counts** — do not conflate them: the number
+of **distinct filter fields** (unique fields filtered on), the number of **worksheet
+filter instances** (the same field filtered on N worksheets counts N times), and the
+number of **dashboard controls** (filter cards/controls shown on dashboards). Keep
+**Measure Names / Measure Values** separate — that is a display/measure-selection
+mechanism, **not a data filter** — and never count it toward the filter totals.
+
+| Filter metric | Count |
+|---|---|
+| Distinct filter fields | ... |
+| Worksheet filter instances | ... |
+| Dashboard controls (filter cards) | ... |
+| Measure Names / Measure Values (display selection — not a data filter) | ... |
+
 | Feature | Count | Status |
 |---|---|---|
 | Filter controls (quick filters) | ... | ✅/⚠️/🔧 |
@@ -519,6 +572,10 @@ If model-only: use Empty Report Handling callout.
 | URL / navigation / drill actions | ... | ✅/⚠️/🔧 |
 | Parameter actions | ... | ✅/⚠️/🔧 |
 | ... only features present, excluding items in Data Modeling ... |
+
+> A filter set to "(All)" is **not** necessarily a no-op — check the consumer formula
+> before treating it as "no filter"; it may be read by a calc (e.g. `ISFILTERED` /
+> context-dependent LODs) or gate a view.
 
 If model-only: use Empty Report Handling callout.
 
@@ -599,6 +656,12 @@ tables above.
 **Semantic-model remediation** (🔧 only, before conversion):
 - <grouped 🔧 blockers by category with counts — e.g. "EXCLUDE LODs with nested context — 4", "fact ÷ fact blends — 2">
 - Names of each 🔧 item are available in the optional 🔧 Manual Adjustment Report (Step 6).
+
+**Dashboard-gating calculations**:
+- Call out boolean / flag calcs that gate what the dashboard shows (e.g. `RM`,
+  `fSite`, `fPlatform` — field/zone visibility, filter actions, or dynamic zone
+  visibility). They control the layout, so they must be assessed for readiness even
+  when simple, and never dismissed as unused.
 
 **Visualization / interaction redesign** (🔧 visuals/interaction):
 - <unsupported visuals, custom geocoding, parameter/highlight/URL actions, analytics objects>
@@ -695,16 +758,20 @@ they do **not** describe actual `/importBI` behavior.
 ### Medium
 - 5–20 calculated fields with FIXED LODs or simple table calcs
 - 2–3 sources, some non-Databricks or extracts
-- Some dual-axis, context filters, filter/parameter actions
+- A few simple dual-axis charts, context filters, filter/parameter actions
 - **Expected automation**: 50–90% ✅ or ⚠️
 
 ### High
 - 20+ calculated fields with INCLUDE/EXCLUDE LODs, nested LODs, or complex
   table calcs (custom addressing/partitioning)
+- **Deep nested-calculation chains** (calcs referencing calcs several levels deep)
 - Multiple sources needing migration/federation/upload; data blending
 - Parameter/highlight/URL/navigation actions, custom geocoding, analytics
   objects (forecast, cluster, trend/reference distributions)
-- Sheet swapping / dynamic zone visibility
+- **High worksheet / widget volume** (many worksheets or dashboard objects to rebuild)
+- **Many dual-axis / combined-axis combinations** (beyond a few simple ones)
+- **Composite scorecards** (dense multi-metric tiles assembled from many sheets)
+- Sheet swapping / **dynamic zone visibility** (and the gating calcs that drive it)
 - **Expected automation**: < 50% ✅ or ⚠️
 
 ## Important Guardrails
@@ -751,6 +818,23 @@ they do **not** describe actual `/importBI` behavior.
 - **Tableau only**: This skill is for `.twb` / `.twbx` workbooks and
   `.tds` / `.tdsx` data sources. Power BI files use a different assessment
   framework (`pbi-migration-assessment`).
+- **Parameters datasource ≠ blend**: The Parameters pseudo-datasource is never a
+  data blend, secondary source, or relationship. Exclude it from the Relationships
+  and Data Source tables.
+- **Constant LOOKUP ≠ dynamic LOOKUP**: A fixed-offset `LOOKUP` and a
+  parameter-/field-driven `LOOKUP` are different table-calc families — classify and
+  count them separately; never merge them.
+- **Mark-positioning windows ≠ ordinary analytics**: Window calcs used to place marks
+  / drive layout (`INDEX`, `SIZE`, `FIRST`, `LAST`) are not analytical window
+  measures. Classify them separately — they usually need manual redesign.
+- **"(All)" ≠ no filter**: Never assume a filter set to "(All)" is a no-op without
+  checking the consumer formula — a calc or view may still depend on it.
+- **Calc-family counts reconcile to the total**: Every calculated field is assigned
+  to exactly one calculation family (aggregate / row-level / FIXED LOD /
+  INCLUDE-EXCLUDE LOD / each table-calc family / cross-datasource ratio), and the
+  family counts **sum to the total calculated-field count** (groups, bins, sets, and
+  parameters are not calculated fields and are counted separately). This completeness
+  check is in addition to the ✅/⚠️/🔧 calc-% reconciliation (Step 5 check #1).
 
 ## Reference Patterns
 

@@ -1,0 +1,22 @@
+# Optional: tag-based access with an ABAC GRANT policy. Rename to abac_policy.tf to use it.
+#
+# Gives EXECUTE on every system.ai model service tagged ai.model_creator = anthropic,
+# including models that Databricks adds later. Other system tags: ai.model_family
+# (for example claude-sonnet).
+#
+# The policy ADDS access. It does not remove direct grants, so keep main.tf: it removes the
+# default account users grant and keeps the break-glass group as the only direct grant.
+# Access from a policy does not show in `databricks grants get`, and main.tf does not see it as drift.
+resource "databricks_policy_info" "claude_models" {
+  name                  = "grant-claude-models"
+  on_securable_type     = "SCHEMA"
+  on_securable_fullname = "system.ai"
+  policy_type           = "POLICY_TYPE_GRANT"
+  for_securable_type    = "MODEL_SERVICE"
+  to_principals         = ["data-scientists", "ml-engineers"]
+  when_condition        = "has_tag_value('ai.model_creator', 'anthropic')"
+  grant = {
+    privileges = ["EXECUTE"]
+  }
+  comment = "Managed by Terraform"
+}

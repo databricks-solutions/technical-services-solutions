@@ -21,7 +21,7 @@ variable "workspace_url" {
 }
 
 variable "break_glass_group" {
-  description = "Gets EXECUTE on models that have no other grant (databricks_grants needs at least one)."
+  description = "Admin group that keeps EXECUTE on every model. databricks_grants needs at least one grant per model."
   type        = string
   default     = "platform-admins"
 }

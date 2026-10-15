@@ -1,5 +1,5 @@
-# New budgets: rename to budgets.tf. For budgets that exist today, import them instead
-# (see the README, step 5), so that nobody creates a second budget by mistake.
+# AI Gateway budgets. For budgets that exist today, import them instead of creating new ones
+# (see the README), so that nobody gets two budgets that both block usage.
 
 variable "budget_alert_email" {
   type    = string

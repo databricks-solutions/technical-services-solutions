@@ -4,9 +4,4 @@ terraform.tfstate*
 terraform.tfvars
 *.tfplan
 tf.plan
-plan.json
-plan.log
-# Snapshots hold real principal names: keep them in your own private repo or storage.
-snapshot/
-budgets/imports.tf
-budgets/budgets_generated.tf
+generated.tf

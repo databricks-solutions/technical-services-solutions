@@ -1,3 +1,34 @@
+# Your own services: a model provider service, a model service that routes to it, and an MCP service.
+# Delete this file if you manage only the Databricks-provided system.ai services.
+
+variable "catalog" {
+  description = "Catalog that holds the services. Callers need USE CATALOG on it."
+  type        = string
+}
+
+variable "schema" {
+  description = "Schema that holds the services. Callers need USE SCHEMA on it."
+  type        = string
+  default     = "ai_services"
+}
+
+variable "provider_base_url" {
+  description = "Full URL of the provider's OpenAI-compatible chat completions endpoint. Unity Gateway adds no path to it."
+  type        = string
+  default     = "https://api.example.com/v1/chat/completions"
+}
+
+variable "provider_api_key" {
+  description = "Provider API key. Pass it with TF_VAR_provider_api_key, never in code."
+  type        = string
+  sensitive   = true
+}
+
+variable "ai_users_group" {
+  type    = string
+  default = "ai-app-developers"
+}
+
 locals {
   parent = "schemas/${var.catalog}.${var.schema}"
   prefix = "${var.catalog}.${var.schema}"

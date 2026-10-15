@@ -29,9 +29,8 @@ The examples in this folder:
 
 | Folder | What it holds |
 | --- | --- |
-| [`grants/`](grants) | `databricks_grants` for each model, the schema grant for `account users`, and an optional ABAC policy ([`abac_policy.tf.example`](grants/abac_policy.tf.example)) |
-| [`services/`](services) | A model provider service, a model service that routes to it, an MCP service on a schema-level connection, and `EXECUTE` grants on all three |
-| [`budgets/`](budgets) | A shared email budget and a per-user `BLOCK_USAGE` budget with a group override |
+| [`services/`](services) | Workspace level. Every Unity Gateway service is a Unity Catalog securable in a catalog schema, so one project holds them all: [`system_ai.tf`](services/system_ai.tf) (access to the `system.ai` model services), [`custom_services.tf`](services/custom_services.tf) (your own model provider, model and MCP services, with their grants) and an optional ABAC policy ([`abac_policy.tf.example`](services/abac_policy.tf.example)) |
+| [`budgets/`](budgets) | Account level. A shared email budget and a per-user `BLOCK_USAGE` budget with a group override |
 
 ---
 
@@ -43,15 +42,15 @@ The examples in this folder:
 | Identity for access | A service principal with `MANAGE` on schema `system.ai`. The metastore owner alone is not enough. A metastore admin grants it once: `databricks grants update schema system.ai --json '{"changes":[{"principal":"<sp-application-id>","add":["MANAGE"]}]}'` |
 | Identity for your own services | `USE CATALOG`, `USE SCHEMA` and `CREATE SERVICE` on the schema, plus `CREATE CONNECTION` for an MCP connection |
 | Identity for budgets | An account admin service principal. Budgets are account-level objects. |
-| State | A remote backend with locking. Use separate state for `grants/` and `budgets/`. |
+| State | A remote backend with locking. Use separate state for `services/` (workspace level) and `budgets/` (account level). |
 
-Grants are stored in the metastore, so one `grants/` project with any workspace on that metastore covers all its workspaces.
+Services and grants are stored in the metastore, so one `services/` project with any workspace on that metastore covers all its workspaces.
 
 ---
 
 ## Option 1: Direct grants with `databricks_grants` (recommended)
 
-One `databricks_grants` resource is the full access list of one model service. It removes principals that are not listed, including the default `account users`, and reverts grants added by hand. For several models, use `for_each` over a map of model → groups ([`grants/main.tf`](grants/main.tf)):
+One `databricks_grants` resource is the full access list of one model service. It removes principals that are not listed, including the default `account users`, and reverts grants added by hand. For several models, use `for_each` over a map of model → groups ([`services/system_ai.tf`](services/system_ai.tf)):
 
 ```hcl
 locals {
@@ -82,7 +81,7 @@ resource "databricks_grants" "system_ai_models" {
 
 - **List every model in `system.ai`, with a fixed list.** Do not build the list from the `databricks_ai_gateway_model_services` data source. In our tests its list API returned an empty result on 5 of 6 calls, and an empty `for_each` made Terraform revoke the grants. New models then come in through a pull request.
 - **Keep a break-glass group on every model.** `databricks_grants` needs at least one grant (`Insufficient grant blocks`), and a locked model then has only that group.
-- **Check the schema.** In some metastores, `account users` has `EXECUTE` on the schema `system.ai`. Every model inherits it, and a revoke on one model has no effect. `main.tf` sets the schema grant of `account users` without `EXECUTE`, after the per-model grants exist:
+- **Check the schema.** In some metastores, `account users` has `EXECUTE` on the schema `system.ai`. Every model inherits it, and a revoke on one model has no effect. `system_ai.tf` sets the schema grant of `account users` without `EXECUTE`, after the per-model grants exist:
 
 ```bash
 databricks grants get schema system.ai
@@ -91,11 +90,11 @@ databricks grants get model_service system.ai.claude-sonnet-4-6
 
 ## Option 2: One principal with `databricks_grant`
 
-`databricks_grant` manages the privileges of **one** principal on one securable, and ignores all other principals. Use it when another team owns the rest of the access list. For example, `main.tf` uses it for the `account users` grant on the schema, so other schema grants stay as they are. For model services it is a weak choice: it does not remove the default grant unless you add a resource for it, and it does not see a grant that someone adds by hand for another principal.
+`databricks_grant` manages the privileges of **one** principal on one securable, and ignores all other principals. Use it when another team owns the rest of the access list. For example, `system_ai.tf` uses it for the `account users` grant on the schema, so other schema grants stay as they are. For model services it is a weak choice: it does not remove the default grant unless you add a resource for it, and it does not see a grant that someone adds by hand for another principal.
 
 ## Option 3: Tag-based access with an ABAC GRANT policy
 
-Databricks tags each `system.ai` model with `ai.model_creator` (for example `anthropic`) and `ai.model_family` (for example `claude-sonnet`). One policy on the schema can give `EXECUTE` on every model with a tag ([`grants/abac_policy.tf.example`](grants/abac_policy.tf.example)):
+Databricks tags each `system.ai` model with `ai.model_creator` (for example `anthropic`) and `ai.model_family` (for example `claude-sonnet`). One policy on the schema can give `EXECUTE` on every model with a tag ([`services/abac_policy.tf.example`](services/abac_policy.tf.example)):
 
 ```hcl
 resource "databricks_policy_info" "claude_models" {
@@ -124,7 +123,7 @@ resource "databricks_policy_info" "claude_models" {
 
 ## Option 4: Your own services
 
-Create your own services in a schema you own ([`services/`](services)):
+Create your own services in a schema you own ([`services/custom_services.tf`](services/custom_services.tf)). They live next to the `system.ai` grants in the same project:
 
 | Resource | What it does | Clients call it with |
 | --- | --- | --- |

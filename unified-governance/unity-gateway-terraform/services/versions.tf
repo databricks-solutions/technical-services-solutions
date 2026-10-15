@@ -3,12 +3,17 @@ terraform {
   required_providers {
     databricks = {
       source  = "databricks/databricks"
-      version = ">= 1.137.0"
+      version = ">= 1.137.0" # tested version; model_service grants need >= 1.136.0
     }
   }
-  # Use a remote backend with locking in real use. The state holds the provider API key.
+  # Use a remote backend with locking and encryption in real use: the state holds the
+  # provider API key from custom_services.tf. For example:
+  # backend "azurerm" { ... }
 }
 
+# Runs as the Terraform service principal. It needs MANAGE on the system.ai schema, and for your own
+# services USE CATALOG, USE SCHEMA, CREATE SERVICE and CREATE CONNECTION on their schema.
+# Any workspace attached to the metastore works: services and grants are stored in the metastore.
 provider "databricks" {
   host = var.workspace_url
 }
@@ -17,30 +22,8 @@ variable "workspace_url" {
   type = string
 }
 
-variable "catalog" {
-  description = "Catalog that holds the services. Callers need USE CATALOG on it."
+variable "break_glass_group" {
+  description = "Admin group that keeps EXECUTE on every model. databricks_grants needs at least one grant per model."
   type        = string
-}
-
-variable "schema" {
-  description = "Schema that holds the services. Callers need USE SCHEMA on it."
-  type        = string
-  default     = "ai_services"
-}
-
-variable "provider_base_url" {
-  description = "Full URL of the provider's OpenAI-compatible chat completions endpoint. Unity Gateway adds no path to it."
-  type        = string
-  default     = "https://api.example.com/v1/chat/completions"
-}
-
-variable "provider_api_key" {
-  description = "Provider API key. Pass it with TF_VAR_provider_api_key, never in code."
-  type        = string
-  sensitive   = true
-}
-
-variable "ai_users_group" {
-  type    = string
-  default = "ai-app-developers"
+  default     = "platform-admins"
 }

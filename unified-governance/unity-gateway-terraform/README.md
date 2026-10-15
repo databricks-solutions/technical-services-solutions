@@ -18,9 +18,9 @@ This playbook shows the options to manage Unity Gateway resources with Terraform
 | What you manage | Terraform resource | Provider level | Tested here |
 | --- | --- | --- | --- |
 | Access to a model service (`system.ai` or your own) | [`databricks_grants`](https://registry.terraform.io/providers/databricks/databricks/latest/docs/resources/grants) with `model_service` (recommended) or [`databricks_grant`](https://registry.terraform.io/providers/databricks/databricks/latest/docs/resources/grant) | Workspace | Yes |
-| Access to a model provider service or MCP service | The same resources, with `model_provider_service` or `mcp_service` | Workspace | No |
+| Access to a model provider service or MCP service | The same resources, with `model_provider_service` or `mcp_service` | Workspace | Yes (`databricks_grants`) |
 | Tag-based access, for example every Anthropic model | [`databricks_policy_info`](https://registry.terraform.io/providers/databricks/databricks/latest/docs/resources/policy_info) with `POLICY_TYPE_GRANT` | Workspace | Yes |
-| Your own services, with routing, fallback and rate limits | [`databricks_ai_gateway_model_service`](https://registry.terraform.io/providers/databricks/databricks/latest/docs/resources/ai_gateway_model_service), [`databricks_ai_gateway_model_provider_service`](https://registry.terraform.io/providers/databricks/databricks/latest/docs/resources/ai_gateway_model_provider_service), [`databricks_ai_gateway_mcp_service`](https://registry.terraform.io/providers/databricks/databricks/latest/docs/resources/ai_gateway_mcp_service) | Workspace | No |
+| Your own services, with routing, fallback and rate limits | [`databricks_ai_gateway_model_service`](https://registry.terraform.io/providers/databricks/databricks/latest/docs/resources/ai_gateway_model_service), [`databricks_ai_gateway_model_provider_service`](https://registry.terraform.io/providers/databricks/databricks/latest/docs/resources/ai_gateway_model_provider_service), [`databricks_ai_gateway_mcp_service`](https://registry.terraform.io/providers/databricks/databricks/latest/docs/resources/ai_gateway_mcp_service) | Workspace | Yes (custom provider, routing, MCP) |
 | AI Gateway budgets | [`databricks_budget`](https://registry.terraform.io/providers/databricks/databricks/latest/docs/resources/budget) with `BUDGET_RESOURCE_TYPE_UNITY_AI_GATEWAY` | Account | Import only |
 | Existing grants | Write the config to match today's grants. No import needed. | — | Yes |
 | Existing budgets | [Import blocks](https://developer.hashicorp.com/terraform/language/import/generating-configuration) or the [exporter](https://registry.terraform.io/providers/databricks/databricks/latest/docs/guides/experimental-exporter) | Account | Import blocks: yes |
@@ -30,6 +30,7 @@ The examples in this folder:
 | Folder | What it holds |
 | --- | --- |
 | [`grants/`](grants) | `databricks_grants` for each model, the schema grant for `account users`, and an optional ABAC policy ([`abac_policy.tf.example`](grants/abac_policy.tf.example)) |
+| [`services/`](services) | A model provider service, a model service that routes to it, an MCP service on a schema-level connection, and `EXECUTE` grants on all three |
 | [`budgets/`](budgets) | A shared email budget and a per-user `BLOCK_USAGE` budget with a group override |
 
 ---
@@ -40,6 +41,7 @@ The examples in this folder:
 | --- | --- |
 | Terraform | 1.5+ (import blocks) and provider `databricks/databricks` 1.136.0+ (`model_service` grants) |
 | Identity for access | A service principal with `MANAGE` on schema `system.ai`. The metastore owner alone is not enough. A metastore admin grants it once: `databricks grants update schema system.ai --json '{"changes":[{"principal":"<sp-application-id>","add":["MANAGE"]}]}'` |
+| Identity for your own services | `USE CATALOG`, `USE SCHEMA` and `CREATE SERVICE` on the schema, plus `CREATE CONNECTION` for an MCP connection |
 | Identity for budgets | An account admin service principal. Budgets are account-level objects. |
 | State | A remote backend with locking. Use separate state for `grants/` and `budgets/`. |
 
@@ -122,7 +124,44 @@ resource "databricks_policy_info" "claude_models" {
 
 ## Option 4: Your own services
 
-To route traffic to external providers, add fallbacks or set rate limits, create your own services in a schema you own with `databricks_ai_gateway_model_provider_service` (connection to the external provider), `databricks_ai_gateway_model_service` (routing, fallback, `rate_limits`) and `databricks_ai_gateway_mcp_service` (MCP server through a Unity Catalog connection). Grant access to them with `databricks_grants` and `model_service`, `model_provider_service` or `mcp_service`, as in option 1. Supply provider credentials through a sensitive variable or a secret, never in the code. We did not test these resources here. See the resource pages linked in the table above.
+Create your own services in a schema you own ([`services/`](services)):
+
+| Resource | What it does | Clients call it with |
+| --- | --- | --- |
+| `databricks_ai_gateway_model_provider_service` | Stores the credential for an external provider and lists the models (`targets`) callers can use | Header `Databricks-Model-Provider-Service: <catalog>.<schema>.<name>` on `/ai-gateway/openai/v1/chat/completions` (or the provider's other managed paths) |
+| `databricks_ai_gateway_model_service` | A stable name with routing, traffic split, fallback and `rate_limits`. Routes to provider services or Databricks models | `model = "<catalog>.<schema>.<name>"` on `/ai-gateway/mlflow/v1/chat/completions` |
+| `databricks_connection` (`HTTP`, `parent = "schemas/..."`) + `databricks_ai_gateway_mcp_service` | Governs an external MCP server, with optional tool selection and `rate_limits` | `https://<workspace>/ai-gateway/mcp-services/<catalog>.<schema>.<name>` |
+
+```hcl
+resource "databricks_ai_gateway_model_provider_service" "chat_provider" {
+  parent                    = "schemas/${var.catalog}.${var.schema}"
+  model_provider_service_id = "chat_provider"
+  config = {
+    provider_type = "EXTERNAL_MODEL_PROVIDER_TYPE_CUSTOM"
+    targets       = [{ model = "chat-model", native_api_types = ["openai/v1/chat/completions"] }]
+    custom = {
+      direct = {
+        base_url = var.provider_base_url                # the FULL endpoint URL
+        api_key  = { plaintext = var.provider_api_key } # sensitive variable
+      }
+    }
+  }
+}
+
+resource "databricks_grants" "chat_provider" {
+  model_provider_service = "${var.catalog}.${var.schema}.chat_provider"
+  grant {
+    principal  = "ai-app-developers"
+    privileges = ["EXECUTE"]
+  }
+}
+```
+
+- **Access:** callers need `EXECUTE` on the service plus `USE CATALOG` and `USE SCHEMA`. End users do not need `USE CONNECTION` on the MCP connection. Use `databricks_grants` with `model_provider_service`, `model_service` or `mcp_service`, as in option 1.
+- **Credentials:** pass the provider key with a sensitive variable (`TF_VAR_provider_api_key`), never in code. The key is also stored in the Terraform state, so keep the state in an encrypted remote backend. The provider also accepts a reference to a Unity Catalog secret (`secret_reference`) instead of `plaintext`; we did not test it.
+- **Custom provider `base_url`:** Unity Gateway sends requests to this URL as it is and adds no path. Give the full endpoint, for example `https://api.example.com/v1/chat/completions`.
+- **MCP connection:** create a schema-level `HTTP` connection. Do not set `is_mcp_connection` (schema-level connections reject it). Set `auth_scheme = "bearer"` for bearer auth, or every plan shows a diff.
+- **Key and URL changes:** a new `api_key` takes effect at once, but a new `base_url` can take more than 2 minutes to reach every gateway replica. During that time, some requests still go to the old URL **with the new key**. Change the URL and the key in separate applies, and wait until all requests use the new URL. Never point a provider service that holds a real key at a URL you do not trust, even for a test.
 
 ## Budgets
 
@@ -219,8 +258,11 @@ On a test metastore with 21 `system.ai` model services, provider 1.136.0 and 1.1
 | Terraform identity without `MANAGE` | Fails: `User does not have MANAGE on MODEL_SERVICE`. |
 | ABAC GRANT policy, `ai.model_creator = anthropic` | Anthropic model opened after about 1.5 minutes. Other model stayed closed. Not shown in `databricks grants get`. |
 | Budget import with import block and generated config | 0 changes. |
+| `databricks_ai_gateway_model_provider_service` (custom), `_model_service` (routes to it), `_mcp_service` (schema-level HTTP connection) | Created in seconds. Real calls through the provider service and the model service returned 200; MCP `tools/list` returned 200. |
+| `databricks_grants` on `model_provider_service`, `model_service`, `mcp_service` | Without `EXECUTE`: 404 `does not exist` (provider and model service), 403 `Not authorized to invoke MCP service` (MCP). Grant: MCP opened at once, the others in about 1.5 minutes. Revoke: MCP closed at once, the others in about 35 seconds. |
+| Change of `api_key` / `base_url` on a provider service | New key used at once. New URL reached all replicas only after more than 2 minutes. |
 
-Not tested: budget enforcement (`BLOCK_USAGE`), exporter output for budgets, ABAC with a group (we used a service principal), the `databricks_ai_gateway_*` service resources, and grants on model provider and MCP services.
+Not tested: budget enforcement (`BLOCK_USAGE`), exporter output for budgets, ABAC with a group (we used a service principal), provider types other than custom, `secret_reference`, fallback routing and `rate_limits`.
 
 ## Troubleshooting
 
@@ -232,6 +274,10 @@ Not tested: budget enforcement (`BLOCK_USAGE`), exporter output for budgets, ABA
 | Revoke on one model has no effect | `account users` has `EXECUTE` on the schema | Remove `EXECUTE` from the schema grant |
 | `'system.ai.<model>' does not exist` | No `EXECUTE`, or the change is still propagating | Wait 1–2 minutes, then check the grants and policies |
 | User has access, but `grants get` shows nothing | Access comes from an ABAC policy | `databricks policies list-policies SCHEMA system.ai` |
+| MCP call returns JSON-RPC error `-32007 Not authorized to invoke MCP service` | No `EXECUTE` on the MCP service | Grant `EXECUTE` with `databricks_grants` and `mcp_service` |
+| Provider error `Path must be of form /serving-endpoints/...` or another upstream 404 | `base_url` is a base path, not the full endpoint | Set the full endpoint URL |
+| `Setting is_mcp_connection is not supported on schema-level connections` | `is_mcp_connection` set on the connection | Remove it; the MCP service does that job |
+| `databricks_connection` shows a change on every plan | `auth_scheme` is missing from `options` | Add `auth_scheme = "bearer"` |
 
 ---
 
@@ -241,5 +287,6 @@ Not tested: budget enforcement (`BLOCK_USAGE`), exporter output for budgets, ABA
 - [Govern access to models with grant policies](https://docs.databricks.com/aws/en/ai-gateway/govern-access-to-models-with-grant-policies)
 - [Unity Gateway budgets](https://docs.databricks.com/aws/en/ai-gateway/budgets)
 - [Unity Gateway rate limits](https://docs.databricks.com/aws/en/ai-gateway/rate-limits)
+- [Query model provider services](https://docs.databricks.com/aws/en/ai-gateway/query-model-provider-services) and [register an external MCP server](https://docs.databricks.com/aws/en/ai-gateway/register-mcp-service)
 - [Terraform exporter guide](https://registry.terraform.io/providers/databricks/databricks/latest/docs/guides/experimental-exporter)
 - [Terraform import blocks with generated configuration](https://developer.hashicorp.com/terraform/language/import/generating-configuration)

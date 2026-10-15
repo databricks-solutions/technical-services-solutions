@@ -7,3 +7,4 @@ Solutions and accelerators for unified governance with Databricks Unity Catalog.
 New work in this track lands here.
 
 - [**Unity Gateway: model-service access and budgets with Terraform**](unity-gateway-terraform) — manage `system.ai` model-service grants, ABAC GRANT policies and AI Gateway budgets in Terraform, and move an existing setup to Terraform without a change in access.
+- [**ABAC Playbook: Data Classification & Policy Enforcement**](unity-catalog-abac) — use Data Classification to tag sensitive data, then enforce ABAC row filter and column mask policies (with a Terraform demo).

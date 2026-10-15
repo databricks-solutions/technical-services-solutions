@@ -35,7 +35,7 @@
 - slug: unity-catalog-abac
   name: "Unity Catalog ABAC"
   kind: "Terraform demo"
-  path: "data-governance/unity-catalog-abac"
+  path: "unified-governance/unity-catalog-abac"
 
 - slug: dbrx-business-semantics
   name: "Databricks Business Semantics"

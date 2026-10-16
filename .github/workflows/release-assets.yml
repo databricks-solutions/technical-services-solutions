@@ -37,14 +37,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
+      # Attest and publish are disabled per go/hardened-gha until #unblock-releases-public
+      # approves re-enabling releases. To re-enable, restore: if: hashFiles('dist/*.zip') != ''
+      # Build still runs as a read-only dry run.
       - name: Attest release zips
-        if: hashFiles('dist/*.zip') != ''
+        if: false
         uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
         with:
           subject-path: dist/*.zip
 
       - name: Publish releases
-        if: hashFiles('dist/*.zip') != ''
+        if: false
         run: python .github/scripts/release_assets.py publish
         env:
           GH_TOKEN: ${{ github.token }}

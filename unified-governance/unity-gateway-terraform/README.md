@@ -160,7 +160,7 @@ resource "databricks_grants" "chat_provider" {
 - **Credentials:** pass the provider key with a sensitive variable (`TF_VAR_provider_api_key`), never in code. The key is also stored in the Terraform state, so keep the state in an encrypted remote backend. The provider also accepts a reference to a Unity Catalog secret (`secret_reference`) instead of `plaintext`; we did not test it.
 - **Custom provider `base_url`:** Unity Gateway sends requests to this URL as it is and adds no path. Give the full endpoint, for example `https://api.example.com/v1/chat/completions`.
 - **MCP connection:** create a schema-level `HTTP` connection. Do not set `is_mcp_connection` (schema-level connections reject it). Set `auth_scheme = "bearer"` for bearer auth, or every plan shows a diff.
-- **Key and URL changes:** a new `api_key` takes effect at once, but a new `base_url` can take more than 2 minutes to reach every gateway replica. During that time, some requests still go to the old URL **with the new key**. Change the URL and the key in separate applies, and wait until all requests use the new URL. Never point a provider service that holds a real key at a URL you do not trust, even for a test.
+- **Key and URL changes:** gateway replicas do not get `api_key` and `base_url` together. Each replica can take more than 2 minutes to get each value, in any order. During that time, a request can go to the new URL with the old key, or to the old URL with the new key. One good response does not show that all replicas have the change. To move a provider to a new URL, create a new provider service and point the model service to it. Never point a provider service that holds a real key at a URL you do not trust, even for a test. To test, use a provider service that only ever holds a dummy key.
 
 ## Budgets
 
@@ -259,7 +259,7 @@ On a test metastore with 21 `system.ai` model services, provider 1.136.0 and 1.1
 | Budget import with import block and generated config | 0 changes. |
 | `databricks_ai_gateway_model_provider_service` (custom), `_model_service` (routes to it), `_mcp_service` (schema-level HTTP connection) | Created in seconds. Real calls through the provider service and the model service returned 200; MCP `tools/list` returned 200. |
 | `databricks_grants` on `model_provider_service`, `model_service`, `mcp_service` | Without `EXECUTE`: 404 `does not exist` (provider and model service), 403 `Not authorized to invoke MCP service` (MCP). Grant: MCP opened at once, the others in about 1.5 minutes. Revoke: MCP closed at once, the others in about 35 seconds. |
-| Change of `api_key` / `base_url` on a provider service | New key used at once. New URL reached all replicas only after more than 2 minutes. |
+| Change of `api_key` / `base_url` on a provider service | Not applied together. Some requests used the new URL with the old key, others the old URL with the new key, for up to about 2.5 minutes. |
 
 Not tested: budget enforcement (`BLOCK_USAGE`), exporter output for budgets, ABAC with a group (we used a service principal), provider types other than custom, `secret_reference`, fallback routing and `rate_limits`.
 

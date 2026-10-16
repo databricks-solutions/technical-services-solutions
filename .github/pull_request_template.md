@@ -6,7 +6,7 @@ Brief description of what this PR does and why.
 ## Category
 - [ ] core-platform
 - [ ] data-engineering
-- [ ] data-governance
+- [ ] unified-governance
 - [ ] data-warehousing  
 - [ ] genai-ml
 - [ ] launch-accelerator

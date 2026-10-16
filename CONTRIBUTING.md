@@ -6,7 +6,7 @@ This PR establishes the foundational structure, documentation, and contribution 
 ## Category
 - [x] core-platform
 - [x] data-engineering
-- [x] data-governance
+- [x] unified-governance
 - [x] data-warehousing  
 - [x] genai-ml
 - [x] launch-accelerator
@@ -30,7 +30,7 @@ This PR introduces a standardized six-category structure:
 technical-services-solutions/
 ├── core-platform/                 # Core platform configurations and utilities
 ├── data-engineering/              # ETL/ELT pipelines and data processing workflows
-├── data-governance/               # Data Governance patterns and solutions
+├── unified-governance/            # Unified Governance patterns and solutions
 ├── data-warehousing/              # Data warehousing patterns and solutions
 ├── genai-ml/                      # Machine learning and generative AI implementations
 ├── launch-accelerator/            # Quick-start templates and accelerators

@@ -28,7 +28,7 @@ output "workspace_status" {
 
 output "vpc_id" {
   description = "ID of the VPC used for the workspace"
-  value       = var.vpc_id == "" ? module.vpc[0].vpc_id : var.vpc_id
+  value       = local.vpc_id
 }
 
 output "private_subnet_ids" {
@@ -37,13 +37,18 @@ output "private_subnet_ids" {
 }
 
 output "public_subnet_ids" {
-  description = "IDs of the public subnets (if new VPC was created)"
-  value       = var.vpc_id == "" ? module.vpc[0].public_subnets : []
+  description = "IDs of the public subnets (if a new VPC was created or create_network_in_existing_vpc is true)"
+  value       = var.vpc_id == "" ? module.vpc[0].public_subnets : [for s in aws_subnet.public : s.id]
 }
 
 output "nat_gateway_ids" {
-  description = "IDs of the NAT Gateways (if new VPC was created)"
-  value       = var.vpc_id == "" ? module.vpc[0].natgw_ids : []
+  description = "IDs of the NAT Gateways (if a new VPC was created or create_network_in_existing_vpc is true)"
+  value       = var.vpc_id == "" ? module.vpc[0].natgw_ids : [for n in aws_nat_gateway.this : n.id]
+}
+
+output "private_route_table_ids" {
+  description = "IDs of the private route tables (if a new VPC was created or create_network_in_existing_vpc is true)"
+  value       = local.private_route_table_ids
 }
 
 output "security_group_ids" {

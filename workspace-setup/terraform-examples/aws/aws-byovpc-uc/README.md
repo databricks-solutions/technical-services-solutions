@@ -22,7 +22,7 @@ This Terraform example deploys a Databricks workspace on AWS using the "Bring Yo
 
 Configuration values (Databricks account ID, AWS region, VPC and subnet CIDRs, availability zones, metastore options) are defined as variables. Copy `tf/terraform.tfvars.example` to `tf/terraform.tfvars` and set your values there. Terraform loads `terraform.tfvars` automatically. You can also use a file ending in `.auto.tfvars` or pass variables via the command line.
 
-You can either create a new VPC (leave `vpc_id` empty and provide the CIDR/AZ values) or reuse an existing VPC by setting `vpc_id` and `subnet_ids`. The user-defined catalog (`new_catalog`) is created by default; the optional single-node cluster (`new_cluster`) is disabled by default.
+You can either create a new VPC (leave `vpc_id` empty and provide the CIDR/AZ values) or reuse an existing VPC by setting `vpc_id` and `subnet_ids`. If the existing VPC only has the two Databricks private subnets and nothing else, also set `create_network_in_existing_vpc = true` and the template adds the missing egress components (see [Existing VPC with only private subnets](#existing-vpc-with-only-private-subnets)). The user-defined catalog (`new_catalog`) is created by default; the optional single-node cluster (`new_cluster`) is disabled by default.
 
 ## Authenticate
 
@@ -81,6 +81,26 @@ The code provisions:
 11. **User-defined catalog** _(optional, when `new_catalog = true`)_ -- A Unity Catalog catalog backed by the external location's storage.
 12. **Single-node cluster** _(optional, when `new_cluster = true`)_ -- A UC-compatible single-node cluster (`SINGLE_USER` mode) using the latest LTS runtime, intended to validate the deployment.
 
+### Existing VPC with only private subnets
+
+Set `vpc_id`, `subnet_ids` (the 2+ Databricks private subnets, in different AZs) and `create_network_in_existing_vpc = true` to have the template add, into that VPC, the same egress components a new VPC gets:
+
+- An **internet gateway** attached to the VPC.
+- **Public subnets** from `public_subnets_cidr`, one per entry in `availability_zones` (named `{resource_prefix}-public-<az>`), with a public route table `0.0.0.0/0 -> IGW`.
+- **NAT gateway(s)** with Elastic IPs, following `nat_gateway_mode`: `single` places one NAT gateway in the first AZ; `per_az` places one in each AZ.
+- **Private route table(s)** with `0.0.0.0/0 -> NAT`, associated with `subnet_ids`. With `per_az`, each subnet routes to the NAT gateway in its own AZ (so `availability_zones` must cover every subnet's AZ).
+- The same **VPC endpoints** as a new VPC: S3 gateway endpoint on the private route tables, and STS and Kinesis Streams interface endpoints (private DNS) in `subnet_ids`.
+
+Intra subnets are not created and the VPC default security group is not managed in this mode. The security group behaves as with any existing VPC (created unless `security_group_ids` is set); the Databricks egress ports (443, 3306, 2443, 5432, 8443-8451) are already handled by `security_group.tf`. Leaving `create_network_in_existing_vpc = false` keeps the fully user-managed existing VPC behavior unchanged.
+
+Assumptions (the plan/apply fails or networking breaks if they don't hold):
+
+- The VPC has `enable_dns_support` and `enable_dns_hostnames` turned on (required for the private DNS endpoints).
+- The private subnets only use the VPC main route table. An explicit association to another route table fails with `Resource.AlreadyAssociated`.
+- No internet gateway is attached to the VPC yet. A VPC can only have one, so an existing IGW makes the apply fail.
+- The `public_subnets_cidr` ranges are inside the VPC CIDR and don't overlap existing subnets.
+- The VPC has no existing STS or Kinesis interface endpoints with private DNS (duplicate private DNS names conflict).
+
 ### Variables
 
 Copy `terraform.tfvars.example` to `terraform.tfvars` in the `tf/` directory and set your values. Do not commit `terraform.tfvars` (it may contain sensitive data). Terraform automatically loads `terraform.tfvars`; for other file names use `-var-file`.
@@ -96,12 +116,13 @@ Copy `terraform.tfvars.example` to `terraform.tfvars` in the `tf/` directory and
 | `region` | **(Required)** AWS region code where resources will be deployed. Must be a [Databricks-supported region](https://docs.databricks.com/en/resources/supported-regions.html). |
 | `tags` | **(Optional)** Additional tags to apply to all AWS resources. Default: `{}`. |
 | `vpc_id` | **(Optional)** Existing VPC ID to reuse. If empty, a new VPC is created. Default: `""`. |
-| `nat_gateway_mode` | **(Optional)** NAT topology for a new VPC: `single` or `per_az`. Default: `single`. Existing VPC routing is user-managed. |
+| `create_network_in_existing_vpc` | **(Optional)** With `vpc_id` and `subnet_ids`, add an IGW, public subnets, NAT gateway(s), private route tables and VPC endpoints to the existing VPC. Requires `availability_zones` and one `public_subnets_cidr` per AZ. Default: `false`. |
+| `nat_gateway_mode` | **(Optional)** NAT topology for a new VPC or `create_network_in_existing_vpc`: `single` or `per_az`. Default: `single`. Otherwise existing VPC routing is user-managed. |
 | `vpc_cidr_range` | **(Optional)** CIDR range for the VPC (only used when creating a new VPC). Default: `10.0.0.0/16`. |
-| `availability_zones` | **(Required when creating a new VPC)** List of AWS availability zones for subnet distribution (e.g. `["us-west-2a", "us-west-2b"]`). |
+| `availability_zones` | **(Required when creating a new VPC or with `create_network_in_existing_vpc`)** List of AWS availability zones for subnet distribution (e.g. `["us-west-2a", "us-west-2b"]`). |
 | `subnet_ids` | **(Required when reusing an existing VPC)** Existing subnet IDs to use. Default: `[]`. |
 | `private_subnets_cidr` | **(Required when creating a new VPC)** List of private subnet CIDR blocks (one per AZ). |
-| `public_subnets_cidr` | **(Required when creating a new VPC)** List of public subnet CIDR blocks (one per AZ). |
+| `public_subnets_cidr` | **(Required when creating a new VPC or with `create_network_in_existing_vpc`)** List of public subnet CIDR blocks (one per AZ). |
 | `intra_subnet_cidr` | **(Required when creating a new VPC)** List of intra subnet CIDR blocks for STS and Kinesis endpoints. |
 | `security_group_ids` | **(Optional)** Existing security group IDs to use. If empty, a dedicated security group is created. Default: `[]`. |
 | `new_security_group_name` | **(Optional)** Name for the new security group. If empty, defaults to `{resource_prefix}-databricks-sg`. Default: `""`. |
@@ -207,14 +228,14 @@ tf/
 | **variables.tf** | Input variables (Databricks config, AWS config, network CIDRs, security group options, metastore options, and optional catalog/cluster toggles) with validation. |
 | **terraform.tfvars.example** | Example variable values; copy to `terraform.tfvars` and set your account ID, region, CIDRs, etc. |
 | **workspace.tf** | Databricks MWS resources: storage configuration, credentials, network configuration, and workspace. |
-| **network.tf** | VPC module (address space, public/private/intra subnets), selectable NAT topology, IGW, S3 gateway endpoint, and STS/Kinesis interface endpoints. |
+| **network.tf** | VPC module (address space, public/private/intra subnets), selectable NAT topology, IGW, S3 gateway endpoint, and STS/Kinesis interface endpoints; plus the IGW/public subnet/NAT/private route table resources added to an existing VPC when `create_network_in_existing_vpc = true`. |
 | **security_group.tf** | Default security group egress rules for Databricks-required ports, internal TCP/UDP egress, and self-ingress. |
 | **credential.tf** | Cross-account IAM role and policy for Databricks workspace provisioning. |
 | **root_s3_bucket.tf** | S3 bucket for workspace root storage (DBFS) with Databricks bucket policy. |
 | **metastore.tf** | Unity Catalog metastore (create new or use existing), region check for existing metastores, and workspace assignment. |
 | **unity_catalog.tf** | Optional Unity Catalog IAM role, S3 bucket, storage credential, external location, and user-defined catalog (gated by `new_catalog`). |
 | **cluster.tf** | Optional UC-compatible single-node cluster (gated by `new_cluster`). |
-| **outputs.tf** | Workspace URL/ID; VPC ID; subnet IDs; NAT gateway IDs; security group ID; S3 bucket names; metastore ID; Unity Catalog catalog, external location, and storage credential names; cluster name; credentials and network config IDs. |
+| **outputs.tf** | Workspace URL/ID; VPC ID; subnet IDs; NAT gateway IDs; private route table IDs; security group ID; S3 bucket names; metastore ID; Unity Catalog catalog, external location, and storage credential names; cluster name; credentials and network config IDs. |
 
 **Note:** There is no `main.tf` file in this project. Instead, resources are organized into descriptive, purpose-specific files.
 

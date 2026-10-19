@@ -33,9 +33,12 @@ resource "databricks_mws_networks" "this" {
   provider           = databricks.mws
   account_id         = var.databricks_account_id
   network_name       = "${var.prefix}-network"
-  security_group_ids = var.vpc_id != "" && length(var.security_group_ids) > 0 ? var.security_group_ids : aws_security_group.databricks[*].id
+  security_group_ids = local.security_group_ids
   subnet_ids         = length(var.subnet_ids) > 0 ? var.subnet_ids : module.vpc[0].private_subnets
-  vpc_id             = var.vpc_id == "" ? module.vpc[0].vpc_id : var.vpc_id
+  vpc_id             = local.vpc_id
+
+  # Option 3: make sure egress routing exists before the workspace is created.
+  depends_on = [aws_route_table_association.private, aws_route.private_nat_gateway]
 
   lifecycle {
     precondition {

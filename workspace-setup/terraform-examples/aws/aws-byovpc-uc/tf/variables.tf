@@ -67,8 +67,19 @@ variable "vpc_id" {
   default     = ""
 }
 
+variable "create_network_in_existing_vpc" {
+  description = "Only with vpc_id + subnet_ids: add an internet gateway, public subnets (public_subnets_cidr), NAT gateway(s) (nat_gateway_mode), private route tables for subnet_ids, and the S3/STS/Kinesis VPC endpoints to the existing VPC. Use when the VPC only has the Databricks private subnets."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = !var.create_network_in_existing_vpc || (var.vpc_id != "" && length(var.subnet_ids) >= 2)
+    error_message = "create_network_in_existing_vpc = true requires vpc_id and at least 2 subnet_ids."
+  }
+}
+
 variable "nat_gateway_mode" {
-  description = "NAT gateway topology for a newly created VPC: 'single' uses one shared NAT gateway; 'per_az' creates one NAT gateway per availability zone. Existing VPC routing is user-managed."
+  description = "NAT gateway topology for a newly created VPC or create_network_in_existing_vpc: 'single' uses one shared NAT gateway; 'per_az' creates one NAT gateway per availability zone. Otherwise existing VPC routing is user-managed."
   type        = string
   default     = "single"
 
@@ -85,7 +96,7 @@ variable "vpc_cidr_range" {
 }
 
 variable "availability_zones" {
-  description = "List of AWS availability zones for subnet distribution"
+  description = "List of AWS availability zones for subnet distribution (new VPC, or public subnets/NAT with create_network_in_existing_vpc)"
   type        = list(string)
   default     = []
 }
@@ -103,13 +114,18 @@ variable "private_subnets_cidr" {
 }
 
 variable "public_subnets_cidr" {
-  description = "List of public subnet CIDR blocks (only used if creating new VPC)"
+  description = "List of public subnet CIDR blocks, one per availability zone (used when creating a new VPC or with create_network_in_existing_vpc)"
   type        = list(string)
   default     = []
 
   validation {
-    condition     = var.vpc_id != "" || var.nat_gateway_mode != "per_az" || length(var.public_subnets_cidr) >= length(var.availability_zones)
+    condition     = (var.vpc_id != "" && !var.create_network_in_existing_vpc) || var.nat_gateway_mode != "per_az" || length(var.public_subnets_cidr) >= length(var.availability_zones)
     error_message = "nat_gateway_mode = \"per_az\" requires at least one public subnet CIDR per availability zone."
+  }
+
+  validation {
+    condition     = !var.create_network_in_existing_vpc || (length(var.availability_zones) > 0 && length(var.public_subnets_cidr) == length(var.availability_zones))
+    error_message = "create_network_in_existing_vpc = true requires availability_zones and exactly one public_subnets_cidr entry per availability zone."
   }
 }
 

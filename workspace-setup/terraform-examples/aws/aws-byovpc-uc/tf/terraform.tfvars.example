@@ -45,6 +45,16 @@ intra_subnet_cidr    = ["10.0.201.0/24"]
 # vpc_id     = "vpc-xxxxxxxxx"
 # subnet_ids = ["subnet-xxxxxxxxx", "subnet-yyyyyyyyy"]
 
+# Option 3: existing VPC with only private subnets -- add IGW/public subnets/NAT/endpoints
+# (VPC must have DNS support/hostnames on, no IGW attached, and the private subnets
+#  must only use the main route table; public CIDRs must be free within the VPC CIDR)
+# vpc_id                         = "vpc-xxxxxxxxx"
+# subnet_ids                     = ["subnet-xxxxxxxxx", "subnet-yyyyyyyyy"]
+# create_network_in_existing_vpc = true
+# nat_gateway_mode               = "single" # "single" or "per_az"
+# availability_zones             = ["us-west-2a", "us-west-2b"]
+# public_subnets_cidr            = ["10.0.101.0/24", "10.0.102.0/24"]
+
 # =============================================================================
 # Security Group Configuration
 # =============================================================================

@@ -47,7 +47,8 @@ intra_subnet_cidr    = ["10.0.201.0/24"]
 
 # Option 3: existing VPC with only private subnets -- add IGW/public subnets/NAT/endpoints
 # (VPC must have DNS support/hostnames on, no IGW attached, and the private subnets
-#  must only use the main route table; public CIDRs must be free within the VPC CIDR)
+#  must only use the main route table; public CIDRs must be free within the VPC CIDR;
+#  no existing STS/Kinesis interface endpoints with private DNS in the VPC)
 # vpc_id                         = "vpc-xxxxxxxxx"
 # subnet_ids                     = ["subnet-xxxxxxxxx", "subnet-yyyyyyyyy"]
 # create_network_in_existing_vpc = true

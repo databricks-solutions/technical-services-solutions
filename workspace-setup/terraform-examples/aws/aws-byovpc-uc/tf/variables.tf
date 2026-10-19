@@ -99,6 +99,11 @@ variable "availability_zones" {
   description = "List of AWS availability zones for subnet distribution (new VPC, or public subnets/NAT with create_network_in_existing_vpc)"
   type        = list(string)
   default     = []
+
+  validation {
+    condition     = length(distinct(var.availability_zones)) == length(var.availability_zones)
+    error_message = "availability_zones must not contain duplicates."
+  }
 }
 
 variable "subnet_ids" {

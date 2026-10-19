@@ -10,7 +10,7 @@ This Terraform example deploys a Databricks workspace on AWS using the "Bring Yo
 
 ## Requirements
 
-- Terraform is installed on your local machine (version ~> 1.3): [link](https://developer.hashicorp.com/terraform/tutorials/aws-get-started/install-cli#install-terraform)
+- Terraform is installed on your local machine (version >= 1.9, < 2.0; required for cross-variable validations): [link](https://developer.hashicorp.com/terraform/tutorials/aws-get-started/install-cli#install-terraform)
 - AWS CLI is installed on your local machine: [Mac](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) or [Windows](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
 - AWS CLI configured with appropriate credentials
 - Databricks account created (E2 account)

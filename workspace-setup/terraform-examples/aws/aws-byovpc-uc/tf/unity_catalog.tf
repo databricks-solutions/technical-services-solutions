@@ -33,6 +33,13 @@ resource "databricks_storage_credential" "uc_storage_cred" {
     role_arn = "arn:aws:iam::${var.aws_account_id}:role/${local.uc_iam_role}"
   }
   depends_on = [databricks_metastore_assignment.this]
+
+  lifecycle {
+    precondition {
+      condition     = can(regex("^[0-9]{12}$", var.aws_account_id))
+      error_message = "aws_account_id must be a 12-digit AWS account ID when new_catalog is true."
+    }
+  }
 }
 
 # Unity Catalog Trust Policy - Data Source

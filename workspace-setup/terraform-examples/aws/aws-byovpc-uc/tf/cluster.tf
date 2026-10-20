@@ -1,5 +1,6 @@
 // Latest LTS Databricks Runtime.
 data "databricks_spark_version" "latest_lts" {
+  count             = var.new_cluster ? 1 : 0
   provider          = databricks.workspace
   long_term_support = true
   latest            = true
@@ -14,7 +15,7 @@ resource "databricks_cluster" "uc_single_node" {
   provider                = databricks.workspace
   count                   = var.new_cluster ? 1 : 0
   cluster_name            = "${var.prefix}-uc-cluster"
-  spark_version           = data.databricks_spark_version.latest_lts.id
+  spark_version           = data.databricks_spark_version.latest_lts[0].id
   node_type_id            = "r5d.large"
   autotermination_minutes = var.cluster_autotermination_minutes
   data_security_mode      = "SINGLE_USER"

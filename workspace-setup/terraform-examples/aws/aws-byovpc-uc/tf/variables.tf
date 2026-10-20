@@ -146,8 +146,9 @@ variable "sg_egress_ports" {
 # =============================================================================
 
 variable "aws_account_id" {
-  description = "AWS account ID where resources are deployed (used to construct IAM role ARNs for Unity Catalog)"
+  description = "AWS account ID where UC resources are deployed. Required only when new_catalog is true."
   type        = string
+  default     = ""
 }
 
 variable "metastore_id" {

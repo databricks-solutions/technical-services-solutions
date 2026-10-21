@@ -4,4 +4,6 @@ Solutions and accelerators for migrating data warehouses onto the Databricks Lak
 
 ## Projects
 
-New work in this track lands here.
+| Project | Description |
+|---|---|
+| [source-extracts](source-extracts) | Offline extractors that write local `.sql` files for Lakebridge Analyzer. Snowflake is first; add other engines as sibling folders. |

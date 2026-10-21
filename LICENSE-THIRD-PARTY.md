@@ -71,3 +71,20 @@ Parsing otherwise uses only the Python standard library (`zipfile`, `xml.etree`,
 ### License texts
 
 - **MIT License** — https://opensource.org/license/mit
+
+---
+
+## dw-migration/source-extracts/snowflake
+
+Direct runtime dependencies (declared in
+[`requirements.txt`](./dw-migration/source-extracts/snowflake/requirements.txt)):
+
+| Dependency | Purpose | License |
+|------------|---------|---------|
+| [snowflake-connector-python](https://github.com/snowflakedb/snowflake-connector-python) | Connect to Snowflake and run `SHOW` / `GET_DDL` | Apache-2.0 |
+
+The connector may pull in its own transitive dependencies; those are governed by their respective licenses as resolved at install time.
+
+### License texts
+
+- **Apache License 2.0** — https://www.apache.org/licenses/LICENSE-2.0

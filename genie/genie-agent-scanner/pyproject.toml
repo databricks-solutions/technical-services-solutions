@@ -1,0 +1,17 @@
+# Placed at the worktree root so `python -m pytest -q` and `ruff check scripts/`
+# work from the worktree root with no extra flags (pytest needs scripts/ on the
+# path to import the genie_space_iq package and the scan/optimize entrypoints).
+# The runtime dependency pin + scripts README live under scripts/ per contract.
+
+[tool.pytest.ini_options]
+pythonpath = ["scripts"]
+testpaths = ["scripts/tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = [".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

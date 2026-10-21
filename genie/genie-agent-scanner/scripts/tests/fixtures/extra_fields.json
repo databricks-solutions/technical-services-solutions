@@ -1,0 +1,65 @@
+{
+  "version": 2,
+  "mystery_top_level": {
+    "preserve": true,
+    "count": 3,
+    "note": "keep this whole object"
+  },
+  "config": {
+    "sample_questions": [
+      {
+        "id": "2c284c068959efc1c946f1bf50f73f20",
+        "question": [
+          "Anything?"
+        ]
+      }
+    ]
+  },
+  "data_sources": {
+    "custom_data_sources_meta": {
+      "provenance": "unknown-but-preserved"
+    },
+    "tables": [
+      {
+        "identifier": "main.retail.customers",
+        "description": [
+          "Customer master."
+        ],
+        "mystery_nested_field": "keep me too",
+        "column_configs": [
+          {
+            "column_name": "customer_id",
+            "description": [
+              "Surrogate customer key."
+            ],
+            "custom_col_flag": 42
+          },
+          {
+            "column_name": "region",
+            "description": [
+              "Region."
+            ],
+            "enable_entity_matching": true,
+            "enable_format_assistance": true
+          }
+        ]
+      }
+    ]
+  },
+  "instructions": {
+    "mystery_instructions_field": [
+      "preserve this array element"
+    ],
+    "text_instructions": [
+      {
+        "id": "f0e323b51dac755b732f7adeebb4e405",
+        "content": [
+          "Retail space with extra unknown fields.\n"
+        ]
+      }
+    ]
+  },
+  "benchmarks": {
+    "questions": []
+  }
+}

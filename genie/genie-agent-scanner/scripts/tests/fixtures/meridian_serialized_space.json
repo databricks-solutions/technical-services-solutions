@@ -1,0 +1,1452 @@
+{
+  "version": 2,
+  "config": {
+    "sample_questions": [
+      {
+        "id": "0c0c2992a3efac05af5acefefacb9de8",
+        "question": [
+          "Show me daily call volume for the last 60 days — are there weekend patterns?"
+        ]
+      },
+      {
+        "id": "2773955cfde0b1c329162c28669374a9",
+        "question": [
+          "Which site has the lowest customer satisfaction and why?"
+        ]
+      },
+      {
+        "id": "44e43962197703a786f3a59c9ba0952c",
+        "question": [
+          "How is service level performing across our sites this quarter?"
+        ]
+      },
+      {
+        "id": "5e4aa752df6dd83ed21505635aaa98aa",
+        "question": [
+          "What happened to our SLA on March 6th?"
+        ]
+      },
+      {
+        "id": "6d48c26b74c43f63d8dcc9a3453e8ee2",
+        "question": [
+          "Summarise the 20 most-negative calls about Billing."
+        ]
+      },
+      {
+        "id": "a46adb92843a4b51fb50d132aeaf6c6c",
+        "question": [
+          "Forecast call volume for the next 30 days and tell me how many agents we need."
+        ]
+      },
+      {
+        "id": "a978f2fb9a222ab0881c26c53f3043d4",
+        "question": [
+          "Has handle time at Birmingham been getting worse?"
+        ]
+      },
+      {
+        "id": "e54837c1700f5e4b0f8c61b08ba6a472",
+        "question": [
+          "How do agents hired in the last 90 days compare to tenured agents on AHT?"
+        ]
+      }
+    ]
+  },
+  "data_sources": {
+    "tables": [
+      {
+        "identifier": "genie_demo.contact_centre.gold_calls_enriched"
+      },
+      {
+        "identifier": "genie_demo.contact_centre.gold_forecast_volume"
+      },
+      {
+        "identifier": "genie_demo.contact_centre.gold_kpi_summary"
+      },
+      {
+        "identifier": "genie_demo.contact_centre.mv_calls"
+      },
+      {
+        "identifier": "genie_demo.contact_centre.silver_agents"
+      },
+      {
+        "identifier": "genie_demo.contact_centre.silver_calls_wide"
+      },
+      {
+        "identifier": "genie_demo.contact_centre.silver_sites"
+      }
+    ]
+  },
+  "instructions": {
+    "text_instructions": [
+      {
+        "id": "647150c9b3e0c01b9286534b5edf9c67",
+        "content": [
+          "1. Prefer mv_calls (the metric view) for any KPI question — its measures\n",
+          "   are the canonical SLA / ASA / AHT / abandon / CSAT / sentiment / volume\n",
+          "   definitions and Genie should default there. mv_calls sources from\n",
+          "   gold_kpi_summary (pre-aggregated) for fast scans. Use silver_calls_wide\n",
+          "   ONLY for: per-agent questions (agent_name / agent_id), individual-call\n",
+          "   filters, sub-aggregate fields (handle_time_min, etc.), or hour-of-day\n",
+          "   intraday patterns (started_at is not on mv_calls).\n",
+          "2. Use gold_calls_enriched only for individual-call or transcript-level\n",
+          "   questions — it carries ai_summary text on the bottom 500 most-negative\n",
+          "   calls; everything else has ai_summary = NULL. Calling ai_summarize at\n",
+          "   query time is allowed but expensive — only do so for a single call_id.\n",
+          "3. Never join bronze_* tables — raw ingestion, not in this space.\n",
+          "4. Default time window is the last 90 days unless the user specifies\n",
+          "   otherwise.\n",
+          "5. Synonyms: AHT = avg_handle_sec; ASA / wait time = avg_wait_voice_chat_sec\n",
+          "   (voice + chat only — email is excluded so 24h email response times do\n",
+          "   not skew the average); CSAT = customer satisfaction (1-5 scale,\n",
+          "   excludes ~30% no-survey calls); SLA = service-level % (channel-aware\n",
+          "   threshold: voice ≤20s, chat ≤60s, email ≤24h; abandoned calls count\n",
+          "   as missed SLA).\n",
+          "6. Channels are exactly voice, chat, email. Topics are exactly Billing,\n",
+          "   Order Status, Account Access, Technical Issue, Cancellation, General\n",
+          "   Enquiry. Sites are exactly Athens, Birmingham, Cambridge, Dublin,\n",
+          "   Manchester, Toledo. Regions are EMEA / AMER / APAC.\n",
+          "7. Sentiment is in [-1, 1]. \"Negative sentiment\" means < -0.2. Use the\n",
+          "   negative_share measure (= AVG(is_negative)) for percent of calls.\n",
+          "8. Tenure buckets on agents: 'new' (≤90 days), 'junior' (≤365 days),\n",
+          "   'tenured' (>365 days). For \"agents hired in the last N days\" questions,\n",
+          "   filter `silver_calls_wide.tenure_days <= N` (or join to silver_agents\n",
+          "   and filter `hire_date`).\n",
+          "9. Forecast/staffing math: gold_forecast_volume has 30 future days of\n",
+          "   y_hat plus CI bounds. Use the 'agents_needed_per_shift' SQL expression\n",
+          "   for staffing calculations. Defaults: AHT=372s, shift=8h,\n",
+          "   target_sla=0.80, shrinkage=0.25. Tighter SLA → more agents\n",
+          "   (the (1 - 0.5 * sla) term shrinks); higher shrinkage → more agents.\n",
+          "10. PK/FK constraints exist for join correctness: silver_calls_wide.call_id\n",
+          "    PK; silver_calls_wide.(agent_id, site_id) → silver_agents / silver_sites.\n",
+          "    Genie can rely on these for join planning.\n"
+        ]
+      }
+    ],
+    "example_question_sqls": [
+      {
+        "id": "0a6c96c29daf3ef00722307c9c55f287",
+        "question": [
+          "Which topic has had the biggest drop in sentiment recently — last 30 days versus prior 30 days?"
+        ],
+        "sql": [
+          "WITH curr AS (\n",
+          "  SELECT topic, MEASURE(avg_sentiment) AS s\n",
+          "  FROM genie_demo.contact_centre.mv_calls\n",
+          "  WHERE date >= current_date() - interval 30 day\n",
+          "  GROUP BY topic\n",
+          "),\n",
+          "prev AS (\n",
+          "  SELECT topic, MEASURE(avg_sentiment) AS s\n",
+          "  FROM genie_demo.contact_centre.mv_calls\n",
+          "  WHERE date >= current_date() - interval 60 day\n",
+          "    AND date <  current_date() - interval 30 day\n",
+          "  GROUP BY topic\n",
+          ")\n",
+          "SELECT curr.topic, curr.s AS curr_sentiment, prev.s AS prev_sentiment,\n",
+          "       curr.s - prev.s AS delta\n",
+          "FROM curr JOIN prev USING (topic)\n",
+          "ORDER BY delta ASC\n"
+        ]
+      },
+      {
+        "id": "0b935d2937de6b7b27594682ed0334ca",
+        "question": [
+          "Compare teams Alpha, Bravo, Charlie and Delta on calls, AHT, SLA and CSAT over the last :days days."
+        ],
+        "sql": [
+          "SELECT team,\n",
+          "       COUNT(*)             AS calls,\n",
+          "       AVG(handle_time_sec) AS aht,\n",
+          "       AVG(meets_sla)       AS sla_pct,\n",
+          "       AVG(csat_score)      AS csat\n",
+          "FROM genie_demo.contact_centre.silver_calls_wide\n",
+          "WHERE date >= current_date() - interval :days day\n",
+          "GROUP BY team\n",
+          "ORDER BY sla_pct ASC\n"
+        ]
+      },
+      {
+        "id": "19cfce41d846c4d1810e7005e18978b4",
+        "question": [
+          "Give me a full per-site scorecard — calls, SLA, AHT, ASA, CSAT, abandon rate and negative share — for the last :days days."
+        ],
+        "sql": [
+          "SELECT site_id, region,\n",
+          "       MEASURE(total_calls)             AS calls,\n",
+          "       MEASURE(sla_pct)                 AS sla_pct,\n",
+          "       MEASURE(avg_handle_sec)          AS aht,\n",
+          "       MEASURE(avg_wait_voice_chat_sec) AS asa,\n",
+          "       MEASURE(csat)                    AS csat,\n",
+          "       MEASURE(abandon_rate)            AS abandon_rate,\n",
+          "       MEASURE(negative_share)          AS negative_share\n",
+          "FROM genie_demo.contact_centre.mv_calls\n",
+          "WHERE date >= current_date() - interval :days day\n",
+          "GROUP BY site_id, region\n",
+          "ORDER BY sla_pct ASC\n"
+        ]
+      },
+      {
+        "id": "20c4b510bed11f45b330d880fe337db3",
+        "question": [
+          "How are agents hired in the last :days days performing on calls, AHT and CSAT?"
+        ],
+        "sql": [
+          "SELECT a.agent_id, a.full_name, a.hire_date, a.site_id,\n",
+          "       COUNT(c.call_id)         AS calls,\n",
+          "       AVG(c.handle_time_sec)   AS aht,\n",
+          "       AVG(c.csat_score)        AS csat\n",
+          "FROM genie_demo.contact_centre.silver_agents a\n",
+          "JOIN genie_demo.contact_centre.silver_calls_wide c\n",
+          "  ON c.agent_id = a.agent_id\n",
+          "WHERE a.hire_date >= current_date() - interval :days day\n",
+          "  AND c.date >= current_date() - interval 30 day\n",
+          "GROUP BY a.agent_id, a.full_name, a.hire_date, a.site_id\n",
+          "ORDER BY aht DESC\n"
+        ]
+      },
+      {
+        "id": "29d9d812b97dc4138d2d31cc3423ed50",
+        "question": [
+          "Rank queues by SLA, AHT and abandon rate over the last :days days."
+        ],
+        "sql": [
+          "SELECT queue,\n",
+          "       MEASURE(total_calls)    AS calls,\n",
+          "       MEASURE(sla_pct)        AS sla_pct,\n",
+          "       MEASURE(avg_handle_sec) AS aht,\n",
+          "       MEASURE(abandon_rate)   AS abandon_rate\n",
+          "FROM genie_demo.contact_centre.mv_calls\n",
+          "WHERE date >= current_date() - interval :days day\n",
+          "GROUP BY queue\n",
+          "ORDER BY abandon_rate DESC\n"
+        ]
+      },
+      {
+        "id": "2c3df7f7eb507c2c90cd019256965545",
+        "question": [
+          "What share of total call volume does each topic represent in the last :days days?"
+        ],
+        "sql": [
+          "SELECT topic,\n",
+          "       MEASURE(total_calls) AS calls,\n",
+          "       MEASURE(total_calls) * 1.0\n",
+          "         / SUM(MEASURE(total_calls)) OVER () AS share\n",
+          "FROM genie_demo.contact_centre.mv_calls\n",
+          "WHERE date >= current_date() - interval :days day\n",
+          "GROUP BY topic\n",
+          "ORDER BY calls DESC\n"
+        ]
+      },
+      {
+        "id": "2cc2448254cb08d03eced2972daba563",
+        "question": [
+          "Show me daily SLA broken out by channel over the last :days days."
+        ],
+        "sql": [
+          "SELECT date, channel, MEASURE(sla_pct) AS sla_pct\n",
+          "FROM genie_demo.contact_centre.mv_calls\n",
+          "WHERE date >= current_date() - interval :days day\n",
+          "GROUP BY date, channel\n",
+          "ORDER BY date, channel\n"
+        ]
+      },
+      {
+        "id": "2d62e7e83c043acc47ba1858f7c7897f",
+        "question": [
+          "Show the weekly trend in total calls, SLA and CSAT over the last :days days."
+        ],
+        "sql": [
+          "SELECT week,\n",
+          "       MEASURE(total_calls) AS calls,\n",
+          "       MEASURE(sla_pct)     AS sla_pct,\n",
+          "       MEASURE(csat)        AS csat\n",
+          "FROM genie_demo.contact_centre.mv_calls\n",
+          "WHERE date >= current_date() - interval :days day\n",
+          "GROUP BY week\n",
+          "ORDER BY week\n"
+        ]
+      },
+      {
+        "id": "2ed897bdc56ca95fb07bf4fcc48779bf",
+        "question": [
+          "Which agents had the biggest CSAT decline in the last 30 days versus the prior month?"
+        ],
+        "sql": [
+          "WITH curr AS (\n",
+          "  SELECT agent_id, AVG(csat_score) AS csat, COUNT(*) AS calls\n",
+          "  FROM genie_demo.contact_centre.silver_calls_wide\n",
+          "  WHERE date >= current_date() - interval 30 day\n",
+          "    AND csat_score IS NOT NULL\n",
+          "  GROUP BY agent_id\n",
+          "),\n",
+          "prev AS (\n",
+          "  SELECT agent_id, AVG(csat_score) AS csat\n",
+          "  FROM genie_demo.contact_centre.silver_calls_wide\n",
+          "  WHERE date >= current_date() - interval 60 day\n",
+          "    AND date <  current_date() - interval 30 day\n",
+          "    AND csat_score IS NOT NULL\n",
+          "  GROUP BY agent_id\n",
+          ")\n",
+          "SELECT a.full_name, curr.csat AS curr_csat, prev.csat AS prev_csat,\n",
+          "       curr.csat - prev.csat AS csat_delta, curr.calls\n",
+          "FROM curr\n",
+          "JOIN prev USING (agent_id)\n",
+          "JOIN genie_demo.contact_centre.silver_agents a USING (agent_id)\n",
+          "WHERE curr.calls >= 30\n",
+          "ORDER BY csat_delta ASC\n",
+          "LIMIT 10\n"
+        ]
+      },
+      {
+        "id": "33b935cb3b23bb73e69917c3478f2f8e",
+        "question": [
+          "How does AI-classified sentiment break down across topics?"
+        ],
+        "sql": [
+          "SELECT topic, ai_sentiment_label, COUNT(*) AS calls\n",
+          "FROM genie_demo.contact_centre.silver_calls_wide\n",
+          "WHERE ai_sentiment_label IS NOT NULL\n",
+          "GROUP BY topic, ai_sentiment_label\n",
+          "ORDER BY topic, calls DESC\n"
+        ]
+      },
+      {
+        "id": "479aef22d6ccda0640f26c7d1f67ee06",
+        "question": [
+          "Which topics have the biggest week-over-week drop in sentiment over the last :days days?"
+        ],
+        "sql": [
+          "WITH weekly AS (\n",
+          "  SELECT date_trunc('week', date) AS week, topic,\n",
+          "         AVG(sentiment_score) AS sentiment\n",
+          "  FROM genie_demo.contact_centre.silver_calls_wide\n",
+          "  WHERE date >= current_date() - interval :days day\n",
+          "  GROUP BY date_trunc('week', date), topic\n",
+          ")\n",
+          "SELECT week, topic, sentiment,\n",
+          "       sentiment - LAG(sentiment) OVER (PARTITION BY topic ORDER BY week)\n",
+          "         AS wow_delta\n",
+          "FROM weekly\n",
+          "ORDER BY week DESC, wow_delta ASC\n"
+        ]
+      },
+      {
+        "id": "4843357299bf10d8a53b815cfce3eda2",
+        "question": [
+          "Show me total calls, SLA, AHT, ASA, CSAT and abandon rate broken out by date, channel and site for the last :days days."
+        ],
+        "sql": [
+          "SELECT date, channel, site_id,\n",
+          "       MEASURE(total_calls)             AS total_calls,\n",
+          "       MEASURE(sla_pct)                 AS sla_pct,\n",
+          "       MEASURE(avg_handle_sec)          AS avg_handle_sec,\n",
+          "       MEASURE(avg_wait_voice_chat_sec) AS asa,\n",
+          "       MEASURE(csat)                    AS csat,\n",
+          "       MEASURE(abandon_rate)            AS abandon_rate\n",
+          "FROM genie_demo.contact_centre.mv_calls\n",
+          "WHERE date >= current_date() - interval :days day\n",
+          "GROUP BY date, channel, site_id\n"
+        ]
+      },
+      {
+        "id": "4a4c799dcdab015d0213c72348fc89f9",
+        "question": [
+          "Show me KPIs by region (EMEA, AMER, APAC) for the last :days days."
+        ],
+        "sql": [
+          "SELECT region,\n",
+          "       MEASURE(total_calls)    AS calls,\n",
+          "       MEASURE(sla_pct)        AS sla_pct,\n",
+          "       MEASURE(csat)           AS csat,\n",
+          "       MEASURE(avg_handle_sec) AS aht\n",
+          "FROM genie_demo.contact_centre.mv_calls\n",
+          "WHERE date >= current_date() - interval :days day\n",
+          "GROUP BY region\n",
+          "ORDER BY calls DESC\n"
+        ]
+      },
+      {
+        "id": "4ab76fa9683dae467a6e99bf83a4006f",
+        "question": [
+          "Generate a fresh ai_summarize for call_id :call_id."
+        ],
+        "sql": [
+          "SELECT call_id, topic,\n",
+          "       ai_summarize(transcript, 60) AS fresh_summary\n",
+          "FROM genie_demo.contact_centre.gold_calls_enriched\n",
+          "WHERE call_id = :call_id\n"
+        ]
+      },
+      {
+        "id": "4ba7a726400e505f11babd4520eb5331",
+        "question": [
+          "Which days in the last :days days saw an unusual spike in the abandon rate?"
+        ],
+        "sql": [
+          "WITH daily AS (\n",
+          "  SELECT date, MEASURE(abandon_rate) AS rate\n",
+          "  FROM genie_demo.contact_centre.mv_calls\n",
+          "  WHERE date >= current_date() - interval :days day\n",
+          "  GROUP BY date\n",
+          "),\n",
+          "stats AS (\n",
+          "  SELECT AVG(rate) AS mu, STDDEV(rate) AS sigma FROM daily\n",
+          ")\n",
+          "SELECT d.date, d.rate, (d.rate - stats.mu) / stats.sigma AS z\n",
+          "FROM daily d, stats\n",
+          "WHERE (d.rate - stats.mu) / stats.sigma > 2\n",
+          "ORDER BY z DESC\n"
+        ]
+      },
+      {
+        "id": "4e471bf376b4430c41a3f3fc8643aeb1",
+        "question": [
+          "Show me KPIs broken out by channel (voice, chat, email) for the last :days days."
+        ],
+        "sql": [
+          "SELECT channel,\n",
+          "       MEASURE(total_calls)    AS calls,\n",
+          "       MEASURE(sla_pct)        AS sla_pct,\n",
+          "       MEASURE(avg_handle_sec) AS aht,\n",
+          "       MEASURE(csat)           AS csat\n",
+          "FROM genie_demo.contact_centre.mv_calls\n",
+          "WHERE date >= current_date() - interval :days day\n",
+          "GROUP BY channel\n",
+          "ORDER BY calls DESC\n"
+        ]
+      },
+      {
+        "id": "5261defed83d7996b1cd4fd6c2438c86",
+        "question": [
+          "Rank topics by average customer sentiment over the last :days days."
+        ],
+        "sql": [
+          "SELECT topic,\n",
+          "       MEASURE(total_calls)    AS calls,\n",
+          "       MEASURE(avg_sentiment)  AS sentiment,\n",
+          "       MEASURE(negative_share) AS pct_negative\n",
+          "FROM genie_demo.contact_centre.mv_calls\n",
+          "WHERE date >= current_date() - interval :days day\n",
+          "GROUP BY topic\n",
+          "ORDER BY sentiment ASC\n"
+        ]
+      },
+      {
+        "id": "565d1447ba97088b178039edee800d36",
+        "question": [
+          "How do KPIs differ across call topics over the last :days days?"
+        ],
+        "sql": [
+          "SELECT topic,\n",
+          "       MEASURE(total_calls)    AS calls,\n",
+          "       MEASURE(csat)           AS csat,\n",
+          "       MEASURE(avg_sentiment)  AS sentiment,\n",
+          "       MEASURE(negative_share) AS negative_share\n",
+          "FROM genie_demo.contact_centre.mv_calls\n",
+          "WHERE date >= current_date() - interval :days day\n",
+          "GROUP BY topic\n",
+          "ORDER BY calls DESC\n"
+        ]
+      },
+      {
+        "id": "5a86eb73bbb81110d503bb621caa558f",
+        "question": [
+          "Show me the onboarding curve — how does AHT change as agents accumulate tenure?"
+        ],
+        "sql": [
+          "SELECT FLOOR(tenure_days / 30) * 30 AS tenure_days_bucket,\n",
+          "       COUNT(*)                     AS calls,\n",
+          "       AVG(handle_time_sec)         AS aht,\n",
+          "       AVG(meets_sla)               AS sla_pct\n",
+          "FROM genie_demo.contact_centre.silver_calls_wide\n",
+          "WHERE tenure_days BETWEEN 0 AND 540\n",
+          "  AND date >= current_date() - interval 90 day\n",
+          "GROUP BY FLOOR(tenure_days / 30) * 30\n",
+          "ORDER BY tenure_days_bucket\n"
+        ]
+      },
+      {
+        "id": "5c72795a62e95348e86c49c53cb1b492",
+        "question": [
+          "How wide is the forecast confidence interval per day — when is the forecast least reliable?"
+        ],
+        "sql": [
+          "SELECT ds, y_hat,\n",
+          "       y_hat_upper - y_hat_lower AS ci_width,\n",
+          "       (y_hat_upper - y_hat_lower) / NULLIF(y_hat, 0) AS ci_relative\n",
+          "FROM genie_demo.contact_centre.gold_forecast_volume\n",
+          "ORDER BY ds\n"
+        ]
+      },
+      {
+        "id": "643895381073aafafd6a1c0da655fd99",
+        "question": [
+          "Has handle time at :site been getting worse — show the weekly trend over the last :days days."
+        ],
+        "sql": [
+          "SELECT date_trunc('week', date) AS week,\n",
+          "       AVG(handle_time_sec) AS avg_aht\n",
+          "FROM genie_demo.contact_centre.silver_calls_wide\n",
+          "WHERE site_id = :site\n",
+          "  AND date >= current_date() - interval :days day\n",
+          "GROUP BY week\n",
+          "ORDER BY week\n"
+        ]
+      },
+      {
+        "id": "66a0f1f0e90951765068ea13f06e8f1b",
+        "question": [
+          "How has :site performed week by week on calls, SLA, CSAT and AHT over the last :days days?"
+        ],
+        "sql": [
+          "SELECT week,\n",
+          "       MEASURE(total_calls)    AS calls,\n",
+          "       MEASURE(sla_pct)        AS sla_pct,\n",
+          "       MEASURE(csat)           AS csat,\n",
+          "       MEASURE(avg_handle_sec) AS aht\n",
+          "FROM genie_demo.contact_centre.mv_calls\n",
+          "WHERE site_id = :site\n",
+          "  AND date >= current_date() - interval :days day\n",
+          "GROUP BY week\n",
+          "ORDER BY week\n"
+        ]
+      },
+      {
+        "id": "6bf520c7714faf6337c9c0f3c3c06938",
+        "question": [
+          "What is the hour-of-day call volume pattern over the last :days days?"
+        ],
+        "sql": [
+          "SELECT HOUR(started_at) AS hour, COUNT(*) AS calls\n",
+          "FROM genie_demo.contact_centre.silver_calls_wide\n",
+          "WHERE date >= current_date() - interval :days day\n",
+          "GROUP BY HOUR(started_at)\n",
+          "ORDER BY hour\n"
+        ]
+      },
+      {
+        "id": "6db23632aad6af0cb33d5b776833f0bd",
+        "question": [
+          "Forecast call volume for the next 30 days and tell me how many agents we need per shift."
+        ],
+        "sql": [
+          "SELECT ds, y_hat, y_hat_lower, y_hat_upper,\n",
+          "       y_hat * 372 / (8 * 3600)\n",
+          "             / (1 - 0.5 * 0.80)\n",
+          "             / (1 - 0.25) AS agents_needed_per_shift\n",
+          "FROM genie_demo.contact_centre.gold_forecast_volume\n",
+          "ORDER BY ds\n"
+        ]
+      },
+      {
+        "id": "71bdfeba1961d9ed1e1249bbfa611428",
+        "question": [
+          "Which queue had the biggest abandon-rate spike in the last 7 days versus the prior 30 days?"
+        ],
+        "sql": [
+          "WITH last7 AS (\n",
+          "  SELECT queue, MEASURE(abandon_rate) AS rate\n",
+          "  FROM genie_demo.contact_centre.mv_calls\n",
+          "  WHERE date >= current_date() - interval 7 day GROUP BY queue\n",
+          "),\n",
+          "base AS (\n",
+          "  SELECT queue, MEASURE(abandon_rate) AS rate\n",
+          "  FROM genie_demo.contact_centre.mv_calls\n",
+          "  WHERE date >= current_date() - interval 37 day\n",
+          "    AND date <  current_date() - interval 7 day GROUP BY queue\n",
+          ")\n",
+          "SELECT last7.queue, last7.rate AS last_7d, base.rate AS prior_30d,\n",
+          "       last7.rate - base.rate AS delta\n",
+          "FROM last7 JOIN base USING (queue)\n",
+          "ORDER BY delta DESC\n"
+        ]
+      },
+      {
+        "id": "7375c2421b77514cf3a63274a6c666bf",
+        "question": [
+          "Which site / topic combinations have the highest share of negative-sentiment calls in the last :days days?"
+        ],
+        "sql": [
+          "SELECT site_id, topic,\n",
+          "       COUNT(*)              AS calls,\n",
+          "       AVG(is_negative)      AS pct_negative,\n",
+          "       AVG(sentiment_score)  AS avg_sentiment\n",
+          "FROM genie_demo.contact_centre.silver_calls_wide\n",
+          "WHERE date >= current_date() - interval :days day\n",
+          "GROUP BY site_id, topic\n",
+          "HAVING COUNT(*) >= 50\n",
+          "ORDER BY pct_negative DESC\n"
+        ]
+      },
+      {
+        "id": "75dee8170f3e4d00883f7fc58de15d75",
+        "question": [
+          "Which days saw the biggest day-over-day drop in SLA in the last :days days?"
+        ],
+        "sql": [
+          "WITH daily AS (\n",
+          "  SELECT date, MEASURE(sla_pct) AS sla_pct\n",
+          "  FROM genie_demo.contact_centre.mv_calls\n",
+          "  WHERE date >= current_date() - interval :days day\n",
+          "  GROUP BY date\n",
+          ")\n",
+          "SELECT date, sla_pct,\n",
+          "       sla_pct - LAG(sla_pct) OVER (ORDER BY date) AS sla_delta\n",
+          "FROM daily\n",
+          "ORDER BY sla_delta ASC\n",
+          "LIMIT 5\n"
+        ]
+      },
+      {
+        "id": "788fb47f6139a6acf46782e0358bd180",
+        "question": [
+          "Summarise the :n most negative-sentiment calls about :topic."
+        ],
+        "sql": [
+          "SELECT call_id, topic, sentiment_score, ai_summary\n",
+          "FROM genie_demo.contact_centre.gold_calls_enriched\n",
+          "WHERE topic = :topic\n",
+          "  AND sentiment_score < -0.2\n",
+          "  AND ai_summary IS NOT NULL\n",
+          "ORDER BY sentiment_score ASC\n",
+          "LIMIT :n\n"
+        ]
+      },
+      {
+        "id": "79087fcd7a138e07f407ab88492bca43",
+        "question": [
+          "Show me forecast call volume next to the last 30 days of actuals on a single timeline."
+        ],
+        "sql": [
+          "SELECT date AS day, total_calls AS y_actual, NULL AS y_hat,\n",
+          "       NULL AS y_hat_lower, NULL AS y_hat_upper, 'actual' AS source\n",
+          "FROM (\n",
+          "  SELECT date, MEASURE(total_calls) AS total_calls\n",
+          "  FROM genie_demo.contact_centre.mv_calls\n",
+          "  WHERE date >= current_date() - interval 30 day\n",
+          "  GROUP BY date\n",
+          ")\n",
+          "UNION ALL\n",
+          "SELECT ds, NULL, y_hat, y_hat_lower, y_hat_upper, 'forecast'\n",
+          "FROM genie_demo.contact_centre.gold_forecast_volume\n",
+          "ORDER BY day\n"
+        ]
+      },
+      {
+        "id": "7aa43a5a6e64102f5122bbc773a8a308",
+        "question": [
+          "Show the 7-day rolling sentiment score for each topic."
+        ],
+        "sql": [
+          "WITH daily AS (\n",
+          "  SELECT date, topic, AVG(sentiment_score) AS avg_sentiment\n",
+          "  FROM genie_demo.contact_centre.silver_calls_wide\n",
+          "  GROUP BY date, topic\n",
+          ")\n",
+          "SELECT date, topic,\n",
+          "       AVG(avg_sentiment) OVER (\n",
+          "         PARTITION BY topic ORDER BY date\n",
+          "         ROWS BETWEEN 6 PRECEDING AND CURRENT ROW\n",
+          "       ) AS rolling_sentiment\n",
+          "FROM daily\n"
+        ]
+      },
+      {
+        "id": "7ee40aa2173839df203415ab7e2d0213",
+        "question": [
+          "What are our overall SLA, CSAT, AHT, ASA, abandon rate and negative-call share for the last :days days?"
+        ],
+        "sql": [
+          "SELECT MEASURE(total_calls)             AS calls,\n",
+          "       MEASURE(sla_pct)                 AS sla_pct,\n",
+          "       MEASURE(csat)                    AS csat,\n",
+          "       MEASURE(avg_handle_sec)          AS aht_sec,\n",
+          "       MEASURE(avg_wait_voice_chat_sec) AS asa_sec,\n",
+          "       MEASURE(abandon_rate)            AS abandon_rate,\n",
+          "       MEASURE(negative_share)          AS negative_share\n",
+          "FROM genie_demo.contact_centre.mv_calls\n",
+          "WHERE date >= current_date() - interval :days day\n"
+        ]
+      },
+      {
+        "id": "82c9ce43bede16e97045bed8b750edd9",
+        "question": [
+          "How does site capacity utilisation look across our sites — calls per agent of provisioned capacity?"
+        ],
+        "sql": [
+          "SELECT s.site_id, s.site_capacity,\n",
+          "       AVG(daily.calls) AS avg_daily_calls,\n",
+          "       AVG(daily.calls) / s.site_capacity AS calls_per_agent\n",
+          "FROM genie_demo.contact_centre.silver_sites s\n",
+          "JOIN (\n",
+          "  SELECT site_id, date, COUNT(*) AS calls\n",
+          "  FROM genie_demo.contact_centre.silver_calls_wide\n",
+          "  WHERE date >= current_date() - interval 30 day\n",
+          "  GROUP BY site_id, date\n",
+          ") daily USING (site_id)\n",
+          "GROUP BY s.site_id, s.site_capacity\n",
+          "ORDER BY calls_per_agent DESC\n"
+        ]
+      },
+      {
+        "id": "82cacd77d60cb64e9d12bb2d92c28b78",
+        "question": [
+          "Show me weekly call volume by topic over the last 180 days — is any topic spiking?"
+        ],
+        "sql": [
+          "SELECT date_trunc('week', date) AS week, topic, COUNT(*) AS calls\n",
+          "FROM genie_demo.contact_centre.silver_calls_wide\n",
+          "WHERE date >= current_date() - interval 180 day\n",
+          "GROUP BY date_trunc('week', date), topic\n",
+          "ORDER BY week, topic\n"
+        ]
+      },
+      {
+        "id": "86e9c00366e7319ff6137deb4d37441f",
+        "question": [
+          "What is our day-of-week pattern in call volume — are weekends quieter than weekdays?"
+        ],
+        "sql": [
+          "SELECT EXTRACT(dayofweek FROM date) AS dow,\n",
+          "       AVG(daily.calls) AS avg_calls\n",
+          "FROM (\n",
+          "  SELECT date, COUNT(*) AS calls\n",
+          "  FROM genie_demo.contact_centre.silver_calls_wide\n",
+          "  WHERE date >= current_date() - interval 60 day\n",
+          "  GROUP BY date\n",
+          ") daily\n",
+          "GROUP BY dow\n",
+          "ORDER BY dow\n"
+        ]
+      },
+      {
+        "id": "8c3be21f0079b915cb47b2889e0d0f93",
+        "question": [
+          "What is the average speed of answer (ASA) for voice versus chat in the last :days days?"
+        ],
+        "sql": [
+          "SELECT channel,\n",
+          "       MEASURE(avg_wait_voice_chat_sec) AS asa\n",
+          "FROM genie_demo.contact_centre.mv_calls\n",
+          "WHERE date >= current_date() - interval :days day\n",
+          "  AND channel IN ('voice', 'chat')\n",
+          "GROUP BY channel\n"
+        ]
+      },
+      {
+        "id": "9c8652aa677180ca86bae43c3f99e349",
+        "question": [
+          "How do full-time and part-time agents compare on calls, AHT, SLA and CSAT?"
+        ],
+        "sql": [
+          "SELECT full_time,\n",
+          "       COUNT(*)             AS calls,\n",
+          "       AVG(handle_time_sec) AS aht,\n",
+          "       AVG(meets_sla)       AS sla_pct,\n",
+          "       AVG(csat_score)      AS csat\n",
+          "FROM genie_demo.contact_centre.silver_calls_wide\n",
+          "WHERE date >= current_date() - interval 30 day\n",
+          "GROUP BY full_time\n"
+        ]
+      },
+      {
+        "id": "9ea9e114f4e11b6bd00d17d6650c1fd3",
+        "question": [
+          "How many agents do we need per shift at SLA targets of 70%, 80%, 90% and 95%?"
+        ],
+        "sql": [
+          "WITH targets(t) AS (VALUES (0.70), (0.80), (0.90), (0.95))\n",
+          "SELECT t AS target_sla,\n",
+          "       AVG(y_hat * 372 / (8 * 3600)\n",
+          "                 / (1 - 0.5 * t)\n",
+          "                 / (1 - 0.25)) AS avg_agents_needed\n",
+          "FROM genie_demo.contact_centre.gold_forecast_volume, targets\n",
+          "GROUP BY t\n",
+          "ORDER BY t\n"
+        ]
+      },
+      {
+        "id": "bcb514f27c9a13da0895148d4ee5678b",
+        "question": [
+          "Show me each site's region, timezone, capacity and recent call/SLA performance."
+        ],
+        "sql": [
+          "SELECT s.site_id, s.region, s.timezone, s.capacity,\n",
+          "       COUNT(c.call_id)     AS calls,\n",
+          "       AVG(c.meets_sla)     AS sla_pct\n",
+          "FROM genie_demo.contact_centre.silver_sites s\n",
+          "LEFT JOIN genie_demo.contact_centre.silver_calls_wide c\n",
+          "  ON c.site_id = s.site_id\n",
+          " AND c.date >= current_date() - interval 30 day\n",
+          "GROUP BY s.site_id, s.region, s.timezone, s.capacity\n",
+          "ORDER BY calls DESC\n"
+        ]
+      },
+      {
+        "id": "be14aedc4eeb09062283d344e9477b56",
+        "question": [
+          "Show me a 7-day rolling SLA for each site over the last 120 days."
+        ],
+        "sql": [
+          "WITH daily AS (\n",
+          "  SELECT date, site_id, MEASURE(sla_pct) AS sla\n",
+          "  FROM genie_demo.contact_centre.mv_calls\n",
+          "  WHERE date >= current_date() - interval 120 day\n",
+          "  GROUP BY date, site_id\n",
+          ")\n",
+          "SELECT date, site_id,\n",
+          "       AVG(sla) OVER (\n",
+          "         PARTITION BY site_id ORDER BY date\n",
+          "         ROWS BETWEEN 6 PRECEDING AND CURRENT ROW\n",
+          "       ) AS rolling_sla\n",
+          "FROM daily\n",
+          "ORDER BY date, site_id\n"
+        ]
+      },
+      {
+        "id": "c01a90783be44248c822a2d68e994b38",
+        "question": [
+          "How do new, junior and tenured agents compare on calls, AHT, SLA and CSAT over the last :days days?"
+        ],
+        "sql": [
+          "SELECT tenure_bucket,\n",
+          "       COUNT(*)             AS calls,\n",
+          "       AVG(handle_time_sec) AS aht,\n",
+          "       AVG(meets_sla)       AS sla_pct,\n",
+          "       AVG(csat_score)      AS csat\n",
+          "FROM genie_demo.contact_centre.silver_calls_wide\n",
+          "WHERE date >= current_date() - interval :days day\n",
+          "GROUP BY tenure_bucket\n",
+          "ORDER BY aht DESC\n"
+        ]
+      },
+      {
+        "id": "c504ac0fa8faca01d0f94b750b8c7174",
+        "question": [
+          "Which days had SLA below 50% in the last :days days?"
+        ],
+        "sql": [
+          "SELECT date,\n",
+          "       MEASURE(total_calls) AS calls,\n",
+          "       MEASURE(sla_pct)     AS sla_pct,\n",
+          "       MEASURE(csat)        AS csat\n",
+          "FROM genie_demo.contact_centre.mv_calls\n",
+          "WHERE date >= current_date() - interval :days day\n",
+          "GROUP BY date\n",
+          "HAVING sla_pct < 0.50\n",
+          "ORDER BY date\n"
+        ]
+      },
+      {
+        "id": "c82464c7a0d206971bc77b01df86d975",
+        "question": [
+          "How many calls per channel are missing an SLA-eligible wait time?"
+        ],
+        "sql": [
+          "SELECT channel,\n",
+          "       COUNT(*)                                                AS calls,\n",
+          "       SUM(CASE WHEN wait_time_voice_chat_sec IS NULL THEN 1 ELSE 0 END) AS null_vc\n",
+          "FROM genie_demo.contact_centre.silver_calls_wide\n",
+          "WHERE date >= current_date() - interval 30 day\n",
+          "GROUP BY channel\n"
+        ]
+      },
+      {
+        "id": "cb215910115ade01891248e1e4425096",
+        "question": [
+          "Which site has the worst SLA over the last :days days?"
+        ],
+        "sql": [
+          "SELECT site_id,\n",
+          "       MEASURE(sla_pct)        AS sla_pct,\n",
+          "       MEASURE(avg_handle_sec) AS aht,\n",
+          "       MEASURE(csat)           AS csat\n",
+          "FROM genie_demo.contact_centre.mv_calls\n",
+          "WHERE date >= current_date() - interval :days day\n",
+          "GROUP BY site_id\n",
+          "ORDER BY sla_pct ASC\n"
+        ]
+      },
+      {
+        "id": "cc57052d342396dc72cd9df110013c80",
+        "question": [
+          "How have site SLA rankings shifted week over week — are any sites catching up or falling behind?"
+        ],
+        "sql": [
+          "SELECT week, site_id, sla_pct,\n",
+          "       ROW_NUMBER() OVER (PARTITION BY week ORDER BY sla_pct DESC) AS rank\n",
+          "FROM (\n",
+          "  SELECT week, site_id,\n",
+          "         MEASURE(sla_pct) AS sla_pct\n",
+          "  FROM genie_demo.contact_centre.mv_calls\n",
+          "  WHERE date >= current_date() - interval 60 day\n",
+          "  GROUP BY week, site_id\n",
+          ")\n",
+          "ORDER BY week, rank\n"
+        ]
+      },
+      {
+        "id": "d8ecfeb59210eb594ad8bacbb139d08b",
+        "question": [
+          "Who is the top-SLA agent at each site over the last 30 days?"
+        ],
+        "sql": [
+          "SELECT site_id, agent_id, agent_name, calls, sla_pct\n",
+          "FROM (\n",
+          "  SELECT site_id, agent_id, agent_name,\n",
+          "         COUNT(*)         AS calls,\n",
+          "         AVG(meets_sla)   AS sla_pct\n",
+          "  FROM genie_demo.contact_centre.silver_calls_wide\n",
+          "  WHERE date >= current_date() - interval 30 day\n",
+          "  GROUP BY site_id, agent_id, agent_name\n",
+          "  HAVING COUNT(*) >= 30\n",
+          ")\n",
+          "QUALIFY ROW_NUMBER() OVER (PARTITION BY site_id ORDER BY sla_pct DESC) = 1\n"
+        ]
+      },
+      {
+        "id": "da6531c00d7d6b2fde6f301cffce6758",
+        "question": [
+          "How does each topic split across voice, chat and email channels in the last :days days?"
+        ],
+        "sql": [
+          "SELECT topic, channel,\n",
+          "       COUNT(*)                                              AS calls,\n",
+          "       COUNT(*) * 1.0 / SUM(COUNT(*)) OVER (PARTITION BY topic) AS share\n",
+          "FROM genie_demo.contact_centre.silver_calls_wide\n",
+          "WHERE date >= current_date() - interval :days day\n",
+          "GROUP BY topic, channel\n",
+          "ORDER BY topic, calls DESC\n"
+        ]
+      },
+      {
+        "id": "dc9ecafe57d958bff03102e12f7051a8",
+        "question": [
+          "How have SLA, CSAT and AHT changed in the last 30 days versus the previous 30 days?"
+        ],
+        "sql": [
+          "WITH curr AS (\n",
+          "  SELECT MEASURE(sla_pct) AS sla, MEASURE(csat) AS csat,\n",
+          "         MEASURE(avg_handle_sec) AS aht\n",
+          "  FROM genie_demo.contact_centre.mv_calls\n",
+          "  WHERE date >= current_date() - interval 30 day\n",
+          "),\n",
+          "prev AS (\n",
+          "  SELECT MEASURE(sla_pct) AS sla, MEASURE(csat) AS csat,\n",
+          "         MEASURE(avg_handle_sec) AS aht\n",
+          "  FROM genie_demo.contact_centre.mv_calls\n",
+          "  WHERE date >= current_date() - interval 60 day\n",
+          "    AND date <  current_date() - interval 30 day\n",
+          ")\n",
+          "SELECT curr.sla, prev.sla AS prior_sla, curr.sla - prev.sla AS sla_delta,\n",
+          "       curr.csat, prev.csat AS prior_csat, curr.csat - prev.csat AS csat_delta,\n",
+          "       curr.aht, prev.aht AS prior_aht, curr.aht - prev.aht AS aht_delta\n",
+          "FROM curr, prev\n"
+        ]
+      },
+      {
+        "id": "dd07d86ef26f81e04ef1f6ebb01570fd",
+        "question": [
+          "How many negative-sentiment calls did we have in the last :days days?"
+        ],
+        "sql": [
+          "SELECT MEASURE(total_calls)    AS calls,\n",
+          "       MEASURE(negative_share) AS pct_negative,\n",
+          "       MEASURE(total_calls) * MEASURE(negative_share) AS negative_calls\n",
+          "FROM genie_demo.contact_centre.mv_calls\n",
+          "WHERE date >= current_date() - interval :days day\n"
+        ]
+      },
+      {
+        "id": "e28a4db526c5e1031c4ca3086eed7214",
+        "question": [
+          "What happened to SLA on :event_date — break it down by channel and site."
+        ],
+        "sql": [
+          "SELECT date, channel, site_id,\n",
+          "       MEASURE(total_calls) AS calls,\n",
+          "       MEASURE(sla_pct)     AS sla_pct,\n",
+          "       MEASURE(csat)        AS csat\n",
+          "FROM genie_demo.contact_centre.mv_calls\n",
+          "WHERE date = :event_date\n",
+          "GROUP BY date, channel, site_id\n",
+          "ORDER BY calls DESC\n"
+        ]
+      },
+      {
+        "id": "ed6f62ec7a5dbbf69c7f857616219275",
+        "question": [
+          "Compare new, junior and tenured agents on calls, AHT, SLA and CSAT for the last 30 days."
+        ],
+        "sql": [
+          "SELECT tenure_bucket,\n",
+          "       COUNT(*)             AS calls,\n",
+          "       AVG(handle_time_sec) AS aht,\n",
+          "       AVG(meets_sla)       AS sla_pct,\n",
+          "       AVG(csat_score)      AS csat\n",
+          "FROM genie_demo.contact_centre.silver_calls_wide\n",
+          "WHERE date >= current_date() - interval 30 day\n",
+          "GROUP BY tenure_bucket\n",
+          "ORDER BY tenure_bucket\n"
+        ]
+      },
+      {
+        "id": "ef9608d1008d8c201888b61358bc885c",
+        "question": [
+          "Which agents have the highest AHT over the last :days days (minimum :min_calls calls)?"
+        ],
+        "sql": [
+          "SELECT agent_id, agent_name,\n",
+          "       COUNT(*)             AS calls,\n",
+          "       AVG(handle_time_sec) AS aht,\n",
+          "       AVG(meets_sla)       AS sla_pct,\n",
+          "       AVG(csat_score)      AS csat\n",
+          "FROM genie_demo.contact_centre.silver_calls_wide\n",
+          "WHERE date >= current_date() - interval :days day\n",
+          "GROUP BY agent_id, agent_name\n",
+          "HAVING COUNT(*) >= :min_calls\n",
+          "ORDER BY aht DESC\n",
+          "LIMIT 10\n"
+        ]
+      },
+      {
+        "id": "f65de9cab3bd831eac63f76ecdc3d2c8",
+        "question": [
+          "Which agents have the lowest CSAT over the last :days days?"
+        ],
+        "sql": [
+          "SELECT agent_id, agent_name, site_id,\n",
+          "       COUNT(*)        AS calls,\n",
+          "       AVG(csat_score) AS csat,\n",
+          "       AVG(meets_sla)  AS sla_pct\n",
+          "FROM genie_demo.contact_centre.silver_calls_wide\n",
+          "WHERE date >= current_date() - interval :days day\n",
+          "  AND csat_score IS NOT NULL\n",
+          "GROUP BY agent_id, agent_name, site_id\n",
+          "HAVING COUNT(*) >= 30\n",
+          "ORDER BY csat ASC\n",
+          "LIMIT 15\n"
+        ]
+      },
+      {
+        "id": "fd78de3ee49d8a5c8a348fb3c8e8e860",
+        "question": [
+          "Give me an agent × site matrix of calls, AHT, CSAT and SLA over the last 30 days."
+        ],
+        "sql": [
+          "WITH agg AS (\n",
+          "  SELECT a.agent_id, a.full_name, a.hire_date,\n",
+          "         s.site_id, s.region,\n",
+          "         COUNT(c.call_id)        AS calls,\n",
+          "         AVG(c.handle_time_sec)  AS aht,\n",
+          "         AVG(c.csat_score)       AS csat,\n",
+          "         AVG(c.meets_sla)        AS sla_pct\n",
+          "  FROM genie_demo.contact_centre.silver_agents a\n",
+          "  JOIN genie_demo.contact_centre.silver_sites  s\n",
+          "    ON s.site_id = a.site_id\n",
+          "  JOIN genie_demo.contact_centre.silver_calls_wide c\n",
+          "    ON c.agent_id = a.agent_id\n",
+          "  WHERE c.date >= current_date() - interval 30 day\n",
+          "  GROUP BY a.agent_id, a.full_name, a.hire_date, s.site_id, s.region\n",
+          ")\n",
+          "SELECT * FROM agg WHERE calls >= 30 ORDER BY sla_pct DESC\n"
+        ]
+      }
+    ],
+    "join_specs": [
+      {
+        "id": "01f19b352b23186d973d8876db9e552f",
+        "left": {
+          "identifier": "genie_demo.contact_centre.gold_kpi_summary",
+          "alias": "gold_kpi_summary"
+        },
+        "right": {
+          "identifier": "genie_demo.contact_centre.silver_sites",
+          "alias": "silver_sites_2"
+        },
+        "sql": [
+          "`gold_kpi_summary`.`site_id` = `silver_sites_2`.`site_id`",
+          "--rt=FROM_RELATIONSHIP_TYPE_MANY_TO_ONE--"
+        ]
+      },
+      {
+        "id": "01f19b352b231a77bc6bd086c54d8e45",
+        "left": {
+          "identifier": "genie_demo.contact_centre.silver_agents",
+          "alias": "silver_agents"
+        },
+        "right": {
+          "identifier": "genie_demo.contact_centre.silver_sites",
+          "alias": "silver_sites_2"
+        },
+        "sql": [
+          "`silver_agents`.`site_id` = `silver_sites_2`.`site_id`",
+          "--rt=FROM_RELATIONSHIP_TYPE_MANY_TO_ONE--"
+        ]
+      },
+      {
+        "id": "01f19b352b231c01922e76e8adce4499",
+        "left": {
+          "identifier": "genie_demo.contact_centre.silver_calls_wide",
+          "alias": "silver_calls_wide"
+        },
+        "right": {
+          "identifier": "genie_demo.contact_centre.silver_sites",
+          "alias": "silver_sites_2"
+        },
+        "sql": [
+          "`silver_calls_wide`.`site_id` = `silver_sites_2`.`site_id`",
+          "--rt=FROM_RELATIONSHIP_TYPE_MANY_TO_ONE--"
+        ]
+      },
+      {
+        "id": "01f19b352b231d5a9246e73d7a9cbb32",
+        "left": {
+          "identifier": "genie_demo.contact_centre.silver_calls_wide",
+          "alias": "silver_calls_wide"
+        },
+        "right": {
+          "identifier": "genie_demo.contact_centre.silver_agents",
+          "alias": "silver_agents_2"
+        },
+        "sql": [
+          "`silver_calls_wide`.`agent_id` = `silver_agents_2`.`agent_id`",
+          "--rt=FROM_RELATIONSHIP_TYPE_MANY_TO_ONE--"
+        ]
+      }
+    ]
+  },
+  "benchmarks": {
+    "questions": [
+      {
+        "id": "ffcdcea5edf4dbeb267336d3341be490",
+        "question": [
+          "Summarise the 20 most negative-sentiment calls about Billing."
+        ],
+        "answer": [
+          {
+            "format": "SQL",
+            "content": [
+              "SELECT call_id, sentiment_score, ai_summary\n",
+              "FROM genie_demo.contact_centre.gold_calls_enriched\n",
+              "WHERE topic = 'Billing'\n",
+              "  AND ai_summary IS NOT NULL\n",
+              "ORDER BY sentiment_score ASC\n",
+              "LIMIT 20\n"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "f723c6b7792bf30f08ebcfedc503f18d",
+        "question": [
+          "Which queue had the biggest abandon-rate spike last week?"
+        ],
+        "answer": [
+          {
+            "format": "SQL",
+            "content": [
+              "WITH last7 AS (\n",
+              "  SELECT queue, MEASURE(abandon_rate) AS rate\n",
+              "  FROM genie_demo.contact_centre.mv_calls\n",
+              "  WHERE date >= current_date() - interval 7 day\n",
+              "  GROUP BY queue\n",
+              "),\n",
+              "base AS (\n",
+              "  SELECT queue, MEASURE(abandon_rate) AS rate\n",
+              "  FROM genie_demo.contact_centre.mv_calls\n",
+              "  WHERE date >= current_date() - interval 37 day\n",
+              "    AND date <  current_date() - interval 7 day\n",
+              "  GROUP BY queue\n",
+              ")\n",
+              "SELECT last7.queue, last7.rate - base.rate AS delta\n",
+              "FROM last7 JOIN base USING (queue)\n",
+              "ORDER BY delta DESC\n",
+              "LIMIT 1\n"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "eb2f4863dd92b072d956e8d2c685923d",
+        "question": [
+          "Which topic has had the biggest drop in sentiment recently?"
+        ],
+        "answer": [
+          {
+            "format": "SQL",
+            "content": [
+              "WITH curr AS (\n",
+              "  SELECT topic, MEASURE(avg_sentiment) AS s\n",
+              "  FROM genie_demo.contact_centre.mv_calls\n",
+              "  WHERE date >= current_date() - interval 30 day\n",
+              "  GROUP BY topic\n",
+              "),\n",
+              "prev AS (\n",
+              "  SELECT topic, MEASURE(avg_sentiment) AS s\n",
+              "  FROM genie_demo.contact_centre.mv_calls\n",
+              "  WHERE date >= current_date() - interval 60 day\n",
+              "    AND date <  current_date() - interval 30 day\n",
+              "  GROUP BY topic\n",
+              ")\n",
+              "SELECT curr.topic, curr.s - prev.s AS sentiment_delta\n",
+              "FROM curr JOIN prev USING (topic)\n",
+              "ORDER BY sentiment_delta ASC\n",
+              "LIMIT 1\n"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "e6363ac6e263187f034835af0af716c7",
+        "question": [
+          "Which agents have the lowest average CSAT over the last 30 days?"
+        ],
+        "answer": [
+          {
+            "format": "SQL",
+            "content": [
+              "SELECT agent_id, agent_name,\n",
+              "       COUNT(*)        AS calls,\n",
+              "       AVG(csat_score) AS csat\n",
+              "FROM genie_demo.contact_centre.silver_calls_wide\n",
+              "WHERE date >= current_date() - interval 30 day\n",
+              "  AND csat_score IS NOT NULL\n",
+              "GROUP BY agent_id, agent_name\n",
+              "HAVING COUNT(*) >= 30\n",
+              "ORDER BY csat ASC\n",
+              "LIMIT 10\n"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "8d83fb271b937073fcb0dcb927dd01ea",
+        "question": [
+          "Which days in the last quarter had SLA below 50%?"
+        ],
+        "answer": [
+          {
+            "format": "SQL",
+            "content": [
+              "SELECT date, MEASURE(sla_pct) AS sla_pct\n",
+              "FROM genie_demo.contact_centre.mv_calls\n",
+              "WHERE date >= current_date() - interval 90 day\n",
+              "GROUP BY date\n",
+              "HAVING sla_pct < 0.50\n",
+              "ORDER BY date\n"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "88df4d91d780051bdd0755e1ae6cd7b8",
+        "question": [
+          "Show me daily call volume for the last 60 days. Are there weekend dips?"
+        ],
+        "answer": [
+          {
+            "format": "SQL",
+            "content": [
+              "SELECT date,\n",
+              "       EXTRACT(dayofweek FROM date) AS dow,\n",
+              "       MEASURE(total_calls) AS calls\n",
+              "FROM genie_demo.contact_centre.mv_calls\n",
+              "WHERE date >= current_date() - interval 60 day\n",
+              "GROUP BY date\n",
+              "ORDER BY date\n"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "84fc8a15bdb7e0bb749d50c5d1473b47",
+        "question": [
+          "Has Birmingham's handle time been getting worse over the last 60 days?"
+        ],
+        "answer": [
+          {
+            "format": "SQL",
+            "content": [
+              "SELECT date_trunc('week', date) AS week,\n",
+              "       AVG(handle_time_sec)     AS avg_aht\n",
+              "FROM genie_demo.contact_centre.silver_calls_wide\n",
+              "WHERE site_id = 'Birmingham'\n",
+              "  AND date >= current_date() - interval 60 day\n",
+              "GROUP BY week\n",
+              "ORDER BY week\n"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "7d5267998ae46e9298ea244020ec1162",
+        "question": [
+          "What topics have the worst sentiment trend over the last 6 months?"
+        ],
+        "answer": [
+          {
+            "format": "SQL",
+            "content": [
+              "SELECT date_trunc('month', date) AS month, topic,\n",
+              "       AVG(sentiment_score) AS avg_sentiment\n",
+              "FROM genie_demo.contact_centre.silver_calls_wide\n",
+              "WHERE date >= current_date() - interval 180 day\n",
+              "GROUP BY date_trunc('month', date), topic\n",
+              "ORDER BY topic, month\n"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "7c23c8dd01f0af3f9624703b0744c722",
+        "question": [
+          "Forecast call volume for the next 30 days."
+        ],
+        "answer": [
+          {
+            "format": "SQL",
+            "content": [
+              "SELECT ds, y_hat, y_hat_lower, y_hat_upper\n",
+              "FROM genie_demo.contact_centre.gold_forecast_volume\n",
+              "ORDER BY ds\n"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "5e4bdd4c92748039f1c5d4999865f28e",
+        "question": [
+          "How is service level performing across our sites this quarter?"
+        ],
+        "answer": [
+          {
+            "format": "SQL",
+            "content": [
+              "SELECT site_id, MEASURE(sla_pct) AS sla_pct, MEASURE(total_calls) AS calls\n",
+              "FROM genie_demo.contact_centre.mv_calls\n",
+              "WHERE date >= date_trunc('quarter', current_date())\n",
+              "GROUP BY site_id\n",
+              "ORDER BY sla_pct ASC\n"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "4c7cb6f9eeaff531be3d5dd82c8bde3d",
+        "question": [
+          "Which site has the lowest customer satisfaction over the last 90 days?"
+        ],
+        "answer": [
+          {
+            "format": "SQL",
+            "content": [
+              "SELECT site_id, MEASURE(csat) AS csat\n",
+              "FROM genie_demo.contact_centre.mv_calls\n",
+              "WHERE date >= current_date() - interval 90 day\n",
+              "GROUP BY site_id\n",
+              "ORDER BY csat ASC\n",
+              "LIMIT 1\n"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "46014956a7f4ac5420d996f2ef0eaabb",
+        "question": [
+          "How do agents hired in the last 90 days compare to tenured agents on handle time?"
+        ],
+        "answer": [
+          {
+            "format": "SQL",
+            "content": [
+              "SELECT tenure_bucket,\n",
+              "       COUNT(*)             AS calls,\n",
+              "       AVG(handle_time_sec) AS aht\n",
+              "FROM genie_demo.contact_centre.silver_calls_wide\n",
+              "WHERE date >= current_date() - interval 30 day\n",
+              "GROUP BY tenure_bucket\n",
+              "ORDER BY aht DESC\n"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "3fbbdeba74d5364dfe7a78b36a20d6c3",
+        "question": [
+          "What's our overall SLA percentage for the last 30 days?"
+        ],
+        "answer": [
+          {
+            "format": "SQL",
+            "content": [
+              "SELECT MEASURE(sla_pct) AS sla_pct\n",
+              "FROM genie_demo.contact_centre.mv_calls\n",
+              "WHERE date >= current_date() - interval 30 day\n"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "301512fb9c3d68eaf32d984cbb876399",
+        "question": [
+          "What happened to our SLA on March 6th 2026?"
+        ],
+        "answer": [
+          {
+            "format": "SQL",
+            "content": [
+              "SELECT date, channel, site_id,\n",
+              "       MEASURE(total_calls) AS calls,\n",
+              "       MEASURE(sla_pct)     AS sla_pct,\n",
+              "       MEASURE(csat)        AS csat\n",
+              "FROM genie_demo.contact_centre.mv_calls\n",
+              "WHERE date = DATE'2026-03-06'\n",
+              "GROUP BY date, channel, site_id\n",
+              "ORDER BY calls DESC\n"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "2087b196c3124a26740fc2c48cca375c",
+        "question": [
+          "How does Billing split across voice, chat and email?"
+        ],
+        "answer": [
+          {
+            "format": "SQL",
+            "content": [
+              "SELECT channel, COUNT(*) AS calls\n",
+              "FROM genie_demo.contact_centre.silver_calls_wide\n",
+              "WHERE topic = 'Billing'\n",
+              "  AND date >= current_date() - interval 30 day\n",
+              "GROUP BY channel\n",
+              "ORDER BY calls DESC\n"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "033e90758f45059cfacc9e6811799e88",
+        "question": [
+          "How many agents do we need per shift over the next 30 days at 80% SLA?"
+        ],
+        "answer": [
+          {
+            "format": "SQL",
+            "content": [
+              "SELECT ds, y_hat,\n",
+              "       y_hat * 372 / (8 * 3600)\n",
+              "             / (1 - 0.5 * 0.80)\n",
+              "             / (1 - 0.25) AS agents_needed_per_shift\n",
+              "FROM genie_demo.contact_centre.gold_forecast_volume\n",
+              "ORDER BY ds\n"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,7 @@
+# Runtime + dev dependencies for the genie-space-scan-optimize scripts.
+# scan.py/optimize.py import databricks-sdk lazily, so offline scan and the test
+# suite run without it installed; it is only needed for live --space-id / --apply.
+databricks-sdk>=0.20
+# Dev / acceptance tooling:
+pytest>=8
+ruff>=0.5

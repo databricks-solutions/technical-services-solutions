@@ -1,0 +1,436 @@
+{
+  "genie_demo.contact_centre.gold_calls_enriched": {
+    "comment": "Per-call fact with AI-derived summary + sentiment label on the bottom 500 calls. Genie row-level source.",
+    "table_type": "MANAGED",
+    "columns": [
+      {
+        "name": "call_id",
+        "comment": "Unique call identifier"
+      },
+      {
+        "name": "started_at",
+        "comment": "Call start timestamp"
+      },
+      {
+        "name": "ended_at",
+        "comment": "Call end timestamp"
+      },
+      {
+        "name": "channel",
+        "comment": "voice / chat / email"
+      },
+      {
+        "name": "queue",
+        "comment": "Queue identifier"
+      },
+      {
+        "name": "topic",
+        "comment": "Call topic category"
+      },
+      {
+        "name": "agent_id",
+        "comment": "FK → silver_agents.agent_id"
+      },
+      {
+        "name": "site_id",
+        "comment": "FK → silver_sites.site_id"
+      },
+      {
+        "name": "handle_time_sec",
+        "comment": "Handle time in seconds"
+      },
+      {
+        "name": "wait_time_sec",
+        "comment": "Wait time in seconds"
+      },
+      {
+        "name": "abandoned",
+        "comment": "True if call was abandoned"
+      },
+      {
+        "name": "csat_score",
+        "comment": "CSAT 1-5, nullable"
+      },
+      {
+        "name": "sentiment_score",
+        "comment": "Seeded sentiment in [-1, 1]"
+      },
+      {
+        "name": "ai_summary",
+        "comment": "AI-generated summary via ai_summarize (NULL except on bottom-500 sentiment slice)"
+      },
+      {
+        "name": "ai_sentiment_label",
+        "comment": "AI sentiment label via ai_analyze_sentiment (NULL except on bottom-500 sentiment slice)"
+      }
+    ]
+  },
+  "genie_demo.contact_centre.gold_forecast_volume": {
+    "comment": "30-day call volume forecast — stub with weekly seasonality + trend (ai_forecast not yet available on serverless notebook compute)",
+    "table_type": "MANAGED",
+    "columns": [
+      {
+        "name": "ds",
+        "comment": "Forecast date (DATE)."
+      },
+      {
+        "name": "y_hat",
+        "comment": "Point forecast — predicted call volume for the day."
+      },
+      {
+        "name": "y_hat_lower",
+        "comment": "Lower bound of the forecast confidence interval (~95% CI)."
+      },
+      {
+        "name": "y_hat_upper",
+        "comment": "Upper bound of the forecast confidence interval (~95% CI)."
+      }
+    ]
+  },
+  "genie_demo.contact_centre.gold_kpi_summary": {
+    "comment": "Pre-aggregated KPI scan target — calls grouped by (date, week, site, region, channel, topic, queue, tenure_bucket). Sources mv_calls and the dashboard summary_calls dataset. Re-aggregate measures via SUM/SUM ratios so weighting stays correct.",
+    "table_type": "MANAGED",
+    "columns": [
+      {
+        "name": "date",
+        "comment": "Calendar date (DATE)."
+      },
+      {
+        "name": "week",
+        "comment": "Monday-anchored week truncation (TIMESTAMP)."
+      },
+      {
+        "name": "site_id",
+        "comment": "Site identifier — Athens, Birmingham, Cambridge, Dublin, Manchester, Toledo."
+      },
+      {
+        "name": "region",
+        "comment": "Region of the site — EMEA / AMER / APAC."
+      },
+      {
+        "name": "channel",
+        "comment": "voice, chat, or email."
+      },
+      {
+        "name": "topic",
+        "comment": "Call topic."
+      },
+      {
+        "name": "queue",
+        "comment": "Inbound queue identifier."
+      },
+      {
+        "name": "tenure_bucket",
+        "comment": "new / junior / tenured."
+      },
+      {
+        "name": "calls",
+        "comment": "Number of calls in this group. Use SUM(calls) for total volume."
+      },
+      {
+        "name": "handle_time_sum",
+        "comment": "Sum of handle_time_sec. Compute AHT as SUM(handle_time_sum) / SUM(calls)."
+      },
+      {
+        "name": "wait_time_sum",
+        "comment": "Sum of wait_time_sec across all channels."
+      },
+      {
+        "name": "wait_time_vc_sum",
+        "comment": "Sum of wait_time_voice_chat_sec (voice + chat only). Pair with wait_time_vc_count to compute ASA."
+      },
+      {
+        "name": "wait_time_vc_count",
+        "comment": "Count of voice/chat calls in the group. Use SUM(wait_time_vc_sum)/SUM(wait_time_vc_count) for ASA."
+      },
+      {
+        "name": "sla_sum",
+        "comment": "Sum of meets_sla flag. Compute SLA % as SUM(sla_sum)/SUM(calls)."
+      },
+      {
+        "name": "abandon_sum",
+        "comment": "Sum of is_abandoned flag. Compute abandon rate as SUM(abandon_sum)/SUM(calls)."
+      },
+      {
+        "name": "negative_sum",
+        "comment": "Sum of is_negative flag. Compute negative share as SUM(negative_sum)/SUM(calls)."
+      },
+      {
+        "name": "csat_sum",
+        "comment": "Sum of csat_score (excludes NULLs). Pair with csat_count to compute CSAT."
+      },
+      {
+        "name": "csat_count",
+        "comment": "Count of calls with non-null csat_score. Use SUM(csat_sum)/SUM(csat_count) for CSAT average."
+      },
+      {
+        "name": "sentiment_sum",
+        "comment": "Sum of sentiment_score. Compute avg sentiment as SUM(sentiment_sum)/SUM(calls)."
+      }
+    ]
+  },
+  "genie_demo.contact_centre.mv_calls": {
+    "comment": "Meridian Customer Operations KPI semantic layer. One source of truth for SLA, ASA, AHT, abandon, CSAT, sentiment, and call volume — same definitions the dashboard reads. Sources gold_kpi_summary for fast KPI scans. For agent-level KPIs use silver_calls_wide directly. Use MEASURE() to retrieve any measure.",
+    "table_type": "METRIC_VIEW",
+    "columns": [
+      {
+        "name": "date",
+        "comment": "Calendar date (DATE)."
+      },
+      {
+        "name": "week",
+        "comment": "Monday-anchored week truncation (TIMESTAMP). Use for weekly aggregates."
+      },
+      {
+        "name": "channel",
+        "comment": "voice, chat, or email."
+      },
+      {
+        "name": "queue",
+        "comment": "Inbound queue identifier (queue_01 .. queue_08)."
+      },
+      {
+        "name": "topic",
+        "comment": "Call topic — Billing, Order Status, Account Access, Technical Issue, Cancellation, General Enquiry."
+      },
+      {
+        "name": "site_id",
+        "comment": "Site that handled the call: Athens, Birmingham, Cambridge, Dublin, Manchester, Toledo."
+      },
+      {
+        "name": "region",
+        "comment": "Region of the site: EMEA / AMER / APAC."
+      },
+      {
+        "name": "tenure_bucket",
+        "comment": "\"new\" (≤90 days), \"junior\" (≤365 days), or \"tenured\" (>365 days)."
+      },
+      {
+        "name": "total_calls",
+        "comment": "Total calls (handled + abandoned)."
+      },
+      {
+        "name": "handled_calls",
+        "comment": "Calls answered (excludes abandoned)."
+      },
+      {
+        "name": "abandon_rate",
+        "comment": "Share of calls abandoned before answer (0.0 - 1.0). Industry target ≤5%."
+      },
+      {
+        "name": "sla_pct",
+        "comment": "Service-level percentage. Channel-aware threshold: voice ≤20s, chat ≤60s, email ≤24h. Abandoned counts as missed SLA. Industry target ≥80%."
+      },
+      {
+        "name": "avg_handle_sec",
+        "comment": "Average handle time in seconds (AHT). Industry target ≤300s."
+      },
+      {
+        "name": "avg_wait_voice_chat_sec",
+        "comment": "Average speed of answer (ASA) for voice + chat in seconds. Email excluded. Industry target ≤30s."
+      },
+      {
+        "name": "csat",
+        "comment": "Average customer satisfaction (1-5 scale). Industry target ≥4.0. Excludes the ~30% of calls with no survey response."
+      },
+      {
+        "name": "avg_sentiment",
+        "comment": "Average sentiment score in [-1, 1]."
+      },
+      {
+        "name": "negative_share",
+        "comment": "Share of calls with sentiment_score < -0.2."
+      }
+    ]
+  },
+  "genie_demo.contact_centre.silver_agents": {
+    "comment": "Agent dimension — Genie-exposed",
+    "table_type": "MANAGED",
+    "columns": [
+      {
+        "name": "agent_id",
+        "comment": "Unique agent identifier"
+      },
+      {
+        "name": "site_id",
+        "comment": "FK → silver_sites.site_id"
+      },
+      {
+        "name": "team",
+        "comment": "Team name: Alpha / Bravo / Charlie / Delta"
+      },
+      {
+        "name": "hire_date",
+        "comment": "Date the agent was hired"
+      },
+      {
+        "name": "full_time",
+        "comment": "TRUE if full-time employee"
+      },
+      {
+        "name": "tenure_days",
+        "comment": "Days since hire_date"
+      },
+      {
+        "name": "full_name",
+        "comment": "Agent display name — surfaced in dashboards and Genie"
+      }
+    ]
+  },
+  "genie_demo.contact_centre.silver_calls_wide": {
+    "comment": "Wide call grain — calls × agents × sites with pre-baked SLA / abandon / negative flags and a voice/chat-only wait column. Source for the dashboard wide_calls dataset and the mv_calls metric view. One row per call.",
+    "table_type": "MANAGED",
+    "columns": [
+      {
+        "name": "call_id",
+        "comment": "Unique call identifier (FK → gold_calls_enriched.call_id)."
+      },
+      {
+        "name": "started_at",
+        "comment": "Call start timestamp."
+      },
+      {
+        "name": "ended_at",
+        "comment": "Call end timestamp."
+      },
+      {
+        "name": "date",
+        "comment": "Calendar date the call started — DATE type, use for daily aggregates."
+      },
+      {
+        "name": "week",
+        "comment": "Monday-anchored week truncation of started_at — TIMESTAMP, use for weekly aggregates."
+      },
+      {
+        "name": "channel",
+        "comment": "voice, chat, or email."
+      },
+      {
+        "name": "queue",
+        "comment": "Inbound queue identifier — queue_01 through queue_08."
+      },
+      {
+        "name": "topic",
+        "comment": "Call topic: Billing, Order Status, Account Access, Technical Issue, Cancellation, General Enquiry."
+      },
+      {
+        "name": "agent_id",
+        "comment": "Agent that handled the call (FK → silver_agents.agent_id)."
+      },
+      {
+        "name": "agent_name",
+        "comment": "Agent display name — denormalised from silver_agents.full_name for Genie usability."
+      },
+      {
+        "name": "team",
+        "comment": "Agent team: Alpha / Bravo / Charlie / Delta."
+      },
+      {
+        "name": "hire_date",
+        "comment": "Date the agent was hired."
+      },
+      {
+        "name": "full_time",
+        "comment": "TRUE if the agent is full-time."
+      },
+      {
+        "name": "tenure_days",
+        "comment": "Days since hire_date as of the call."
+      },
+      {
+        "name": "tenure_bucket",
+        "comment": "\"new\" (<=90 days), \"junior\" (<=365 days), or \"tenured\" (>365 days). Use this for new-hire-vs-tenured comparisons."
+      },
+      {
+        "name": "site_id",
+        "comment": "Site that handled the call: Athens, Birmingham, Cambridge, Dublin, Manchester, Toledo."
+      },
+      {
+        "name": "region",
+        "comment": "Region of the site: EMEA / AMER / APAC."
+      },
+      {
+        "name": "timezone",
+        "comment": "IANA timezone of the site."
+      },
+      {
+        "name": "site_capacity",
+        "comment": "Max concurrent agents the site is provisioned for."
+      },
+      {
+        "name": "handle_time_sec",
+        "comment": "Handle time (seconds) — agent talk/work time. Aka AHT."
+      },
+      {
+        "name": "handle_time_min",
+        "comment": "Handle time in minutes (handle_time_sec / 60)."
+      },
+      {
+        "name": "wait_time_sec",
+        "comment": "Customer wait time before the call was answered, in seconds. Includes email response times (up to 24h)."
+      },
+      {
+        "name": "wait_time_min",
+        "comment": "Wait time in minutes (wait_time_sec / 60)."
+      },
+      {
+        "name": "wait_time_voice_chat_sec",
+        "comment": "Wait time for voice/chat calls only — NULL for email. Use this for ASA (avg speed of answer) so email response times do not skew the average."
+      },
+      {
+        "name": "abandoned",
+        "comment": "TRUE if the call was abandoned before being answered."
+      },
+      {
+        "name": "csat_score",
+        "comment": "Customer satisfaction 1-5. NULL for ~30% of calls (no survey response)."
+      },
+      {
+        "name": "sentiment_score",
+        "comment": "Seeded sentiment score in [-1, 1]. <-0.2 is negative."
+      },
+      {
+        "name": "ai_summary",
+        "comment": "AI-generated call summary (ai_summarize) — populated only on the bottom 500 calls by sentiment. NULL otherwise."
+      },
+      {
+        "name": "ai_sentiment_label",
+        "comment": "AI sentiment label (ai_analyze_sentiment) — populated on the same bottom-500 slice as ai_summary. NULL otherwise."
+      },
+      {
+        "name": "meets_sla",
+        "comment": "Channel-aware SLA flag (0.0 / 1.0). Voice <=20s, chat <=60s, email <=24h, abandoned counts as 0. Use AVG(meets_sla) for SLA %."
+      },
+      {
+        "name": "is_abandoned",
+        "comment": "Numeric form of abandoned (0.0 / 1.0). Use AVG(is_abandoned) for abandon rate."
+      },
+      {
+        "name": "is_negative",
+        "comment": "Numeric flag: 1.0 if sentiment_score < -0.2, else 0.0. Use AVG(is_negative) for negative-call share."
+      }
+    ]
+  },
+  "genie_demo.contact_centre.silver_sites": {
+    "comment": "Site dimension — Genie-exposed",
+    "table_type": "MANAGED",
+    "columns": [
+      {
+        "name": "site_id",
+        "comment": "Unique site identifier, e.g. Birmingham"
+      },
+      {
+        "name": "region",
+        "comment": "Geographic region: EMEA / AMER / APAC"
+      },
+      {
+        "name": "timezone",
+        "comment": "IANA timezone"
+      },
+      {
+        "name": "capacity",
+        "comment": "Max concurrent agents supported at this site"
+      }
+    ]
+  }
+}

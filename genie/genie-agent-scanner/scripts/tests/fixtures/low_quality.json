@@ -1,0 +1,124 @@
+{
+  "version": 2,
+  "config": {
+    "sample_questions": [
+      {
+        "id": "332d1987845557bc451aa295d85e6d67",
+        "question": [
+          "Show me leads."
+        ]
+      }
+    ]
+  },
+  "data_sources": {
+    "tables": [
+      {
+        "identifier": "main.sales.leads",
+        "column_configs": [
+          {
+            "column_name": "lead_id"
+          },
+          {
+            "column_name": "email"
+          },
+          {
+            "column_name": "status"
+          }
+        ]
+      },
+      {
+        "identifier": "main.sales.opportunities",
+        "column_configs": [
+          {
+            "column_name": "opp_id"
+          },
+          {
+            "column_name": "lead_id"
+          },
+          {
+            "column_name": "amount"
+          },
+          {
+            "column_name": "stage"
+          }
+        ]
+      }
+    ]
+  },
+  "instructions": {
+    "text_instructions": [
+      {
+        "id": "e381e1483ef2c4c412da1f94eccc2e94",
+        "content": [
+          "Sales.\n"
+        ]
+      }
+    ],
+    "example_question_sqls": [
+      {
+        "id": "756ace6ba0d035d1f5a9373adc98ded0",
+        "question": [
+          "How many leads?"
+        ],
+        "sql": [
+          "SELECT COUNT(*) FROM `main`.`sales`.`leads`;"
+        ]
+      },
+      {
+        "id": "327b9c469dca40c50ff4455b6f90c7e3",
+        "question": [
+          "How many opportunities?"
+        ],
+        "sql": [
+          "SELECT COUNT(*) FROM `main`.`sales`.`opportunities`;"
+        ]
+      }
+    ]
+  },
+  "benchmarks": {
+    "questions": [
+      {
+        "id": "cb99c216ece1cd4baaf61f6c57cc3ac4",
+        "question": [
+          "Low benchmark 1?"
+        ],
+        "answer": [
+          {
+            "format": "SQL",
+            "content": [
+              "SELECT 1;"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "4c667844b8fa5b6cd10263087510a9a5",
+        "question": [
+          "Low benchmark 2?"
+        ],
+        "answer": [
+          {
+            "format": "SQL",
+            "content": [
+              "SELECT 1;"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "9e6396f31b76d3d141d6ff59e49701a0",
+        "question": [
+          "Low benchmark 3?"
+        ],
+        "answer": [
+          {
+            "format": "SQL",
+            "content": [
+              "SELECT 1;"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

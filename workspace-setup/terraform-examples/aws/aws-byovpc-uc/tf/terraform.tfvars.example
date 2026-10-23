@@ -97,3 +97,12 @@ new_cluster = false
 
 # Optional: override the cluster default (only used when new_cluster = true)
 # cluster_autotermination_minutes = 10
+
+# =============================================================================
+# Workspace Admin / Catalog Access (Optional)
+# =============================================================================
+
+# Databricks account user to make workspace admin and grant ALL PRIVILEGES on the
+# user-defined catalog, external location and storage credential. Without it, only the
+# Terraform principal can see the catalog. Leave empty to skip.
+workspace_admin_email = "you@company.com"

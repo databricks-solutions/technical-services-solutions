@@ -114,10 +114,12 @@ resource "databricks_external_location" "uc_external_location" {
   depends_on      = [time_sleep.wait_60_seconds]
 }
 resource "databricks_catalog" "uc_quickstart" {
-  count         = var.new_catalog ? 1 : 0
-  provider      = databricks.workspace
-  name          = local.uc_catalog_name
-  storage_root  = databricks_external_location.uc_external_location[0].url
+  count    = var.new_catalog ? 1 : 0
+  provider = databricks.workspace
+  name     = local.uc_catalog_name
+  # Trailing slash: the provider normalizes storage_root to end with "/", which otherwise
+  # fails with "Provider produced inconsistent final plan".
+  storage_root  = "${databricks_external_location.uc_external_location[0].url}/"
   comment       = "this catalog is managed by terraform"
   force_destroy = true
   # enable_predictive_optimization = "ENABLE"
@@ -125,4 +127,32 @@ resource "databricks_catalog" "uc_quickstart" {
   # properties = {
   #   purpose = "development"
   # }
+}
+
+# The Terraform principal stays the catalog owner (it needs USE CATALOG to refresh the catalog on later runs);
+# the admin user gets ALL PRIVILEGES so they can see and manage it. Non-authoritative: other grants are kept.
+resource "databricks_grant" "catalog_admin" {
+  count      = var.new_catalog && var.workspace_admin_email != "" ? 1 : 0
+  provider   = databricks.workspace
+  catalog    = databricks_catalog.uc_quickstart[0].name
+  principal  = var.workspace_admin_email
+  privileges = ["ALL_PRIVILEGES"]
+  depends_on = [databricks_mws_permission_assignment.workspace_admin]
+}
+
+# Same for the external location and storage credential, so the admin user can see them too.
+resource "databricks_grant" "external_location_admin" {
+  count             = var.new_catalog && var.workspace_admin_email != "" ? 1 : 0
+  provider          = databricks.workspace
+  external_location = databricks_external_location.uc_external_location[0].name
+  principal         = var.workspace_admin_email
+  privileges        = ["ALL_PRIVILEGES"]
+}
+
+resource "databricks_grant" "storage_credential_admin" {
+  count              = var.new_catalog && var.workspace_admin_email != "" ? 1 : 0
+  provider           = databricks.workspace
+  storage_credential = databricks_storage_credential.uc_storage_cred[0].name
+  principal          = var.workspace_admin_email
+  privileges         = ["ALL_PRIVILEGES"]
 }

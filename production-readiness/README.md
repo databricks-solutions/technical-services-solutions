@@ -4,4 +4,6 @@ Solutions and accelerators for hardening Databricks workloads for production. Th
 
 ## Projects
 
-New work in this track lands here.
+| Project | Description |
+|---|---|
+| [mlops-readiness-scorecard](mlops-readiness-scorecard/) | Read-only notebook that scores a workspace's MLOps maturity (tracking, model management, serving & monitoring, engineering) against Databricks best practices, with a why and how-to-fix for every gap. |

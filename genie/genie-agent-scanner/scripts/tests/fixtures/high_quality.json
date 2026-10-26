@@ -1,0 +1,598 @@
+{
+  "serialized_space": {
+    "version": 2,
+    "config": {
+      "sample_questions": [
+        {
+          "id": "4a8db3e8163afe761b87229baeff342c",
+          "question": [
+            "What is total revenue by region?"
+          ]
+        },
+        {
+          "id": "1c2389e145e8af5bfebe3a18f81aae07",
+          "question": [
+            "Which product category sells the most?"
+          ]
+        }
+      ]
+    },
+    "data_sources": {
+      "tables": [
+        {
+          "identifier": "main.retail.customers",
+          "description": [
+            "Customer master with region and signup metadata."
+          ],
+          "column_configs": [
+            {
+              "column_name": "customer_id",
+              "description": [
+                "Surrogate customer key."
+              ]
+            },
+            {
+              "column_name": "name",
+              "description": [
+                "Customer full name."
+              ],
+              "synonyms": [
+                "client name"
+              ]
+            },
+            {
+              "column_name": "region",
+              "description": [
+                "Sales region the customer belongs to."
+              ],
+              "synonyms": [
+                "territory",
+                "geo"
+              ],
+              "enable_entity_matching": true,
+              "enable_format_assistance": true
+            },
+            {
+              "column_name": "signup_date",
+              "description": [
+                "Date the customer signed up."
+              ]
+            }
+          ]
+        },
+        {
+          "identifier": "main.retail.orders",
+          "description": [
+            "Order line facts including revenue and dates."
+          ],
+          "column_configs": [
+            {
+              "column_name": "order_id",
+              "description": [
+                "Surrogate order key."
+              ]
+            },
+            {
+              "column_name": "customer_id",
+              "description": [
+                "FK to customers.customer_id."
+              ]
+            },
+            {
+              "column_name": "product_id",
+              "description": [
+                "FK to products.product_id."
+              ]
+            },
+            {
+              "column_name": "order_date",
+              "description": [
+                "Date the order was placed."
+              ]
+            },
+            {
+              "column_name": "revenue",
+              "description": [
+                "Gross revenue for the order line."
+              ],
+              "synonyms": [
+                "sales"
+              ]
+            },
+            {
+              "column_name": "region",
+              "description": [
+                "Region attributed to the order."
+              ]
+            }
+          ]
+        },
+        {
+          "identifier": "main.retail.products",
+          "description": [
+            "Product catalog with category and price."
+          ],
+          "column_configs": [
+            {
+              "column_name": "product_id",
+              "description": [
+                "Surrogate product key."
+              ]
+            },
+            {
+              "column_name": "name",
+              "description": [
+                "Product display name."
+              ],
+              "synonyms": [
+                "item name"
+              ],
+              "enable_entity_matching": true,
+              "enable_format_assistance": true
+            },
+            {
+              "column_name": "category",
+              "description": [
+                "Product category."
+              ],
+              "synonyms": [
+                "product group"
+              ],
+              "enable_entity_matching": true,
+              "enable_format_assistance": true
+            },
+            {
+              "column_name": "price",
+              "description": [
+                "Unit list price."
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "instructions": {
+      "text_instructions": [
+        {
+          "id": "04f25e2992d90b875d919d7e5905a0b8",
+          "content": [
+            "This space answers retail sales and revenue questions. Summarize the result first, then cite any filters that were applied. Prefer the curated revenue measure over ad-hoc aggregation, and disambiguate product versus category when the user is vague.\n"
+          ]
+        }
+      ],
+      "example_question_sqls": [
+        {
+          "id": "73f51caef3e53fd44a7a81e0fd87d2c7",
+          "question": [
+            "Example business question number 1?"
+          ],
+          "sql": [
+            "SELECT\n",
+            "  region, SUM(revenue) AS total_revenue_1\n",
+            "FROM\n",
+            "  `main`.`retail`.`orders`\n",
+            "GROUP BY\n",
+            "  region;"
+          ],
+          "usage_guidance": [
+            "Use for revenue rollup variant 1."
+          ]
+        },
+        {
+          "id": "d437c5a9804607c1ac9313b9090a34b5",
+          "question": [
+            "Example business question number 2?"
+          ],
+          "sql": [
+            "SELECT\n",
+            "  region, SUM(revenue) AS total_revenue_2\n",
+            "FROM\n",
+            "  `main`.`retail`.`orders`\n",
+            "GROUP BY\n",
+            "  region;"
+          ],
+          "usage_guidance": [
+            "Use for revenue rollup variant 2."
+          ]
+        },
+        {
+          "id": "94e4891cd8e206b408b905959c0747cc",
+          "question": [
+            "Example business question number 3?"
+          ],
+          "sql": [
+            "SELECT\n",
+            "  region, SUM(revenue) AS total_revenue_3\n",
+            "FROM\n",
+            "  `main`.`retail`.`orders`\n",
+            "GROUP BY\n",
+            "  region;"
+          ],
+          "usage_guidance": [
+            "Use for revenue rollup variant 3."
+          ]
+        },
+        {
+          "id": "6145a520721efa54aaddad988e529e61",
+          "question": [
+            "Example business question number 4?"
+          ],
+          "sql": [
+            "SELECT\n",
+            "  region, SUM(revenue) AS total_revenue_4\n",
+            "FROM\n",
+            "  `main`.`retail`.`orders`\n",
+            "GROUP BY\n",
+            "  region;"
+          ],
+          "usage_guidance": [
+            "Use for revenue rollup variant 4."
+          ]
+        },
+        {
+          "id": "48c272f37a131a281792747481455692",
+          "question": [
+            "Example business question number 5?"
+          ],
+          "sql": [
+            "SELECT\n",
+            "  region, SUM(revenue) AS total_revenue_5\n",
+            "FROM\n",
+            "  `main`.`retail`.`orders`\n",
+            "GROUP BY\n",
+            "  region;"
+          ],
+          "usage_guidance": [
+            "Use for revenue rollup variant 5."
+          ]
+        },
+        {
+          "id": "a561717fae04cc7a7e30a3137b0ab074",
+          "question": [
+            "Example business question number 6?"
+          ],
+          "sql": [
+            "SELECT\n",
+            "  region, SUM(revenue) AS total_revenue_6\n",
+            "FROM\n",
+            "  `main`.`retail`.`orders`\n",
+            "GROUP BY\n",
+            "  region;"
+          ],
+          "usage_guidance": [
+            "Use for revenue rollup variant 6."
+          ]
+        },
+        {
+          "id": "0a4e005dee958607b97e67e1b7cd9b83",
+          "question": [
+            "Example business question number 7?"
+          ],
+          "sql": [
+            "SELECT\n",
+            "  region, SUM(revenue) AS total_revenue_7\n",
+            "FROM\n",
+            "  `main`.`retail`.`orders`\n",
+            "GROUP BY\n",
+            "  region;"
+          ],
+          "usage_guidance": [
+            "Use for revenue rollup variant 7."
+          ]
+        },
+        {
+          "id": "cecdf78de54f696cf9a3bafd1b84edf8",
+          "question": [
+            "Example business question number 8?"
+          ],
+          "sql": [
+            "SELECT\n",
+            "  region, SUM(revenue) AS total_revenue_8\n",
+            "FROM\n",
+            "  `main`.`retail`.`orders`\n",
+            "GROUP BY\n",
+            "  region;"
+          ],
+          "usage_guidance": [
+            "Use for revenue rollup variant 8."
+          ]
+        },
+        {
+          "id": "b2d087679201608e0192ae7147d98711",
+          "question": [
+            "Example business question number 9?"
+          ],
+          "sql": [
+            "SELECT\n",
+            "  region, SUM(revenue) AS total_revenue_9\n",
+            "FROM\n",
+            "  `main`.`retail`.`orders`\n",
+            "GROUP BY\n",
+            "  region;"
+          ],
+          "usage_guidance": [
+            "Use for revenue rollup variant 9."
+          ]
+        },
+        {
+          "id": "b748c3c89095532f8b9792835fae8671",
+          "question": [
+            "Example business question number 10?"
+          ],
+          "sql": [
+            "SELECT\n",
+            "  region, SUM(revenue) AS total_revenue_10\n",
+            "FROM\n",
+            "  `main`.`retail`.`orders`\n",
+            "GROUP BY\n",
+            "  region;"
+          ],
+          "usage_guidance": [
+            "Use for revenue rollup variant 10."
+          ]
+        }
+      ],
+      "sql_functions": [
+        {
+          "id": "8baebaad1c3ac4b5459760c05d4c0952",
+          "identifier": "main.retail.fiscal_quarter"
+        }
+      ],
+      "join_specs": [
+        {
+          "id": "16e4f1acbb9c1b76fa19173379f3b91f",
+          "left": {
+            "identifier": "main.retail.orders",
+            "alias": "o"
+          },
+          "right": {
+            "identifier": "main.retail.customers",
+            "alias": "c"
+          },
+          "sql": [
+            "`o`.`customer_id` = `c`.`customer_id`",
+            "--rt=FROM_RELATIONSHIP_TYPE_MANY_TO_ONE--"
+          ]
+        },
+        {
+          "id": "587e4c2bc51b37b5266f71a604cc7083",
+          "left": {
+            "identifier": "main.retail.orders",
+            "alias": "o"
+          },
+          "right": {
+            "identifier": "main.retail.products",
+            "alias": "p"
+          },
+          "sql": [
+            "`o`.`product_id` = `p`.`product_id`",
+            "--rt=FROM_RELATIONSHIP_TYPE_MANY_TO_ONE--"
+          ]
+        }
+      ],
+      "sql_snippets": {
+        "filters": [
+          {
+            "id": "e72a6e88cedc415173c1db04d2abab04",
+            "display_name": "Recent orders",
+            "sql": [
+              "`main`.`retail`.`orders`.`order_date` >= DATE_SUB(CURRENT_DATE, 90)"
+            ],
+            "instruction": [
+              "When the user asks about recent activity."
+            ],
+            "synonyms": [
+              "last 90 days"
+            ]
+          }
+        ],
+        "measures": [
+          {
+            "id": "17d9b2aedd9d542d222658f375689a5a",
+            "display_name": "Total revenue",
+            "sql": [
+              "SUM(`main`.`retail`.`orders`.`revenue`) AS total_revenue"
+            ],
+            "instruction": [
+              "When asked about revenue or sales."
+            ],
+            "synonyms": [
+              "sales"
+            ]
+          }
+        ],
+        "expressions": [
+          {
+            "id": "deb3dd39848ffabec525e34b5cfa9f26",
+            "display_name": "Order month",
+            "sql": [
+              "DATE_TRUNC('MONTH', `main`.`retail`.`orders`.`order_date`) AS order_month"
+            ],
+            "instruction": [
+              "When grouping by month."
+            ]
+          }
+        ]
+      }
+    },
+    "benchmarks": {
+      "questions": [
+        {
+          "id": "5db95686d40a8b479fce443c43b03c6d",
+          "question": [
+            "Benchmark question 1: what is metric 1?"
+          ],
+          "answer": [
+            {
+              "format": "SQL",
+              "content": [
+                "SELECT\n",
+                "  COUNT(*) AS metric_1\n",
+                "FROM\n",
+                "  `main`.`retail`.`orders`;"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "6931b76c7173b74a768d19900ec16d8d",
+          "question": [
+            "Benchmark question 2: what is metric 2?"
+          ],
+          "answer": [
+            {
+              "format": "SQL",
+              "content": [
+                "SELECT\n",
+                "  COUNT(*) AS metric_2\n",
+                "FROM\n",
+                "  `main`.`retail`.`orders`;"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "b931c88052efe09754e8fec2a04ee58e",
+          "question": [
+            "Benchmark question 3: what is metric 3?"
+          ],
+          "answer": [
+            {
+              "format": "SQL",
+              "content": [
+                "SELECT\n",
+                "  COUNT(*) AS metric_3\n",
+                "FROM\n",
+                "  `main`.`retail`.`orders`;"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "58142d6e51e48f49d139f3b97e402b28",
+          "question": [
+            "Benchmark question 4: what is metric 4?"
+          ],
+          "answer": [
+            {
+              "format": "SQL",
+              "content": [
+                "SELECT\n",
+                "  COUNT(*) AS metric_4\n",
+                "FROM\n",
+                "  `main`.`retail`.`orders`;"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "a2634ef7c3a25b15ddaf40fce387ecc2",
+          "question": [
+            "Benchmark question 5: what is metric 5?"
+          ],
+          "answer": [
+            {
+              "format": "SQL",
+              "content": [
+                "SELECT\n",
+                "  COUNT(*) AS metric_5\n",
+                "FROM\n",
+                "  `main`.`retail`.`orders`;"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "97c57b8c309db6e1c65a19789304b103",
+          "question": [
+            "Benchmark question 6: what is metric 6?"
+          ],
+          "answer": [
+            {
+              "format": "SQL",
+              "content": [
+                "SELECT\n",
+                "  COUNT(*) AS metric_6\n",
+                "FROM\n",
+                "  `main`.`retail`.`orders`;"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "d88d938fbbca71dda258b1712d734449",
+          "question": [
+            "Benchmark question 7: what is metric 7?"
+          ],
+          "answer": [
+            {
+              "format": "SQL",
+              "content": [
+                "SELECT\n",
+                "  COUNT(*) AS metric_7\n",
+                "FROM\n",
+                "  `main`.`retail`.`orders`;"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "7f95c63da2af9ed399f0363dd7fd8c1a",
+          "question": [
+            "Benchmark question 8: what is metric 8?"
+          ],
+          "answer": [
+            {
+              "format": "SQL",
+              "content": [
+                "SELECT\n",
+                "  COUNT(*) AS metric_8\n",
+                "FROM\n",
+                "  `main`.`retail`.`orders`;"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "241b8f51ecc4e0eaad65cab3a8919099",
+          "question": [
+            "Benchmark question 9: what is metric 9?"
+          ],
+          "answer": [
+            {
+              "format": "SQL",
+              "content": [
+                "SELECT\n",
+                "  COUNT(*) AS metric_9\n",
+                "FROM\n",
+                "  `main`.`retail`.`orders`;"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "5a040f4ccd4780affbe2f00be97a739a",
+          "question": [
+            "Benchmark question 10: what is metric 10?"
+          ],
+          "answer": [
+            {
+              "format": "SQL",
+              "content": [
+                "SELECT\n",
+                "  COUNT(*) AS metric_10\n",
+                "FROM\n",
+                "  `main`.`retail`.`orders`;"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "optimization_run": {
+    "run_id": "run-hq-001",
+    "status": "COMPLETED",
+    "accuracy": 0.9
+  }
+}

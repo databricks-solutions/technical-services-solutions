@@ -74,6 +74,32 @@ Parsing otherwise uses only the Python standard library (`zipfile`, `xml.etree`,
 
 ---
 
+## genie/genie-agent-scanner
+
+Direct runtime dependencies (declared in
+[`scripts/requirements.txt`](./genie/genie-agent-scanner/scripts/requirements.txt)):
+
+| Dependency | Purpose | License |
+|------------|---------|---------|
+| [databricks-sdk](https://github.com/databricks/databricks-sdk-py) | Genie Spaces REST access + Unity Catalog metadata (imported lazily; needed only for live `--space-id` scans and `--apply`) | Apache-2.0 |
+
+The deterministic scorer and fully offline scans
+(`--serialized-space-file`) use only the Python standard library — no
+third-party runtime dependency at all.
+
+Development-only dependencies (not shipped in the installed skill): `pytest`,
+`ruff` (MIT).
+
+Each dependency may in turn pull in its own transitive dependencies; those are
+governed by their respective licenses as resolved at install time.
+
+### License texts
+
+- **Apache License 2.0** — https://www.apache.org/licenses/LICENSE-2.0
+- **MIT License** — https://opensource.org/license/mit
+
+---
+
 ## dw-migration/source-extracts/snowflake
 
 Direct runtime dependencies (declared in

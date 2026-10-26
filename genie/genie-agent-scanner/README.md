@@ -1,8 +1,8 @@
-# genie-space-scan-optimize
+# Genie Agent Scanner
 
-A portable Agent Skill that audits one Databricks Genie space / agent, scores it
-against a 12-check rubric, and guides approval-gated fixes through the Genie
-REST API. It ports the *scan → scored report → guided optimize* flow of
+A portable Agent Skill (`genie-space-scan-optimize`) that audits one Databricks
+Genie agent, scores it against a 12-check rubric, and guides approval-gated
+fixes through the Genie REST API. It ports the *scan → scored report → guided optimize* flow of
 [Genie Workbench](https://github.com/databricks-solutions/databricks-genie-workbench)
 without installing the Workbench app, and runs in Genie Code (primary), Claude
 Code, and Cursor.
@@ -66,21 +66,21 @@ no local Python is needed.
 > so install it manually for now.
 
 ## Usage
-Name the space and say what you want. No space ID or long prompt is needed:
-- "Scan the Meridian Customer Operations space."
-- "Scan this Genie space and tell me what to fix first."
-- "Optimize this space." (previews fixes, writes only after you approve)
+Name the agent and say what you want. No agent ID or long prompt is needed:
+- "Scan the Meridian Customer Operations agent."
+- "Scan this Genie agent and tell me what to fix first."
+- "Optimize this agent." (previews fixes, writes only after you approve)
 
 Or run the scorer directly from a terminal with a Databricks profile:
 ```
-python scripts/scan.py --space-id <SPACE_ID> --json-out scan.json --md-out scan.md
+python scripts/scan.py --space-id <AGENT_ID> --json-out scan.json --md-out scan.md
 ```
 
 ## License & attribution
 A derivative work of the public Databricks Genie Workbench accelerator
 (`databricks-solutions/databricks-genie-workbench`), distributed under the
 **Databricks License** (see the repository-root [`LICENSE.md`](../../LICENSE.md)).
-The scoring rubric and lever mapping in `scripts/genie_space_iq/` are adapted
-from its `genie-space-optimizer` package; see [`NOTICE.md`](./NOTICE.md). This
+The scoring rubric and lever mapping in `scripts/` are adapted from its
+optimizer package; see [`NOTICE.md`](./NOTICE.md). This
 is an unsupported community port, **not** an official Databricks product,
 certification, or supported feature.

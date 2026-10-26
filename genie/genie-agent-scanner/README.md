@@ -1,6 +1,6 @@
 # Genie Agent Scanner
 
-A portable Agent Skill (`genie-space-scan-optimize`) that audits one Databricks
+A portable Agent Skill (`genie-agent-scan-optimize`) that audits one Databricks
 Genie Agent, scores it against a 12-check rubric, and guides approval-gated
 fixes through the Genie REST API. It ports the *scan → scored report → guided optimize* flow of
 [Genie Workbench](https://github.com/databricks-solutions/databricks-genie-workbench)
@@ -45,7 +45,7 @@ fix order and anti-patterns: [`references/best-practices.md`](./references/best-
 ## Install
 It is a standard Agent Skill (a folder with `SKILL.md` at its root), so
 installing means copying the folder. Name the installed folder
-`genie-space-scan-optimize/` to match the skill name.
+`genie-agent-scan-optimize/` to match the skill name.
 
 ```
 git clone https://github.com/databricks-solutions/technical-services-solutions.git
@@ -54,8 +54,8 @@ cd technical-services-solutions/genie/genie-agent-scanner
 
 | Assistant | Copy the folder to |
 |---|---|
-| **Genie Code** | `/Workspace/Users/<your-email>/.assistant/skills/genie-space-scan-optimize/` (personal) or `/Workspace/.assistant/skills/...` (workspace-wide, admin). Or use Genie Code **Settings → Open skills folder**. Start a **new** chat afterwards. |
-| **Claude Code** | `~/.claude/skills/genie-space-scan-optimize/` (all projects) or `.claude/skills/...` (this project). Picked up live. |
+| **Genie Code** | `/Workspace/Users/<your-email>/.assistant/skills/genie-agent-scan-optimize/` (personal) or `/Workspace/.assistant/skills/...` (workspace-wide, admin). Or use Genie Code **Settings → Open skills folder**. Start a **new** chat afterwards. |
+| **Claude Code** | `~/.claude/skills/genie-agent-scan-optimize/` (all projects) or `.claude/skills/...` (this project). Picked up live. |
 | **Cursor** | Cursor's skills directory. |
 
 For **local** runs (Claude Code, Cursor, terminal), install the scorer's

@@ -1,13 +1,13 @@
 ---
-name: genie-space-scan-optimize
+name: genie-agent-scan-optimize
 description: >-
-  Audit and improve a single Databricks Genie space / Genie agent's
+  Audit and improve a single Databricks Genie Agent's (formerly Genie space)
   configuration quality. Runs a deterministic 12-check "IQ scan" (data sources,
   table/column description coverage, instructions, joins, example SQL,
   benchmarks, entity matching) with RLS / column-mask safety guidance, scores it
   0-12 with a maturity tier, and then guides approval-gated context fixes
   applied through the Genie REST API. Use whenever someone asks to scan, audit,
-  score, health-check, review, or optimize a Genie space or Genie agent, or
+  score, health-check, review, or optimize a Genie Agent, or
   wants a lightweight "mini Genie Workbench" without installing the Workbench
   app. Portable across Genie Code, Claude Code, and Cursor.
 ---
@@ -24,7 +24,7 @@ You do NOT need a long prompt, and you do NOT need the space id. Name the space
 (or just say "this space" when you are already in it) and say what you want:
 - "Scan the Meridian Customer Operations space."
 - "Help me scan this Genie space and tell me what to fix first."
-- "@genie-space-scan-optimize audit this agent's setup (read-only)."
+- "@genie-agent-scan-optimize audit this agent's setup (read-only)."
 
 On any such request the skill resolves the space, runs the deterministic scorer,
 and reports the score, tier, and ranked fixes. Everything below is the agent's
@@ -259,12 +259,12 @@ score improved and to gate promotion.
 
 ## Install (Genie Code)
 - **Workspace skill** (team-wide standard): place this folder at
-  `Workspace/.assistant/skills/genie-space-scan-optimize/`.
+  `Workspace/.assistant/skills/genie-agent-scan-optimize/`.
 - **User skill** (personal use / prototyping): place it at
-  `/Users/<username>/.assistant/skills/genie-space-scan-optimize/`.
+  `/Users/<username>/.assistant/skills/genie-agent-scan-optimize/`.
 - In the Genie Code pane: **Settings -> Open skills folder**. Start a NEW chat
   after adding or editing the skill (edits do not affect an active chat). Invoke
-  by relevance, or type `@genie-space-scan-optimize`.
+  by relevance, or type `@genie-agent-scan-optimize`.
 - Back the folder with a Databricks Git folder to version, share, and roll back.
 
 Footprint: this skill is deliberately small -- `SKILL.md`, three reference docs,

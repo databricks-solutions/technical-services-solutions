@@ -114,12 +114,10 @@ resource "databricks_external_location" "uc_external_location" {
   depends_on      = [time_sleep.wait_60_seconds]
 }
 resource "databricks_catalog" "uc_quickstart" {
-  count    = var.new_catalog ? 1 : 0
-  provider = databricks.workspace
-  name     = local.uc_catalog_name
-  # Trailing slash: the provider normalizes storage_root to end with "/", which otherwise
-  # fails with "Provider produced inconsistent final plan".
-  storage_root  = "${databricks_external_location.uc_external_location[0].url}/"
+  count         = var.new_catalog ? 1 : 0
+  provider      = databricks.workspace
+  name          = local.uc_catalog_name
+  storage_root  = databricks_external_location.uc_external_location[0].url
   comment       = "this catalog is managed by terraform"
   force_destroy = true
   # enable_predictive_optimization = "ENABLE"

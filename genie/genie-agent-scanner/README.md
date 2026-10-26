@@ -1,98 +1,86 @@
 # genie-space-scan-optimize
 
-A condensed, portable Agent Skill that ports Databricks Genie Workbench's
-scan -> scored report -> guided optimize against a single Genie space/agent,
-without installing the Workbench app. It is a derivative work of the public
-Genie Workbench accelerator and is distributed under the same Databricks License
-(see `LICENSE.md` / `NOTICE.md`). Authored to the open Agent Skills standard so
-it runs in Genie Code (primary), Claude Code, and Cursor.
+A portable Agent Skill that audits one Databricks Genie space / agent, scores it
+against a 12-check rubric, and guides approval-gated fixes through the Genie
+REST API. It ports the *scan → scored report → guided optimize* flow of
+[Genie Workbench](https://github.com/databricks-solutions/databricks-genie-workbench)
+without installing the Workbench app, and runs in Genie Code (primary), Claude
+Code, and Cursor.
 
-> **Not a replacement for Genie Workbench — a stopgap.** This is a small, local
-> alternative you can reach for *while* you get the full Genie Workbench app
-> installed. It deliberately covers only part of what Workbench does; the goal
-> is to unblock the day's work in the meantime, not to be a complete
-> replacement for the Workbench experience.
+> **A stopgap, not a replacement for Genie Workbench.** Use it to keep moving
+> while the full Workbench app is being installed. It covers only part of what
+> Workbench does.
 
-## Why this while you install the Workbench app
-- **Light.** No app, no backend, no Lakebase, no service to deploy or host --
-  just a small folder you drop into `.assistant/skills/` (or back with a Git
-  folder). The security-review surface is a handful of readable Markdown +
-  Python files, with no network egress beyond the workspace's own Genie / Unity
-  Catalog APIs. Use it today to keep moving while the full Workbench app is
-  being installed.
-- **Deterministic and fast.** The 12-check IQ score comes from a pure, no-LLM
-  scorer -- same input, same score, no model calls and no SQL warehouse in the
-  scan path -- so results are reproducible and match Workbench's rubric.
-- **Meets authors where they already are.** Runs inside Genie Code (and Claude
-  Code / Cursor) as one portable artifact, complementing native Genie Code
-  curation as the deterministic quality gate rather than duplicating it.
+**Status:** WIP. Unsupported community port, published for early feedback.
+
+## Why use it
+- **Light.** No app, backend, or Lakebase. Just a folder of readable Markdown and
+  Python, with no network egress beyond the workspace's own Genie / Unity
+  Catalog APIs.
+- **Deterministic.** The score comes from a pure, no-LLM scorer (no model calls,
+  no SQL warehouse), so results are reproducible and match Workbench's rubric.
+- **Safe.** Fixes are previewed as a diff and nothing is written until you
+  approve it.
+
+## Genie best practices (what the scan checks)
+
+![Best Practices for Genie Agents](./figures/genie_best_practices.png)
+
+A good Genie agent is built in five stages. The scan scores the first four and
+tells you which stage to fix first:
+
+| Stage | What good looks like | Scan checks |
+|---|---|---|
+| **1. Data preparation** | A small set of curated, topic-specific tables (≤ 12) with business descriptions on each table. | 1 Data sources, 2 Table descriptions, 6 Data source count |
+| **2. Semantic modeling** | Joins defined between tables (primary / foreign keys), descriptions on the columns users ask about, correct data types, entity matching on categorical columns. | 3 Column descriptions, 5 Join specs, 9 Entity / format matching |
+| **3. Instructions & examples** | Short, clear text instructions for business logic; reusable SQL snippets (measures, filters); 10-15 example SQL queries for complex questions. | 4 Text instructions, 7 Example SQL, 8 SQL snippets |
+| **4. Testing & iteration** | 10+ benchmark questions with expected SQL, an optimization run, and ≥ 85% benchmark accuracy. | 10 Benchmarks, 11 Optimization run, 12 Accuracy |
+| **5. Monitoring & feedback** | Users rate answers (thumbs up / down); authors review the Monitoring tab for recurring questions and failures and feed them back into stages 1-4. | Not scored (ongoing) |
+
+The score is the number of passed checks (0-12), with a maturity tier:
+**Not Ready** (any of checks 1-10 fail), **Ready to Optimize** (1-10 pass), or
+**Trusted** (all 12 pass). Full rubric: [`references/scan-checks.md`](./references/scan-checks.md);
+fix order and anti-patterns: [`references/best-practices.md`](./references/best-practices.md).
 
 ## Install
-This is a standard Agent Skill: a folder with a `SKILL.md` at its root.
-Installing it means dropping that folder into your assistant's skills directory
--- there is nothing to build, deploy, or host. It is **not** a Unity Catalog
-object: agent skills are plain workspace / local files (only MCP *servers* are
-UC-governed), so `.assistant/skills/` (Genie Code) and `~/.claude/skills/`
-(Claude Code) folders are the whole install surface.
+It is a standard Agent Skill (a folder with `SKILL.md` at its root), so
+installing means copying the folder. Name the installed folder
+`genie-space-scan-optimize/` to match the skill name.
 
-First get the folder. It ships as a solution inside the Databricks Technical
-Services Solutions repo, under `genie/genie-agent-scanner/`:
 ```
-# clone the solutions repo (or sparse-checkout just this folder)
 git clone https://github.com/databricks-solutions/technical-services-solutions.git
 cd technical-services-solutions/genie/genie-agent-scanner
 ```
-The skill's own `name` is `genie-space-scan-optimize` (that is the invocation
-token). When you drop it into an assistant's skills directory below, name the
-installed folder to match the skill -- `genie-space-scan-optimize/` -- so
-`@genie-space-scan-optimize` resolves cleanly.
 
-**Genie Code (primary).** Copy the `genie-space-scan-optimize/` folder into a
-skills directory in your Databricks workspace:
-- Personal: `/Workspace/Users/<your-email>/.assistant/skills/genie-space-scan-optimize/`
-- Workspace-wide (admin only): `/Workspace/.assistant/skills/genie-space-scan-optimize/`
+| Assistant | Copy the folder to |
+|---|---|
+| **Genie Code** | `/Workspace/Users/<your-email>/.assistant/skills/genie-space-scan-optimize/` (personal) or `/Workspace/.assistant/skills/...` (workspace-wide, admin). Or use Genie Code **Settings → Open skills folder**. Start a **new** chat afterwards. |
+| **Claude Code** | `~/.claude/skills/genie-space-scan-optimize/` (all projects) or `.claude/skills/...` (this project). Picked up live. |
+| **Cursor** | Cursor's skills directory. |
 
-Or, in the Genie Code pane, click the **Settings** gear -> **Open skills
-folder** and drop it there. Back the folder with a Databricks Git folder to
-version, share, and roll back across the team. After adding or editing the
-skill, start a **new** chat -- edits do not affect an active chat (hard-refresh
-if it still looks stale).
+For **local** runs (Claude Code, Cursor, terminal), install the scorer's
+dependencies once: `pip install -r scripts/requirements.txt`. Inside Genie Code
+no local Python is needed.
 
-**Claude Code.** Copy the folder into either:
-- Personal (all projects): `~/.claude/skills/genie-space-scan-optimize/`
-- This project only: `.claude/skills/genie-space-scan-optimize/`
+> The skill is not yet published to the `databricks aitools install` catalog,
+> so install it manually for now.
 
-It is picked up live in the current session -- no restart. Invoke it in plain
-language ("scan this Genie space") or explicitly with
-`/genie-space-scan-optimize`.
+## Usage
+Name the space and say what you want. No space ID or long prompt is needed:
+- "Scan the Meridian Customer Operations space."
+- "Scan this Genie space and tell me what to fix first."
+- "Optimize this space." (previews fixes, writes only after you approve)
 
-**Cursor.** Drop the same folder into Cursor's skills directory; Cursor loads
-the identical `SKILL.md`. (The Databricks CLI below can place it for you with
-`--agents cursor`.)
-
-**Python (local runs only).** Live and offline scans run the scorer in
-`scripts/`, so install its dependencies once:
+Or run the scorer directly from a terminal with a Databricks profile:
 ```
-pip install -r scripts/requirements.txt
+python scripts/scan.py --space-id <SPACE_ID> --json-out scan.json --md-out scan.md
 ```
-The Databricks SDK is imported lazily -- fully offline scans
-(`--serialized-space-file`) need no SDK, and runs **inside Genie Code** need no
-local Python at all, since the agent gathers the config with its native tools.
-
-> **`databricks aitools install`.** Databricks ships a CLI that auto-detects
-> your installed coding agents and distributes *published* skills to each one
-> (e.g. `databricks aitools install --agents claude-code`). This skill is WIP
-> and not published to that catalog yet, so install it manually with the steps
-> above for now.
-
-Status: WIP. Unsupported community port; published for early feedback.
 
 ## License & attribution
-This project is a derivative work of the public Databricks Genie Workbench
-accelerator (`databricks-solutions/databricks-genie-workbench`) and is
-distributed under the **Databricks License** — see the repository-root
-[`LICENSE.md`](../../LICENSE.md). The deterministic scoring rubric and lever
-mapping in `scripts/genie_space_iq/` are ported/adapted from that repository's
-`genie-space-optimizer` package; see [`NOTICE.md`](./NOTICE.md) for attribution.
-It is an unsupported community port, **not** an official Databricks product,
+A derivative work of the public Databricks Genie Workbench accelerator
+(`databricks-solutions/databricks-genie-workbench`), distributed under the
+**Databricks License** (see the repository-root [`LICENSE.md`](../../LICENSE.md)).
+The scoring rubric and lever mapping in `scripts/genie_space_iq/` are adapted
+from its `genie-space-optimizer` package; see [`NOTICE.md`](./NOTICE.md). This
+is an unsupported community port, **not** an official Databricks product,
 certification, or supported feature.

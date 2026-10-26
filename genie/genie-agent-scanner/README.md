@@ -1,7 +1,7 @@
 # Genie Agent Scanner
 
 A portable Agent Skill (`genie-space-scan-optimize`) that audits one Databricks
-Genie agent, scores it against a 12-check rubric, and guides approval-gated
+Genie Agent, scores it against a 12-check rubric, and guides approval-gated
 fixes through the Genie REST API. It ports the *scan → scored report → guided optimize* flow of
 [Genie Workbench](https://github.com/databricks-solutions/databricks-genie-workbench)
 without installing the Workbench app, and runs in Genie Code (primary), Claude
@@ -26,7 +26,7 @@ Code, and Cursor.
 
 ![Best Practices for Genie Agents](./figures/genie_best_practices.png)
 
-A good Genie agent is built in five stages. The scan scores the first four and
+A good Genie Agent is built in five stages. The scan scores the first four and
 tells you which stage to fix first:
 
 | Stage | What good looks like | Scan checks |
@@ -68,7 +68,7 @@ no local Python is needed.
 ## Usage
 Name the agent and say what you want. No agent ID or long prompt is needed:
 - "Scan the Meridian Customer Operations agent."
-- "Scan this Genie agent and tell me what to fix first."
+- "Scan this Genie Agent and tell me what to fix first."
 - "Optimize this agent." (previews fixes, writes only after you approve)
 
 Or run the scorer directly from a terminal with a Databricks profile:

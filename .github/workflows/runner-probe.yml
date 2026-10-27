@@ -1,0 +1,75 @@
+name: Runner probe (protected group)
+
+# Throwaway check: can databricks-solutions-protected-runner-group reach Sigstore
+# and the IP-allow-listed GitHub API with the same calls release-assets.yml makes?
+# Runs only on pushes to this test branch; everything it creates is deleted again.
+on:
+  push:
+    branches: [test/runner-probe-protected-group]
+
+permissions: {}
+
+concurrency:
+  group: runner-probe
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on:
+      group: databricks-solutions-protected-runner-group
+      labels: linux-ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write       # draft release + tag ref, both deleted at the end
+      id-token: write       # Sigstore signing
+      attestations: write   # persist the attestation
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PROBE: runner-probe-${{ github.run_id }}
+
+    steps:
+      - name: Egress (Sigstore, GitHub API, PyPI)
+        run: |
+          for url in \
+            https://fulcio.sigstore.dev/api/v2/configuration \
+            https://rekor.sigstore.dev/api/v1/log \
+            https://tuf-repo-cdn.sigstore.dev/timestamp.json \
+            https://api.github.com/zen \
+            https://pypi.org/simple/pyyaml/; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "$url" || echo FAIL)
+            echo "$code $url"
+          done
+
+      # build() calls `gh release view`; on ubuntu-latest this was silently 403'd.
+      - name: GitHub API read
+        run: |
+          gh api "repos/$REPO/releases?per_page=1" --jq 'length'
+          gh release view terraform-checker-latest --repo "$REPO" --json tagName --jq .tagName
+
+      - name: Create probe file
+        run: echo "$PROBE $GITHUB_SHA" > probe.txt
+
+      - name: Attest probe file
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-path: probe.txt
+
+      - name: Verify attestation
+        run: gh attestation verify probe.txt --repo "$REPO"
+
+      # Same endpoints publish() uses: release create/upload/edit and git/refs POST/PATCH.
+      - name: GitHub API writes
+        run: |
+          gh release create "$PROBE" probe.txt --repo "$REPO" --draft --target "$GITHUB_SHA" \
+            --title "$PROBE" --notes "Runner probe; deleted by the same job."
+          gh release upload "$PROBE" probe.txt --repo "$REPO" --clobber
+          gh release edit "$PROBE" --repo "$REPO" --notes "Runner probe (edited); deleted by the same job."
+          gh api --method POST "repos/$REPO/git/refs" -f "ref=refs/tags/$PROBE" -f "sha=$GITHUB_SHA"
+          gh api --method PATCH "repos/$REPO/git/refs/tags/$PROBE" -f "sha=$GITHUB_SHA" -F force=true
+
+      - name: Clean up
+        if: always()
+        run: |
+          gh release delete "$PROBE" --repo "$REPO" --yes || true
+          gh api --method DELETE "repos/$REPO/git/refs/tags/$PROBE" || true

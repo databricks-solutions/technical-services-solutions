@@ -70,3 +70,46 @@ output "ncc_id" {
   description = "Network Connectivity Config ID (for serverless private endpoints)"
   value       = databricks_mws_network_connectivity_config.ncc.network_connectivity_config_id
 }
+
+# =============================================================================
+# Unity Catalog Outputs
+# =============================================================================
+
+output "metastore_id" {
+  description = "ID of the Unity Catalog metastore assigned to the workspace (null when none is assigned by this template)"
+  value       = local.assign_metastore ? local.metastore_id : null
+}
+
+output "catalog_name" {
+  description = "Name of the user-defined Unity Catalog catalog (null when new_catalog is false)"
+  value       = one(databricks_catalog.uc[*].name)
+}
+
+output "external_location_name" {
+  description = "Name of the Unity Catalog external location (null when new_catalog is false)"
+  value       = one(databricks_external_location.uc[*].name)
+}
+
+output "external_location_url" {
+  description = "URL of the Unity Catalog external location (null when new_catalog is false)"
+  value       = one(databricks_external_location.uc[*].url)
+}
+
+output "storage_credential_name" {
+  description = "Name of the Unity Catalog storage credential (null when new_catalog is false)"
+  value       = one(databricks_storage_credential.uc[*].name)
+}
+
+output "uc_storage_account_name" {
+  description = "Name of the storage account backing the Unity Catalog catalog (null when new_catalog is false)"
+  value       = one(azurerm_storage_account.uc[*].name)
+}
+
+# =============================================================================
+# Cluster Outputs
+# =============================================================================
+
+output "cluster_id" {
+  description = "ID of the UC-compatible single-node cluster (null when create_cluster is false)"
+  value       = one(databricks_cluster.uc_single_node[*].id)
+}

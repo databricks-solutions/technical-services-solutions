@@ -52,6 +52,21 @@ tasks:
 - **Python wheel task** — `python_wheel_task: { package_name: ..., entry_point: ... }` with the wheel in `environments`.
 - **Triggered (no schedule)** — omit the `schedule:` block; trigger via API or another job.
 
+## Migration: environment isolation
+
+Applies the environment-value hard rules in `SKILL.md`. A live read returns the source environment's values. Put them only in the source target's `targets.<target>.variables`; every other target, and `dev` in particular, gets its own value. Never leave a literal from the live read in the fields below.
+
+| Field | Use |
+|---|---|
+| `schedule.pause_status`, `trigger.pause_status`, `continuous.pause_status` | source `UNPAUSED`: `${var.schedule_pause_status}`. Source `PAUSED`: keep `PAUSED`. Never copy a literal `UNPAUSED` |
+| `tasks[].pipeline_task.pipeline_id` | `${resources.pipelines.<key>.id}`. If the pipeline is not in the bundle, stop and ask the user to add it, or use a per-target variable |
+| `tasks[].run_job_task.job_id` | `${resources.jobs.<key>.id}`, same rule as above |
+| `tasks[].sql_task.warehouse_id`, `dbt_task.warehouse_id`, `environment` / cluster IDs | `${var.warehouse_id}` / per-target variables |
+| `email_notifications.*`, `tasks[].email_notifications.*` | `${var.notification_emails}` |
+| `webhook_notifications.*` destination IDs | per-target variable, or omit in `dev` |
+| `parameters[].default` and task parameters naming a catalog, schema or table | `${var.catalog}` / `${var.schema}` |
+| `run_as` | never copied. Only `staging` / `prod` set `run_as` at the target level |
+
 ## Complete schema reference
 
 ```yaml

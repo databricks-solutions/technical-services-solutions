@@ -6,6 +6,24 @@ Entries are reverse-chronological. Each entry: date, what changed, **why** (with
 
 ---
 
+## 2026-10-28: Per-target environment values; CI no longer overrides catalog/schema (#108, #116)
+
+**Change:**
+1. `templates/databricks.yml.tmpl`: `catalog` and `schema` lose their top-level defaults (`dev`, `my_project_bronze`) and are set per target under `targets.<target>.variables`. `dev` gets a dev catalog, the personal schema `dev_${workspace.current_user.short_name}`, `schedule_pause_status: PAUSED`, `notification_emails: []`, no `workspace.host` and no `run_as`. New variables `schedule_pause_status` and `notification_emails`.
+2. `SKILL.md`: the interview asks which target the source workspace represents and which catalog `dev` uses. New hard rules: environment values from a live read fill only the source target; no top-level catalog/schema default; no literal `UNPAUSED`; no copied `run_as`; dev never notifies production recipients; CI never sets `BUNDLE_VAR_*` for environment values. The CI contract passes `-t <target>` explicitly (reverses "never use -t").
+3. `cicd/*.md`: removed `BUNDLE_VAR_catalog` / `BUNDLE_VAR_schema` and the `catalog` / `schema` secrets; every bundle command passes `-t <target>`.
+4. `templates/README.md.tmpl`: replaced the instruction to set `${var.schema}` to "the schema defined in the resource user wants to migrate" (the production schema) with per-target guidance.
+
+**Why:** a generated `dev` target resolved to the production catalog and schema, so a dev deploy wrote to (or failed on) production tables. Three causes: the template's `dev` target had no variables, the README told users to copy the source schema, and CI set one shared `BUNDLE_VAR_catalog` / `BUNDLE_VAR_schema` pair that overrides every target's values (CLI precedence: `--var` > `BUNDLE_VAR_*` > overrides file > target variables > default). Missing values also fell back silently to `dev` / `my_project_bronze`, and a step without `DATABRICKS_BUNDLE_ENV` silently selected the `dev` target.
+
+**Verified (CLI v1.17.0, `bundle validate`, no deploy):** `dev_${workspace.current_user.short_name}` resolves inside `targets.dev.variables`; dev resolves the schedule to `PAUSED`, recipients to `[]` and adds no `run_as`; a target without `catalog` fails with "no value assigned to required variable catalog"; `BUNDLE_VAR_schema` overrides the dev target value; a declared variable with no value fails validate even when unused.
+
+**Not yet done:** resource docs still copy literals (pipeline `catalog`/`schema`, task `pipeline_id`/`job_id`, alert `pause_status`); see the follow-up PRs for #108 and #119.
+
+**Where:** `templates/databricks.yml.tmpl`, `templates/README.md.tmpl`, `SKILL.md` (Inputs, Workflow steps 1 and 3, CI/CD action contract, Hard rules), `cicd/*.md`, this entry.
+
+---
+
 ## 2026-08-12 — Kill the read-side retries on alert/dashboard/genie
 
 **Change:** A migration run (15 resources, live Azure workspace) retried repeatedly while *reading assets out of the workspace* — not while authoring YAML. Once the reads were clean, the existing resource-doc rules produced valid output first try. The retries had three root causes, all now documented so the next agent gets clean reads on the first attempt:

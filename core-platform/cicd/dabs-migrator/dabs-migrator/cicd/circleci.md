@@ -9,8 +9,6 @@
 | `DATABRICKS_HOST` — use context or per-environment variable to set different values for staging and prod |
 | `DATABRICKS_CLIENT_ID` |
 | `DATABRICKS_CLIENT_SECRET` |
-| `catalog` |
-| `schema` |
 
 ## `.circleci/config.yml`
 
@@ -42,9 +40,7 @@ jobs:
             DATABRICKS_CLIENT_ID: $DATABRICKS_CLIENT_ID
             DATABRICKS_CLIENT_SECRET: $DATABRICKS_CLIENT_SECRET
             DATABRICKS_BUNDLE_ENV: staging
-            BUNDLE_VAR_catalog: $catalog
-            BUNDLE_VAR_schema: $schema
-          command: databricks bundle validate --output json | tee bundle-validate.json
+          command: databricks bundle validate -t staging --output json | tee bundle-validate.json
       - store_artifacts:
           path: bundle-validate.json
 
@@ -59,11 +55,9 @@ jobs:
             DATABRICKS_CLIENT_ID: $DATABRICKS_CLIENT_ID
             DATABRICKS_CLIENT_SECRET: $DATABRICKS_CLIENT_SECRET
             DATABRICKS_BUNDLE_ENV: staging
-            BUNDLE_VAR_catalog: $catalog
-            BUNDLE_VAR_schema: $schema
           command: |
-            databricks bundle validate --output json
-            databricks bundle deploy
+            databricks bundle validate -t staging --output json
+            databricks bundle deploy -t staging
 
   deploy-prod:
     executor: ubuntu
@@ -76,11 +70,9 @@ jobs:
             DATABRICKS_CLIENT_ID: $DATABRICKS_CLIENT_ID
             DATABRICKS_CLIENT_SECRET: $DATABRICKS_CLIENT_SECRET
             DATABRICKS_BUNDLE_ENV: prod
-            BUNDLE_VAR_catalog: $catalog
-            BUNDLE_VAR_schema: $schema
           command: |
-            databricks bundle validate --output json
-            databricks bundle deploy
+            databricks bundle validate -t prod --output json
+            databricks bundle deploy -t prod
 
 workflows:
   validate-and-deploy:
@@ -111,6 +103,6 @@ workflows:
 
 - `type: approval` on `hold-prod` is the manual gate.
 - CircleCI requires explicit tag filters on every job in a tag-triggered workflow — copy the `filters:` block.
-- Set `DATABRICKS_CLIENT_ID`, `DATABRICKS_CLIENT_SECRET`, `catalog`, and `schema` as project environment variables in CircleCI project settings.
-- `DATABRICKS_BUNDLE_ENV` is hardcoded per job and tells the CLI which target to use (replaces the `-t` flag).
-- `BUNDLE_VAR_catalog` and `BUNDLE_VAR_schema` pass the `catalog` and `schema` variables into bundle variables via the `BUNDLE_VAR_` prefix convention.
+- Set `DATABRICKS_CLIENT_ID` and `DATABRICKS_CLIENT_SECRET` as project environment variables in CircleCI project settings.
+- Every bundle command passes `-t <target>` explicitly. `DATABRICKS_BUNDLE_ENV` is set to the same target as well; keep the two in sync.
+- Catalog, schema and other non-secret per-environment values are committed per target in `databricks.yml` (`targets.<target>.variables`). Do not set `BUNDLE_VAR_catalog` or `BUNDLE_VAR_schema` in CI: `BUNDLE_VAR_*` overrides the target values, so one shared value would point every target at the same tables.

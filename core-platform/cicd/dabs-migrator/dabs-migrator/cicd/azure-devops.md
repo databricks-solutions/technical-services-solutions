@@ -9,8 +9,6 @@ Generates three pipelines under `.azure-pipelines/`.
 | `DATABRICKS_HOST` | workspace URL — use environment-scoped variable groups or pipeline variables to set a different value per environment |
 | `DATABRICKS_CLIENT_ID` | secret variable, service principal application (client) ID |
 | `DATABRICKS_CLIENT_SECRET` | secret variable, service principal client secret |
-| `catalog` | secret variable, Unity Catalog catalog name |
-| `schema` | secret variable, Unity Catalog schema name |
 
 ## `.azure-pipelines/pr-validate.yml`
 
@@ -30,15 +28,13 @@ steps:
   - script: curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
     displayName: Install Databricks CLI
 
-  - script: databricks bundle validate --output json | tee bundle-validate.json
+  - script: databricks bundle validate -t staging --output json | tee bundle-validate.json
     displayName: Validate bundle
     env:
       DATABRICKS_HOST: $(DATABRICKS_HOST)
       DATABRICKS_CLIENT_ID: $(DATABRICKS_CLIENT_ID)
       DATABRICKS_CLIENT_SECRET: $(DATABRICKS_CLIENT_SECRET)
       DATABRICKS_BUNDLE_ENV: staging
-      BUNDLE_VAR_catalog: $(catalog)
-      BUNDLE_VAR_schema: $(schema)
 
   - publish: bundle-validate.json
     artifact: bundle-validate
@@ -70,24 +66,20 @@ stages:
                 - checkout: self
                 - script: curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
                   displayName: Install Databricks CLI
-                - script: databricks bundle validate --output json
+                - script: databricks bundle validate -t staging --output json
                   displayName: Validate bundle
                   env:
                     DATABRICKS_HOST: $(DATABRICKS_HOST)
                     DATABRICKS_CLIENT_ID: $(DATABRICKS_CLIENT_ID)
                     DATABRICKS_CLIENT_SECRET: $(DATABRICKS_CLIENT_SECRET)
                     DATABRICKS_BUNDLE_ENV: staging
-                    BUNDLE_VAR_catalog: $(catalog)
-                    BUNDLE_VAR_schema: $(schema)
-                - script: databricks bundle deploy
+                - script: databricks bundle deploy -t staging
                   displayName: Deploy bundle
                   env:
                     DATABRICKS_HOST: $(DATABRICKS_HOST)
                     DATABRICKS_CLIENT_ID: $(DATABRICKS_CLIENT_ID)
                     DATABRICKS_CLIENT_SECRET: $(DATABRICKS_CLIENT_SECRET)
                     DATABRICKS_BUNDLE_ENV: staging
-                    BUNDLE_VAR_catalog: $(catalog)
-                    BUNDLE_VAR_schema: $(schema)
 ```
 
 ## `.azure-pipelines/deploy-prod.yml`
@@ -116,29 +108,25 @@ stages:
                 - checkout: self
                 - script: curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
                   displayName: Install Databricks CLI
-                - script: databricks bundle validate --output json
+                - script: databricks bundle validate -t prod --output json
                   displayName: Validate bundle
                   env:
                     DATABRICKS_HOST: $(DATABRICKS_HOST)
                     DATABRICKS_CLIENT_ID: $(DATABRICKS_CLIENT_ID)
                     DATABRICKS_CLIENT_SECRET: $(DATABRICKS_CLIENT_SECRET)
                     DATABRICKS_BUNDLE_ENV: prod
-                    BUNDLE_VAR_catalog: $(catalog)
-                    BUNDLE_VAR_schema: $(schema)
-                - script: databricks bundle deploy
+                - script: databricks bundle deploy -t prod
                   displayName: Deploy bundle
                   env:
                     DATABRICKS_HOST: $(DATABRICKS_HOST)
                     DATABRICKS_CLIENT_ID: $(DATABRICKS_CLIENT_ID)
                     DATABRICKS_CLIENT_SECRET: $(DATABRICKS_CLIENT_SECRET)
                     DATABRICKS_BUNDLE_ENV: prod
-                    BUNDLE_VAR_catalog: $(catalog)
-                    BUNDLE_VAR_schema: $(schema)
 ```
 
 ## Notes
 
 - Configure approvals on the `prod` Environment in Azure DevOps Project Settings → Environments.
-- Mark `DATABRICKS_CLIENT_ID`, `DATABRICKS_CLIENT_SECRET`, `catalog`, and `schema` as secret in the variable group.
-- `DATABRICKS_BUNDLE_ENV` is hardcoded per pipeline and tells the CLI which target to use (replaces the `-t` flag).
-- `BUNDLE_VAR_catalog` and `BUNDLE_VAR_schema` pass the `catalog` and `schema` variables into bundle variables via the `BUNDLE_VAR_` prefix convention.
+- Mark `DATABRICKS_CLIENT_ID` and `DATABRICKS_CLIENT_SECRET` as secret in the variable group.
+- Every bundle command passes `-t <target>` explicitly. `DATABRICKS_BUNDLE_ENV` is set to the same target as well; keep the two in sync.
+- Catalog, schema and other non-secret per-environment values are committed per target in `databricks.yml` (`targets.<target>.variables`). Do not set `BUNDLE_VAR_catalog` or `BUNDLE_VAR_schema` in CI: `BUNDLE_VAR_*` overrides the target values, so one shared value would point every target at the same tables.

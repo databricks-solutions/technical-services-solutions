@@ -32,7 +32,9 @@ If any of these are missing, ask once before generating; default to GitHub Actio
 | List of resources | yes | — | each item is `<resource_type>:<resource_name>` e.g. `job:my_job_1`. Supported types listed in `resources/` — see the [official supported-resources table](https://docs.databricks.com/aws/en/dev-tools/bundles/resources#supported-resources) |
 | CI/CD tool | no | `github-actions` | one of: `github-actions`, `azure-devops`, `gitlab-ci`, `bitbucket`, `jenkins`, `circleci`. See `cicd/` |
 | Targets | no | `dev`, `staging`, `prod` | bundle deployment environments |
-| Workspace host(s) | no | `${var.workspace_host}` placeholder | one per target, can be filled in later |
+| Workspace host(s) | no | `${var.workspace_host}` placeholder | staging and prod only, can be filled in later. `dev` has no host (it uses the developer's auth profile) |
+| Source target | yes | none | which target the source workspace represents (`dev`, `staging` or `prod`). Values read from the live assets fill only that target |
+| Dev catalog | yes | none | catalog the `dev` target writes to. Must differ from the prod catalog; the dev schema is `dev_${workspace.current_user.short_name}` |
 
 ## Output: project layout
 
@@ -63,11 +65,11 @@ If any of these are missing, ask once before generating; default to GitHub Actio
 
 ## Workflow
 
-1. **Parse inputs.** Extract project name, the `<type>:<name>` resource list, and CI/CD tool. Confirm any missing required fields before proceeding.
+1. **Parse inputs.** Extract project name, the `<type>:<name>` resource list, and CI/CD tool. Confirm any missing required fields before proceeding. Always ask which target the source workspace represents and which catalog `dev` should use. Stop if the dev catalog and schema would equal the production ones.
 2. **Detect mode — fresh start vs. incremental.** Check whether `databricks.yml` already exists in the target project folder.
    - **Fresh start** (file absent): proceed through all steps below.
    - **Incremental** (file present): the project already exists. Skip steps 3, 5, and 6. Go directly to step 4 for the new resources only. Never overwrite existing files — if a resource file for the named asset already exists, report a conflict and stop for that asset.
-3. **Create root folder** named after the project and **generate `databricks.yml`** from `templates/databricks.yml.tmpl` — fills in `bundle.name`, `include:` globs, and `targets` (dev/staging/prod with `${var.workspace_host}` placeholder per target). *(Fresh start only.)*
+3. **Create root folder** named after the project and **generate `databricks.yml`** from `templates/databricks.yml.tmpl` — fills in `bundle.name`, `include:` globs, and `targets` (dev/staging/prod). Set `catalog`, `schema` and every other environment value under `targets.<target>.variables` for each target: the source values go only into the source target, and the other targets get the values the user gave (or a placeholder the user must replace). Never give `catalog` or `schema` a top-level default. *(Fresh start only.)*
 4. **For each resource** in the input list, open `resources/<type>.md` and use its `## Complete schema reference` as the authoritative field catalogue. Build `resources/<type_plural>/<name>.yml` by mapping the asset's **actual existing attributes** onto the schema — include only the fields the asset uses, using the correct field names and types from the schema. Do not copy the complete schema verbatim and do not invent placeholder values for fields the asset does not have. If the resource type owns source code (jobs, pipelines, apps, dashboards), also populate `src/<name>/`:
    - **If migrating an existing resource** (the default case — the user named a real workspace asset): pull the source code used by the resource (original notebook(s) / script(s) / SQL files) and copy their content **verbatim** into `src/<name>/`. Preserve filenames, structure, comments, and logic exactly. Do **not** add headers like `# Originally sourced from: <path>` or replace any block with `# TODO: Replace with actual ingestion logic`. See the corresponding hard rule below.
    - **If starting from scratch** (only when the user explicitly says so): create minimal stub files and populate only the required fields (marked `REQUIRED` in the schema reference).
@@ -113,11 +115,13 @@ Every generated CI/CD pipeline (regardless of tool) must:
 
 1. **Install the Databricks CLI** — use the official installer/action for the tool (see `cicd/<tool>.md`).
 2. **Run `databricks bundle validate --output json`** — fail the pipeline on non-zero exit. The JSON output should be uploaded as a build artifact when the tool supports it.
-3. **Run `databricks bundle deploy`** — only on the deploy pipelines, not on PR validation. The target is inferred from the `DATABRICKS_BUNDLE_ENV` environment variable (never use `-t`).
+3. **Run `databricks bundle deploy`** — only on the deploy pipelines, not on PR validation.
 
-Every step must also set `BUNDLE_VAR_catalog` and `BUNDLE_VAR_schema` (sourced from CI/CD variables named `catalog` and `schema`) so the CLI resolves the bundle variables defined in `databricks.yml`.
+Every bundle command passes the target explicitly with `-t <target>`. Also set `DATABRICKS_BUNDLE_ENV` to the same target and keep the two in sync. Without either, the CLI silently selects the `default: true` target (`dev`).
 
-PR validation runs steps 1–2 only with `DATABRICKS_BUNDLE_ENV=staging`. Staging deploys run 1–3 with `DATABRICKS_BUNDLE_ENV=staging`. Prod deploys run 1–3 with `DATABRICKS_BUNDLE_ENV=prod` and require manual approval / protected environment gating.
+CI never sets `BUNDLE_VAR_catalog`, `BUNDLE_VAR_schema` or any other `BUNDLE_VAR_*` for environment values. `BUNDLE_VAR_*` overrides `targets.<target>.variables`, so a shared CI value points every target at the same tables. Catalog, schema and other non-secret environment values are committed per target in `databricks.yml`; CI holds only the host and the service principal credentials.
+
+PR validation runs steps 1–2 only with `-t staging`. Staging deploys run 1–3 with `-t staging`. Prod deploys run 1–3 with `-t prod` and require manual approval / protected environment gating.
 
 Reference: [Databricks bundle jobs tutorial](https://docs.databricks.com/aws/en/dev-tools/bundles/jobs-tutorial).
 
@@ -127,6 +131,12 @@ Reference: [Databricks bundle jobs tutorial](https://docs.databricks.com/aws/en/
 - **Never** commit secrets, workspace tokens, or service principal credentials into generated YAML or workflow files. Use the CI tool's secret store (`${{ secrets.* }}` for GitHub, variable groups for Azure DevOps, etc.) and Databricks secret scopes (`{{secrets/scope/key}}`) for runtime.
 - **Never** hardcode workspace hosts, cluster IDs, warehouse IDs, catalog or schema names  in resource YAML. Use bundle variables (`${var.catalog}`, `${var.schema}`, etc.) and override per target.
 - **Never** copy the concrete IDs a live read returns straight into resource YAML. Reading an existing asset returns *resolved* values — `warehouse_id: 3d885699...`, `cluster_id`, `instance_pool_id`, and fully-qualified `catalog.schema.table` (including inside SQL strings such as an alert's `query_text` or a dashboard dataset query). Replace each with the matching bundle variable (`${var.warehouse_id}`, `${var.catalog}`, `${var.schema}`, …) and declare it. This is the hardcode rule above applied to the migration read path — `alerts`, `dashboards`, `genie_spaces`, and `quality_monitors` are the usual offenders because they all carry a `warehouse_id`.
+- **Never** copy an environment value from a live read into a target it does not belong to. Every catalog, schema, warehouse ID, cluster ID, pipeline ID, job ID, dashboard ID, model, serving endpoint, volume or storage path, secret scope, principal and notification recipient is a bundle variable set per target, or a bundle reference such as `${resources.pipelines.<key>.id}`. The live read's values fill only the source target.
+- **Never** give `catalog` or `schema` a top-level default, and never let `dev` resolve to the production catalog or schema. Each target sets both under `targets.<target>.variables`; `dev` uses the user's dev catalog and `dev_${workspace.current_user.short_name}`. Stop generation if dev and prod would match.
+- **Never** copy a literal `UNPAUSED` schedule, trigger or alert status. A source that is active uses `${var.schedule_pause_status}`, which is `PAUSED` in `dev`. A source that is paused stays `PAUSED` everywhere.
+- **Never** copy `run_as` from a live read. Only the `staging` and `prod` targets set `run_as`, from `${var.staging_sp_app_id}` / `${var.prod_sp_app_id}`. `dev` runs as the developer.
+- **Never** let `dev` notify production recipients: notification recipients use `${var.notification_emails}`, which is `[]` in `dev`.
+- **Never** set `BUNDLE_VAR_catalog`, `BUNDLE_VAR_schema` or any other `BUNDLE_VAR_*` for environment values in generated CI. `BUNDLE_VAR_*` overrides the per-target values.
 - **Never** reference a `${var.<name>}` in `databricks.yml` without declaring it in a `variables:` block. The generated `databricks.yml` wires `workspace.host: ${var.workspace_host}` and `run_as.service_principal_name: ${var.staging_sp_app_id}` / `${var.prod_sp_app_id}`; all three must be declared under top-level `variables:` (see `templates/databricks.yml.tmpl`). An undeclared reference fails with `Error: reference does not exist: ${var.staging_sp_app_id}` on `bundle validate -t staging`/`-t prod` — and `-t dev` usually passes because it doesn't use them, so the bug ships silently until someone validates staging/prod.
 - **Never** put more than one resource definition per YAML file in `resources/`. One asset, one file.
 - **Never** deploy to `prod` from a dev machine. Prod deploys go through CI only.

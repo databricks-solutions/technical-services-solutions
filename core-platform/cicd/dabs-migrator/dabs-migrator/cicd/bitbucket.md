@@ -9,8 +9,6 @@ Single `bitbucket-pipelines.yml` at repo root.
 | `DATABRICKS_HOST` | yes — use Deployment variables scoped to `staging` / `production` for different values per environment |
 | `DATABRICKS_CLIENT_ID` | yes |
 | `DATABRICKS_CLIENT_SECRET` | yes |
-| `catalog` | yes |
-| `schema` | yes |
 
 ## `bitbucket-pipelines.yml`
 
@@ -34,9 +32,7 @@ definitions:
           - export DATABRICKS_CLIENT_ID=$DATABRICKS_CLIENT_ID
           - export DATABRICKS_CLIENT_SECRET=$DATABRICKS_CLIENT_SECRET
           - export DATABRICKS_BUNDLE_ENV=staging
-          - export BUNDLE_VAR_catalog=$catalog
-          - export BUNDLE_VAR_schema=$schema
-          - databricks bundle validate --output json | tee bundle-validate.json
+          - databricks bundle validate -t staging --output json | tee bundle-validate.json
         artifacts:
           - bundle-validate.json
 
@@ -58,10 +54,8 @@ pipelines:
             - export DATABRICKS_CLIENT_ID=$DATABRICKS_CLIENT_ID
             - export DATABRICKS_CLIENT_SECRET=$DATABRICKS_CLIENT_SECRET
             - export DATABRICKS_BUNDLE_ENV=staging
-            - export BUNDLE_VAR_catalog=$catalog
-            - export BUNDLE_VAR_schema=$schema
-            - databricks bundle validate --output json
-            - databricks bundle deploy
+            - databricks bundle validate -t staging --output json
+            - databricks bundle deploy -t staging
 
   tags:
     "v*":
@@ -76,16 +70,14 @@ pipelines:
             - export DATABRICKS_CLIENT_ID=$DATABRICKS_CLIENT_ID
             - export DATABRICKS_CLIENT_SECRET=$DATABRICKS_CLIENT_SECRET
             - export DATABRICKS_BUNDLE_ENV=prod
-            - export BUNDLE_VAR_catalog=$catalog
-            - export BUNDLE_VAR_schema=$schema
-            - databricks bundle validate --output json
-            - databricks bundle deploy
+            - databricks bundle validate -t prod --output json
+            - databricks bundle deploy -t prod
 ```
 
 ## Notes
 
 - `trigger: manual` on the prod step requires an explicit click in the Bitbucket UI.
 - Use **Deployment variables** scoped to `staging` / `production` so each deployment environment supplies its own `DATABRICKS_HOST`.
-- Mark `DATABRICKS_CLIENT_ID`, `DATABRICKS_CLIENT_SECRET`, `catalog`, and `schema` as secured repository variables.
-- `DATABRICKS_BUNDLE_ENV` is hardcoded per step and tells the CLI which target to use (replaces the `-t` flag).
-- `BUNDLE_VAR_catalog` and `BUNDLE_VAR_schema` pass the `catalog` and `schema` variables into bundle variables via the `BUNDLE_VAR_` prefix convention.
+- Mark `DATABRICKS_CLIENT_ID` and `DATABRICKS_CLIENT_SECRET` as secured repository variables.
+- Every bundle command passes `-t <target>` explicitly. `DATABRICKS_BUNDLE_ENV` is set to the same target as well; keep the two in sync.
+- Catalog, schema and other non-secret per-environment values are committed per target in `databricks.yml` (`targets.<target>.variables`). Do not set `BUNDLE_VAR_catalog` or `BUNDLE_VAR_schema` in CI: `BUNDLE_VAR_*` overrides the target values, so one shared value would point every target at the same tables.

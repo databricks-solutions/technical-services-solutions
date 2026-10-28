@@ -42,7 +42,7 @@ All `path:` values are relative to the bundle root **resolved via the YAML file'
 
 ## Source code
 
-**If migrating an existing pipeline:** clone every notebook/script the source pipeline loaded as a library, verbatim, into `src/{{ pipeline_name }}/`. Preserve filenames, decorators, SQL bodies, and comments exactly. Do not replace any block with `# TODO: Replace with actual ingestion logic` or add `# Originally sourced from:` headers. Update each `libraries[].notebook.path` entry above to match the cloned filenames.
+**If migrating an existing pipeline:** clone every notebook/script the source pipeline loaded as a library, verbatim, into `src/{{ pipeline_name }}/`. Preserve filenames, decorators, SQL bodies, and comments exactly. Do not replace any block with `# TODO: Replace with actual ingestion logic` or add `# Originally sourced from:` headers. Update each `libraries[].notebook.path` entry above to match the cloned filenames. Exception: replace literals that name the source catalog or schema as described in `SKILL.md` ("Environment literals in migrated source"), and report each replaced line.
 
 **Stubs (only when starting from scratch)** — medallion convention:
 

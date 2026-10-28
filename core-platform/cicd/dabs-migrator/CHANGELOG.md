@@ -6,6 +6,21 @@ Entries are reverse-chronological. Each entry: date, what changed, **why** (with
 
 ---
 
+## 2026-10-28: Environment literals in migrated source, and a self-check before reporting (#119)
+
+**Change:**
+1. `SKILL.md`: new section "Environment literals in migrated source". The verbatim-copy rule gets one exception: string literals that name the source catalog or `catalog.schema` are replaced with a lookup (pipeline `configuration` via `spark.conf.get(...)` in Python and `${migrator.catalog}` in SQL; job parameters via `dbutils.widgets.get(...)` or `IDENTIFIER(:catalog || '.' || :schema || '.<table>')`). Exact matches only; anything dynamic, in a library, in another file type, or in a job SQL file task, dashboard or Genie space is not rewritten and the resource is reported as "not dev-safe". Every replaced line is reported.
+2. `SKILL.md`: new workflow step 7 and section "Environment self-check": search `resources/` and `src/` for the production values captured from the live read, check for literal `UNPAUSED` and `run_as`, run `bundle validate -t <target> -o json` for every target, and confirm `dev` resolves to no production value. The report (now step 8) lists variables per target, replaced lines and "not dev-safe" resources.
+3. `resources/jobs.md`, `resources/pipelines.md`: the "copy verbatim" guidance points to the exception.
+
+**Why:** with variables in the YAML (previous two entries), migrated notebooks and SQL still hardcoded fully qualified production table names, so a `dev` run still read and wrote production tables. Reviewers agreed (plan decision D1) to replace and report, and to stop rather than guess when a replacement is ambiguous. The self-check turns the isolation rules into something the agent verifies instead of only reads.
+
+**Verify in sandbox (plan test T9):** Python and SQL pipeline sources and a job notebook with a hardcoded catalog: only the literal changes, the rest is byte-identical, and the dev run writes only to dev tables. Pipeline SQL `${key}` substitution and `IDENTIFIER()` with parameter markers are documented in "Use parameters with pipelines" and the IDENTIFIER clause reference.
+
+**Where:** `SKILL.md` (Workflow steps 7 and 8, the two new sections, the verbatim hard rule), `resources/jobs.md`, `resources/pipelines.md`, this entry.
+
+---
+
 ## 2026-10-28: Environment isolation rules in the resource docs (#108)
 
 **Change:** added a "Migration: environment isolation" section to `resources/` for pipelines, jobs, alerts, quality monitors, model serving endpoints, volumes, registered models, apps, external locations, dashboards and Genie spaces. Each lists the fields a live read fills with environment values and what to use instead: `${var.catalog}` / `${var.schema}` / `${var.warehouse_id}` / `${var.notification_emails}` / `${var.schedule_pause_status}`, and `${resources.pipelines.<key>.id}` / `${resources.jobs.<key>.id}` for job task references. `alerts.md` no longer says to preserve `pause_status` exactly: a paused source stays `PAUSED`, an active source uses `${var.schedule_pause_status}`.

@@ -7,7 +7,7 @@ Job API: https://docs.databricks.com/api/workspace/jobs/create
 
 ## Source code
 
-**If migrating an existing job:** clone the original notebook(s) and any referenced scripts verbatim into `src/{{ job_name }}/`. Keep filenames, comments, and logic intact. Do not insert `# TODO` placeholders or `# Originally sourced from:` headers — the user's working code must survive the migration unchanged. Update the `notebook_path` / `sql_task.file.path` entries above to match the cloned filenames — including the file extension (see below).
+**If migrating an existing job:** clone the original notebook(s) and any referenced scripts verbatim into `src/{{ job_name }}/`. Keep filenames, comments, and logic intact. Do not insert `# TODO` placeholders or `# Originally sourced from:` headers — the user's working code must survive the migration unchanged. Update the `notebook_path` / `sql_task.file.path` entries above to match the cloned filenames — including the file extension (see below). Exception: replace literals that name the source catalog or schema as described in `SKILL.md` ("Environment literals in migrated source"), and report each replaced line.
 
 **Stubs (only when starting from scratch):**
 

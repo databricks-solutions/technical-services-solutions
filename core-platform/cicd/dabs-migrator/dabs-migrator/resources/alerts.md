@@ -15,8 +15,20 @@ databricks alerts-v2 get-alert <id> -p <profile> -o json 2>/dev/null
 
 - `warehouse_id` comes back from a live read as a concrete ID (e.g. `3d885699…`). Replace it with `${var.warehouse_id}` and declare the variable — never inline the raw ID.
 - `query_text` is read back with fully-qualified table names. Parameterize the catalog and schema with `${var.catalog}` / `${var.schema}` (e.g. `SELECT count(*) FROM ${var.catalog}.${var.schema}.<table>`) rather than hardcoding them.
-- Preserve `schedule.pause_status` exactly as the source alert has it (`PAUSED` or `UNPAUSED`). Omitting it silently flips a paused alert to active.
+- Keep a paused source alert `PAUSED` in every target. An active (`UNPAUSED`) source alert uses `schedule.pause_status: ${var.schedule_pause_status}`, which is `PAUSED` in `dev` and `UNPAUSED` in `staging` / `prod`. Do not omit `pause_status`: omitting it silently activates a paused alert.
 - **Omit `evaluation.notification` entirely unless it has real content.** A live read returns the `notification` key even when the alert has no subscriptions, so a naive copy produces an empty `evaluation.notification: {}`. That passes `bundle validate` but the create API rejects it: `evaluation.notification is provided but doesn't contain any value, please remove this field if you don't want to set it (400 INVALID_PARAMETER_VALUE)`. Only emit `notification` when it carries `subscriptions` (or `notify_on_ok`/`retrigger_seconds`); otherwise drop the whole key. The same "drop empty optional sub-objects" rule applies to any block you'd otherwise serialize as `{}`.
+
+## Migration: environment isolation
+
+Applies the environment-value hard rules in `SKILL.md`. A live read returns the source environment's values. Put them only in the source target's `targets.<target>.variables`; every other target, and `dev` in particular, gets its own value. Never leave a literal from the live read in the fields below.
+
+| Field | Use |
+|---|---|
+| `schedule.pause_status` | source `UNPAUSED`: `${var.schedule_pause_status}`. Source `PAUSED`: keep `PAUSED` |
+| `warehouse_id` | `${var.warehouse_id}` |
+| fully qualified tables in `query_text` | `${var.catalog}.${var.schema}.<table>` |
+| `evaluation.notification.subscriptions[]` | per-target recipients. Omit the block in `dev` (an empty `notification` is rejected, see above) |
+| `run_as`, `run_as_user_name` | never copied from the live read |
 
 ## Complete schema reference
 

@@ -42,7 +42,7 @@ All `path:` values are relative to the bundle root **resolved via the YAML file'
 
 ## Source code
 
-**If migrating an existing pipeline:** clone every notebook/script the source pipeline loaded as a library, verbatim, into `src/{{ pipeline_name }}/`. Preserve filenames, decorators, SQL bodies, and comments exactly. Do not replace any block with `# TODO: Replace with actual ingestion logic` or add `# Originally sourced from:` headers. Update each `libraries[].notebook.path` entry above to match the cloned filenames.
+**If migrating an existing pipeline:** clone every notebook/script the source pipeline loaded as a library, verbatim, into `src/{{ pipeline_name }}/`. Preserve filenames, decorators, SQL bodies, and comments exactly. Do not replace any block with `# TODO: Replace with actual ingestion logic` or add `# Originally sourced from:` headers. Update each `libraries[].notebook.path` entry above to match the cloned filenames. Exception: replace literals that name the source catalog or schema as described in `SKILL.md` ("Environment literals in migrated source"), and report each replaced line.
 
 **Stubs (only when starting from scratch)** — medallion convention:
 
@@ -57,6 +57,21 @@ Each should `import dlt` and define `@dlt.table`-decorated functions.
 - **Continuous pipeline** — set `continuous: true`; omit any external scheduler.
 - **Serverless** — drop the `clusters:` block; set `serverless: true`.
 - **SQL pipeline** — replace `.py` libraries with `.sql` files and switch the entry kind to `file:` (one `file:` entry per `.sql` source).
+
+## Migration: environment isolation
+
+Applies the environment-value hard rules in `SKILL.md`. A live read returns the source environment's values. Put them only in the source target's `targets.<target>.variables`; every other target, and `dev` in particular, gets its own value. Never leave a literal from the live read in the fields below.
+
+| Field | Use |
+|---|---|
+| `catalog`, `schema` | `${var.catalog}`, `${var.schema}` |
+| `event_log.catalog`, `event_log.schema` | `${var.catalog}`, `${var.schema}` (keep `event_log.name`) |
+| `storage`, `root_path` | omit for Unity Catalog pipelines; if the source sets them, a per-target variable |
+| `configuration` values that name a catalog, schema, path or table | a per-target variable, for example `migrator.catalog: ${var.catalog}` |
+| `gateway_definition.gateway_storage_catalog` / `gateway_storage_schema`, `ingestion_definition` destination `catalog_name` / `schema_name` | `${var.catalog}`, `${var.schema}` (or a dedicated per-target variable) |
+| `notifications[].email_recipients` | `${var.notification_emails}` |
+| `run_as` | never copied. Only `staging` / `prod` set `run_as` at the target level |
+| `continuous: true` | keep, but `dev` deploys pause it (development mode). If the pipeline is triggered by a job, see `jobs.md` |
 
 ## Complete schema reference
 

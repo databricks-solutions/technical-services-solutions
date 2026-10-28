@@ -75,7 +75,42 @@ If any of these are missing, ask once before generating; default to GitHub Actio
    - **If starting from scratch** (only when the user explicitly says so): create minimal stub files and populate only the required fields (marked `REQUIRED` in the schema reference).
 5. **Generate CI/CD files** from the user's chosen tool's reference under `cicd/<tool>.md`. Always emit at least: PR validation pipeline, staging deploy pipeline, prod deploy pipeline. All pipelines must follow the **CI/CD action contract** below. *(Fresh start only.)*
 6. **Write supporting files**: `requirements.txt` (databricks-cli, pytest, ruff baseline), `.gitignore` (Python + DABs `.databricks/`), `tests/test_unity_catalog.py` (copied from `templates/test_unity_catalog.py`), and a minimal `README.md` documenting how to deploy. *(Fresh start only.)*
-7. **Report** what was generated: tree of created/modified files. In incremental mode, explicitly list which files were added and confirm that no existing files were touched.
+7. **Self-check before reporting.** Run the checks in [Environment self-check](#environment-self-check). If any check fails, fix the output and run them again. Never report success with a failing check.
+8. **Report** what was generated: tree of created/modified files. In incremental mode, explicitly list which files were added and confirm that no existing files were touched. Always include: the variables set per target, every source line replaced under [Environment literals in migrated source](#environment-literals-in-migrated-source), and any resource marked "not dev-safe".
+
+## Environment literals in migrated source
+
+Migrated source is copied verbatim (see the hard rules), with one exception: string literals that name the **source** catalog, or a `<catalog>.<schema>` prefix, are replaced with a lookup, so `dev` reads and writes its own tables. Nothing else in the file changes.
+
+| Source | Replace `"<src_catalog>.<src_schema>.orders"` with | Wiring |
+|---|---|---|
+| Pipeline, Python | `f"{spark.conf.get('migrator.catalog')}.{spark.conf.get('migrator.schema')}.orders"` | pipeline `configuration: {migrator.catalog: ${var.catalog}, migrator.schema: ${var.schema}}` |
+| Pipeline, SQL | `${migrator.catalog}.${migrator.schema}.orders` | same `configuration` keys |
+| Job notebook task, Python | `f"{dbutils.widgets.get('catalog')}.{dbutils.widgets.get('schema')}.orders"` | job `parameters: [{name: catalog, default: ${var.catalog}}, {name: schema, default: ${var.schema}}]` |
+| Job notebook task, SQL cells | `IDENTIFIER(:catalog || '.' || :schema || '.orders')` | same job `parameters` |
+
+Rules:
+
+1. **Exact matches only.** Replace a literal only when it is exactly the source catalog, the source `catalog.schema`, or a fully qualified `catalog.schema.table` that starts with them. Never touch partial matches, comments that only mention the name, or unrelated strings that happen to be equal.
+2. **Unqualified names stay as they are.** A pipeline already writes to its own `catalog` / `schema`, so `orders` inside the pipeline needs no change.
+3. **Stop on ambiguity.** Do not rewrite, and mark the resource **"not dev-safe"** in the report, when the name is built dynamically (string concatenation, f-strings with other variables, config files), lives in a library, wheel or `%run` target outside the migrated files, appears in a file type other than Python or SQL, or appears in a job SQL file task, a dashboard dataset or a Genie space. Never guess.
+4. **Report every replacement:** file, line, old text, new text. The rest of each file stays byte-identical to the source.
+5. **Other environment values in code** (secret scopes, endpoint names, storage paths, recipients) follow the same rules: replace exact literals with a configuration or parameter lookup, or mark the resource "not dev-safe".
+
+## Environment self-check
+
+Run before reporting (workflow step 7). Keep the list of production values captured from the live read (source catalog and schema, workspace host, warehouse and cluster IDs, pipeline, job and dashboard IDs, recipients) in memory only, never in the generated files.
+
+1. **No production literals.** Search `resources/` and `src/` for each captured value:
+   ```bash
+   grep -rnF --include='*.yml' --include='*.py' --include='*.sql' --include='*.json' "<value>" resources/ src/
+   ```
+   Any hit fails, except in a resource already reported as "not dev-safe". When the source workspace is `dev`, the captured values are dev values: check that the `staging` and `prod` targets do not resolve to them instead.
+2. **No literal schedules or identities.** `grep -rn 'UNPAUSED' resources/` and `grep -rn 'run_as' resources/` return nothing.
+3. **Every target resolves.** For each target, `databricks bundle validate -t <target> -o json > validate-<target>.json`. A target without auth, or still holding placeholders, is reported as "not checked", never as passing.
+4. **dev is isolated.** In `validate-dev.json`: no captured production value anywhere, every `pause_status` is `PAUSED`, no `run_as` under `resources`, and `catalog` / `schema` differ from the prod target's values.
+
+Delete the `validate-*.json` files after the check; never commit them.
 
 ## Reading assets out of the workspace
 
@@ -143,7 +178,7 @@ Reference: [Databricks bundle jobs tutorial](https://docs.databricks.com/aws/en/
 - **Never** use `../src/...` in resource YAML paths. Resource files live at `resources/<type>/<name>.yml` (two levels under the bundle root), so paths to `src/` must be `../../src/<name>/...`. Using a single `..` resolves to `resources/src/...` and the deploy fails.
 - **Never** mismatch the library entry kind to the source extension in a `pipelines` resource's `libraries:` block. Spark Declarative Pipelines (SDP) require `notebook:` for `.py` sources and `file:` for `.sql` sources. Mismatch produces `Error: expected a file for "resources.pipelines.<name>.libraries[0].file.path"` (or the symmetric notebook variant).
 - **Never** use `target:` on new pipelines. SDP uses `schema:` — `target` is the legacy DLT field and is deprecated.
-- **Never** replace migrated source files with placeholder, stub, sample, or "blueprint" code. When migrating an existing Databricks asset (job, pipeline, app, dashboard, or any resource that owns code), clone the original notebook/script/file content **verbatim** into `src/<name>/`. Do not insert `# TODO: Replace with actual ingestion logic...`, `# Originally sourced from: <path>` headers, or simplified example code. The user's working logic must survive the migration intact — anything else silently breaks production behavior. Only generate stub files when the user explicitly states they are starting from scratch (no original asset to migrate).
+- **Never** replace migrated source files with placeholder, stub, sample, or "blueprint" code. When migrating an existing Databricks asset (job, pipeline, app, dashboard, or any resource that owns code), clone the original notebook/script/file content **verbatim** into `src/<name>/`. Do not insert `# TODO: Replace with actual ingestion logic...`, `# Originally sourced from: <path>` headers, or simplified example code. The user's working logic must survive the migration intact — anything else silently breaks production behavior. Only generate stub files when the user explicitly states they are starting from scratch (no original asset to migrate). The only permitted edit is the environment-literal replacement in [Environment literals in migrated source](#environment-literals-in-migrated-source), and each replaced line is reported.
 - **Never** emit a `genie_spaces` resource without its `serialized_space` (or a `file_path` pointing at the exported `.geniespace.json`). That body holds the space's `data_sources.tables`, `instructions`, and `config.sample_questions`; dropping it deploys an **empty** Genie space that validates fine but has no tables or sample questions. Export the live space (`databricks bundle generate genie-space`, or the Get Genie Space API's `serialized_space` field) and carry it over verbatim. See `resources/genie_spaces.md`.
 - **Never** emit an empty optional sub-object (`{}`) just because a live read returned the key. The clearest offender is an alert's `evaluation.notification`: a read returns the `notification` key even with no subscriptions, and copying it produces `evaluation.notification: {}`, which the create API rejects with `evaluation.notification is provided but doesn't contain any value, please remove this field`. Drop any optional block that would serialize empty. See `resources/alerts.md`.
 - **Never** write API resource paths into a dashboard's `.lvdash.json` `name` fields. Export the dashboard's `serialized_dashboard` (via `databricks bundle generate dashboard` or the Lakeview GET `serialized_dashboard` field) and use it verbatim — it already uses short slug `name`s and carries widget `position`. If you instead reconstruct the JSON from per-collection API reads, the `name`s become full paths like `dashboards/<id>/datasets/<id>` (contain `/`, exceed 63 chars) and `layout[].position` ends up empty, which fails deploy validation. See `resources/dashboards.md`.

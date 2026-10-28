@@ -38,6 +38,15 @@ When migrating an existing space, the generated resource **must** include `seria
 
 **Every `id` inside `serialized_space` must be a lowercase 32-character hex UUID with no hyphens** (e.g. `a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6`). This applies to `sample_questions[].id`, `instructions.text_instructions[].id`, and any other `id` field in the body. Placeholder or friendly ids like `q1` pass `bundle validate` but the create API rejects them: `Failed to parse export proto: Invalid id for sample_question.id: 'q1'. Expected lowercase 32-hex UUID without hyphens (400 INVALID_PARAMETER_VALUE)`. When migrating, keep the exported ids verbatim (they are already valid); when authoring from scratch, generate 32-hex ids (e.g. `python -c "import uuid;print(uuid.uuid4().hex)"`).
 
+## Migration: environment isolation
+
+Applies the environment-value hard rules in `SKILL.md`. A live read returns the source environment's values. Put them only in the source target's `targets.<target>.variables`; every other target, and `dev` in particular, gets its own value. Never leave a literal from the live read in the fields below.
+
+| Field | Use |
+|---|---|
+| `warehouse_id` | `${var.warehouse_id}` |
+| table identifiers in `serialized_space` | `${var.catalog}.${var.schema}.<table>` (see above). If the space is exported to a `file_path` JSON and variables are not interpolated there, list the space as "reads production tables" in the report |
+
 ## Complete schema reference
 
 ```yaml

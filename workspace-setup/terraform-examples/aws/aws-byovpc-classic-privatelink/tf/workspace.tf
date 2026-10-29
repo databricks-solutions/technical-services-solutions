@@ -81,3 +81,22 @@ resource "time_sleep" "wait_2_minutes" {
   depends_on      = [databricks_mws_workspaces.this]
   create_duration = "120s"
 }
+
+# Workspace admin for var.workspace_admin_email (skipped when empty). Errors at apply time
+# if the email is not a Databricks account user. Also granted ALL PRIVILEGES on the user-defined catalog.
+data "databricks_user" "workspace_admin" {
+  count     = var.workspace_admin_email != "" ? 1 : 0
+  provider  = databricks.mws
+  user_name = var.workspace_admin_email
+}
+
+resource "databricks_mws_permission_assignment" "workspace_admin" {
+  count        = var.workspace_admin_email != "" ? 1 : 0
+  provider     = databricks.mws
+  workspace_id = databricks_mws_workspaces.this.workspace_id
+  principal_id = data.databricks_user.workspace_admin[0].id
+  permissions  = ["ADMIN"]
+
+  # Assign only once the workspace has its metastore.
+  depends_on = [databricks_metastore_assignment.this]
+}

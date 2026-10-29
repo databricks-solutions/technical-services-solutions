@@ -113,12 +113,6 @@ variable "public_subnets_cidr" {
   }
 }
 
-variable "intra_subnet_cidr" {
-  description = "List of intra subnet CIDR blocks that contain the STS and Kinesis VPC endpoints (only used if creating new VPC)"
-  type        = list(string)
-  default     = []
-}
-
 # =============================================================================
 # Security Group Configuration
 # =============================================================================
@@ -168,6 +162,16 @@ variable "metastore_name" {
 # =============================================================================
 # User Defined Catalog
 # =============================================================================
+variable "workspace_admin_email" {
+  description = "Email of a Databricks account user to make workspace admin and grant ALL PRIVILEGES on the user-defined catalog. Should be the person who will use the workspace; otherwise only the Terraform principal (the catalog owner) can see the catalog. Leave empty to skip."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.workspace_admin_email == "" || can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", var.workspace_admin_email))
+    error_message = "workspace_admin_email must be empty or a valid email address."
+  }
+}
+
 variable "new_catalog" {
   description = "Boolean flag to create a user-defined catalog (with its storage credential, IAM role, S3 bucket, and external location). Defaults to true."
   type        = bool

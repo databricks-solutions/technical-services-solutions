@@ -4,7 +4,7 @@
 > **This is the recommended, canonical Azure VNet injection template.** It supersedes the
 > legacy [`azure-vnet-injection`](../azure-vnet-injection/) example, which is now deprecated.
 
-This Terraform example deploys an Azure Databricks workspace with VNet Injection, Unity Catalog, and a user-defined catalog with an external location. It provisions the full networking stack (VNet, subnets, NSG, NAT Gateway), a Databricks workspace with Secure Cluster Connectivity (No Public IP), configures Unity Catalog with a storage credential, external location, and user-defined catalog backed by an Azure Storage Account, and creates a single-node Databricks cluster on the latest LTS runtime governed by the built-in **Personal Compute** cluster policy.
+This Terraform example deploys an Azure Databricks workspace with VNet Injection, Unity Catalog, and a user-defined catalog with an external location. It provisions the full networking stack (VNet, subnets, NSG, NAT Gateway), a Databricks workspace with Secure Cluster Connectivity (No Public IP), configures Unity Catalog with a storage credential, external location, and user-defined catalog backed by an Azure Storage Account, and creates a single-node Databricks cluster on the latest LTS runtime in standard (shared) access mode.
 
 By default this deployment creates a new virtual network from scratch. It can also bring an existing VNet instead: set `create_new_vnet = false` and provide `vnet_name` and `vnet_resource_group_name` for the existing network. In that mode the module looks up the existing VNet and resource group and creates the delegated subnets, NSG, and NAT Gateway within it.
 
@@ -119,7 +119,7 @@ The code provisions:
 9. **Storage credential** – A Unity Catalog storage credential backed by the managed identity.
 10. **External location** – Points to the storage container using the storage credential.
 11. **User-defined catalog** – A Unity Catalog catalog backed by the external location's storage.
-12. **Single-node cluster (optional)** – Created only when `create_cluster = true` (default `false`). A UC-compatible cluster attached to the built-in **Personal Compute** policy, which enforces Single User access mode, the single-node profile, and other UC-safe defaults. Overrides set by this template: latest LTS Databricks Runtime (via the `databricks_spark_version` data source), node type (`var.node_type_id`), idle auto-termination (`var.cluster_autotermination_minutes`, default `10`), access mode (constant `SINGLE_USER`), and a `ClusterType = TerraformDeploymentTesting` custom tag. The cluster is created after the metastore assignment and workspace admin permission so UC is fully wired up before it boots. Single-user ownership is assigned to `var.admin_user`.
+12. **Single-node cluster (optional)** – Created only when `create_cluster = true` (default `false`). A UC-compatible single-node cluster in standard (shared) access mode, so workspace users can attach to it. No cluster policy is used; the template sets the latest LTS Databricks Runtime (via the `databricks_spark_version` data source), node type (`var.node_type_id`), idle auto-termination (`var.cluster_autotermination_minutes`, default `10`), access mode (constant `USER_ISOLATION`, shown as Standard/Shared in the UI), single-node (`is_single_node`), and a `ClusterType = TerraformDeploymentTesting` custom tag. The cluster is created after the metastore assignment and workspace admin permission so UC is fully wired up before it boots.
 
 ### Variables
 
@@ -147,7 +147,7 @@ Copy `terraform.tfvars.example` to `terraform.tfvars` in the `tf/` directory and
 | `new_metastore_name` | **(Optional)** Name for the new metastore. Required when `existing_metastore_id` is empty. |
 | `create_cluster` | **(Optional)** Whether to create the single-node UC cluster (and its policy/runtime lookups). Default: `false`. |
 | `node_type_id` | **(Optional)** Azure VM SKU used for the single-node UC cluster driver. Default: `Standard_DS3_v2`. |
-| `cluster_autotermination_minutes` | **(Optional)** Idle minutes before the single-node cluster auto-terminates. Default: `10`. Minimum: `10`. Must fit within the Personal Compute policy's allowed range in your workspace. |
+| `cluster_autotermination_minutes` | **(Optional)** Idle minutes before the single-node cluster auto-terminates. Default: `10`. Minimum: `10`. |
 | `create_new_vnet` | **(Optional)** Whether to create a new VNet (`true`, default) or use an existing one (`false`). When `false`, set `vnet_name` to the existing VNet. |
 | `vnet_name` | **(Conditional)** Name of the virtual network. Required when `create_new_vnet = false` (the existing VNet to reuse); ignored when creating a new VNet. |
 | `vnet_resource_group_name` | **(Required)** Name of the resource group for the VNet and networking resources. Must differ from `resource_group_name`. |
@@ -204,7 +204,7 @@ To verify the deployment succeeded:
 1. **Terraform outputs** – From the `tf/` directory, run `terraform output` and confirm `workspace_url`, `workspace_id`, and `vnet_id` are present and non-empty. `cluster_id` is populated only when `create_cluster = true` (otherwise it is `null`).
 2. **Azure portal** – In your subscription, check that the resource group, VNet, subnets, NAT gateway, and the Databricks workspace exist and are in "Succeeded" or "Ready" state.
 3. **Workspace access** – Open `terraform output -raw workspace_url` in a browser and sign in (public access is always enabled).
-4. **Single-node cluster** (only when `create_cluster = true`) – Under **Compute**, locate the cluster named `<workspace_name>-uc-cluster`. Confirm the **Policy** field is `Personal Compute`, access mode matches `var.data_security_mode` (default **Single user**), runtime is the latest LTS, node type matches `var.node_type_id`, auto-termination matches `var.cluster_autotermination_minutes` (default `10`), and the cluster carries the `ClusterType = TerraformDeploymentTesting` tag. Start the cluster and wait for "Running".
+4. **Single-node cluster** (only when `create_cluster = true`) – Under **Compute**, locate the cluster named `<workspace_name>-uc-cluster`. Confirm the access mode is **Standard** (shared), runtime is the latest LTS, node type matches `var.node_type_id`, auto-termination matches `var.cluster_autotermination_minutes` (default `10`), and the cluster carries the `ClusterType = TerraformDeploymentTesting` tag. Start the cluster and wait for "Running".
 
 ## Clean-up
 
@@ -227,7 +227,6 @@ Type `yes` when prompted. Destruction can take several minutes.
 | Subnet or delegation errors | CIDR too small or delegation conflict | Ensure `cidr` encompasses both subnets. Set `subnet_public_cidr` and `subnet_private_cidr` to non-overlapping CIDRs within the VNet (e.g. /24 each within a /20 VNet). |
 | Resource group name conflict | `vnet_resource_group_name` is the same as `resource_group_name` | These must be different values. Terraform creates two separate resource groups; using the same name causes a conflict on the second create. |
 | NAT Gateway or outbound connectivity issues | Cluster nodes cannot reach the control plane | Verify the NAT Gateway is associated to both subnets and has a public IP. Check that NSG rules allow outbound traffic on port 443. |
-| `cannot create cluster policy: Policy named 'Personal Compute' does not exist` on first apply | Resource propagation lag — the Personal Compute policy exists in the workspace but hasn't fully propagated by the time the cluster resource is created. This is a known intermittent Terraform behavior when resources depend on recently provisioned cloud state. | Re-run `terraform apply`. The second apply typically succeeds once the policy has propagated. No changes to the configuration are needed. |
 
 > **Note:** Terraform occasionally encounters transient errors during first-time deployments — particularly when cloud resources take a moment to fully propagate after being created. If you hit an unexpected error on `terraform apply`, a second run will often resolve it without any changes to the configuration.
 
@@ -252,7 +251,7 @@ tf/
 | File | Purpose |
 |------|--------|
 | **azure.tf** | Resource group for the Databricks workspace and Unity Catalog resources. |
-| **cluster.tf** | `databricks_spark_version` (latest LTS) and `databricks_cluster_policy` ("Personal Compute") data sources, plus the `databricks_cluster` resource attached to the Personal Compute policy. Overrides node type, Spark version, auto-termination minutes, and the `ClusterType` tag. Depends on metastore assignment and workspace admin permission. |
+| **cluster.tf** | `databricks_spark_version` (latest LTS) data source and the `databricks_cluster` resource (standard/shared access mode, single node, no cluster policy). Sets node type, Spark version, auto-termination minutes, and the `ClusterType` tag. Depends on metastore assignment and workspace admin permission. |
 | **databricks.tf** | `azurerm_databricks_workspace` (Premium, VNet injection, No Public IP); metastore creation or assignment; workspace admin permissions; metastore owner group. |
 | **network.tf** | VNet and its resource group — created when `create_new_vnet = true`, or looked up via data sources when `create_new_vnet = false` (BYO existing VNet); NSG; public and private subnets (CIDRs from `subnet_public_cidr` and `subnet_private_cidr`); NAT Gateway with public IP and subnet associations. |
 | **providers.tf** | Azure and Databricks providers (workspace-level via workspace URL, account-level via accounts endpoint). Auth via Azure CLI. |

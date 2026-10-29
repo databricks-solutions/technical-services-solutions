@@ -39,8 +39,6 @@ vpc_cidr_range      = "10.0.0.0/16"
 availability_zones  = ["us-west-2a", "us-west-2b"]
 private_subnets_cidr = ["10.0.1.0/24", "10.0.2.0/24"]
 public_subnets_cidr  = ["10.0.101.0/24", "10.0.102.0/24"]
-intra_subnet_cidr    = ["10.0.201.0/24"]
-
 # Option 2: Use existing VPC (uncomment and specify IDs)
 # vpc_id     = "vpc-xxxxxxxxx"
 # subnet_ids = ["subnet-xxxxxxxxx", "subnet-yyyyyyyyy"]
@@ -97,3 +95,12 @@ new_cluster = false
 
 # Optional: override the cluster default (only used when new_cluster = true)
 # cluster_autotermination_minutes = 10
+
+# =============================================================================
+# Workspace Admin / Catalog Access (Optional)
+# =============================================================================
+
+# Databricks account user to make workspace admin and grant ALL PRIVILEGES on the
+# user-defined catalog, external location and storage credential. Without it, only the
+# Terraform principal can see the catalog. Leave empty to skip.
+workspace_admin_email = "you@company.com"

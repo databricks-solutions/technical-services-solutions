@@ -2,54 +2,21 @@
 
 A read-only profiling skill that assesses Tableau files for migration to
 Databricks AI/BI dashboards. It profiles each file, classifies every feature as
-automatable / automatable-with-workaround / manual (anchored to the `/importBI`
+Auto / Auto + workaround / Manual (anchored to the `/importBI`
 migration agent), and estimates the automation uplift from applying
 [uc-semantics-patterns](https://github.com/databricks-solutions/uc-semantics-patterns).
 
 It **does not convert anything** — no datasets, no widgets, no dashboards are created.
 
+**Current version**: 2.0.0 — see [CHANGELOG.md](CHANGELOG.md).
+
 > [!CAUTION]
-> The assessment — and the `/importBI` conversion it anchors to — is performed by
-> an **LLM-based agent under active development**. Every count, classification, and
-> automation estimate is **indicative** and must be **reviewed and validated** by a
-> human before you plan or execute a migration. Treat the report as a starting
-> point, not a guarantee.
+> Results are produced by an LLM-based agent under active development and are
+> **indicative only** — review and validate them before planning a migration. See
+> the full [Disclaimer](../README.md#disclaimer).
 
-> [!IMPORTANT]
-> The Automation Uplift section (and the eventual conversion) reads the
-> [uc-semantics-patterns](https://github.com/databricks-solutions/uc-semantics-patterns)
-> repository **live at each run**, so the workspace running the skill needs
-> outbound access to **github.com**. Without it, the uplift falls back to
-> "Pattern repo unavailable — uplift not computed; baseline applies."
-
-> [!NOTE]
-> If you observe on some runs that the skill is abandoned and the process falls
-> back to a plain `/importBI` assessment, prompt additionally:
-> "use the tableau-migration-assessment skill to wrap up the migration report".
-
-## User journey
-
-1. Install the `tableau-migration-assessment` folder (see
-   [Adding the skill in Genie Code](#adding-the-skill-in-genie-code)).
-2. Open a new dashboard page.
-3. **Run the assessment.** In Genie Code: *"assess the Tableau workbook with my
-   tableau-migration-assessment skill"* (attach the file, or point to the volume).
-   To get the detailed manual list in the same pass, add it to the prompt, e.g.
-   *"assess the Tableau files in `/Volumes/catalog/schema/volume/` with my
-   tableau-migration-assessment skill and include the 🔧 Manual Adjustment Report"*.
-4. **Review the result** in the chat — a single report, Migration Summary first,
-   then the per-file detail sections.
-5. **Get the 🔧 Manual Adjustment Report** — if you did not ask for it up front, the
-   skill offers it after the main report; accept to get every 🔧 item named with a
-   reason.
-6. **Save the results (optional)** — first switch context to your workspace user
-   folder *in the same conversation*, then *"save results in MD and HTML format in
-   my user folder"*.
-7. **Convert (when ready)** — hand the file to `/importBI`, pointing it at the
-   patterns repo for the calculation conversions:
-   ```
-   /importBI Convert the workbook [attach the file, or provide a volume path], as additional reference for the calculations conversion use https://github.com/databricks-solutions/uc-semantics-patterns
-   ```
+For installation, invocation, prerequisites (including GitHub access for the
+Automation Uplift), and troubleshooting, see the [main README](../README.md).
 
 ## Supported file types
 
@@ -63,68 +30,36 @@ It **does not convert anything** — no datasets, no widgets, no dashboards are 
 `.tds` / `.tdsx` have no worksheets, dashboards, filters, or actions, so their
 visual/interaction sections collapse into a single model-only callout.
 
-## Adding the skill in Genie Code
+## Example prompts
 
-This skill follows the open [Agent Skills](https://docs.databricks.com/aws/en/assistant/skills)
-standard, so adding it to **Genie Code** is just a matter of dropping its folder
-into a `.assistant/skills/` directory — no packaging or marketplace step. Genie
-Code loads it automatically the next time you start a chat.
-
-First pick where it lives:
-
-- **User skill (just you):** `/Workspace/Users/[user@databricks.com]/.assistant/skills/`
-  — good for personal use or prototyping before promoting it to the workspace.
-- **Workspace skill (whole workspace):** `/Workspace/.assistant/skills/` — makes it
-  available to everyone. Requires access to the workspace skills folder (ask a
-  workspace admin if you don't have it).
-
-Then:
-
-1. In the **Genie Code** pane, click **Settings → Open skills folder** to jump to
-   the right `.assistant/skills/` directory (user or workspace).
-2. Create a folder named `tableau-migration-assessment/` inside it.
-3. Add this skill's **`SKILL.md`** to that folder. `SKILL.md` is required — its
-   `name` / `description` frontmatter is what Genie Code uses to auto-load the
-   skill. (`README.md` is optional; it's just this overview.)
-   ```
-   /Workspace/Users/[user@databricks.com]/.assistant/skills/
-   └── tableau-migration-assessment/
-       └── SKILL.md
-   ```
-4. Start a **new chat**. Genie Code picks up the skill automatically. Edits to a
-   skill only take effect in new chats — if it still looks stale, hard-refresh the
-   browser tab to clear cached skill metadata.
-
-> **Tip:** back your `.assistant/skills/` folder with a **Databricks Git folder** to
-> version the skill and share it with your team.
->
-> **Other agents:** because `SKILL.md` is Agent-Skills-standard, the same skill also
-> installs into Claude Code, Cursor, or GitHub Copilot via the Databricks
-> agent-skills plugin path — see
-> [Agent skills for AI coding assistants](https://docs.databricks.com/aws/en/agent-skills).
-
-## How to invoke
-
-Once the skill is in your `.assistant/skills/`, there are two ways to invoke it:
-
-**1. Automatically (description-triggered)** — Genie Code loads it on its own when
-you ask to **assess, profile, audit, or evaluate** Tableau files for migration.
-Point it at either a Unity Catalog Volume or attached files. No mention needed.
+Start prompts with `@tableau-migration-assessment` so the skill is used.
 
 Assess a UC Volume (bulk):
 ```
-Assess the Tableau files in /Volumes/catalog/schema/volume/ for AI/BI migration.
+@tableau-migration-assessment assess the Tableau files in /Volumes/catalog/schema/volume/ for AI/BI migration.
 ```
 
 Assess attached files:
 ```
-Profile these workbooks for migration complexity. <attach .twb/.twbx/.tds/.tdsx files>
+@tableau-migration-assessment profile these workbooks for migration complexity. <attach .twb/.twbx/.tds/.tdsx files>
 ```
 
-**2. Explicitly (@ mention)** — force Genie Code to use it by @-mentioning the
-skill in your prompt (the most reliable way to keep the skill engaged):
+Run the assessment and get the 🔧 Manual Adjustment Report in one pass:
 ```
-@tableau-migration-assessment profile these workbooks for AI/BI migration.
+@tableau-migration-assessment assess the Tableau files in /Volumes/catalog/schema/volume/
+and include the 🔧 Manual Adjustment Report.
+```
+
+If the run falls back to a plain `/importBI` assessment:
+```
+@tableau-migration-assessment wrap up the migration report.
+```
+
+Convert with the patterns repo (when the Automation Uplift section shows a
+positive uplift):
+```
+/importBI Convert the workbook [attach the file, or provide a volume path], as additional
+reference for the calculations conversion use https://github.com/databricks-solutions/uc-semantics-patterns
 ```
 
 ## What it does
@@ -139,74 +74,95 @@ skill in your prompt (the most reliable way to keep the skill engaged):
    mismatched keys, many-to-many, cardinality overrides).
 3. **Profile** — hands each file to the `/importBI` specialist in **profile-only**
    mode, asking it to state how it would handle each category (transformations,
-   relationships by pattern, row-level calcs/groups/bins/sets, cross-datasource
-   ratios, unconvertible calcs with names, unused calcs). With **2+ files, profiling
-   runs in parallel batches of up to 4 at a time where the environment supports
-   concurrent handoffs**, otherwise sequentially; a single file is profiled directly.
-4. **Consolidate & report** — produces ONE report that opens with the **Migration
-   Summary Report** and is followed by one **Individual Workbook Report** section
-   per file. Buckets and handling text come only from the `/importBI` profile
-   (anything it did not state is marked `Not stated by /importBI — verify` and 🔧).
-5. **Consistency check (mandatory, silent)** — before printing, reconciles bucket
-   counts to totals (minus unused calcs), confirms counts match everywhere, keeps
-   row-level calcs out of the calc %, and checks portfolio totals equal the per-file
-   sums.
-6. **Offer the 🔧 Manual Adjustment Report** — after the main report (or inline if
-   requested up front), lists every 🔧 item by name with a reason.
+   relationships by pattern, calculation families, row-level calcs/groups/bins/sets,
+   cross-datasource ratios, unconvertible calcs with names, unused, display & gating
+   calcs, calc dependencies). With **2+ files, profiling runs in parallel batches of
+   up to 4 at a time where the environment supports concurrent handoffs**, otherwise
+   sequentially; a single file is profiled directly. All files are profiled in one
+   run — you only see a `Profiled <i>/<n>` progress line per file, with no need to
+   reply "continue". Each answer is reduced to a short structured digest, so large
+   batches fit.
+4. **Consolidate** — reads uc-semantics-patterns live once per run (every report
+   header shows whether it was read), builds an Individual Report for each file
+   (with its own Automation Summary and Uplift), groups data sources shared across
+   files, then aggregates everything into the Migration Summary Report and flags
+   outliers.
+5. **Consistency check (mandatory, silent)** — reconciles every calc population and
+   bucket count, checks that calculation-family counts add up to the total, keeps
+   row-level calcs and model features out of the calc %, checks root 🔧 + dependents
+   and the complexity score, and — in bulk runs — that portfolio counts equal the sum
+   over unique data sources.
+6. **Follow-ups** — offers the 🔧 Manual Adjustment Report (printed straight away if
+   requested up front). For 6+ files it also offers the full Individual Report for
+   files you choose.
 
 ## Output
 
-ONE report, in this order:
+The report layout depends on how many files are assessed:
 
-- **Migration Summary Report** (opens the report): portfolio totals, complexity
-  distribution, per-file summary, cross-cutting findings, and a recommended
-  migration sequence.
-- **Individual Workbook Report** (one section per file, after the summary): metrics,
-  prerequisites (including a **Data Source Transformations** table), executive
-  overview + complexity drivers, a feature inventory with a grouped **Relationships**
-  table and a separate **Row-level Calculations, Groups, Bins & Sets** block,
-  Automation Classification (✅ Auto / ⚠️ Auto + workaround / 🔧 Manual), Automation
-  Uplift with reference patterns, and a readiness summary.
+| Files | Report |
+|---|---|
+| 1 | One full Individual Report |
+| 2–5 | Migration Summary Report + a full Individual Report per file |
+| 6+ | Migration Summary Report + a compact Individual Report per file; ask for the full report of any file afterwards |
+
+**Migration Summary Report** (bulk runs, opens the report):
+
+- **Unique Data Sources** — data sources shared across files (e.g. a `.tdsx` and the
+  workbooks that use it) are grouped and counted once in every portfolio total.
+- **Complexity Distribution** and overall portfolio complexity.
+- **Per-Workbook Automation** — each file's complexity score, Auto % and Auto with
+  review % (baseline and with patterns), root 🔧 calcs, uplift, and outlier flag,
+  plus a distribution line.
+- **Portfolio Automation Summary** — the rate for all files (unique data sources),
+  excluding outliers, and the per-file median.
+- **Automation Uplift with Reference Patterns** — roll-up of the per-file uplift.
+- **Outliers** — files flagged (3+ file runs) because they hold more than 40% of the
+  portfolio's classified calcs and more than twice the average share, or (with at
+  least 10 classified calcs) their rate is more than 20pp away from the rest. Their
+  statistics are shown separately.
+- **Cross-cutting Findings** and a **Recommended Migration Sequence**.
+
+**Individual Report** (one per file): metrics, prerequisites (including a **Data
+Source Transformations** table), executive overview with the complexity score and
+drivers, a feature inventory with a grouped **Relationships** table and a separate
+**Row-level Calculations, Groups, Bins & Sets** block, Automation Classification
+(✅ Auto / ⚠️ Auto + workaround / 🔧 Manual) with layer rates, Automation Uplift with
+reference patterns, and a readiness summary. The **compact** form (6+ files, up to
+~25 lines each) keeps a metrics line, the ⚠️/🔧 families, a combined Automation
+Summary & Uplift table, and the top root 🔧 blockers.
 
 Individual 🔧 item names are **not** inlined in the main report — they appear only
-in the optional **🔧 Manual Adjustment Report**, which names every 🔧 calculated
-field / LOD / table calc (no top-N cap) with the blocking reason so you can plan the
-manual rebuild.
+in the optional **🔧 Manual Adjustment Report**, organised by **root 🔧 calcs** (the
+calcs whose own formula blocks conversion), each with its data source, reason, and
+the calcs it blocks — no top-N cap. It uses the same format whether you ask for it
+in the first prompt or later.
 
 The report is returned in chat (summary first, then the per-file sections). You can
 optionally ask to save the results in MD and HTML format in your user folder.
 
-## Skill definition (`SKILL.md`)
+## How the numbers are counted
 
-`SKILL.md` is the authoritative specification for this skill — `README.md` is only
-an overview. Anyone installing, running, or adapting the skill should read
-`SKILL.md`, which defines the required details the assessment must follow:
-
-- **Trigger & scope** — the `description` frontmatter that auto-loads the skill,
-  and the supported file types.
-- **Workflow** — enumerate → prerequisites check → profile (read-only, via
-  `/importBI` in profile-only mode, parallel batches of up to 4 where supported,
-  else sequential) → consolidate → **mandatory consistency check** → **offer the
-  🔧 Manual Adjustment Report**.
-- **Mandatory report structure** — the exact headings and tables for **Template A
-  (Migration Summary Report, opens the report)** and **Template B (Individual
-  Workbook Report, one section per file, after the summary)**, plus the **Manual
-  Adjustment Report Structure**. These formats are required, not examples.
-- **Deduplication & Empty Report Handling** rules.
-- **Automation Classification Legend** (✅ Auto / ⚠️ Auto + workaround / 🔧 Manual,
-  with the fact ÷ dimension vs fact ÷ fact split) and the **Complexity Rating
-  Criteria** (Low / Medium / High).
-- **Guardrails** — read-only, the **source-of-truth rule** (`/importBI` output is
-  the only basis for buckets and handling text), `/importBI`-anchored classification,
-  no unevidenced claims, Tableau-only terminology, group-don't-name in the main
-  report, the mandatory consistency check, source-dependency handling, and the
-  mandatory Automation Classification + Automation Uplift sections.
-- **Reference Patterns** — read the uc-semantics-patterns repo **live at each run**
-  (no hardcoded catalog), match 🔧 items to its current content, and cite the
-  folder/recipe in the Uplift section.
-
-If the behavior described in this README ever diverges from `SKILL.md`, `SKILL.md`
-wins.
+- **Auto %** = ✅ ÷ classified calcs (aggregate calcs, LODs, table calcs,
+  cross-datasource ratios). **Auto with review %** = (✅ + ⚠️) ÷ classified calcs — the
+  headline rate; ⚠️ items convert automatically but need review. Rates on fewer than
+  10 items are marked `(small n)`.
+- **Display & gating calcs** — color / shape / label / title calcs and visibility /
+  zone / action flags — are reported separately and not in the headline rate.
+  Gating calcs are still assessed for readiness.
+- **Unused calcs** are excluded only when the file has worksheets and its data
+  source isn't shared. For `.tds` / `.tdsx` files, model-only workbooks, and shared
+  data sources they're shown as "not used in this file" and stay in the counts.
+- **Root 🔧 calcs** are the manual effort units: a 🔧 calc blocked only because it
+  references another 🔧 calc is listed under that root.
+- **Calculation families** come from a fixed list (simple aggregations, FIXED and
+  INCLUDE / EXCLUDE LODs, constant and dynamic LOOKUP, analytical and
+  mark-positioning windows, cross-datasource ratios, row-level, display, gating), so
+  they compare across files and runs.
+- **Complexity** is a points score (root 🔧 calcs, calc volume and depth, sources and
+  extracts, blends, LODs, table-calc types, actions and dynamic zone visibility,
+  user filters, worksheet volume, advanced visuals, layer rates): 0–3 Low, 4–7
+  Medium, 8+ High.
 
 ## Notes
 
@@ -220,3 +176,5 @@ wins.
 - Classification reflects what `/importBI` reports **today**; the Automation Uplift
   section shows the additional automation achievable with uc-semantics-patterns
   recipes (read live) on top of that baseline.
+- `SKILL.md` is the authoritative specification; if this README diverges from it,
+  `SKILL.md` wins.

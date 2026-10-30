@@ -6,11 +6,11 @@ Entries are reverse-chronological. Each entry: date, what changed, **why** (with
 
 ---
 
-## 2026-10-30: Plan check before first deploy + dev-mode bind warning (reviewer feedback on #106)
+## 2026-10-30: Plan check before first deploy (reviewer feedback on #106)
 
 **Changes:**
 1. All six `cicd/*.md` one-time bind-and-deploy snippets: added a `databricks bundle plan -t <source_target>` step between bind and deploy. The step fails if any bound resource shows `create`, `recreate`, or `delete` in the plan output (expected action for a correctly bound resource is `update`). This catches wrong IDs in `bindings/*.yml` before the deploy overwrites the source asset's configuration.
-2. `SKILL.md` step 5e: added a plan-check instruction for the local dev bind path. Added a `mode: development` warning explaining that the first deploy to a dev target renames the asset (`[dev <user>]` prefix), pauses schedules, substitutes the personal dev schema, and removes `run_as`; for pipelines a schema change forces a full table recreate. Agents must confirm with the user before deploying a bound pipeline to a dev target.
+2. `SKILL.md` step 5e: added a plan-check instruction for the local dev bind path.
 3. `SKILL.md` step 5f: noted that the one-time CI workflow includes the plan check.
 
 **Why the plan check matters:** the first deploy to a source workspace overwrites the original asset's configuration (name, schedule, cluster, etc.). A `create` in the plan after bind means the binding failed silently — deploying would create a duplicate instead of updating the original. Failing on `create`/`recreate`/`delete` makes the misconfiguration visible before any data is touched.

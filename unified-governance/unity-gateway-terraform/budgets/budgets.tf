@@ -2,8 +2,13 @@
 # (see the README), so that nobody gets two budgets that both block usage.
 
 variable "budget_alert_email" {
-  type    = string
-  default = "platform-team@example.com"
+  description = "Email address that gets the shared budget alert."
+  type        = string
+}
+
+variable "budget_workspace_ids" {
+  description = "IDs of the workspaces whose usage the budgets count and block. [] means all workspaces in the account. Try a new BLOCK_USAGE budget on one workspace first."
+  type        = list(number)
 }
 
 # Account-level group that gets a higher per-user limit.
@@ -15,6 +20,16 @@ data "databricks_group" "genai_power_users" {
 resource "databricks_budget" "ai_gateway_shared" {
   display_name  = "ai-gateway-monthly-shared"
   resource_type = "BUDGET_RESOURCE_TYPE_UNITY_AI_GATEWAY"
+
+  dynamic "filter" {
+    for_each = length(var.budget_workspace_ids) > 0 ? [1] : []
+    content {
+      workspace_id {
+        operator = "IN"
+        values   = var.budget_workspace_ids
+      }
+    }
+  }
 
   alert_configurations {
     time_period        = "MONTH"
@@ -36,13 +51,16 @@ resource "databricks_budget" "ai_gateway_per_user" {
   display_name  = "ai-gateway-monthly-per-user"
   resource_type = "BUDGET_RESOURCE_TYPE_UNITY_AI_GATEWAY"
 
-  # Optional: count only the usage in these workspaces. Try a new budget on one workspace first.
-  # filter {
-  #   workspace_id {
-  #     operator = "IN"
-  #     values   = [1234567890123456]
-  #   }
-  # }
+  # Without workspace IDs, the budget blocks users in every workspace of the account.
+  dynamic "filter" {
+    for_each = length(var.budget_workspace_ids) > 0 ? [1] : []
+    content {
+      workspace_id {
+        operator = "IN"
+        values   = var.budget_workspace_ids
+      }
+    }
+  }
 
   alert_configurations {
     time_period        = "MONTH"

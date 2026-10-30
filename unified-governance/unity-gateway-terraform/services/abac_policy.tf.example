@@ -1,11 +1,14 @@
 # Optional: tag-based access with an ABAC GRANT policy. Rename to abac_policy.tf to use it.
 #
 # Gives EXECUTE on every system.ai model service tagged ai.model_creator = anthropic,
-# including models that Databricks adds later. Other system tags: ai.model_family
+# including models that Databricks adds later, with no review. Other system tags: ai.model_family
 # (for example claude-sonnet).
+# Use only the Databricks system tags (ai.*) in when_condition. With a tag that users can set,
+# anyone with APPLY TAG can open access.
 #
 # The policy ADDS access. It does not remove direct grants, so keep system_ai.tf: it removes the
-# default account users grant and keeps the break-glass group as the only direct grant.
+# default account users grant. For the models that this policy covers, set [] in model_groups, so
+# that the break-glass group is the only direct grant and the policy is the only way in.
 # Access from a policy does not show in `databricks grants get`, and system_ai.tf does not see it as drift.
 resource "databricks_policy_info" "claude_models" {
   name                  = "grant-claude-models"

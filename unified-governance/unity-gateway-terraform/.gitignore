@@ -1,7 +1,21 @@
+# In your own repo, commit the .terraform.lock.hcl that terraform init creates: it pins the
+# provider version and checksums. This examples repo does not track lock files (root .gitignore).
 **/.terraform/
-.terraform.lock.hcl
 terraform.tfstate*
-terraform.tfvars
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+.env
+# Variable values and plans can hold secrets.
+*.tfvars
+*.tfvars.json
 *.tfplan
-tf.plan
+*.plan
+# Generated from live budgets: holds alert emails and principal IDs.
 generated.tf
+budgets_export/

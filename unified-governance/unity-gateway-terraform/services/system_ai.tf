@@ -39,17 +39,32 @@ resource "databricks_grants" "system_ai_models" {
   }
 }
 
-# If account users have EXECUTE on the schema, every model inherits it and a revoke on one
-# model has no effect. This resource removes that EXECUTE.
-# It sets the schema privileges of account users to EXACTLY this list: it also adds missing
-# privileges and removes others. Set the list to today's privileges of account users minus
-# EXECUTE (`databricks grants get schema system.ai`). The list below is the default.
-# If account users have no EXECUTE on the schema, delete this resource.
+# If account users have EXECUTE on the schema (directly or through ALL_PRIVILEGES), every model
+# inherits it and a revoke on one model has no effect. This resource removes that EXECUTE.
+# It sets the schema privileges of account users to EXACTLY the variable below: it also adds
+# missing privileges and removes others, so copy today's list. The privileges differ per metastore.
+# Never keep MANAGE or ALL_PRIVILEGES: with them, every user can grant themselves EXECUTE.
 # It is applied after the per-model grants, so no allowed group loses access in between.
+variable "account_users_schema_privileges" {
+  description = "Today's privileges of account users on schema system.ai (databricks grants get schema system.ai) minus EXECUTE, MANAGE and ALL_PRIVILEGES, and with USE_SCHEMA. ALL_PRIVILEGES includes USE_SCHEMA without listing it: replace it with the privileges users need. Set null if account users have none of EXECUTE, MANAGE and ALL_PRIVILEGES on the schema: then this project does not change the schema grant. Set it before the first apply."
+  type        = list(string)
+
+  validation {
+    condition     = var.account_users_schema_privileges == null ? true : length(setintersection(var.account_users_schema_privileges, ["EXECUTE", "MANAGE", "ALL_PRIVILEGES"])) == 0
+    error_message = "Remove EXECUTE, MANAGE and ALL_PRIVILEGES: with them, account users keep access to every model or can grant it to themselves."
+  }
+
+  validation {
+    condition     = var.account_users_schema_privileges == null ? true : contains(var.account_users_schema_privileges, "USE_SCHEMA")
+    error_message = "Keep USE_SCHEMA: without it, no user can use any model in system.ai."
+  }
+}
+
 resource "databricks_grant" "system_ai_schema_account_users" {
+  count      = var.account_users_schema_privileges == null ? 0 : 1
   schema     = "system.ai"
   principal  = "account users"
-  privileges = ["READ_VOLUME", "SELECT", "USE_SCHEMA"]
+  privileges = var.account_users_schema_privileges
   depends_on = [databricks_grants.system_ai_models]
 
   lifecycle {

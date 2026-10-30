@@ -136,3 +136,8 @@
   name: "AI/BI Migration Map"
   kind: "Agent skill"
   path: "aibi-migration/aibi-migration-map"
+
+- slug: unity-gateway-migration
+  name: "Unity Gateway Migration"
+  kind: "Installer notebook + Databricks App + Declarative Automation Bundle"
+  path: "genai-ml/unity-gateway-migration"

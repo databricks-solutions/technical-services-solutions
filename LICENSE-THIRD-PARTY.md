@@ -114,3 +114,29 @@ The connector may pull in its own transitive dependencies; those are governed by
 ### License texts
 
 - **Apache License 2.0** — https://www.apache.org/licenses/LICENSE-2.0
+
+---
+
+## genai-ml/unity-gateway-migration
+
+Python runtime dependencies (declared in
+[`app/requirements.txt`](./genai-ml/unity-gateway-migration/app/requirements.txt); the job notebooks install
+`databricks-sdk` themselves):
+
+| Dependency | Purpose | License |
+|------------|---------|---------|
+| [Databricks SDK for Python](https://github.com/databricks/databricks-sdk-py) | Databricks REST APIs | Apache-2.0 |
+| [FastAPI](https://github.com/fastapi/fastapi) | App backend | MIT |
+| [Uvicorn](https://github.com/encode/uvicorn) | ASGI server for the app | BSD-3-Clause |
+| [Requests](https://github.com/psf/requests) | HTTP client for the command-line scripts | Apache-2.0 |
+
+Frontend dependencies (declared in
+[`app/frontend/package.json`](./genai-ml/unity-gateway-migration/app/frontend/package.json); the built
+bundle in `app/frontend/static` includes React):
+
+| Dependency | Purpose | License |
+|------------|---------|---------|
+| [React](https://github.com/facebook/react) and React DOM | UI library | MIT |
+| [Vite](https://github.com/vitejs/vite) and @vitejs/plugin-react | Build tool (development only) | MIT |
+| [TypeScript](https://github.com/microsoft/TypeScript) | Type checking (development only) | Apache-2.0 |
+

@@ -136,3 +136,8 @@
   name: "AI/BI Migration Map"
   kind: "Agent skill"
   path: "aibi-migration/aibi-migration-map"
+
+- slug: mlops-readiness-scorecard
+  name: "MLOps Readiness Scorecard"
+  kind: "Databricks notebook"
+  path: "production-readiness/mlops-readiness-scorecard"

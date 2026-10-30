@@ -45,7 +45,7 @@ resource "databricks_budget" "ai_gateway_per_user" {
 
     principal_overrides {
       principal_id       = data.databricks_group.genai_power_users.id
-      override_threshold = "300"
+      override_threshold = "300.00" # two decimals, as the API returns it: "300" shows a diff on every plan
     }
 
     action_configurations {

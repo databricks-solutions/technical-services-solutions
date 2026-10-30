@@ -16,8 +16,8 @@ provider "databricks" {
 }
 
 variable "account_host" {
-  type    = string
-  default = "https://accounts.azuredatabricks.net"
+  description = "https://accounts.cloud.databricks.com (AWS), https://accounts.azuredatabricks.net (Azure) or https://accounts.gcp.databricks.com (GCP)"
+  type        = string
 }
 
 variable "account_id" {

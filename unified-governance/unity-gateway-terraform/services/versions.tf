@@ -3,7 +3,7 @@ terraform {
   required_providers {
     databricks = {
       source  = "databricks/databricks"
-      version = ">= 1.137.0" # tested version; model_service grants need >= 1.136.0
+      version = ">= 1.136.0" # schema-level databricks_connection (MCP service) needs >= 1.136.0
     }
   }
   # Use a remote backend with locking and encryption in real use: the state holds the

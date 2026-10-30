@@ -38,7 +38,7 @@ The examples in this folder:
 
 | Requirement | Details |
 | --- | --- |
-| Terraform | 1.5+ (import blocks) and provider `databricks/databricks` 1.136.0+ (`model_service` grants) |
+| Terraform | 1.5+ (import and check blocks) and provider `databricks/databricks` 1.136.0+ (schema-level `databricks_connection` for the MCP service) |
 | Identity for access | A service principal with `MANAGE` on schema `system.ai`. The metastore owner alone is not enough. A metastore admin grants it once: `databricks grants update schema system.ai --json '{"changes":[{"principal":"<sp-application-id>","add":["MANAGE"]}]}'` |
 | Identity for your own services | `USE CATALOG`, `USE SCHEMA` and `CREATE SERVICE` on the schema, plus `CREATE CONNECTION` for an MCP connection |
 | Identity for budgets | An account admin service principal. Budgets are account-level objects. |
@@ -79,9 +79,10 @@ resource "databricks_grants" "system_ai_models" {
 }
 ```
 
-- **List every model in `system.ai`, with a fixed list.** Do not build the list from the `databricks_ai_gateway_model_services` data source. In our tests its list API returned an empty result on 5 of 6 calls, and an empty `for_each` made Terraform revoke the grants. New models then come in through a pull request.
+- **List every model in `system.ai`, with a fixed list.** Do not build the list from the `databricks_ai_gateway_model_services` data source. Its list API can return an empty result (we saw it in October 2026), and an empty `for_each` made Terraform revoke the grants. New models then come in through a pull request.
+- **A model that is not in the list closes for everyone.** It has no direct grant. When `account users` loses `EXECUTE` on the schema (next bullets), nobody can use it, also not the break-glass group, and the plan shows only "create". The example in `system_ai.tf` lists 6 models: add all models of your metastore before you apply. A `check` block in `system_ai.tf` warns about models that are not in `model_groups`, for example a new model from Databricks. It only warns, so an empty result from the data source changes nothing.
 - **Keep a break-glass group on every model.** `databricks_grants` needs at least one grant (`Insufficient grant blocks`), and a locked model then has only that group.
-- **Check the schema.** In some metastores, `account users` has `EXECUTE` on the schema `system.ai`. Every model inherits it, and a revoke on one model has no effect. `system_ai.tf` sets the schema grant of `account users` without `EXECUTE`, after the per-model grants exist:
+- **Check the schema.** In many metastores, `account users` has `EXECUTE` on the schema `system.ai` and the models have no direct grants. Every model inherits it, and a revoke on one model has no effect. `system_ai.tf` removes that `EXECUTE` after the per-model grants exist. Its `databricks_grant` sets the schema privileges of `account users` to exactly its list: it also adds missing privileges and removes others. Set the list to today's privileges of `account users` minus `EXECUTE`. If `account users` has no `EXECUTE` on the schema, delete that resource:
 
 ```bash
 databricks grants get schema system.ai
@@ -180,7 +181,7 @@ AI Gateway budgets also count usage from Databricks products that use the gatewa
 `databricks_grants` needs no import: the first apply replaces the access list. On that first apply the plan shows only "create". It does not show which grants it will remove. So:
 
 1. Read today's grants for the schema and every model: `databricks grants get schema system.ai` and `databricks grants get model_service system.ai.<model>`.
-2. Write `local.model_groups` so that it gives the same groups to the same models.
+2. Write `local.model_groups` so that it gives the same groups to the same models, for every model in `system.ai`. In `system_ai.tf`, set the `account users` schema privileges to today's list minus `EXECUTE`, or delete that resource if `account users` has no `EXECUTE` on the schema.
 3. Run `terraform plan -out=tf.plan` and compare each planned access list with step 1. The only expected addition is the break-glass group.
 4. Apply that saved plan: `terraform apply tf.plan`. No user loses or gets access.
 
@@ -210,17 +211,18 @@ terraform plan -generate-config-out=generated.tf
 
 3. Clean `generated.tf`, then move it into `budgets.tf`:
    - remove the read-only fields `account_id`, `budget_configuration_id`, `create_time`, `update_time`, `alert_configuration_id` and `action_configuration_id`;
-   - replace each numeric `principal_id` in `principal_overrides` with a data source, for example `data.databricks_group.genai_power_users.id`.
+   - replace each numeric `principal_id` in `principal_overrides` with a data source, for example `data.databricks_group.genai_power_users.id`;
+   - write each `override_threshold` with two decimals, as the API returns it, for example `"500.00"` (the generated config can have `jsonencode(500)`). The provider compares `override_threshold` as text, so `"500"` shows a change on every plan. `quantity_threshold` does not have this problem.
 4. `terraform plan` must show `1 to import, 0 to add, 0 to change, 0 to destroy`. Apply, then remove the import block.
 
-In our test, this round trip showed 0 changes, also after we removed the read-only fields.
+In our test of a budget without `principal_overrides`, this round trip showed 0 changes, also after we removed the read-only fields. A second test of a budget with `principal_overrides` (provider 1.140.0) showed `override_threshold = "500.00" -> "500"` until the value had two decimals.
 
 **Option B: the Terraform exporter**
 
 The exporter is a command in the provider binary (after `terraform init`, under `.terraform/providers/registry.terraform.io/databricks/databricks/<version>/<os_arch>/`):
 
 ```bash
-export DATABRICKS_HOST=https://accounts.azuredatabricks.net
+export DATABRICKS_HOST=<accounts-host> # for your cloud, see Budgets
 export DATABRICKS_ACCOUNT_ID=<account-id>
 export DATABRICKS_CLIENT_ID=<sp-application-id>
 export DATABRICKS_CLIENT_SECRET=<sp-secret>
@@ -256,7 +258,8 @@ On a test metastore with 21 `system.ai` model services, provider 1.136.0 and 1.1
 | Call without access | HTTP 404 `'system.ai.<model>' does not exist`, not a permission error. |
 | Terraform identity without `MANAGE` | Fails: `User does not have MANAGE on MODEL_SERVICE`. |
 | ABAC GRANT policy, `ai.model_creator = anthropic` | Anthropic model opened after about 1.5 minutes. Other model stayed closed. Not shown in `databricks grants get`. |
-| Budget import with import block and generated config | 0 changes. |
+| `check` block with `databricks_ai_gateway_model_services` (provider 1.139.0, 44 models) | Plan warns with the names of the models that are not in `model_groups`, and continues. No warning when all models are listed. |
+| Budget import with import block and generated config | 0 changes for a budget without `principal_overrides`. With `principal_overrides`, `override_threshold` needs two decimals (see [Budgets: import](#budgets-import)). |
 | `databricks_ai_gateway_model_provider_service` (custom), `_model_service` (routes to it), `_mcp_service` (schema-level HTTP connection) | Created in seconds. Real calls through the provider service and the model service returned 200; MCP `tools/list` returned 200. |
 | `databricks_grants` on `model_provider_service`, `model_service`, `mcp_service` | Without `EXECUTE`: 404 `does not exist` (provider and model service), 403 `Not authorized to invoke MCP service` (MCP). Grant: MCP opened at once, the others in about 1.5 minutes. Revoke: MCP closed at once, the others in about 35 seconds. |
 | Change of `api_key` / `base_url` on a provider service | Not applied together. Some requests used the new URL with the old key, others the old URL with the new key, for up to about 2.5 minutes. |
@@ -270,6 +273,7 @@ Not tested: budget enforcement (`BLOCK_USAGE`), exporter output for budgets, ABA
 | `Insufficient grant blocks` | A model with no grants | Keep the break-glass group on every model |
 | `User does not have MANAGE on MODEL_SERVICE` | The Terraform identity has no `MANAGE` | Grant `MANAGE` on `system.ai` |
 | Plan wants to destroy many grants | The model list came from a data source that returned empty | Use a fixed list |
+| Warning `Models not in model_groups: ...` | `system.ai` has a model that is not in the list, for example a new one | Add it to `model_groups`, with `[]` to keep it locked |
 | Revoke on one model has no effect | `account users` has `EXECUTE` on the schema | Remove `EXECUTE` from the schema grant |
 | `'system.ai.<model>' does not exist` | No `EXECUTE`, or the change is still propagating | Wait 1–2 minutes, then check the grants and policies |
 | User has access, but `grants get` shows nothing | Access comes from an ABAC policy | `databricks policies list-policies SCHEMA system.ai` |
@@ -277,6 +281,7 @@ Not tested: budget enforcement (`BLOCK_USAGE`), exporter output for budgets, ABA
 | Provider error `Path must be of form /serving-endpoints/...` or another upstream 404 | `base_url` is a base path, not the full endpoint | Set the full endpoint URL |
 | `Setting is_mcp_connection is not supported on schema-level connections` | `is_mcp_connection` set on the connection | Remove it; the MCP service does that job |
 | `databricks_connection` shows a change on every plan | `auth_scheme` is missing from `options` | Add `auth_scheme = "bearer"` |
+| `databricks_budget` shows `override_threshold = "500.00" -> "500"` on every plan | The API returns two decimals, and the provider compares the text | Write `"500.00"` |
 
 ---
 

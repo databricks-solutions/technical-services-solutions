@@ -3,4 +3,4 @@
 # Run before the first `databricks bundle deploy -t dev`.
 # Delete the one-time bind-and-deploy CI workflow after the first successful deploy.
 # Format: resource_key: "bind_id"
-dm_job: "587210577538574"
+dm_job: "<job-id>"

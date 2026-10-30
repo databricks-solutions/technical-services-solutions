@@ -4,7 +4,7 @@
 # NOTE: staging and prod targets are not generated.
 # This project is paused for staging/prod use pending resolution of
 # https://github.com/databricks-solutions/technical-services-solutions/issues?q=is%3Aissue+is%3Aopen+dabs-migrator
-# (#107, #108 and follow-ups).
+# (#108 and follow-ups).
 
 bundle:
   name: dm_job_bundle
@@ -39,7 +39,7 @@ targets:
     # No workspace.host: dev deploys to the workspace of the developer's auth profile.
     # No run_as: dev runs as the developer, never as a production identity.
     variables:
-      catalog: classic_stable_aiy0te          # source workspace catalog (dev target)
+      catalog: <your-dev-catalog>
       schema: dev_${workspace.current_user.short_name}  # personal dev schema
       schedule_pause_status: PAUSED
       notification_emails: []

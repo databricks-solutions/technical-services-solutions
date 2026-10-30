@@ -2,6 +2,47 @@
 
 `.circleci/config.yml` at repo root.
 
+## Binding (one-time, source target only)
+
+Before the first recurring deploy to the source workspace, add a temporary `bind-and-deploy-<source_target>` job to `.circleci/config.yml`, gate it behind an `approval` job, run it once, and then remove both jobs.
+
+```yaml
+# Add temporarily to .circleci/config.yml — remove after the first successful run.
+jobs:
+  bind-and-deploy-<source_target>:
+    executor: ubuntu
+    steps:
+      - checkout
+      - install-cli
+      - run:
+          name: Bind migrated resources and deploy to <source_target>
+          environment:
+            DATABRICKS_HOST: $DATABRICKS_HOST
+            DATABRICKS_CLIENT_ID: $DATABRICKS_CLIENT_ID
+            DATABRICKS_CLIENT_SECRET: $DATABRICKS_CLIENT_SECRET
+            DATABRICKS_BUNDLE_ENV: <source_target>
+          command: |
+            set -euo pipefail
+            grep -v '^#' bindings/<source_target>.yml | while IFS=': ' read -r key bind_id; do
+              [ -z "$key" ] && continue
+              bind_id=$(printf '%s' "$bind_id" | tr -d '"')
+              echo "Binding $key -> $bind_id"
+              databricks bundle deployment bind "$key" "$bind_id" -t <source_target> --auto-approve
+            done
+            databricks bundle deploy -t <source_target>
+
+# Gate it behind a manual approval in the workflow:
+workflows:
+  bind-and-deploy-once:
+    jobs:
+      - hold-bind:
+          type: approval
+      - bind-and-deploy-<source_target>:
+          requires: [hold-bind]
+```
+
+> Do **not** add `bundle deployment bind` to the `validate`, `deploy-staging`, or `deploy-prod` jobs. Binding is one-time; repeating it in recurring jobs fails on the second run.
+
 ## Required project environment variables
 
 | Variable |

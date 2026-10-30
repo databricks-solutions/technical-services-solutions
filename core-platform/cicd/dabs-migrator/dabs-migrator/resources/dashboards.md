@@ -6,7 +6,7 @@ Docs: https://docs.databricks.com/aws/en/dev-tools/bundles/resources#dashboard
 
 ## Source
 
-**If migrating an existing dashboard:** export the original Lakeview dashboard JSON from the workspace and place it verbatim at `src/{{ dashboard_name }}/dashboard.lvdash.json`. Do not edit, prettify, or simplify the exported JSON — bundle deploy round-trips it as-is.
+**If migrating an existing dashboard:** export the original Lakeview dashboard JSON from the workspace and place it verbatim at `src/{{ dashboard_name }}/dashboard.lvdash.json`. Do not edit, prettify, or simplify the exported JSON — bundle deploy round-trips it as-is. Record the `dashboard_id` as the bind argument for this resource (see the Bind arguments table in `SKILL.md`).
 
 **Stub (only when starting from scratch):** create an empty `src/{{ dashboard_name }}/dashboard.lvdash.json`, then author in the UI and export back into the file.
 

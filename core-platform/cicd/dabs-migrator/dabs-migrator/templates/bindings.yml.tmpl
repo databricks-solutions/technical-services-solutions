@@ -1,0 +1,15 @@
+# Bind map for source workspace: {{ source_target }}
+# IDs are not secrets — commit this file.
+# Run before the first `databricks bundle deploy -t {{ source_target }}`.
+# Delete the one-time bind-and-deploy CI workflow after the first successful deploy.
+#
+# Format: resource_key: "bind_id"
+#   - jobs, pipelines, clusters, warehouses, alerts, dashboards, genie spaces:
+#       use the numeric or UUID ID returned by the list/get command.
+#   - Unity Catalog resources (schemas, volumes, registered_models, quality_monitors,
+#       catalogs, external_locations, apps, experiments, model_serving_endpoints,
+#       secret_scopes): use the full name path (e.g. "my_catalog.my_schema").
+#
+# See the "Bind arguments" table in SKILL.md for the exact format per resource type.
+
+{{ resource_key }}: "{{ bind_id }}"

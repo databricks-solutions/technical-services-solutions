@@ -6,6 +6,26 @@ Entries are reverse-chronological. Each entry: date, what changed, **why** (with
 
 ---
 
+## 2026-10-30: Bind migrated resources before first deploy (#106)
+
+**Change:**
+1. `SKILL.md` pause banner: removed "Migrated assets are not bound" (now fixed); removed #106 from the open-issues list. Item 3 of the agent instructions now requires a successful bind on the source target before any `bundle deploy`, and drops the old "Never run `bundle deployment bind`" prohibition.
+2. `SKILL.md` workflow: step 4 now records `bind_id` for every migrated resource. New step 5 writes `bindings/<source_target>.yml`, validates the bundle, asks for confirmation, and runs `databricks bundle deployment bind <key> <bind_id> -t <source_target> --auto-approve` for each key. Old steps 5→6, 6→7, 7→8.
+3. `SKILL.md` "Reading assets" table: added **Bind argument** column to the existing name-to-ID table; added a fourth rule with a UC full-name table for schemas, volumes, registered_models, quality_monitors, catalogs, external_locations, apps, experiments, serving endpoints, and secret scopes.
+4. `SKILL.md` CI/CD action contract: added a "Binding (one-time, source target only)" note pointing at the one-time workflow; the recurring pipelines remain bind-free.
+5. `SKILL.md` hard rules: four new rules — never deploy without a prior bind on the source target; never bind non-source targets with source IDs; never put bind in recurring CI pipelines; never use `bundle generate --bind` as a YAML source.
+6. `templates/bindings.yml.tmpl`: new template for the committed bind map (`bindings/<source_target>.yml`).
+7. `templates/README.md.tmpl`: new "Binding (one-time per source workspace)" section with local and CI instructions, and a `never destroy` reminder.
+8. `cicd/*.md` (all six tools): new "Binding (one-time, source target only)" section with a one-time bind-and-deploy workflow snippet; recurring pipelines unchanged.
+
+**Why:** the skill read live assets and wrote YAML, but never recorded IDs or ran `bundle deployment bind`. The first `bundle deploy` therefore created duplicate resources. For pipelines, Unity Catalog allows only one pipeline to manage a streaming table or materialized view; the second pipeline failed on deploy, and teams cleaning up by deleting the original pipeline caused Databricks to drop the tables it managed — **data loss**. Jobs doubled their runs. Named UC objects (schemas, volumes, catalogs) failed with "already exists". Dashboards, Genie spaces, and alerts silently duplicated. Fix: record `bind_id` during the YAML generation step and bind each resource to its source workspace counterpart before the first deploy.
+
+**Why not `bundle generate --bind`:** `bundle generate` writes hardcoded resolved IDs into the YAML (concrete warehouse IDs, catalog names, etc.) and fights the no-hardcode rules that were added for #108. The existing schema-mapped YAML path is kept; bind is a separate one-time step.
+
+**Where:** `SKILL.md` (pause banner, workflow, reading table, CI/CD contract, hard rules), `templates/bindings.yml.tmpl` (new), `templates/README.md.tmpl` (Binding section), `cicd/*.md` (Binding section), this entry.
+
+---
+
 ## 2026-10-28: Per-target environment values; CI no longer overrides catalog/schema (#108, #116)
 
 **Change:**

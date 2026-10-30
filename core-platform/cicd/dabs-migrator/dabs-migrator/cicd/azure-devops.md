@@ -2,6 +2,59 @@
 
 Generates three pipelines under `.azure-pipelines/`.
 
+## Binding (one-time, source target only)
+
+Before the first recurring deploy to the source workspace, run a one-time bind-and-deploy pipeline. Emit it as `.azure-pipelines/bind_and_deploy_<source_target>.yml`, trigger it manually once (with environment approval), and then delete the file.
+
+```yaml
+# .azure-pipelines/bind_and_deploy_<source_target>.yml
+# ONE-TIME: binds migrated resources to their source workspace counterparts, then deploys.
+# Delete this file after the first successful run.
+trigger: none
+pr: none
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: databricks-bundle
+
+stages:
+  - stage: BindAndDeploy
+    jobs:
+      - deployment: bind_and_deploy
+        environment: <source_target>   # add approvals/checks in the environment settings
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - script: curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+                  displayName: Install Databricks CLI
+                - script: |
+                    set -euo pipefail
+                    grep -v '^#' bindings/<source_target>.yml | while IFS=': ' read -r key bind_id; do
+                      [ -z "$key" ] && continue
+                      bind_id=$(printf '%s' "$bind_id" | tr -d '"')
+                      echo "Binding $key -> $bind_id"
+                      databricks bundle deployment bind "$key" "$bind_id" -t <source_target> --auto-approve
+                    done
+                  displayName: Bind migrated resources
+                  env:
+                    DATABRICKS_HOST: $(DATABRICKS_HOST)
+                    DATABRICKS_CLIENT_ID: $(DATABRICKS_CLIENT_ID)
+                    DATABRICKS_CLIENT_SECRET: $(DATABRICKS_CLIENT_SECRET)
+                - script: databricks bundle deploy -t <source_target>
+                  displayName: Deploy bundle
+                  env:
+                    DATABRICKS_HOST: $(DATABRICKS_HOST)
+                    DATABRICKS_CLIENT_ID: $(DATABRICKS_CLIENT_ID)
+                    DATABRICKS_CLIENT_SECRET: $(DATABRICKS_CLIENT_SECRET)
+                    DATABRICKS_BUNDLE_ENV: <source_target>
+```
+
+> Do **not** add `bundle deployment bind` to `pr-validate.yml`, `deploy-staging.yml`, or `deploy-prod.yml`. Binding is one-time; repeating it in recurring pipelines fails on the second run.
+
 ## Required variables (variable group `databricks-bundle`)
 
 | Variable | Notes |

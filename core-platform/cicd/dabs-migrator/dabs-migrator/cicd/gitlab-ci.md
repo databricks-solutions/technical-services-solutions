@@ -2,6 +2,37 @@
 
 Single `.gitlab-ci.yml` at repo root.
 
+## Binding (one-time, source target only)
+
+Before the first recurring deploy to the source workspace, add a `bind_and_deploy_<source_target>` job to `.gitlab-ci.yml`, trigger it manually once (via the GitLab UI `when: manual` gate), and then remove the job.
+
+```yaml
+# Add temporarily to .gitlab-ci.yml — remove after the first successful run.
+bind_and_deploy_<source_target>:
+  stage: deploy
+  environment:
+    name: <source_target>
+  script:
+    - set -euo pipefail
+    - |
+      grep -v '^#' bindings/<source_target>.yml | while IFS=': ' read -r key bind_id; do
+        [ -z "$key" ] && continue
+        bind_id=$(printf '%s' "$bind_id" | tr -d '"')
+        echo "Binding $key -> $bind_id"
+        databricks bundle deployment bind "$key" "$bind_id" -t <source_target> --auto-approve
+      done
+    - databricks bundle deploy -t <source_target>
+  variables:
+    DATABRICKS_HOST: $DATABRICKS_HOST
+    DATABRICKS_CLIENT_ID: $DATABRICKS_CLIENT_ID
+    DATABRICKS_CLIENT_SECRET: $DATABRICKS_CLIENT_SECRET
+    DATABRICKS_BUNDLE_ENV: <source_target>
+  rules:
+    - when: manual
+```
+
+> Do **not** add `bundle deployment bind` to `validate`, `deploy_staging`, or `deploy_prod`. Binding is one-time; repeating it in recurring jobs fails on the second run.
+
 ## Required CI/CD variables
 
 | Variable | Scope | Masked |

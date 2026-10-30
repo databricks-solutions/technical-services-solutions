@@ -8,6 +8,7 @@ Databricks Asset Bundle (DABs) project.
 - `resources/` — one YAML per Databricks resource (jobs, pipelines, etc.).
 - `src/` — source code grouped by the asset that owns it.
 - `tests/` — pytest unit tests.
+- `bindings/` — bind maps for each source workspace (commit these; IDs are not secrets).
 - `{{ cicd_dir }}` — CI/CD pipelines for {{ cicd_tool }}.
 
 ## Local development
@@ -55,3 +56,23 @@ Configure these in your CI/CD tool's secret store (never commit them):
 - `DATABRICKS_CLIENT_SECRET` — service principal client secret
 
 Every bundle command in CI passes `-t staging` or `-t prod` explicitly. Catalog and schema are not CI secrets: they are committed per target in `databricks.yml`. Do not set `BUNDLE_VAR_catalog` or `BUNDLE_VAR_schema` in CI, because `BUNDLE_VAR_*` overrides the target values.
+
+## Binding (one-time per source workspace)
+
+Before you run `bundle deploy` for the first time against a workspace that already has the migrated resources, bind each resource so the deploy updates the existing asset rather than creating a duplicate.
+
+**What the `bindings/` directory contains:** one `<source_target>.yml` per source workspace — a flat `key: "bind_id"` map committed with the project. IDs are not secrets.
+
+**If the source target is `dev`** — run these commands locally (replace `<key>` and `<bind_id>` with the values from `bindings/{{ source_target }}.yml`):
+
+```bash
+databricks bundle validate -t {{ source_target }}
+# Then for each entry in bindings/{{ source_target }}.yml:
+databricks bundle deployment bind <key> <bind_id> -t {{ source_target }} --auto-approve
+# Finally:
+databricks bundle deploy -t {{ source_target }}
+```
+
+**If the source target is `staging` or `prod`** — run the one-time bind-and-deploy CI workflow (`{{ cicd_dir }}/bind_and_deploy_{{ source_target }}.*`) once, with environment approval, and then delete the workflow file. The recurring deploy pipelines do not contain bind commands.
+
+> **Never run `databricks bundle destroy` on a migrated project.** Once bound, `bundle destroy` deletes the original workspace resources. Add `lifecycle.prevent_destroy: true` to stateful resources (pipelines, schemas, volumes) before running any destroy operations.

@@ -6,7 +6,7 @@ Docs: https://docs.databricks.com/aws/en/dev-tools/bundles/resources#genie_space
 
 ## Source
 
-**If migrating an existing Genie space:** export the original space definition and place it verbatim. Run `databricks bundle generate genie-space` to round-trip an existing space into the bundle — this writes the serialized body to a `.geniespace.json` file. Reference it via `file_path: ../../src/{{ genie_space_name }}/space.geniespace.json` rather than inlining `serialized_space`. Do not edit, prettify, or simplify the exported JSON.
+**If migrating an existing Genie space:** export the original space definition and place it verbatim. Run `databricks bundle generate genie-space` to round-trip an existing space into the bundle — this writes the serialized body to a `.geniespace.json` file. Reference it via `file_path: ../../src/{{ genie_space_name }}/space.geniespace.json` rather than inlining `serialized_space`. Do not edit, prettify, or simplify the exported JSON. Record the `space_id` as the bind argument for this resource (see the Bind arguments table in `SKILL.md`). Note: `bundle generate genie-space` does **not** run bind; binding is a separate `bundle deployment bind` step.
 
 ### Retrieving the serialized body (avoids the empty-space retry)
 

@@ -36,6 +36,14 @@ resource "databricks_budget" "ai_gateway_per_user" {
   display_name  = "ai-gateway-monthly-per-user"
   resource_type = "BUDGET_RESOURCE_TYPE_UNITY_AI_GATEWAY"
 
+  # Optional: count only the usage in these workspaces. Try a new budget on one workspace first.
+  # filter {
+  #   workspace_id {
+  #     operator = "IN"
+  #     values   = [1234567890123456]
+  #   }
+  # }
+
   alert_configurations {
     time_period        = "MONTH"
     trigger_type       = "CUMULATIVE_SPENDING_EXCEEDED"
@@ -43,9 +51,11 @@ resource "databricks_budget" "ai_gateway_per_user" {
     quantity_threshold = "100"
     scope_type         = "ALERT_CONFIGURATION_SCOPE_TYPE_PER_USER"
 
+    # An override must be higher than quantity_threshold. Write it with two decimals, as the
+    # API returns it: "300" shows a diff on every plan.
     principal_overrides {
       principal_id       = data.databricks_group.genai_power_users.id
-      override_threshold = "300.00" # two decimals, as the API returns it: "300" shows a diff on every plan
+      override_threshold = "300.00"
     }
 
     action_configurations {

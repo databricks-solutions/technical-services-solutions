@@ -15,15 +15,15 @@ This playbook shows the options to manage Unity Gateway resources with Terraform
 
 ## Options at a glance
 
-| What you manage | Terraform resource | Provider level | Tested here |
-| --- | --- | --- | --- |
-| Access to a model service (`system.ai` or your own) | [`databricks_grants`](https://registry.terraform.io/providers/databricks/databricks/latest/docs/resources/grants) with `model_service` (recommended) or [`databricks_grant`](https://registry.terraform.io/providers/databricks/databricks/latest/docs/resources/grant) | Workspace | Yes |
-| Access to a model provider service or MCP service | The same resources, with `model_provider_service` or `mcp_service` | Workspace | Yes (`databricks_grants`) |
-| Tag-based access, for example every Anthropic model | [`databricks_policy_info`](https://registry.terraform.io/providers/databricks/databricks/latest/docs/resources/policy_info) with `POLICY_TYPE_GRANT` | Workspace | Yes |
-| Your own services, with routing, fallback and rate limits | [`databricks_ai_gateway_model_service`](https://registry.terraform.io/providers/databricks/databricks/latest/docs/resources/ai_gateway_model_service), [`databricks_ai_gateway_model_provider_service`](https://registry.terraform.io/providers/databricks/databricks/latest/docs/resources/ai_gateway_model_provider_service), [`databricks_ai_gateway_mcp_service`](https://registry.terraform.io/providers/databricks/databricks/latest/docs/resources/ai_gateway_mcp_service) | Workspace | Yes (custom provider, routing, MCP) |
-| AI Gateway budgets | [`databricks_budget`](https://registry.terraform.io/providers/databricks/databricks/latest/docs/resources/budget) with `BUDGET_RESOURCE_TYPE_UNITY_AI_GATEWAY` | Account | Import only |
-| Existing grants | Write the config to match today's grants. No import needed. | — | Yes |
-| Existing budgets | [Import blocks](https://developer.hashicorp.com/terraform/language/import/generating-configuration) or the [exporter](https://registry.terraform.io/providers/databricks/databricks/latest/docs/guides/experimental-exporter) | Account | Import blocks: yes |
+| What you manage | Terraform resource | Provider level |
+| --- | --- | --- |
+| Access to a model service (`system.ai` or your own) | [`databricks_grants`](https://registry.terraform.io/providers/databricks/databricks/latest/docs/resources/grants) with `model_service` (recommended) or [`databricks_grant`](https://registry.terraform.io/providers/databricks/databricks/latest/docs/resources/grant) | Workspace |
+| Access to a model provider service or MCP service | The same resources, with `model_provider_service` or `mcp_service` | Workspace |
+| Tag-based access, for example every Anthropic model | [`databricks_policy_info`](https://registry.terraform.io/providers/databricks/databricks/latest/docs/resources/policy_info) with `POLICY_TYPE_GRANT` | Workspace |
+| Your own services, with routing, fallback and rate limits | [`databricks_ai_gateway_model_service`](https://registry.terraform.io/providers/databricks/databricks/latest/docs/resources/ai_gateway_model_service), [`databricks_ai_gateway_model_provider_service`](https://registry.terraform.io/providers/databricks/databricks/latest/docs/resources/ai_gateway_model_provider_service), [`databricks_ai_gateway_mcp_service`](https://registry.terraform.io/providers/databricks/databricks/latest/docs/resources/ai_gateway_mcp_service) | Workspace |
+| AI Gateway budgets | [`databricks_budget`](https://registry.terraform.io/providers/databricks/databricks/latest/docs/resources/budget) with `BUDGET_RESOURCE_TYPE_UNITY_AI_GATEWAY` | Account |
+| Existing grants | Write the config to match today's grants. No import needed. | — |
+| Existing budgets | [Import blocks](https://developer.hashicorp.com/terraform/language/import/generating-configuration) or the [exporter](https://registry.terraform.io/providers/databricks/databricks/latest/docs/guides/experimental-exporter) | Account |
 
 The examples in this folder:
 
@@ -79,14 +79,44 @@ resource "databricks_grants" "system_ai_models" {
 }
 ```
 
-- **List every model in `system.ai`, with a fixed list.** Do not build the list from the `databricks_ai_gateway_model_services` data source. Its list API can return an empty result (we saw it in October 2026), and an empty `for_each` made Terraform revoke the grants. New models then come in through a pull request.
-- **A model that is not in the list closes for everyone.** It has no direct grant. When `account users` loses `EXECUTE` on the schema (next bullets), nobody can use it, also not the break-glass group, and the plan shows only "create". The example in `system_ai.tf` lists 6 models: add all models of your metastore before you apply. A `check` block in `system_ai.tf` warns about models that are not in `model_groups`, for example a new model from Databricks. It only warns, so an empty result from the data source changes nothing.
+- **List every model in `system.ai`, with a fixed list.** Do not build the list from the `databricks_ai_gateway_model_services` data source. Its list API can return an empty result, and an empty `for_each` makes Terraform revoke the grants. New models then come in through a pull request.
+- **A model that is not in the list closes for everyone.** It has no direct grant. When `account users` loses `EXECUTE` on the schema (next bullets), nobody can use it, also not the break-glass group, and the plan shows only "create". The example in `system_ai.tf` lists 6 models: add all models of your metastore before you apply.
 - **Keep a break-glass group on every model.** `databricks_grants` needs at least one grant (`Insufficient grant blocks`), and a locked model then has only that group.
-- **Check the schema.** In many metastores, `account users` has `EXECUTE` on the schema `system.ai` and the models have no direct grants. Every model inherits it, and a revoke on one model has no effect. `system_ai.tf` removes that `EXECUTE` after the per-model grants exist. Its `databricks_grant` sets the schema privileges of `account users` to exactly its list: it also adds missing privileges and removes others. Set the list to today's privileges of `account users` minus `EXECUTE`. If `account users` has no `EXECUTE` on the schema, delete that resource:
+
+Add a `check` block that warns about models that are not in `model_groups`, for example a new model from Databricks. It only warns and never changes a grant, so an empty result from the data source is safe here:
+
+```hcl
+check "all_system_ai_models_listed" {
+  data "databricks_ai_gateway_model_services" "system_ai" {
+    parent = "schemas/system.ai"
+  }
+
+  assert {
+    condition = length(setsubtract(
+      [for s in data.databricks_ai_gateway_model_services.system_ai.model_services : trimprefix(s.name, "model-services/system.ai.")],
+      keys(local.model_groups),
+    )) == 0
+    error_message = "system.ai has models that are not in model_groups." # system_ai.tf also lists their names
+  }
+}
+```
+
+**Check the schema.** In many metastores, `account users` has `EXECUTE` on the schema `system.ai` and the models have no direct grants. Every model inherits it, and a revoke on one model has no effect. Read today's grants:
 
 ```bash
 databricks grants get schema system.ai
 databricks grants get model_service system.ai.claude-sonnet-4-6
+```
+
+Then remove that `EXECUTE` after the per-model grants exist. `databricks_grant` sets the schema privileges of `account users` to exactly its list: it also adds missing privileges and removes others. Set the list to today's privileges of `account users` minus `EXECUTE`. If `account users` has no `EXECUTE` on the schema, do not add this resource:
+
+```hcl
+resource "databricks_grant" "system_ai_schema_account_users" {
+  schema     = "system.ai"
+  principal  = "account users"
+  privileges = ["READ_VOLUME", "SELECT", "USE_SCHEMA"] # today's list minus EXECUTE
+  depends_on = [databricks_grants.system_ai_models]   # per-model grants first: no gap in access
+}
 ```
 
 ## Option 2: One principal with `databricks_grant`
@@ -118,7 +148,7 @@ resource "databricks_policy_info" "claude_models" {
 | Removes the default grant | Yes | No: policies only add access |
 | Shown in `databricks grants get` | Yes | No: read the policies (`databricks policies list-policies SCHEMA system.ai`) |
 
-- Keep option 1 with the policy: only `databricks_grants` removes the default grant. Give the models only the break-glass group (`[]`), so the policy is the only way in. In our test, `databricks_grants` did not see the policy access as drift.
+- Keep option 1 with the policy: only `databricks_grants` removes the default grant. Give the models only the break-glass group (`[]`), so the policy is the only way in. `databricks_grants` does not see the policy access as drift.
 - Policies cannot grant `USE CATALOG` or `USE SCHEMA`. The groups still need them on `system` and `system.ai` (`account users` has them by default).
 - Import an existing policy with `id = "SCHEMA,system.ai,<policy-name>"`.
 
@@ -158,7 +188,7 @@ resource "databricks_grants" "chat_provider" {
 ```
 
 - **Access:** callers need `EXECUTE` on the service plus `USE CATALOG` and `USE SCHEMA`. End users do not need `USE CONNECTION` on the MCP connection. Use `databricks_grants` with `model_provider_service`, `model_service` or `mcp_service`, as in option 1.
-- **Credentials:** pass the provider key with a sensitive variable (`TF_VAR_provider_api_key`), never in code. The key is also stored in the Terraform state, so keep the state in an encrypted remote backend. The provider also accepts a reference to a Unity Catalog secret (`secret_reference`) instead of `plaintext`; we did not test it.
+- **Credentials:** pass the provider key with a sensitive variable (`TF_VAR_provider_api_key`), never in code. The key is also stored in the Terraform state, so keep the state in an encrypted remote backend. The provider also accepts a reference to a Unity Catalog secret (`secret_reference`) instead of `plaintext`.
 - **Custom provider `base_url`:** Unity Gateway sends requests to this URL as it is and adds no path. Give the full endpoint, for example `https://api.example.com/v1/chat/completions`.
 - **MCP connection:** create a schema-level `HTTP` connection. Do not set `is_mcp_connection` (schema-level connections reject it). Set `auth_scheme = "bearer"` for bearer auth, or every plan shows a diff.
 - **Key and URL changes:** gateway replicas do not get `api_key` and `base_url` together. Each replica can take more than 2 minutes to get each value, in any order. During that time, a request can go to the new URL with the old key, or to the old URL with the new key. One good response does not show that all replicas have the change. To move a provider to a new URL, create a new provider service and point the model service to it. Never point a provider service that holds a real key at a URL you do not trust, even for a test. To test, use a provider service that only ever holds a dummy key.
@@ -168,7 +198,46 @@ resource "databricks_grants" "chat_provider" {
 Budgets are account-level objects: they need an account-level provider (`host = https://accounts.cloud.databricks.com` on AWS, `https://accounts.azuredatabricks.net` on Azure, `https://accounts.gcp.databricks.com` on GCP, plus `account_id`) and an account admin identity. [`budgets/budgets.tf`](budgets/budgets.tf) has two examples:
 
 - a shared monthly budget that sends an email;
-- a monthly cap for each user (`ALERT_CONFIGURATION_SCOPE_TYPE_PER_USER`) that blocks usage (`BLOCK_USAGE`), with a higher limit for one group (`principal_overrides`).
+- a monthly cap for each user (`ALERT_CONFIGURATION_SCOPE_TYPE_PER_USER`) that blocks usage (`BLOCK_USAGE`), with a higher limit for one group (`principal_overrides`):
+
+```hcl
+resource "databricks_budget" "ai_gateway_per_user" {
+  display_name  = "ai-gateway-monthly-per-user"
+  resource_type = "BUDGET_RESOURCE_TYPE_UNITY_AI_GATEWAY"
+
+  # Optional: count only the usage in these workspaces. Try a new budget on one workspace first.
+  # filter {
+  #   workspace_id {
+  #     operator = "IN"
+  #     values   = [1234567890123456]
+  #   }
+  # }
+
+  alert_configurations {
+    time_period        = "MONTH"
+    trigger_type       = "CUMULATIVE_SPENDING_EXCEEDED"
+    quantity_type      = "LIST_PRICE_DOLLARS_USD"
+    quantity_threshold = "100"
+    scope_type         = "ALERT_CONFIGURATION_SCOPE_TYPE_PER_USER"
+
+    # An override must be higher than quantity_threshold. Write it with two decimals, as the
+    # API returns it: "300" shows a diff on every plan.
+    principal_overrides {
+      principal_id       = data.databricks_group.genai_power_users.id
+      override_threshold = "300.00"
+    }
+
+    action_configurations {
+      action_type = "BLOCK_USAGE"
+    }
+  }
+}
+```
+
+- **An override can only raise the limit.** The API rejects an override that is not greater than `quantity_threshold`.
+- **Write `override_threshold` with two decimals**, for example `"300.00"`. The API stores two decimals and the provider compares the text, so `"300"` shows a change on every plan.
+- **Try a new `BLOCK_USAGE` budget on one workspace first**, with the `filter` above, so that it cannot block users in other workspaces.
+- A blocked user gets HTTP 403 `PERMISSION_DENIED`: `Budget "<name>" (<id>) has reached its limit of $<amount>`. Blocking starts and stops within about a minute.
 
 AI Gateway budgets also count usage from Databricks products that use the gateway, such as Genie.
 
@@ -215,9 +284,7 @@ terraform plan -generate-config-out=generated.tf
    - write each `override_threshold` with two decimals, as the API returns it, for example `"500.00"` (the generated config can have `jsonencode(500)`). The provider compares `override_threshold` as text, so `"500"` shows a change on every plan. `quantity_threshold` does not have this problem.
 4. `terraform plan` must show `1 to import, 0 to add, 0 to change, 0 to destroy`. Apply, then remove the import block.
 
-In our test of a budget without `principal_overrides`, this round trip showed 0 changes, also after we removed the read-only fields. A second test of a budget with `principal_overrides` (provider 1.140.0) showed `override_threshold = "500.00" -> "500"` until the value had two decimals.
-
-Known provider issue [#5978](https://github.com/databricks/terraform-provider-databricks/issues/5978) (open in October 2026): the API returns alerts, actions and principal overrides in its own order, and the provider compares them by position. If a budget has more than one alert, or an alert has more than one action or override, a plan can show changes that you did not make, and an apply can fail with `Action type cannot be updated`. Keep these blocks in the order of `generated.tf`, which is the order that the API returns (we did not test this). The open provider PR [#6100](https://github.com/databricks/terraform-provider-databricks/pull/6100) fixes this issue and the `override_threshold` format.
+Known provider issue [#5978](https://github.com/databricks/terraform-provider-databricks/issues/5978): the API returns alerts, actions and principal overrides in its own order, and the provider compares them by position. If a budget has more than one alert, or an alert has more than one action or override, a plan can show changes that you did not make, and an apply can fail with `Action type cannot be updated`. The API returns the same order on every read, so keep these blocks in the order of `generated.tf`. The open provider PR [#6100](https://github.com/databricks/terraform-provider-databricks/pull/6100) fixes this issue and the `override_threshold` format.
 
 **Option B: the Terraform exporter**
 
@@ -248,26 +315,6 @@ If you recreate a budget in Terraform instead of importing it, delete the old bu
 - **To retire a model**, remove it from `model_groups` and run `terraform state rm 'databricks_grants.system_ai_models["<model>"]'` on purpose.
 - **Stop changes by hand:** keep `MANAGE` on `system.ai` for the Terraform service principal only, and run `terraform plan -detailed-exitcode` every day to find drift (exit code 2).
 
-## What we tested
-
-On a test metastore with 21 `system.ai` model services, provider 1.136.0 and 1.137.0, October 2026:
-
-| Behaviour | Result |
-| --- | --- |
-| `databricks_grants` on `model_service` | No import needed. Removes principals that are not listed, including `account users`. Reverts grants added by hand. |
-| Revoke on one model | Takes effect in about 1–2 minutes. Other models are not affected. |
-| Re-grant | Takes effect in about 50 seconds. |
-| Call without access | HTTP 404 `'system.ai.<model>' does not exist`, not a permission error. |
-| Terraform identity without `MANAGE` | Fails: `User does not have MANAGE on MODEL_SERVICE`. |
-| ABAC GRANT policy, `ai.model_creator = anthropic` | Anthropic model opened after about 1.5 minutes. Other model stayed closed. Not shown in `databricks grants get`. |
-| `check` block with `databricks_ai_gateway_model_services` (provider 1.139.0, 44 models) | Plan warns with the names of the models that are not in `model_groups`, and continues. No warning when all models are listed. |
-| Budget import with import block and generated config | 0 changes for a budget without `principal_overrides`. With `principal_overrides`, `override_threshold` needs two decimals (see [Budgets: import](#budgets-import)). |
-| `databricks_ai_gateway_model_provider_service` (custom), `_model_service` (routes to it), `_mcp_service` (schema-level HTTP connection) | Created in seconds. Real calls through the provider service and the model service returned 200; MCP `tools/list` returned 200. |
-| `databricks_grants` on `model_provider_service`, `model_service`, `mcp_service` | Without `EXECUTE`: 404 `does not exist` (provider and model service), 403 `Not authorized to invoke MCP service` (MCP). Grant: MCP opened at once, the others in about 1.5 minutes. Revoke: MCP closed at once, the others in about 35 seconds. |
-| Change of `api_key` / `base_url` on a provider service | Not applied together. Some requests used the new URL with the old key, others the old URL with the new key, for up to about 2.5 minutes. |
-
-Not tested: budget enforcement (`BLOCK_USAGE`), exporter output for budgets, ABAC with a group (we used a service principal), provider types other than custom, `secret_reference`, fallback routing and `rate_limits`.
-
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
@@ -284,6 +331,8 @@ Not tested: budget enforcement (`BLOCK_USAGE`), exporter output for budgets, ABA
 | `Setting is_mcp_connection is not supported on schema-level connections` | `is_mcp_connection` set on the connection | Remove it; the MCP service does that job |
 | `databricks_connection` shows a change on every plan | `auth_scheme` is missing from `options` | Add `auth_scheme = "bearer"` |
 | `databricks_budget` shows `override_threshold = "500.00" -> "500"` on every plan | The API returns two decimals, and the provider compares the text | Write `"500.00"` |
+| HTTP 403 `PERMISSION_DENIED` `Budget "<name>" (<id>) has reached its limit` | A `BLOCK_USAGE` budget blocks the user | Raise the threshold, give the user a higher override, or delete the budget. Calls work again in about 1 minute |
+| `Override threshold ... must be greater than the alert's default threshold` | The override is lower than `quantity_threshold` | Overrides only raise a limit. Lower `quantity_threshold`, and give the higher limit as the override |
 
 ---
 

@@ -1,6 +1,6 @@
-# genie-space-scan-optimize — scripts
+# genie-agent-scan-optimize — scripts
 
-The deterministic Python layer of the `genie-space-scan-optimize` skill. Two
+The deterministic Python layer of the `genie-agent-scan-optimize` skill. Two
 CLI entrypoints plus the `genie_space_iq` package. **No LLM. No hidden network
 calls.** `scan.py` is a read-only quality gate; `optimize.py` applies
 caller-drafted fixes and defaults to a dry-run diff.

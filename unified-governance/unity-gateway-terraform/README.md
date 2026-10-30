@@ -217,6 +217,8 @@ terraform plan -generate-config-out=generated.tf
 
 In our test of a budget without `principal_overrides`, this round trip showed 0 changes, also after we removed the read-only fields. A second test of a budget with `principal_overrides` (provider 1.140.0) showed `override_threshold = "500.00" -> "500"` until the value had two decimals.
 
+Known provider issue [#5978](https://github.com/databricks/terraform-provider-databricks/issues/5978) (open in October 2026): the API returns alerts, actions and principal overrides in its own order, and the provider compares them by position. If a budget has more than one alert, or an alert has more than one action or override, a plan can show changes that you did not make, and an apply can fail with `Action type cannot be updated`. Keep these blocks in the order of `generated.tf`, which is the order that the API returns (we did not test this). The open provider PR [#6100](https://github.com/databricks/terraform-provider-databricks/pull/6100) fixes this issue and the `override_threshold` format.
+
 **Option B: the Terraform exporter**
 
 The exporter is a command in the provider binary (after `terraform init`, under `.terraform/providers/registry.terraform.io/databricks/databricks/<version>/<os_arch>/`):

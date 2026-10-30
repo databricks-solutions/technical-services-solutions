@@ -29,6 +29,15 @@ jobs:
               echo "Binding $key -> $bind_id"
               databricks bundle deployment bind "$key" "$bind_id" -t <source_target> --auto-approve
             done
+            PLAN=$(databricks bundle plan -t <source_target> 2>&1)
+            printf '%s\n' "$PLAN"
+            if printf '%s\n' "$PLAN" | grep -qiE '\b(create|recreate|delete)\b'; then
+              echo "ERROR: Plan shows create/recreate/delete for a bound resource."
+              echo "The bind may have used the wrong ID, or the YAML config does not match the source asset."
+              echo "Review the plan output above, correct bindings/<source_target>.yml if needed, and re-run."
+              exit 1
+            fi
+            echo "Plan check passed — all bound resources will be updated in-place."
             databricks bundle deploy -t <source_target>
 
 # Gate it behind a manual approval in the workflow:

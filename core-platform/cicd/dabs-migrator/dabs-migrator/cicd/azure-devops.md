@@ -44,6 +44,23 @@ stages:
                     DATABRICKS_HOST: $(DATABRICKS_HOST)
                     DATABRICKS_CLIENT_ID: $(DATABRICKS_CLIENT_ID)
                     DATABRICKS_CLIENT_SECRET: $(DATABRICKS_CLIENT_SECRET)
+                - script: |
+                    set -euo pipefail
+                    PLAN=$(databricks bundle plan -t <source_target> 2>&1)
+                    printf '%s\n' "$PLAN"
+                    if printf '%s\n' "$PLAN" | grep -qiE '\b(create|recreate|delete)\b'; then
+                      echo "ERROR: Plan shows create/recreate/delete for a bound resource."
+                      echo "The bind may have used the wrong ID, or the YAML config does not match the source asset."
+                      echo "Review the plan output above, correct bindings/<source_target>.yml if needed, and re-run."
+                      exit 1
+                    fi
+                    echo "Plan check passed — all bound resources will be updated in-place."
+                  displayName: Plan — verify bound resources show update, not create/recreate/delete
+                  env:
+                    DATABRICKS_HOST: $(DATABRICKS_HOST)
+                    DATABRICKS_CLIENT_ID: $(DATABRICKS_CLIENT_ID)
+                    DATABRICKS_CLIENT_SECRET: $(DATABRICKS_CLIENT_SECRET)
+                    DATABRICKS_BUNDLE_ENV: <source_target>
                 - script: databricks bundle deploy -t <source_target>
                   displayName: Deploy bundle
                   env:

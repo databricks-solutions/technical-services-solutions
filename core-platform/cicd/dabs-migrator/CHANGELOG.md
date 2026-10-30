@@ -6,6 +6,17 @@ Entries are reverse-chronological. Each entry: date, what changed, **why** (with
 
 ---
 
+## 2026-10-30: Plan check before first deploy + dev-mode bind warning (reviewer feedback on #106)
+
+**Changes:**
+1. All six `cicd/*.md` one-time bind-and-deploy snippets: added a `databricks bundle plan -t <source_target>` step between bind and deploy. The step fails if any bound resource shows `create`, `recreate`, or `delete` in the plan output (expected action for a correctly bound resource is `update`). This catches wrong IDs in `bindings/*.yml` before the deploy overwrites the source asset's configuration.
+2. `SKILL.md` step 5e: added a plan-check instruction for the local dev bind path. Added a `mode: development` warning explaining that the first deploy to a dev target renames the asset (`[dev <user>]` prefix), pauses schedules, substitutes the personal dev schema, and removes `run_as`; for pipelines a schema change forces a full table recreate. Agents must confirm with the user before deploying a bound pipeline to a dev target.
+3. `SKILL.md` step 5f: noted that the one-time CI workflow includes the plan check.
+
+**Why the plan check matters:** the first deploy to a source workspace overwrites the original asset's configuration (name, schedule, cluster, etc.). A `create` in the plan after bind means the binding failed silently — deploying would create a duplicate instead of updating the original. Failing on `create`/`recreate`/`delete` makes the misconfiguration visible before any data is touched.
+
+---
+
 ## 2026-10-30: Enforce `lifecycle.prevent_destroy: true` on migrated stateful resources (#107)
 
 **Failure mode this fixes:** Once a resource is bound, the bundle fully owns it. Three actions silently delete the original asset and its data: (1) `databricks bundle destroy`; (2) removing the resource's YAML key and running `bundle deploy`; (3) renaming the resource key (a rename = delete + create in bundle semantics). For pipelines, the delete also drops all managed DLT/SDP tables. For schemas, volumes, and catalogs it drops the data itself. The skill had no rule requiring `lifecycle.prevent_destroy: true`, and the resource docs showed it only as an optional schema field with no migration guidance.

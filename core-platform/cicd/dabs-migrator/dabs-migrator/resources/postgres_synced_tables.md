@@ -4,6 +4,23 @@ Lakebase Postgres synced table — continuously (or on a schedule) syncs a Unity
 
 Docs: https://docs.databricks.com/aws/en/dev-tools/bundles/resources#postgres_synced_table
 
+## Destroy protection
+
+Always set `lifecycle.prevent_destroy: true` on migrated Postgres synced tables. Once bound, the bundle owns the sync — running `databricks bundle destroy`, removing this YAML entry, or renaming the resource key will **delete the sync and the synced table in the target Postgres database**.
+
+```yaml
+resources:
+  postgres_synced_tables:
+    my_synced_table:
+      lifecycle:
+        prevent_destroy: true
+      # ... rest of config
+```
+
+To intentionally destroy a bound Postgres synced table: set `prevent_destroy: false`, run `databricks bundle deploy`, then `databricks bundle destroy`.
+
+> ⚠️ **Never rename a bound resource's key.** A key rename is treated as delete + create by the bundle.
+
 ## Complete schema reference
 
 Required fields: `synced_table_id`

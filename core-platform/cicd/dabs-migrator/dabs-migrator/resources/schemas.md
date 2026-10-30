@@ -4,6 +4,23 @@ Unity Catalog schemas (databases) within a catalog.
 
 Docs: https://docs.databricks.com/aws/en/dev-tools/bundles/resources#schema
 
+## Destroy protection
+
+Always set `lifecycle.prevent_destroy: true` on migrated schemas. Once bound, the bundle owns the schema — running `databricks bundle destroy`, removing this YAML entry, or renaming the resource key will **delete the original schema and all tables, volumes, and views inside it**.
+
+```yaml
+resources:
+  schemas:
+    my_schema:
+      lifecycle:
+        prevent_destroy: true
+      # ... rest of config
+```
+
+To intentionally destroy a bound schema: set `prevent_destroy: false`, run `databricks bundle deploy`, then `databricks bundle destroy`.
+
+> ⚠️ **Never rename a bound resource's key.** A key rename is treated as delete + create by the bundle and will delete the original schema and its contents.
+
 ## Complete schema reference
 
 Required fields: `catalog_name`, `name`

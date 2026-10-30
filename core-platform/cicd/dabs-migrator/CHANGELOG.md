@@ -6,6 +6,23 @@ Entries are reverse-chronological. Each entry: date, what changed, **why** (with
 
 ---
 
+## 2026-10-30: Enforce `lifecycle.prevent_destroy: true` on migrated stateful resources (#107)
+
+**Failure mode this fixes:** Once a resource is bound, the bundle fully owns it. Three actions silently delete the original asset and its data: (1) `databricks bundle destroy`; (2) removing the resource's YAML key and running `bundle deploy`; (3) renaming the resource key (a rename = delete + create in bundle semantics). For pipelines, the delete also drops all managed DLT/SDP tables. For schemas, volumes, and catalogs it drops the data itself. The skill had no rule requiring `lifecycle.prevent_destroy: true`, and the resource docs showed it only as an optional schema field with no migration guidance.
+
+**Changes:**
+1. `SKILL.md` new hard rule: "Never deploy a migrated stateful resource without `lifecycle.prevent_destroy: true`." Lists all affected types: `pipelines`, `schemas`, `volumes`, `catalogs`, `registered_models`, `database_instances`, `database_catalogs`, `synced_database_tables`, `vector_search_indexes`, and all 6 `postgres_*` types. Explains the intentional-destroy escape hatch (set `false`, deploy, destroy).
+2. `SKILL.md` footnote updated: "last eight rules" → "last nine rules".
+3. `SKILL.md` pause banner updated: removed "Stateful resources have no destroy protection" (now fixed). Removed `#107` from the open issues list. Pause remains for `#108` (dev→prod catalog isolation) and follow-ups.
+4. All 16 affected `resources/<type>.md` files: added a **Destroy protection** section before the schema reference with a YAML example, the intentional-destroy escape hatch, and a ⚠️ callout about key renames. Files updated: `pipelines.md`, `schemas.md`, `volumes.md`, `catalogs.md`, `registered_models.md`, `database_instances.md`, `database_catalogs.md`, `synced_database_tables.md`, `vector_search_indexes.md`, `postgres_branches.md`, `postgres_catalogs.md`, `postgres_databases.md`, `postgres_endpoints.md`, `postgres_projects.md`, `postgres_roles.md`, `postgres_synced_tables.md`.
+5. `templates/README.md.tmpl` destroy callout: expanded the type list, added "never rename a resource key after binding" warning.
+
+**Why `prevent_destroy` must be set at migration time, not later:** The agent cannot distinguish "user intentionally deleted this key to decommission the asset" from "user accidentally deleted or renamed the key". The safest default for a migrated asset (which the user wants to keep running) is to block destroy unconditionally and require an explicit opt-out.
+
+**Rule location:** `SKILL.md` hard rules section; per-type guidance in `resources/<type>.md` Destroy protection sections.
+
+---
+
 ## 2026-10-30: Bind migrated resources before first deploy (#106)
 
 **Change:**

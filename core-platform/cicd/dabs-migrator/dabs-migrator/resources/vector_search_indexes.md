@@ -10,6 +10,23 @@ Docs: https://docs.databricks.com/aws/en/dev-tools/bundles/resources#vector_sear
 - **Direct Access index** — set `index_type: DIRECT_ACCESS` and populate `direct_access_index_spec` (including `schema_json`). You write vectors directly via the API; there is no source table.
 - Provide exactly one of `delta_sync_index_spec` / `direct_access_index_spec`, matching `index_type`.
 
+## Destroy protection
+
+Always set `lifecycle.prevent_destroy: true` on migrated vector search indexes. Once bound, the bundle owns the index — running `databricks bundle destroy`, removing this YAML entry, or renaming the resource key will **delete the original vector search index and all its embedded vectors**.
+
+```yaml
+resources:
+  vector_search_indexes:
+    my_index:
+      lifecycle:
+        prevent_destroy: true
+      # ... rest of config
+```
+
+To intentionally destroy a bound vector search index: set `prevent_destroy: false`, run `databricks bundle deploy`, then `databricks bundle destroy`.
+
+> ⚠️ **Never rename a bound resource's key.** A key rename is treated as delete + create by the bundle and will delete the original index and all its data.
+
 ## Complete schema reference
 
 Required fields: `endpoint_name`, `index_type`, `name`, `primary_key`

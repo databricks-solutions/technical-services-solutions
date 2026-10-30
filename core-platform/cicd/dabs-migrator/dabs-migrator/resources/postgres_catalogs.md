@@ -4,6 +4,23 @@ Lakebase Postgres catalog — registers a Lakebase database as a Unity Catalog c
 
 Docs: https://docs.databricks.com/aws/en/dev-tools/bundles/resources#postgres_catalog
 
+## Destroy protection
+
+Always set `lifecycle.prevent_destroy: true` on migrated Postgres catalogs. Once bound, the bundle owns the catalog — running `databricks bundle destroy`, removing this YAML entry, or renaming the resource key will **delete the UC catalog registration for the Postgres database**.
+
+```yaml
+resources:
+  postgres_catalogs:
+    my_pg_catalog:
+      lifecycle:
+        prevent_destroy: true
+      # ... rest of config
+```
+
+To intentionally destroy a bound Postgres catalog: set `prevent_destroy: false`, run `databricks bundle deploy`, then `databricks bundle destroy`.
+
+> ⚠️ **Never rename a bound resource's key.** A key rename is treated as delete + create by the bundle.
+
 ## Complete schema reference
 
 Required fields: `catalog_id`, `postgres_database`

@@ -4,6 +4,23 @@ Unity Catalog registered models (preferred over legacy `models`).
 
 Docs: https://docs.databricks.com/aws/en/dev-tools/bundles/resources#registered_model
 
+## Destroy protection
+
+Always set `lifecycle.prevent_destroy: true` on migrated registered models. Once bound, the bundle owns the model — running `databricks bundle destroy`, removing this YAML entry, or renaming the resource key will **delete the original registered model and all its versions**.
+
+```yaml
+resources:
+  registered_models:
+    my_model:
+      lifecycle:
+        prevent_destroy: true
+      # ... rest of config
+```
+
+To intentionally destroy a bound registered model: set `prevent_destroy: false`, run `databricks bundle deploy`, then `databricks bundle destroy`.
+
+> ⚠️ **Never rename a bound resource's key.** A key rename is treated as delete + create by the bundle and will delete the original model and all its versions.
+
 ## Complete schema reference
 
 ```yaml

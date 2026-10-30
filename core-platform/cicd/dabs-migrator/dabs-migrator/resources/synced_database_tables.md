@@ -4,6 +4,23 @@ Tables synced from a Databricks UC table to a Lakebase Postgres database.
 
 Docs: https://docs.databricks.com/aws/en/dev-tools/bundles/resources#synced_database_table
 
+## Destroy protection
+
+Always set `lifecycle.prevent_destroy: true` on migrated synced database tables. Once bound, the bundle owns the sync — running `databricks bundle destroy`, removing this YAML entry, or renaming the resource key will **delete the sync configuration and the synced table in the target Postgres database**.
+
+```yaml
+resources:
+  synced_database_tables:
+    my_synced_table:
+      lifecycle:
+        prevent_destroy: true
+      # ... rest of config
+```
+
+To intentionally destroy a bound synced database table: set `prevent_destroy: false`, run `databricks bundle deploy`, then `databricks bundle destroy`.
+
+> ⚠️ **Never rename a bound resource's key.** A key rename is treated as delete + create by the bundle.
+
 ## Complete schema reference
 
 Required fields: `name`

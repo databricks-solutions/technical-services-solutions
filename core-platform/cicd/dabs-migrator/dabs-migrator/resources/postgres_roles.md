@@ -4,6 +4,23 @@ Lakebase Postgres role — a Databricks-managed identity (user, service principa
 
 Docs: https://docs.databricks.com/aws/en/dev-tools/bundles/resources#postgres_role
 
+## Destroy protection
+
+Always set `lifecycle.prevent_destroy: true` on migrated Postgres roles. Once bound, the bundle owns the role — running `databricks bundle destroy`, removing this YAML entry, or renaming the resource key will **delete the original Postgres role and revoke all its privileges**.
+
+```yaml
+resources:
+  postgres_roles:
+    my_role:
+      lifecycle:
+        prevent_destroy: true
+      # ... rest of config
+```
+
+To intentionally destroy a bound Postgres role: set `prevent_destroy: false`, run `databricks bundle deploy`, then `databricks bundle destroy`.
+
+> ⚠️ **Never rename a bound resource's key.** A key rename is treated as delete + create by the bundle.
+
 ## Complete schema reference
 
 Required fields: `parent`, `role_id`

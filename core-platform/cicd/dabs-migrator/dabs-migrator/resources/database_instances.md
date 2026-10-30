@@ -4,6 +4,23 @@ Lakebase Postgres database instances (managed Postgres).
 
 Docs: https://docs.databricks.com/aws/en/dev-tools/bundles/resources#database_instance
 
+## Destroy protection
+
+Always set `lifecycle.prevent_destroy: true` on migrated database instances. Once bound, the bundle owns the instance — running `databricks bundle destroy`, removing this YAML entry, or renaming the resource key will **delete the original Postgres database instance and all its databases and data**.
+
+```yaml
+resources:
+  database_instances:
+    my_instance:
+      lifecycle:
+        prevent_destroy: true
+      # ... rest of config
+```
+
+To intentionally destroy a bound database instance: set `prevent_destroy: false`, run `databricks bundle deploy`, then `databricks bundle destroy`.
+
+> ⚠️ **Never rename a bound resource's key.** A key rename is treated as delete + create by the bundle and will delete the original database instance and all its data.
+
 ## Complete schema reference
 
 Required fields: `name`

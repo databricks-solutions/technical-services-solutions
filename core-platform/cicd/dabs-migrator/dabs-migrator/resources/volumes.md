@@ -4,6 +4,15 @@ Unity Catalog volumes (file storage).
 
 Docs: https://docs.databricks.com/aws/en/dev-tools/bundles/resources#volume
 
+## Migration: environment isolation
+
+Applies the environment-value hard rules in `SKILL.md`. A live read returns the source environment's values. Put them only in the source target's `targets.<target>.variables`; every other target, and `dev` in particular, gets its own value. Never leave a literal from the live read in the fields below.
+
+| Field | Use |
+|---|---|
+| `catalog_name`, `schema_name` | `${var.catalog}`, `${var.schema}` |
+| `storage_location` (external volumes) | a per-target variable. Never point a dev volume at the production storage path |
+
 ## Complete schema reference
 
 Required fields: `catalog_name`, `name`, `schema_name`

@@ -4,6 +4,14 @@ Unity Catalog external locations — pointers to cloud storage paths secured by 
 
 Docs: https://docs.databricks.com/aws/en/dev-tools/bundles/resources#external_location
 
+## Migration: environment isolation
+
+Applies the environment-value hard rules in `SKILL.md`. A live read returns the source environment's values. Put them only in the source target's `targets.<target>.variables`; every other target, and `dev` in particular, gets its own value. Never leave a literal from the live read in the fields below.
+
+| Field | Use |
+|---|---|
+| `url`, `credential_name` | per-target variables. Usually only `staging` / `prod` own external locations; leave them out of `dev` unless the user has a dev location |
+
 ## Complete schema reference
 
 Required fields: `credential_name`, `name`, `url`

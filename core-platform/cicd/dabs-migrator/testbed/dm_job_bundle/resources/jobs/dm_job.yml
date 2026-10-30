@@ -1,0 +1,13 @@
+resources:
+  jobs:
+    dm_job:
+      name: dm_job
+      description: Seed job with a single serverless notebook task.
+      max_concurrent_runs: 1
+      queue:
+        enabled: true
+      tasks:
+        - task_key: run_notebook
+          notebook_task:
+            notebook_path: ../../src/dm_job/notebook.py
+            source: WORKSPACE

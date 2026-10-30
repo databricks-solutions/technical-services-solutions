@@ -1,0 +1,45 @@
+# Bundle entrypoint. Keep this file thin — delegate resource definitions to resources/**/*.yml.
+# Docs: https://docs.databricks.com/aws/en/dev-tools/bundles/settings
+#
+# NOTE: staging and prod targets are not generated.
+# This project is paused for staging/prod use pending resolution of
+# https://github.com/databricks-solutions/technical-services-solutions/issues?q=is%3Aissue+is%3Aopen+dabs-migrator
+# (#107, #108 and follow-ups).
+
+bundle:
+  name: dm_job_bundle
+
+include:
+  - resources/**/*.yml
+
+variables:
+  # Environment values are set per target under targets.<target>.variables, never as a
+  # top-level default and never from CI (BUNDLE_VAR_* overrides target values).
+  # catalog and schema have no default on purpose: a target that forgets them fails
+  # `databricks bundle validate` instead of silently deploying into the wrong place.
+  catalog:
+    description: Unity Catalog catalog for this target (set per target)
+
+  schema:
+    description: Unity Catalog schema for this target (set per target)
+
+  schedule_pause_status:
+    description: PAUSED or UNPAUSED for schedules, triggers and alerts that are active in the source. dev is always PAUSED.
+    default: PAUSED
+
+  notification_emails:
+    description: Failure and alert recipients for this target. dev never notifies production recipients.
+    type: complex
+    default: []
+
+targets:
+  dev:
+    mode: development
+    default: true
+    # No workspace.host: dev deploys to the workspace of the developer's auth profile.
+    # No run_as: dev runs as the developer, never as a production identity.
+    variables:
+      catalog: classic_stable_aiy0te          # source workspace catalog (dev target)
+      schema: dev_${workspace.current_user.short_name}  # personal dev schema
+      schedule_pause_status: PAUSED
+      notification_emails: []

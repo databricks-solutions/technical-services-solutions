@@ -102,18 +102,21 @@ For one workspace, a workspace admin's CLI login is enough. For an account, use 
 | 5 | Operators | blank | Emails, comma-separated; blank = you. Required when the notebook runs as a service principal |
 | 6 | App name | `unity-gateway-migration` | 2 to 30 characters |
 | 7 | Install folder | blank | Blank = `/Workspace/Users/<you>/<app name>-toolkit` (the older folder for the default app name). A blank widget reuses the folder of an existing install of the same app |
-| 8 | Drop results tables | no | Uninstall only. Refused if another install reads the same results schema |
-| 9 | Adopt existing app | no | Lets install or uninstall replace or delete an app whose description isn't a toolkit app |
-| 10 | Allow downgrade | no | Needed to install an older version over a newer one |
-| 11 | Allow a second install | no | Lets a second install (another app name) run in the same workspace. It still needs its own results schema and install folder |
-| 12 | Allowed secret schemas | blank | Comma-separated `catalog.schema`. Blank = Unity Catalog secret mapping is off |
-| 13 | Allow reading secret values | no | Lets apply copy workspace secret values into provider services (fixed on the apply job) |
+| 8 | Adopt existing app | no | Lets install or uninstall replace or delete an app whose description isn't a toolkit app |
+| 9 | Allow downgrade | no | Needed to install an older version over a newer one |
+| 10 | Allow a second install | no | Lets a second install (another app name) run in the same workspace. It still needs its own results schema and install folder |
+| 11 | Allowed secret schemas | blank | Comma-separated `catalog.schema`. Blank = Unity Catalog secret mapping is off |
+| 12 | Allow reading secret values | no | Lets apply copy workspace secret values into provider services (fixed on the apply job) |
+| 13 | Uninstall: remove results tables | no | Drops the six results tables, and the schema if nothing else is in it. Refused if another install reads the same results schema |
+| 14 | Uninstall: remove apply logs | no | Deletes `<install folder>/apply_logs`. Without them (and the app), services you keep can only be removed by hand |
+| 15 | Uninstall: roll back Unity Gateway services created by apply | no | Rolls back every execute run still in place, newest first, before anything else is removed. Callers that moved to those services stop working |
+| 16 | Uninstall: confirm | no | `no` only prints what uninstall would remove and keep; `yes` removes |
 
 The notebook refuses to continue when: the app name belongs to another toolkit install (the message names it: set App name to that name to update it, or uninstall it first); the results schema or folder is used by another install; the results schema's comment says it belongs to another app; the install folder path is not under `/Workspace/Users/...` or `/Workspace/Shared/...`; the SQL warehouse can't run the system table check; or an apply run is active (uninstall only).
 
 Before you apply anything from the app, create the target schema for the new model services (the scan form's **Target catalog** and **Target schema**, `ai_gateway.migrated` by default) and give the identity that runs the jobs `CREATE SERVICE` on it. Scans work without it; apply, including a dry run, stops if the schema is missing.
 
-It needs: serverless compute for notebooks and jobs, Databricks Apps, and permission to create apps, jobs and (if missing) the schema. The jobs run as the person who runs the installer, so run it as someone with the permissions in section 2 (or as a service principal). To update, import the newer installer and run it again with the same widgets; history is kept. To change the operators, run it again with the **Operators** widget updated. To remove it, set **Action** to `uninstall` and run it again: the app, jobs, toolkit files and the `output` folder are deleted; results tables stay unless **Drop results tables** is `yes`; Unity Gateway services created by apply and the `apply_logs` folder (in the install folder) stay. Roll back first (section 8) if you want those services gone, and see "Rollback after uninstall" in section 8.
+It needs: serverless compute for notebooks and jobs, Databricks Apps, and permission to create apps, jobs and (if missing) the schema. The jobs run as the person who runs the installer, so run it as someone with the permissions in section 2 (or as a service principal). To update, import the newer installer and run it again with the same widgets; history is kept. To change the operators, run it again with the **Operators** widget updated. To remove it, set **Action** to `uninstall`, choose what else goes with the three **Uninstall:** widgets (results tables, apply logs, Unity Gateway services created by apply; all `no` by default) and run it. The first run changes nothing: it lists what would be removed and what would be kept (for example "Unity Gateway services created by 2 apply run(s)"). Check the list, set **Uninstall: confirm** = `yes` and run it again. The app, jobs, toolkit files and the `output` folder are always removed. If a rollback doesn't succeed, uninstall stops before removing anything else. Kept services keep serving the callers that moved to them; see "Rollback after uninstall" in section 8 to remove them later.
 
 On update the installer also keeps the app's own settings (budget policy, usage policy, compute size and so on), removes files that a newer version dropped from the install folder, and keeps the weekly snapshot's paused or unpaused state. It moves the dashboard **Unity Gateway migration progress** (created by versions before 0.8.0) to Trash, since charts and exports are now in the app.
 
@@ -195,9 +198,9 @@ Typical order inside a workspace: **coding agents and simple SDK callers first, 
 
 **Post-retirement cleanup.** After the retirement dates (v2 on November 30, 2026, v1 on March 30, 2027) and when you no longer need the results:
 
-1. Roll back any apply run whose services you no longer want (section 8). Uninstall doesn't remove Unity Gateway services.
-2. Uninstall the toolkit (**Action** = `uninstall`). Set **Drop results tables** = `yes` to drop the results tables (`ug_migration_scans`, `_scan_items`, `_applies`, `_apply_items`, `_workspaces`, `_endpoints`), or drop them yourself.
-3. Delete the `apply_logs` folder in the install folder by hand. Uninstall keeps it.
+1. Decide what to keep. The Unity Gateway services created by apply are usually what your callers now use, so keep them unless they are no longer needed.
+2. Run the installer with **Action** = `uninstall`, **Uninstall: remove results tables** = `yes` (drops `ug_migration_scans`, `_scan_items`, `_applies`, `_apply_items`, `_workspaces`, `_endpoints` and the empty schema), **Uninstall: remove apply logs** = `yes`, and **Uninstall: roll back Unity Gateway services created by apply** = `yes` only if you want those services gone.
+3. Review the list it prints, set **Uninstall: confirm** = `yes` and run it again.
 
 ---
 
@@ -463,7 +466,7 @@ Each line of output is a JSON record:
 
 **Rollback after callers have moved** breaks their traffic, because the services they call are deleted. See section 4.
 
-**Rollback after uninstall.** Uninstalling the toolkit keeps `<install folder>/apply_logs/<apply_id>.jsonl` but deletes the toolkit files. Download the same zip (or a newer one), unzip it, and run the command-line rollback with the log path. Dry run first:
+**Rollback after uninstall.** Uninstall can roll back the services itself (**Uninstall: roll back Unity Gateway services created by apply**). If you kept them, uninstall keeps `<install folder>/apply_logs/<apply_id>.jsonl` (unless **Uninstall: remove apply logs** = `yes`) but deletes the toolkit files. Download the same zip (or a newer one), unzip it, and run the command-line rollback with the log path. Dry run first:
 
 ```bash
 python ug_migration_apply.py --profile <p> rollback --log "/Workspace/Users/<you>/unity-gateway-migration-toolkit/apply_logs/<apply_id>.jsonl"

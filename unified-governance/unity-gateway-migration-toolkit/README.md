@@ -12,7 +12,7 @@ Prototype from Databricks Shared Technical Services, provided as is. Review resu
 4. Before you apply anything, create the target schema (default `ai_gateway.migrated`) and give the jobs' identity `CREATE SERVICE` on it. Apply never creates schemas.
 5. In the app: **Overview**, Refresh snapshot; then **Scans**, Start scan; then **Apply** for external model and Provisioned Throughput endpoints (dry run first, then execute).
 
-Run the installer as a workspace admin with access to the system tables (the app's jobs run as you), or as a service principal. To update, run a newer installer with the same widgets; to remove, set **Action** to `uninstall`. Upgrading from 0.8.0 or 0.7.0: see [USER_GUIDE.md](USER_GUIDE.md) section 3. The runbook (order of work, owner communication, verifying callers, rollback) is in section 4. Results are explained in [HOW_TO_READ.md](HOW_TO_READ.md).
+Run the installer as a workspace admin with access to the system tables (the app's jobs run as you), or as a service principal. To update, run a newer installer with the same widgets; to remove, set **Action** to `uninstall`, choose what else goes (results tables, apply logs, services created by apply) and confirm after reviewing the preview it prints. Upgrading from 0.8.0 or 0.7.0: see [USER_GUIDE.md](USER_GUIDE.md) section 3. The runbook (order of work, owner communication, verifying callers, rollback) is in section 4. Results are explained in [HOW_TO_READ.md](HOW_TO_READ.md).
 
 Prefer the command line or CI/CD? The same toolkit runs as Python scripts and as a Declarative Automation Bundle (`databricks.yml`); see below.
 

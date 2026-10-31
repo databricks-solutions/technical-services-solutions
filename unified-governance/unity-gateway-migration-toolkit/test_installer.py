@@ -167,3 +167,17 @@ def test_app_env_and_resources():
     assert env["OPERATORS"].value == "a@x.com"
     res = H["app_resources"]("wh1", {"snapshot": 1, "scan": 2, "apply": 3})
     assert {r.name for r in res} == {"sql-warehouse", "snapshot-job", "scan-job", "apply-job"}
+
+
+def test_uninstall_summary_lists_choices_and_warns_about_orphans():
+    pending = [{"apply_id": "a", "created": 2}, {"apply_id": "b", "created": 1}]
+    remove, keep = H["uninstall_summary"](False, False, False, pending, True, "c.s", "/Workspace/Users/me/t")
+    assert any("3 object(s)" in k and "roll back" in k for k in keep)
+    assert any("results tables in c.s" in k for k in keep) and any("apply_logs" in k for k in keep)
+    remove, keep = H["uninstall_summary"](True, True, True, pending, True, "c.s", "/Workspace/Users/me/t")
+    assert remove[0].startswith("Unity Gateway services") and any("schema" in r for r in remove)
+    assert any("apply_logs" in r for r in remove) and not any("WARNING" in k for k in keep)
+    remove, keep = H["uninstall_summary"](False, True, False, pending, True, "c.s", "/Workspace/Users/me/t")
+    assert any(k.startswith("WARNING") for k in keep)
+    remove, keep = H["uninstall_summary"](False, False, False, [], False, "c.s", "/Workspace/Users/me/t")
+    assert any("no Unity Gateway services" in k for k in keep) and not any("apply_logs" in x for x in remove + keep)

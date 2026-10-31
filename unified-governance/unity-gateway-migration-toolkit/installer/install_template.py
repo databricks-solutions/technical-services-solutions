@@ -22,8 +22,10 @@
 # MAGIC (for a service principal, set **Operators** explicitly).
 # MAGIC Only the people in **Operators** can start jobs from the app; everyone else can only view results.
 # MAGIC
-# MAGIC Run it again to update (same widgets). Set **Action** to `uninstall` to remove the app and jobs
-# MAGIC (results tables are kept unless **Drop results tables** is `yes`). Uninstall refuses while an apply run is active.
+# MAGIC Run it again to update (same widgets). To remove it, set **Action** to `uninstall` and choose what else goes
+# MAGIC with the three **Uninstall:** widgets (results tables, apply logs, Unity Gateway services created by apply).
+# MAGIC The first uninstall run only shows what would be removed and what would be kept; set **Uninstall: confirm** to
+# MAGIC `yes` and run it again to remove. Uninstall refuses while an apply run is active.
 # MAGIC
 # MAGIC Prototype from Databricks Shared Technical Services, provided as is. Version __VERSION__.
 
@@ -49,12 +51,15 @@ dbutils.widgets.dropdown("warehouse", wh_choices[0], wh_choices, "4. SQL warehou
 dbutils.widgets.text("operators", "", "5. Operators (emails, comma-separated; blank = you)")
 dbutils.widgets.text("app_name", "unity-gateway-migration", "6. App name (2-30 characters)")
 dbutils.widgets.text("install_folder", "", "7. Install folder (blank = your home folder, <app name>-toolkit)")
-dbutils.widgets.dropdown("drop_data", "no", ["no", "yes"], "8. Drop results tables (uninstall)")
-dbutils.widgets.dropdown("adopt_app", "no", ["no", "yes"], "9. Adopt existing app (replace an app that isn't a toolkit app)")
-dbutils.widgets.dropdown("allow_downgrade", "no", ["no", "yes"], "10. Allow downgrade (older version over a newer one)")
-dbutils.widgets.dropdown("second_install", "no", ["no", "yes"], "11. Allow a second install (other app name, results and folder)")
-dbutils.widgets.text("secret_schemas", "", "12. Allowed secret schemas (catalog.schema, comma-separated; blank = off)")
-dbutils.widgets.dropdown("allow_secret_read", "no", ["no", "yes"], "13. Allow reading secret values")
+dbutils.widgets.dropdown("adopt_app", "no", ["no", "yes"], "8. Adopt existing app (replace an app that isn't a toolkit app)")
+dbutils.widgets.dropdown("allow_downgrade", "no", ["no", "yes"], "9. Allow downgrade (older version over a newer one)")
+dbutils.widgets.dropdown("second_install", "no", ["no", "yes"], "10. Allow a second install (other app name, results and folder)")
+dbutils.widgets.text("secret_schemas", "", "11. Allowed secret schemas (catalog.schema, comma-separated; blank = off)")
+dbutils.widgets.dropdown("allow_secret_read", "no", ["no", "yes"], "12. Allow reading secret values")
+dbutils.widgets.dropdown("drop_data", "no", ["no", "yes"], "13. Uninstall: remove results tables (and the schema, if empty)")
+dbutils.widgets.dropdown("remove_logs", "no", ["no", "yes"], "14. Uninstall: remove apply logs")
+dbutils.widgets.dropdown("rollback_services", "no", ["no", "yes"], "15. Uninstall: roll back Unity Gateway services created by apply")
+dbutils.widgets.dropdown("confirm_uninstall", "no", ["no", "yes"], "16. Uninstall: confirm (no = only show what would be removed)")
 
 # COMMAND ----------
 
@@ -66,6 +71,7 @@ import io
 import json
 import re
 import zipfile
+from datetime import timedelta
 
 from databricks.sdk.service import apps, jobs
 from databricks.sdk.service.workspace import ImportFormat, Language
@@ -243,6 +249,29 @@ def app_update_spec(existing: apps.App, **set_fields) -> apps.App:
     kept = {f.name: getattr(existing, f.name) for f in dataclasses.fields(apps.App) if f.name not in APP_OUTPUT_ONLY}
     kept.update(set_fields)
     return apps.App(**kept)
+def uninstall_summary(drop: bool, remove_logs: bool, rollback: bool, pending: list[dict], has_logs: bool,
+                      results: str, folder: str) -> tuple[list[str], list[str]]:
+    """What an uninstall removes and keeps. pending: execute runs not rolled back yet (apply_id, created)."""
+    created = sum(p.get("created", 0) for p in pending)
+    remove = ["the app and its three jobs", f"the toolkit files and snapshot output in {folder}"]
+    keep = []
+    if pending and rollback:
+        remove.insert(0, f"Unity Gateway services and grants created by {len(pending)} apply run(s) "
+                         f"({created} object(s)), rolled back newest first before anything else is removed")
+    elif pending:
+        keep.append(f"Unity Gateway services created by {len(pending)} apply run(s) ({created} object(s)): callers "
+                    "that moved to them keep working (set Uninstall: roll back ... = yes to remove them)")
+    else:
+        keep.append("no Unity Gateway services: no apply run created any that is still in place")
+    (remove if drop else keep).append(f"the results tables in {results}" + (" (and the schema, if nothing else is in it)"
+                                                                            if drop else ""))
+    if has_logs:
+        (remove if remove_logs else keep).append(f"the apply logs in {folder}/apply_logs")
+        if remove_logs and pending and not rollback:
+            keep.append("WARNING: without the apply logs and the app, the kept services can only be removed by hand")
+    return remove, keep
+
+
 # HELPERS-END
 
 # COMMAND ----------
@@ -270,6 +299,9 @@ SECRET_SCHEMAS, secret_problem = parse_secret_schemas(g("secret_schemas"))
 TOOLKIT_VERSION = "__VERSION__"
 APP_DESCRIPTION = f"{APP_MARKER}: account overview, workspace scans, readiness, code fixes and apply"
 DROP = g("drop_data") == "yes"
+REMOVE_LOGS = g("remove_logs") == "yes"
+ROLLBACK = g("rollback_services") == "yes"
+CONFIRMED = g("confirm_uninstall") == "yes"
 SCHEMA_GIVEN = bool(g("results_schema").strip())
 FOLDER_GIVEN = bool(g("install_folder").strip())
 
@@ -471,9 +503,9 @@ def preflight() -> tuple[list[str], str]:
             found.append("uninstall would delete files that another install uses in the same folder: "
                          + ", ".join(c["app"] for c in clash if c["kind"] == "folder"))
         if DROP and any(c["kind"] == "results" for c in clash):
-            found.append("drop results tables would drop the results that another install uses: "
+            found.append("removing the results tables would drop the results that another install uses: "
                          + ", ".join(c["app"] for c in clash if c["kind"] == "results")
-                         + " (leave Drop results tables = no)")
+                         + " (leave Uninstall: remove results tables = no)")
         for role, ids in find_jobs().items():
             for job_id in ids:
                 if role == "apply" and next(iter(w.jobs.list_runs(job_id=job_id, active_only=True)), None):
@@ -490,8 +522,60 @@ print(f"{ACTION}: {version_note}")
 
 # COMMAND ----------
 
+def pending_rollbacks() -> list[dict]:
+    """Execute runs whose Unity Gateway objects are still in place (no successful rollback), newest first."""
+    try:
+        rows = spark.sql(f"""
+            SELECT a.apply_id, count(i.payload) AS created FROM `{CATALOG}`.`{SCHEMA}`.ug_migration_applies a
+            LEFT JOIN `{CATALOG}`.`{SCHEMA}`.ug_migration_apply_items i
+              ON i.apply_id = a.apply_id AND get_json_object(i.payload, '$.action') = 'created'
+            WHERE a.mode = 'execute' AND a.apply_id NOT IN (
+              SELECT rollback_of FROM `{CATALOG}`.`{SCHEMA}`.ug_migration_applies
+              WHERE mode = 'rollback' AND status = 'SUCCEEDED' AND rollback_of IS NOT NULL)
+            GROUP BY a.apply_id, a.started_at ORDER BY a.started_at DESC""").collect()
+    except Exception as e:  # no results tables yet: nothing was applied from this install
+        if "TABLE_OR_VIEW_NOT_FOUND" in str(e) or "SCHEMA_NOT_FOUND" in str(e):
+            return []
+        raise
+    return [{"apply_id": r["apply_id"], "created": r["created"]} for r in rows if r["created"]]
+
+
+def rollback_status(apply_id: str) -> str:
+    rows = spark.sql(f"SELECT status FROM `{CATALOG}`.`{SCHEMA}`.ug_migration_applies WHERE mode = 'rollback' "
+                     f"AND rollback_of = '{apply_id}' ORDER BY started_at DESC LIMIT 1").collect()
+    return rows[0]["status"] if rows else "not recorded"
+
+
 if ACTION == "uninstall":
     existing = get_app()
+    pending = pending_rollbacks()
+    try:
+        has_logs = bool(list(w.workspace.list(f"{FOLDER}/apply_logs")))
+    except (NotFound, ResourceDoesNotExist):
+        has_logs = False
+    remove, keep = uninstall_summary(DROP, REMOVE_LOGS, ROLLBACK, pending, has_logs, RESULTS, FOLDER)
+    print("Uninstall removes:\n- " + "\n- ".join(remove))
+    print("Uninstall keeps:\n- " + "\n- ".join(keep))
+    if not CONFIRMED:
+        print("\nNothing was changed. Adjust the Uninstall: widgets if needed, set Uninstall: confirm = yes and run again.")
+        dbutils.notebook.exit("uninstall preview: nothing changed")
+    if ROLLBACK and pending:
+        apply_jobs = find_jobs().get("apply") or []
+        if not apply_jobs:
+            raise ValueError("Nothing was removed: the apply job is missing, so services can't be rolled back here. "
+                             "Roll them back with the command line (USER_GUIDE section 8), then uninstall.")
+        for p in pending:  # newest first, so providers shared with earlier runs are removed by the last rollback
+            print("rolling back apply", p["apply_id"], "...")
+            try:
+                w.jobs.run_now(job_id=apply_jobs[0], job_parameters={
+                    "mode": "rollback", "rollback_of": p["apply_id"], "results_schema": RESULTS,
+                    "requested_by": me}).result(timeout=timedelta(minutes=60))
+            except Exception as e:  # the run failed or timed out; its row says how far it got
+                print("rollback run ended with an error:", str(e)[:300])
+            status = rollback_status(p["apply_id"])
+            if status != "SUCCEEDED":
+                raise ValueError(f"Uninstall stopped: the rollback of apply {p['apply_id']} ended {status} (see its "
+                                 "results in the app). Rollbacks that finished stay done; nothing else was removed.")
     for role, ids in find_jobs().items():
         for job_id in ids:  # stop what's running before the jobs go (apply was checked above)
             w.jobs.cancel_all_runs(job_id=job_id)
@@ -506,8 +590,8 @@ if ACTION == "uninstall":
     if dash:
         w.lakeview.trash(dash)
         print("moved dashboard to Trash:", DASH_NAME)
-    for path in (FILES, f"{FOLDER}/output", MARKER):
-        try:  # toolkit files, snapshot output files (results are in tables) and the install marker
+    for path in (FILES, f"{FOLDER}/output", MARKER) + ((f"{FOLDER}/apply_logs",) if REMOVE_LOGS else ()):
+        try:  # toolkit files, snapshot output files (results are in tables), the install marker, apply logs if chosen
             w.workspace.delete(path, recursive=True)
             print("deleted", path)
         except (NotFound, ResourceDoesNotExist):
@@ -522,9 +606,12 @@ if ACTION == "uninstall":
         for t in ("scans", "scan_items", "applies", "apply_items", "workspaces", "endpoints"):
             spark.sql(f"DROP TABLE IF EXISTS `{CATALOG}`.`{SCHEMA}`.ug_migration_{t}")
         print("dropped results tables in", RESULTS)
-    print(f"Done. Kept: {FOLDER}/apply_logs (if any) and the Unity Gateway services created by apply (roll them back "
-          "before uninstalling if you want them removed, since this run deletes the app)"
-          + ("." if DROP else f", and the results tables in {RESULTS}."))
+        try:  # RESTRICT: only an empty schema goes
+            spark.sql(f"DROP SCHEMA IF EXISTS `{CATALOG}`.`{SCHEMA}` RESTRICT")
+            print("dropped schema", RESULTS)
+        except Exception:
+            print("kept schema", RESULTS, "(other objects are in it)")
+    print("Done. Kept:\n- " + "\n- ".join(keep) if keep else "Done.")
     dbutils.notebook.exit("uninstalled")
 
 # COMMAND ----------

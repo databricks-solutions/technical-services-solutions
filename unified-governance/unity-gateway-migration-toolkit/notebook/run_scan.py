@@ -7,7 +7,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install --quiet "databricks-sdk>=0.158.0"
+# MAGIC %pip install --quiet "databricks-sdk==0.158.0"
 # MAGIC %restart_python
 
 # COMMAND ----------
@@ -20,6 +20,7 @@ dbutils.widgets.text("scan_roots", "")
 dbutils.widgets.text("target_catalog", "ai_gateway")
 dbutils.widgets.text("target_schema", "migrated")
 dbutils.widgets.text("requested_by", "")
+dbutils.widgets.dropdown("ack_guardrails", "false", ["false", "true"])  # true: accept that guardrails aren't carried over
 
 # COMMAND ----------
 
@@ -63,7 +64,8 @@ out_dir = tempfile.mkdtemp(prefix="ug_scan_")
 try:
     store.upsert(spark, schema, "ug_migration_scans", store.SCAN_COLUMNS, "run_id", meta)
     res = planner.run(w, out_dir, warehouse_id=None, days=int(meta["days"]), target_catalog=meta["target_catalog"],
-                      target_schema=meta["target_schema"], scan_roots=roots)
+                      target_schema=meta["target_schema"], scan_roots=roots,
+                      ack_guardrails=dbutils.widgets.get("ack_guardrails") == "true")
     ready = store.write_scan_items(spark, schema, run_id, out_dir)
     store.upsert(spark, schema, "ug_migration_scans", store.SCAN_COLUMNS, "run_id", {
         "run_id": run_id, "status": "SUCCEEDED", "readiness": res["readiness"], "endpoints": res["endpoints"],

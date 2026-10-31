@@ -3,7 +3,7 @@ import { useApi } from "./api";
 import Apply from "./Apply";
 import Overview from "./Overview";
 import Scans from "./Scans";
-import { Badge, Card, ErrorBoundary, Notice, PageHeader, Tabs } from "./ui";
+import { Badge, Card, ErrorBoundary, LiveRegion, Notice, PageHeader, Tabs, tabPanel } from "./ui";
 
 export const PRODUCT = "Unity Gateway Migration Toolkit";
 
@@ -18,11 +18,14 @@ export default function App() {
   return (
     <div className="app">
       <a className="skip-link" href="#main">Skip to content</a>
+      <LiveRegion />
       <header className="top">
         <h1>{PRODUCT}</h1>
-        <Tabs className="tabs" label="Sections" tabs={TABS} value={tab} onChange={setTab} />
+        <Tabs className="tabs" label="Sections" tabs={TABS} value={tab} onChange={setTab} panelId="sections" />
         <div className="me">
-          {me.data && <><span>{me.data.email}</span><Badge value={me.data.operator ? "Operator" : "View only"} tone={me.data.operator ? "info" : "neutral"} /></>}
+          {me.data && (me.data.email
+            ? <><span>{me.data.email}</span><Badge value={me.data.operator ? "Operator" : "View only"} tone={me.data.operator ? "info" : "neutral"} /></>
+            : <Badge value="Not signed in" tone="warn" />)}
         </div>
       </header>
       <main id="main" tabIndex={-1}>
@@ -34,10 +37,12 @@ export default function App() {
           </div>
         )}
         {/* Sections stay mounted so a running job keeps its status when you switch tabs. */}
-        <div hidden={tab !== "overview"}><ErrorBoundary><Overview operator={operator} /></ErrorBoundary></div>
-        <div hidden={tab !== "scans"}><ErrorBoundary><Scans operator={operator} onApply={(id) => { setScanForApply(id); setTab("apply"); }} /></ErrorBoundary></div>
-        <div hidden={tab !== "apply"}><ErrorBoundary><Apply operator={operator} scanRunId={scanForApply} setScanRunId={setScanForApply} /></ErrorBoundary></div>
-        <div hidden={tab !== "about"}><About user={me.data} /></div>
+        <div {...tabPanel("sections", tab)} className="section-panel">
+          <div hidden={tab !== "overview"}><ErrorBoundary><Overview operator={operator} /></ErrorBoundary></div>
+          <div hidden={tab !== "scans"}><ErrorBoundary><Scans operator={operator} onApply={(id) => { setScanForApply(id); setTab("apply"); }} /></ErrorBoundary></div>
+          <div hidden={tab !== "apply"}><ErrorBoundary><Apply operator={operator} scanRunId={scanForApply} setScanRunId={setScanForApply} /></ErrorBoundary></div>
+          <div hidden={tab !== "about"}><About user={me.data} /></div>
+        </div>
       </main>
       <footer className="muted small">Prototype from Databricks Shared Technical Services, provided as is. Review results before acting on them.</footer>
     </div>
@@ -55,15 +60,16 @@ function About({ user }: { user: any }) {
         <ol>
           <li><b>Overview:</b> refresh the account snapshot to see every workspace, its migration wave and the share already on Unity Gateway.</li>
           <li><b>Scans:</b> scan a workspace. Readiness says whether Enforce Unity Gateway is safe; Callers and Code fixes show who has to change what.</li>
-          <li><b>Apply:</b> for external model and Provisioned Throughput endpoints, dry run, then execute. The target schema must exist and the jobs' identity needs <code>CREATE SERVICE</code> on it.</li>
-          <li>Move callers, scan again, and turn on <i>Enforce Unity Gateway</i> (Settings, Advanced) when the workspace is READY.</li>
+          <li><b>Apply:</b> for external model and Provisioned Throughput endpoints, run a dry run, then execute the same selection. The target schema must exist and the jobs' identity needs <code>CREATE SERVICE</code> on it.</li>
+          <li>Move callers and scan again. READY needs zero legacy requests in the whole window (30 days by default), so callers that moved recently still show: scan with a 7-day window to watch progress. Then turn on <i>Enforce Unity Gateway</i> in the workspace admin settings (confirm the location in current Databricks docs).</li>
         </ol>
       </Card>
       <Card title="Access and safety">
         <ul>
-          <li>Pages read results as you ({user?.user_authorization ? "user authorization is on" : "user authorization is off: results are read as the app"}), so Unity Catalog permissions on the results schema apply.</li>
-          <li>Snapshots, scans and apply runs are jobs that run as the identity that installed the app. Only operators can start them.</li>
-          <li>Execute and rollback need a typed confirmation. Apply never changes legacy endpoints.</li>
+          <li>Pages read results as you ({user?.user_authorization ? "user authorization is on" : "user authorization is off: results can't be read until it is turned on"}), so Unity Catalog permissions on the results schema apply.</li>
+          <li>Snapshots, scans and apply runs are jobs that run as the identity that installed the app. Only operators can start them. Job messages and links are shown to the person who started a run and to operators.</li>
+          <li>Execute and rollback need a typed confirmation. Execute only follows a successful dry run of the same selection. Grants are off unless you choose them. Apply never changes legacy endpoints.</li>
+          <li>Secrets: provider API keys come from Unity Catalog secrets in schemas the installer allowed. Copying key values is off unless the installer enabled it.</li>
           <li>Scans store matched code lines (credential-looking values hidden): keep the results schema limited to the migration team.</li>
         </ul>
       </Card>

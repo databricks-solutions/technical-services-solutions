@@ -7,7 +7,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install --quiet "databricks-sdk>=0.158.0"
+# MAGIC %pip install --quiet "databricks-sdk==0.158.0"
 # MAGIC %restart_python
 
 # COMMAND ----------
@@ -15,6 +15,7 @@
 dbutils.widgets.text("out_dir", "", "Output folder (workspace or volume path)")
 dbutils.widgets.text("days", "30", "Traffic window (days)")
 dbutils.widgets.text("scan_root", "", "Scan root (blank = /Users, /Shared, /Repos)")
+dbutils.widgets.dropdown("ack_guardrails", "false", ["false", "true"], "Accept guardrails not carried over")
 
 # COMMAND ----------
 
@@ -31,7 +32,7 @@ import ug_migration_planner as planner
 out_dir = dbutils.widgets.get("out_dir") or f"/Workspace{here}/ug_migration_out"
 roots = [dbutils.widgets.get("scan_root")] if dbutils.widgets.get("scan_root") else None
 result = planner.run(WorkspaceClient(), out_dir, warehouse_id=None, days=int(dbutils.widgets.get("days")),
-                     scan_roots=roots)
+                     scan_roots=roots, ack_guardrails=dbutils.widgets.get("ack_guardrails") == "true")
 print(result)
 
 # COMMAND ----------

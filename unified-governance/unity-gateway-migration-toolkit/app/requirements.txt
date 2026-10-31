@@ -1,3 +1,4 @@
-fastapi>=0.110
-uvicorn[standard]>=0.29
-databricks-sdk>=0.158.0
+# Exact versions resolved and used in this repo's test environment (see NOTES_install.md). Upgrade deliberately.
+fastapi==0.162.0
+uvicorn[standard]==0.54.0
+databricks-sdk==0.158.0

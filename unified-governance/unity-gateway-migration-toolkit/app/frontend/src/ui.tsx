@@ -1,4 +1,4 @@
-import { Component, KeyboardEvent, ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Component, KeyboardEvent, ReactNode, RefObject, useEffect, useId, useMemo, useRef, useState } from "react";
 import { JobState, TERMINAL_LIFE_CYCLES, fmt } from "./api";
 
 export class ErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
@@ -26,13 +26,17 @@ export function PageHeader({ title, description, actions }: { title: string; des
   );
 }
 
-export function Card({ title, children, actions, note, id }: { title?: ReactNode; children: ReactNode; actions?: ReactNode; note?: ReactNode; id?: string }) {
+export function Card({ title, children, actions, note, id, headingRef }: {
+  title?: ReactNode; children: ReactNode; actions?: ReactNode; note?: ReactNode; id?: string; headingRef?: RefObject<HTMLHeadingElement>;
+}) {
+  const generated = useId();
+  const titleId = id || generated;
   return (
-    <section className="card" aria-labelledby={id}>
+    <section className="card" aria-labelledby={title ? titleId : undefined}>
       {(title || actions) && (
         <header className="card-head">
           <div className="stack-sm">
-            {title && <h3 id={id}>{title}</h3>}
+            {title && <h3 id={titleId} ref={headingRef} tabIndex={headingRef ? -1 : undefined} className={headingRef ? "focus-target" : undefined}>{title}</h3>}
             {note && <p className="muted small">{note}</p>}
           </div>
           {actions && <div className="actions">{actions}</div>}
@@ -65,25 +69,44 @@ export function Badge({ value, tone }: { value: any; tone?: string }) {
   return <span className={`badge ${t}`}>{String(value ?? "-").replace(/_/g, " ")}</span>;
 }
 
+/* ---------- Live region: one polite region for job progress and outcomes ---------- */
+
+/** Mount once (App). announce() writes to it so screen readers hear job progress and completion. */
+export function LiveRegion() {
+  return <div id="app-live" className="sr-only" aria-live="polite" aria-atomic="true" />;
+}
+
+export function announce(message: string) {
+  const el = document.getElementById("app-live");
+  if (!el) return;
+  el.textContent = "";
+  window.setTimeout(() => { el.textContent = message; }, 50);
+}
+
 /* ---------- States: loading, empty, error, notices ---------- */
 
+/** Visual placeholder only (hidden from screen readers); one "Loading" text announces the wait. */
 export function Skeleton({ lines = 3, block = false, label = "Loading" }: { lines?: number; block?: boolean; label?: string }) {
   return (
-    <div className="stack-sm" role="status" aria-live="polite" aria-busy="true">
+    <div className="stack-sm">
       <span className="sr-only">{label}</span>
-      {block ? <span className="skeleton block" /> : Array.from({ length: lines }, (_, i) => (
-        <span key={i} className="skeleton line" style={{ width: `${[92, 78, 85, 64, 70][i % 5]}%` }} />
-      ))}
+      <div className="stack-sm" aria-hidden="true">
+        {block ? <span className="skeleton block" /> : Array.from({ length: lines }, (_, i) => (
+          <span key={i} className="skeleton line" style={{ width: `${[92, 78, 85, 64, 70][i % 5]}%` }} />
+        ))}
+      </div>
     </div>
   );
 }
 
 export function SkeletonTable({ rows = 6, label = "Loading table" }: { rows?: number; label?: string }) {
   return (
-    <div className="skeleton-table" role="status" aria-live="polite" aria-busy="true">
+    <div className="stack-sm">
       <span className="sr-only">{label}</span>
-      <span className="skeleton line" style={{ height: 30 }} />
-      {Array.from({ length: rows }, (_, i) => <span key={i} className="skeleton line" />)}
+      <div className="skeleton-table" aria-hidden="true">
+        <span className="skeleton line" style={{ height: 30 }} />
+        {Array.from({ length: rows }, (_, i) => <span key={i} className="skeleton line" />)}
+      </div>
     </div>
   );
 }
@@ -133,7 +156,7 @@ function friendly(error: string) {
   const m = /^(\d{3}): ([\s\S]*)$/.exec(error);
   if (!m) return error;
   const [, code, text] = m;
-  if (code === "401") return "Your session has no user token. Ask the person who installed the app to enable user authorization.";
+  if (code === "401") return "Your session has no verified user. Ask the person who installed the app to enable user authorization, then reload.";
   if (code === "403") return text || "You don't have permission for this.";
   if (code === "504") return "The SQL warehouse took too long to answer (it may be starting). Try again in a minute.";
   return text || `Request failed (${code}).`;
@@ -156,16 +179,47 @@ export function Notice({ tone, title, children, action, onClose }: {
   );
 }
 
-/** Status of a started job, then the outcome (success or failure) once it ends. */
+/** Visible reason why an action is unavailable (linked to the button with aria-describedby). */
+export function Reason({ id, children }: { id: string; children: ReactNode }) {
+  return <p id={id} className="reason small">{children}</p>;
+}
+
+/** Time since a job or run started, ticking once a second (visible, not announced). */
+export function Elapsed({ since }: { since: number | string | null | undefined }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  if (since === null || since === undefined || since === "") return null;
+  const start = typeof since === "number" ? since : Date.parse(String(since).includes("T") ? String(since) : `${String(since).replace(" ", "T")}Z`);
+  if (Number.isNaN(start)) return null;
+  const s = Math.max(0, Math.floor((now - start) / 1000));
+  const text = s >= 3600 ? `${Math.floor(s / 3600)}h ${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}m`
+    : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  return <span className="muted small">running for {text}</span>;
+}
+
+/** Status of a started job, then the outcome (success or failure) once it ends. Changes are announced once. */
 export function JobLine({ state, label, done }: { state: JobState | null; label: string; done?: ReactNode }) {
-  if (!state) return <div className="jobline" role="status"><div className="spinner" aria-hidden="true" />{label}: starting</div>;
+  const life = state?.life_cycle || "";
+  const finished = !!state && (!!state.error || TERMINAL_LIFE_CYCLES.includes(life));
+  const sentence = !state ? "" : state.error ? `${label}: status unknown`
+    : !finished ? `${label}: ${life.toLowerCase()}`
+    : state.result === "SUCCESS" ? `${label} finished` : `${label} ${String(state.result || life).toLowerCase()}`;
+  const baseline = useRef<string | null>(null);
+  useEffect(() => {
+    if (baseline.current === null) { baseline.current = sentence; return; }
+    if (sentence && sentence !== baseline.current) announce(sentence);
+    baseline.current = sentence;
+  }, [sentence]);
+  if (!state) return <div className="jobline"><div className="spinner" aria-hidden="true" />{label}: starting</div>;
   if (state.error) return <Notice tone="error" title={`${label}: status unknown`}>{state.error}</Notice>;
-  const running = !TERMINAL_LIFE_CYCLES.includes(state.life_cycle || "");
   const link = state.url && <a href={state.url} target="_blank" rel="noreferrer">View job run</a>;
-  if (running) {
+  if (!finished) {
     return (
-      <div className="jobline" role="status" aria-live="polite">
-        <div className="spinner" aria-hidden="true" /><span>{label}: {String(state.life_cycle || "starting").toLowerCase()}</span>{link}
+      <div className="jobline">
+        <div className="spinner" aria-hidden="true" /><span>{label}: {life.toLowerCase()}</span><Elapsed since={state.start_time} />{link}
       </div>
     );
   }
@@ -173,10 +227,15 @@ export function JobLine({ state, label, done }: { state: JobState | null; label:
   return <Notice tone="error" title={`${label} ${String(state.result || state.life_cycle).toLowerCase()}`} action={link}>{state.message}</Notice>;
 }
 
-/* ---------- Tabs (arrow keys move between tabs) ---------- */
+/* ---------- Tabs (arrow keys move between tabs; each tab controls the panel `${panelId}-panel`) ---------- */
 
-export function Tabs({ tabs, value, onChange, className = "subtabs", label }: {
-  tabs: readonly (readonly [string, ReactNode])[]; value: string; onChange: (k: string) => void; className?: string; label: string;
+/** Attributes for the tabpanel that shows the selected tab. */
+export function tabPanel(panelId: string, value: string) {
+  return { id: `${panelId}-panel`, role: "tabpanel", tabIndex: 0, "aria-labelledby": `${panelId}-tab-${value}` } as const;
+}
+
+export function Tabs({ tabs, value, onChange, className = "subtabs", label, panelId }: {
+  tabs: readonly (readonly [string, ReactNode])[]; value: string; onChange: (k: string) => void; className?: string; label: string; panelId: string;
 }) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const onKey = (e: KeyboardEvent, i: number) => {
@@ -190,7 +249,8 @@ export function Tabs({ tabs, value, onChange, className = "subtabs", label }: {
   return (
     <div className={className} role="tablist" aria-label={label}>
       {tabs.map(([k, l], i) => (
-        <button key={k} ref={(el) => (refs.current[i] = el)} role="tab" aria-selected={value === k} tabIndex={value === k ? 0 : -1}
+        <button key={k} ref={(el) => (refs.current[i] = el)} id={`${panelId}-tab-${k}`} aria-controls={`${panelId}-panel`}
+                role="tab" aria-selected={value === k} tabIndex={value === k ? 0 : -1}
                 onClick={() => onChange(k)} onKeyDown={(e) => onKey(e, i)}>{l}</button>
       ))}
     </div>
@@ -201,8 +261,10 @@ export function Tabs({ tabs, value, onChange, className = "subtabs", label }: {
 
 export type Column<T> = { key: string; label: string; render?: (row: T) => ReactNode; num?: boolean; width?: string; sortable?: boolean };
 
-export function Table<T extends Record<string, any>>({ rows, columns, search, pageSize = 25, empty, label, tools }: {
+export function Table<T extends Record<string, any>>({ rows, columns, search, pageSize = 25, empty, label, tools, rowCurrent }: {
   rows: T[]; columns: Column<T>[]; search?: boolean; pageSize?: number; empty?: ReactNode; label: string; tools?: ReactNode;
+  /** Marks the row that is open elsewhere on the page (aria-current). */
+  rowCurrent?: (row: T) => boolean;
 }) {
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 } | null>(null);
@@ -266,13 +328,16 @@ export function Table<T extends Record<string, any>>({ rows, columns, search, pa
               </tr>
             </thead>
             <tbody>
-              {view.map((row, i) => (
-                <tr key={i}>
-                  {columns.map((c) => (
-                    <td key={c.key} className={c.num ? "num" : ""}>{c.render ? c.render(row) : String(row[c.key] ?? "")}</td>
-                  ))}
-                </tr>
-              ))}
+              {view.map((row, i) => {
+                const current = rowCurrent?.(row) ?? false;
+                return (
+                  <tr key={i} className={current ? "current" : undefined} aria-current={current ? "true" : undefined}>
+                    {columns.map((c) => (
+                      <td key={c.key} className={c.num ? "num" : ""}>{c.render ? c.render(row) : String(row[c.key] ?? "")}</td>
+                    ))}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -298,9 +363,10 @@ export function Pager({ page, pages, total, onPage, busy }: { page: number; page
 
 type Series = { key: string; label: string; cls: "legacy" | "ug" | "single" };
 
-/** Line chart over snapshots, drawn as SVG. Each point has a tooltip; the data is also exportable as CSV. */
-export function TrendChart({ points, series, label, valueFmt = fmtShort }: {
-  points: Record<string, any>[]; series: Series[]; label: string; valueFmt?: (v: number) => string;
+/** Line chart over snapshots, drawn as SVG. Each point has a tooltip; `summary` is the accessible name and
+ *  `describedBy` can point at a data table elsewhere on the page. Scrolls sideways on narrow screens so labels stay readable. */
+export function TrendChart({ points, series, label, valueFmt = fmtShort, id, describedBy }: {
+  points: Record<string, any>[]; series: Series[]; label: string; valueFmt?: (v: number) => string; id?: string; describedBy?: string;
 }) {
   if (points.length === 0) return <Empty title="No snapshots yet" />;
   const W = 640, H = 210, P = { l: 52, r: 16, t: 12, b: 30 };
@@ -313,29 +379,31 @@ export function TrendChart({ points, series, label, valueFmt = fmtShort }: {
     series.map((s) => `${s.label} ${valueFmt(Number(last[s.key]) || 0)}`).join(", ") + ".";
   return (
     <figure className="stack-sm" style={{ margin: 0 }}>
-      <svg viewBox={`0 0 ${W} ${H}`} className="chart" role="img" aria-label={summary}>
-        {ticks.map((t) => (
-          <g key={t}>
-            <line x1={P.l} x2={W - P.r} y1={y(t)} y2={y(t)} className="grid" />
-            <text x={P.l - 8} y={y(t) + 4} textAnchor="end" className="axis">{valueFmt(t)}</text>
-          </g>
-        ))}
-        {series.map((s) => (
-          <g key={s.key}>
-            <polyline className={`line ${s.cls}`} points={points.map((p, i) => `${x(i)},${y(Number(p[s.key]) || 0)}`).join(" ")} />
-            {points.map((p, i) => (
-              <circle key={i} cx={x(i)} cy={y(Number(p[s.key]) || 0)} r={3.5} className={`dot ${s.cls}`}>
-                <title>{`${String(p.snapshot_time).slice(0, 16)} · ${s.label}: ${valueFmt(Number(p[s.key]) || 0)}`}</title>
-              </circle>
-            ))}
-          </g>
-        ))}
-        {points.map((p, i) => (i === 0 || i === points.length - 1) && (
-          <text key={i} x={x(i)} y={H - 10} textAnchor={points.length === 1 ? "middle" : i === 0 ? "start" : "end"} className="axis">
-            {String(p.snapshot_time).slice(0, 10)}
-          </text>
-        ))}
-      </svg>
+      <div className="chart-scroll">
+        <svg id={id} viewBox={`0 0 ${W} ${H}`} className="chart" role="img" aria-label={summary} aria-describedby={describedBy}>
+          {ticks.map((t) => (
+            <g key={t}>
+              <line x1={P.l} x2={W - P.r} y1={y(t)} y2={y(t)} className="grid" />
+              <text x={P.l - 8} y={y(t) + 4} textAnchor="end" className="axis">{valueFmt(t)}</text>
+            </g>
+          ))}
+          {series.map((s) => (
+            <g key={s.key}>
+              <polyline className={`line ${s.cls}`} points={points.map((p, i) => `${x(i)},${y(Number(p[s.key]) || 0)}`).join(" ")} />
+              {points.map((p, i) => (
+                <circle key={i} cx={x(i)} cy={y(Number(p[s.key]) || 0)} r={3.5} className={`dot ${s.cls}`}>
+                  <title>{`${String(p.snapshot_time).slice(0, 16)} · ${s.label}: ${valueFmt(Number(p[s.key]) || 0)}`}</title>
+                </circle>
+              ))}
+            </g>
+          ))}
+          {points.map((p, i) => (i === 0 || i === points.length - 1) && (
+            <text key={i} x={x(i)} y={H - 10} textAnchor={points.length === 1 ? "middle" : i === 0 ? "start" : "end"} className="axis">
+              {String(p.snapshot_time).slice(0, 10)}
+            </text>
+          ))}
+        </svg>
+      </div>
       {series.length > 1 && (
         <figcaption className="legend">
           {series.map((s) => <span key={s.key}><i className={`swatch ${s.cls}`} aria-hidden="true" />{s.label}</span>)}
@@ -399,6 +467,7 @@ export function ExportMenu({ items, label = "Export" }: { items: { href: string;
             {i.label}{i.hint && <span className="muted small">{i.hint}</span>}
           </a>
         ))}
+        <p className="menu-note small muted">Exports are limited to 200,000 rows.</p>
       </div>
     </details>
   );
@@ -409,10 +478,13 @@ export function Confirm({ word, title, body, onConfirm, onCancel, busy }: {
 }) {
   const [typed, setTyped] = useState("");
   const dialog = useRef<HTMLDivElement>(null);
-  const opener = useRef<Element | null>(document.activeElement);
+  const [opener] = useState<Element | null>(() => document.activeElement);
+  // Keep the latest onCancel in a ref so the key handler isn't re-bound (and focus disturbed) on every parent render.
+  const cancel = useRef(onCancel);
+  cancel.current = onCancel;
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key === "Escape" && !busy) onCancel();
+      if (e.key === "Escape" && !busy) cancel.current();
       if (e.key === "Tab" && dialog.current) { // keep focus inside the dialog
         const f = dialog.current.querySelectorAll<HTMLElement>("input, button:not(:disabled)");
         if (!f.length) return;
@@ -422,9 +494,10 @@ export function Confirm({ word, title, body, onConfirm, onCancel, busy }: {
       }
     };
     window.addEventListener("keydown", onKey);
-    const back = opener.current;
-    return () => { window.removeEventListener("keydown", onKey); (back as HTMLElement | null)?.focus?.(); };
-  }, [busy, onCancel]);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy]);
+  // Give focus back to the control that opened the dialog, once, when it closes.
+  useEffect(() => () => { (opener as HTMLElement | null)?.focus?.(); }, [opener]);
   const ok = typed === word && !busy;
   return (
     <div className="modal-back">

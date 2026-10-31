@@ -178,43 +178,65 @@ def apply_log_from_items(spark, schema: str, apply_id: str, path: str, durable_l
     rows = spark.sql(f"SELECT payload FROM {q(schema)}.ug_migration_apply_items "
                      f"WHERE apply_id = {_lit(apply_id, 'STRING')} ORDER BY seq").collect()
     entries = [json.loads(r["payload"]) for r in rows]
-    if not any(e.get("execute") and e.get("action") in ("created", "creating") for e in entries) \
+    if not any(e.get("execute") and e.get("action") in ROLLBACK_ACTIONS for e in entries) \
             and durable_log and os.path.exists(durable_log):
-        entries = [json.loads(l) for l in open(durable_log) if l.strip()]
+        entries = []
+        for line in open(durable_log):
+            try:
+                if line.strip():
+                    entries.append(json.loads(line))
+            except ValueError:
+                continue  # a torn last line from a killed run
     n = 0
     with open(path, "w") as f:
         for entry in entries:
-            if entry.get("execute") and entry.get("action") in ("created", "creating"):
+            if _is_rollback_entry(entry):
                 f.write(json.dumps(entry) + "\n")
                 n += 1
     return n
 
 
-def protected_objects(spark, schema: str, apply_id: str) -> set[tuple[str, str]]:
-    """Objects other execute runs (not rolled back) still depend on, so a rollback must keep them.
+ROLLBACK_ACTIONS = ("created", "creating", "exists", "updated")
 
-    A run depends on what it created, and on provider services it reused for model services it created
-    (a later wave). Re-running the same selection only finds everything existing, so it protects nothing."""
+
+def _is_rollback_entry(e: dict) -> bool:
+    """Entries a rollback needs: objects this run created, reused or updated, and the grants it added."""
+    if not e.get("execute"):
+        return False
+    if e.get("action") in ROLLBACK_ACTIONS and e.get("type") in ("model_service", "model_provider_service"):
+        return True
+    return e.get("type") == "grant" and e.get("action") == "granted" and bool(e.get("added"))
+
+
+def protection_runs(spark, schema: str) -> list[dict]:
+    """Every execute run with its items, and whether its rollback finished (SUCCEEDED or NEEDS_ATTENTION).
+
+    Feed the result to ug_migration_apply.protection_from_runs to get what a rollback must keep."""
     s = q(schema)
-    rows = spark.sql(f"""
-        SELECT i.apply_id, i.payload FROM {s}.ug_migration_apply_items i JOIN {s}.ug_migration_applies a USING (apply_id)
-        WHERE a.mode = 'execute' AND a.apply_id <> {_lit(apply_id, 'STRING')}
-          AND NOT EXISTS (SELECT 1 FROM {s}.ug_migration_applies r
-                          WHERE r.mode = 'rollback' AND r.rollback_of = a.apply_id AND r.status = 'SUCCEEDED')
-    """).collect()
-    runs: dict[str, list[dict]] = {}
+    rows = spark.sql(f"SELECT i.apply_id, i.payload FROM {s}.ug_migration_apply_items i "
+                     f"JOIN {s}.ug_migration_applies a USING (apply_id) WHERE a.mode = 'execute'").collect()
+    done = {r["rollback_of"] for r in spark.sql(
+        f"SELECT rollback_of FROM {s}.ug_migration_applies WHERE mode = 'rollback' "
+        "AND status IN ('SUCCEEDED', 'NEEDS_ATTENTION')").collect()}
+    runs: dict[str, dict] = {}
     for r in rows:
-        e = json.loads(r["payload"])
-        if e.get("execute"):
-            runs.setdefault(r["apply_id"] if "apply_id" in r else "", []).append(e)
-    out = set()
-    for entries in runs.values():
-        made_service = any(e.get("type") == "model_service" and e.get("action") in ("created", "creating")
-                           for e in entries)
-        for e in entries:
-            if e.get("action") in ("created", "creating") or \
-                    (made_service and e.get("type") == "model_provider_service" and e.get("action") == "exists"):
-                out.add((e.get("type"), e.get("name")))
+        run = runs.setdefault(r["apply_id"], {"apply_id": r["apply_id"], "rolled_back": r["apply_id"] in done,
+                                              "entries": []})
+        run["entries"].append(json.loads(r["payload"]))
+    return list(runs.values())
+
+
+def running_applies(spark, w, schema: str, target_catalog: str, target_schema: str, exclude: str) -> list[str]:
+    """Other execute runs for the same target that are still RUNNING (best effort: the check is not atomic)."""
+    rows = spark.sql(f"SELECT apply_id, job_run_id, status FROM {q(schema)}.ug_migration_applies "
+                     f"WHERE mode = 'execute' AND status = 'RUNNING' "
+                     f"AND target_catalog = {_lit(target_catalog, 'STRING')} "
+                     f"AND target_schema = {_lit(target_schema, 'STRING')} "
+                     f"AND apply_id <> {_lit(exclude, 'STRING')}").collect()
+    out = []
+    for r in rows:
+        if w is None or effective_status(w, r["status"], r["job_run_id"]) == "RUNNING":
+            out.append(r["apply_id"])
     return out
 
 

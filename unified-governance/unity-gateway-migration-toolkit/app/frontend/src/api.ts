@@ -14,9 +14,29 @@ export async function api<T = any>(path: string, init?: RequestInit): Promise<T>
     } catch {
       /* not JSON */
     }
-    throw new Error(`${res.status}: ${detail}`);
+    const err = new Error(`${res.status}: ${detail}`) as Error & { status: number };
+    err.status = res.status;
+    throw err;
   }
   return res.json();
+}
+
+/** Days since a UTC timestamp from the results tables ("2026-10-01 12:00:00"); null if it can't be read. */
+export function ageDays(ts: any): number | null {
+  if (!ts) return null;
+  const s = String(ts).trim();
+  const t = Date.parse(s.includes("T") ? s : `${s.replace(" ", "T")}Z`);
+  return Number.isNaN(t) ? null : (Date.now() - t) / 86_400_000;
+}
+
+/** "3 days ago", "today", "2 months ago": relative age of a scan or run. */
+export function relativeAge(ts: any): string {
+  const d = ageDays(ts);
+  if (d === null) return "age unknown";
+  if (d < 1) return "today";
+  if (d < 2) return "yesterday";
+  if (d < 60) return `${Math.floor(d)} days ago`;
+  return `${Math.floor(d / 30)} months ago`;
 }
 
 export function useApi<T = any>(path: string | null) {
@@ -59,8 +79,11 @@ export type JobState = {
   job_run_id: string;
   life_cycle: string | null;
   result: string | null;
-  message: string | null;
-  url: string | null;
+  /** Only for runs the signed-in user started (or operators): the Databricks message and run link. */
+  message?: string | null;
+  url?: string | null;
+  start_time?: number | null;
+  end_time?: number | null;
   error?: string;
 };
 

@@ -46,17 +46,55 @@ def test_upsert_builds_merge():
     assert "unknown" not in q
 
 
-def test_ids_are_escaped_and_protection(tmp_path):
+def test_ids_are_escaped(tmp_path):
     sp = FakeSpark([])
     store.apply_log_from_items(sp, "c.s", "x' OR '1'='1", str(tmp_path / "l.jsonl"))
     assert "'x\\' OR \\'1\\'=\\'1'" in sp.statements[-1]
-    rerun = [{"apply_id": "b", "payload": json.dumps({"type": t, "name": n, "action": "exists", "execute": True})}
-             for t, n in (("model_provider_service", "c.s.p"), ("model_service", "c.s.a"))]
-    assert store.protected_objects(FakeSpark(rerun), "c.s", "a") == set()
-    wave = [{"apply_id": "b", "payload": json.dumps(p)} for p in (
+
+
+class SparkByQuery:
+    """Answers each SQL statement with the rows whose key appears in the statement."""
+
+    def __init__(self, answers):
+        self.answers, self.statements = answers, []
+
+    def sql(self, q):
+        self.statements.append(q)
+        rows = next((rows for key, rows in self.answers if key in q), [])
+
+        class R:
+            def collect(self_inner):
+                return rows
+        return R()
+
+
+def test_protection_runs_marks_finished_rollbacks():
+    items = [{"apply_id": "A", "payload": json.dumps({"type": "model_service", "name": "c.s.x", "action": "created",
+                                                       "execute": True})},
+             {"apply_id": "B", "payload": json.dumps({"type": "model_service", "name": "c.s.y", "action": "exists",
+                                                       "execute": True})}]
+    sp = SparkByQuery([("ug_migration_apply_items", items), ("mode = 'rollback'", [{"rollback_of": "A"}])])
+    runs = {r["apply_id"]: r for r in store.protection_runs(sp, "c.s")}
+    assert runs["A"]["rolled_back"] is True and runs["B"]["rolled_back"] is False
+    assert runs["B"]["entries"][0]["action"] == "exists"
+
+
+def test_running_applies_for_the_same_target():
+    rows = [{"apply_id": "A", "job_run_id": "", "status": "RUNNING"}]
+    sp = SparkByQuery([("mode = 'execute'", rows)])
+    assert store.running_applies(sp, None, "c.s", "c", "s", "B") == ["A"]
+    assert "target_catalog = 'c'" in sp.statements[-1] and "apply_id <> 'B'" in sp.statements[-1]
+
+
+def test_log_from_items_keeps_reuse_and_added_grants(tmp_path):
+    items = [{"payload": json.dumps(p)} for p in (
         {"type": "model_provider_service", "name": "c.s.p", "action": "exists", "execute": True},
-        {"type": "model_service", "name": "c.s.b", "action": "created", "execute": True})]
-    assert store.protected_objects(FakeSpark(wave), "c.s", "a") == {("model_provider_service", "c.s.p"), ("model_service", "c.s.b")}
+        {"type": "model_service", "name": "c.s.a", "action": "updated", "execute": True},
+        {"type": "grant", "name": "c.s.a", "action": "granted", "execute": True, "added": [{"principal": "g"}]},
+        {"type": "grant", "name": "c.s.a", "action": "granted", "execute": True},
+        {"type": "model_service", "name": "c.s.b", "action": "exists", "execute": False})]
+    path = tmp_path / "log.jsonl"
+    assert store.apply_log_from_items(FakeSpark(items), "c.s", "abc", str(path)) == 3
 
 
 def test_durable_log_fallback(tmp_path):
@@ -88,6 +126,9 @@ def test_rollback_keeps_protected(tmp_path):
 
     class Obj:
         comment = a.TOOL_MARK
+
+        def as_dict(self):
+            return {"comment": self.comment}
 
     class GW:
         deleted = []

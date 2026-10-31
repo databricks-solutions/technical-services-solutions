@@ -139,7 +139,7 @@ def test_crlf_and_tabs_scan_correctly():
 
 def test_references_in_comments_and_strings_are_reported():
     # Informational: a reference inside a comment or string is still reported (conservative).
-    refs = scan(["gpt-5"], "# old: ai_query('gpt-5', 'x')\nmsg = \"use 'gpt-5' later\"\n")
+    refs = scan(["gpt-5-mini"], "# old: ai_query('gpt-5-mini', 'x')\nmsg = \"use 'gpt-5-mini' later\"\n")
     assert len(refs) == 2
 
 
@@ -474,7 +474,7 @@ def test_dry_run_apply_writes_no_log(tmp_path, monkeypatch):
     from databricks.sdk.errors import NotFound
     w.ai_gateway.get_model_provider_service.side_effect = NotFound("nope")
     w.ai_gateway.get_model_service.side_effect = NotFound("nope")
-    res = a.apply(w, None, "c", "s", False, a.Secrets(None, {"llm/openai": "secrets/c.s.k"}, False), str(log))
+    res = a.apply(w, None, "c", "s", False, a.Secrets(None, {"llm/openai": "secrets/c.s.k"}, False, allowed_schemas=["c.s"]), str(log))
     assert not log.exists()
     assert any(r["action"] == "would_create" for r in res)
 

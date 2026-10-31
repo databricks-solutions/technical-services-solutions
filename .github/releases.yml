@@ -140,4 +140,4 @@
 - slug: unity-gateway-migration
   name: "Unity Gateway Migration"
   kind: "Installer notebook + Databricks App + Declarative Automation Bundle"
-  path: "genai-ml/unity-gateway-migration"
+  path: "unified-governance/unity-gateway-migration"

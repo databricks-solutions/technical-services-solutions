@@ -117,10 +117,10 @@ The connector may pull in its own transitive dependencies; those are governed by
 
 ---
 
-## genai-ml/unity-gateway-migration
+## unified-governance/unity-gateway-migration
 
 Python runtime dependencies (declared in
-[`app/requirements.txt`](./genai-ml/unity-gateway-migration/app/requirements.txt); the job notebooks install
+[`app/requirements.txt`](./unified-governance/unity-gateway-migration/app/requirements.txt); the job notebooks install
 `databricks-sdk` themselves):
 
 | Dependency | Purpose | License |
@@ -131,7 +131,7 @@ Python runtime dependencies (declared in
 | [Requests](https://github.com/psf/requests) | HTTP client for the command-line scripts | Apache-2.0 |
 
 Frontend dependencies (declared in
-[`app/frontend/package.json`](./genai-ml/unity-gateway-migration/app/frontend/package.json); the built
+[`app/frontend/package.json`](./unified-governance/unity-gateway-migration/app/frontend/package.json); the built
 bundle in `app/frontend/static` includes React):
 
 | Dependency | Purpose | License |

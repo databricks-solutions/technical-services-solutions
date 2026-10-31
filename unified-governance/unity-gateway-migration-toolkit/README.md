@@ -6,7 +6,7 @@ Written by Databricks Shared Technical Services (STS) as a prototype. Not an off
 
 ## Quick start (inside the workspace, about 5 minutes)
 
-1. In your workspace, open **Workspace**, go to your home folder and choose **Import**. Import `INSTALL_unity_gateway_migration_toolkit_0_8_0.py`.
+1. Download `unity-gateway-migration-toolkit-0.8.0.zip` and unzip it. In your workspace, open **Workspace**, go to your home folder and choose **Import**. Import `INSTALL_unity_gateway_migration_toolkit_0_8_0.py` from the unzipped folder. You only need that one file in the workspace: it carries the rest of the toolkit.
 2. Open it, set **Results catalog** (an existing catalog) and pick a **SQL warehouse**. The other widgets have defaults.
 3. Click **Run all**. It prints the link to the **Unity Gateway Migration Toolkit** app.
 4. In the app: **Overview**, Refresh snapshot; then **Scans**, Start scan; then **Apply** for external model and Provisioned Throughput endpoints (dry run first).

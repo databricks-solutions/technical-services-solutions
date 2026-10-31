@@ -7,10 +7,10 @@ This file, the tests and `test_fixtures.py` stay in the source repo; they aren't
 ```bash
 cd app/frontend && npm install && cd ../..   # once (or after package.json changes)
 ./package.sh
-cp dist/INSTALL_unity_gateway_migration_toolkit_*.py .    # the committed installer customers download
+cp dist/INSTALL_unity_gateway_migration_toolkit_*.py .    # commit the regenerated installer in this folder
 ```
 
-`package.sh` rebuilds the frontend (`app/frontend/static`), writes `dist/unity-gateway-migration-toolkit-<version>.zip` (command-line and bundle users) and runs `make_installer.py`, which writes `dist/INSTALL_unity_gateway_migration_toolkit_<version>.py` (the installer notebook most customers use; it embeds the runtime files, so commit the regenerated copy in this folder whenever the code changes). Bump `__version__` in `ug_migration_planner.py` and `version` in `app/frontend/package.json` together.
+`package.sh` rebuilds the frontend (`app/frontend/static`), runs `make_installer.py` (writes `dist/INSTALL_unity_gateway_migration_toolkit_<version>.py`, the installer notebook that embeds the runtime files) and writes `dist/unity-gateway-migration-toolkit-<version>.zip`, the one file customers download: the installer at the top, plus the toolkit files for command-line and bundle users. Commit the regenerated installer in this folder whenever the code changes, so the repo release zip carries it too. Bump `__version__` in `ug_migration_planner.py` and `version` in `app/frontend/package.json` together.
 
 Then check the bundle from the zip:
 

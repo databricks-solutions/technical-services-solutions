@@ -89,7 +89,7 @@ For one workspace, a workspace admin's CLI login is enough. For an account, use 
 
 **Recommended: the installer notebook (everything inside the workspace, about 5 minutes).**
 
-1. In the workspace, open **Workspace**, go to your home folder, and choose **Import**. Import the file `INSTALL_unity_gateway_migration_toolkit_<version>.py`.
+1. Download `unity-gateway-migration-toolkit-<version>.zip` and unzip it. In the workspace, open **Workspace**, go to your home folder, and choose **Import**. Import `INSTALL_unity_gateway_migration_toolkit_<version>.py` from the unzipped folder. Only that file goes into the workspace: it carries the rest of the toolkit and writes it to the install folder.
 2. Open the notebook. At the top, set **Results catalog** (an existing catalog where you can create a schema) and pick a **SQL warehouse**. The other widgets have defaults: results schema `ug_migration`, **Operators** = you, app name `unity-gateway-migration` (app names are limited to 30 characters), install folder in your home folder.
 3. Click **Run all**. At the end it prints the link to the app and the three jobs (if you run it as a job, the links are also the notebook's result in the run output).
 
@@ -97,7 +97,7 @@ Before you apply anything from the app, create the target schema for the new mod
 
 It needs: serverless compute for notebooks and jobs, Databricks Apps, and permission to create apps, jobs and (if missing) the schema. The jobs run as the person who runs the installer, so run it as someone with the permissions in section 2 (or as a service principal). To update, import the newer installer and run it again with the same widgets; history is kept. To change the operators, run it again with the **Operators** widget updated. To remove it, set **Action** to `uninstall` and run it again: the app, jobs, toolkit files and the `output` folder are deleted; results tables stay unless **Drop results tables** is `yes`; Unity Gateway services created by apply and the `apply_logs` folder stay (roll back first, section 8, if you want those services gone).
 
-The other ways to install, for command-line use, CI/CD, or to change the bundle:
+The other ways to install, for command-line use, CI/CD, or to change the bundle, use the rest of the same zip:
 
 **A. Local (laptop or CI)**
 
@@ -577,7 +577,7 @@ Yes. The planner and account view are read-only. Apply skips existing objects. S
 | `notebook/run_planner.py`, `notebook/run_account.py` | Notebook entry points (one workspace, account view and snapshots) |
 | `notebook/run_scan.py`, `notebook/run_apply.py` | Job notebooks the app starts (scan; dry run, execute and rollback) |
 | `app/` | The Unity Gateway Migration Toolkit app (FastAPI backend, React frontend build in `app/frontend/static`) |
-| `INSTALL_unity_gateway_migration_toolkit_<version>.py` | Installer notebook (shipped separately): installs, updates or removes everything inside a workspace |
+| `INSTALL_unity_gateway_migration_toolkit_<version>.py` | Installer notebook: installs, updates or removes everything inside a workspace |
 | `databricks.yml` | Bundle: app, snapshot, scan and apply jobs |
 | `HOW_TO_READ.md` | Short guide to the outputs |
 | `README.md` | Technical overview |

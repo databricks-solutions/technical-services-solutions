@@ -1,12 +1,15 @@
 #!/bin/sh
-# Build a shareable zip of the toolkit (no tests, fixtures or sample outputs).
+# Build the release zip: the installer notebook at the top, plus the toolkit files for CLI and bundle users
+# (no tests, fixtures or sample outputs).
 set -e
 cd "$(dirname "$0")"
 VERSION=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' ug_migration_planner.py)
 (cd app/frontend && npm run build >/dev/null)  # never ship a stale frontend
+INSTALLER=$(python3 make_installer.py | cut -d" " -f1)
 NAME="unity-gateway-migration-toolkit-$VERSION"
 rm -rf "dist/$NAME" "dist/$NAME.zip"
 mkdir -p "dist/$NAME/notebook" "dist/$NAME/app/backend" "dist/$NAME/app/frontend"
+cp "$INSTALLER" "dist/$NAME/"
 cp ug_migration_planner.py ug_migration_apply.py ug_migration_account.py \
    README.md HOW_TO_READ.md USER_GUIDE.md "dist/$NAME/"
 # The shipped bundle doesn't need the repo-only sync excludes (they'd only produce validate warnings).
@@ -21,5 +24,4 @@ cp app/frontend/package.json app/frontend/tsconfig.json app/frontend/vite.config
    app/frontend/index.html "dist/$NAME/app/frontend/"
 (cd dist && zip -qr "$NAME.zip" "$NAME")
 rm -rf "dist/$NAME"
-echo "dist/$NAME.zip"
-python3 make_installer.py
+echo "dist/$NAME.zip (includes $(basename "$INSTALLER"))"

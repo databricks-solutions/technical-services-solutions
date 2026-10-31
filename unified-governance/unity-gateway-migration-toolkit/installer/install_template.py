@@ -49,7 +49,7 @@ dbutils.widgets.text("results_catalog", "main", "2. Results catalog (must exist)
 dbutils.widgets.text("results_schema", "", "3. Results schema (blank = ug_migration, or ug_migration_<app name>)")
 dbutils.widgets.dropdown("warehouse", wh_choices[0], wh_choices, "4. SQL warehouse")
 dbutils.widgets.text("operators", "", "5. Operators (emails, comma-separated; blank = you)")
-dbutils.widgets.text("app_name", "unity-gateway-migration", "6. App name (2-30 characters)")
+dbutils.widgets.text("app_name", "ug-migration-toolkit", "6. App name (2-30 characters)")
 dbutils.widgets.text("install_folder", "", "7. Install folder (blank = your home folder, <app name>-toolkit)")
 dbutils.widgets.dropdown("adopt_app", "no", ["no", "yes"], "8. Adopt existing app (replace an app that isn't a toolkit app)")
 dbutils.widgets.dropdown("allow_downgrade", "no", ["no", "yes"], "9. Allow downgrade (older version over a newer one)")
@@ -79,7 +79,8 @@ from databricks.sdk.service.workspace import ImportFormat, Language
 TOOL_TAG = "ug-migration-toolkit"
 PROJECT_TAG = "unity-gateway-migration-toolkit"
 APP_MARKER = "Unity Gateway Migration Toolkit"  # every toolkit app's description starts with this
-LEGACY_APP = "unity-gateway-migration"  # the app name the installer has used by default since 0.8.0
+DEFAULT_APP = "ug-migration-toolkit"  # app names are limited to 30 characters
+LEGACY_APP = "unity-gateway-migration"  # the default app name in 0.8.0
 NAME = r"[A-Za-z0-9_]+"
 UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 # App fields the API fills in. They are not sent back on update.
@@ -105,17 +106,17 @@ def valid_folder(path: str) -> str | None:
 
 
 def results_schema_for(raw: str, app_name: str) -> str:
-    """Blank means ug_migration for the default app name (as before), else a schema named after the app."""
+    """Blank means ug_migration for the default app names (current and 0.8.0), else a schema named after the app."""
     raw = (raw or "").strip()
     if raw:
         return raw
-    return "ug_migration" if app_name == LEGACY_APP else app_name.replace("-", "_")
+    return "ug_migration" if app_name in (DEFAULT_APP, LEGACY_APP) else app_name.replace("-", "_")
 
 
 def folder_for(raw: str, me: str, app_name: str) -> str:
-    """Blank means a folder in your home folder named after the app (the default app name keeps the old folder)."""
+    """Blank means a folder in your home folder named after the app, ending in -toolkit."""
     raw = (raw or "").strip().rstrip("/")
-    return raw or f"/Workspace/Users/{me}/{app_name}-toolkit"
+    return raw or f"/Workspace/Users/{me}/{app_name if app_name.endswith('-toolkit') else app_name + '-toolkit'}"
 
 
 def is_service_principal(user_name: str) -> bool:

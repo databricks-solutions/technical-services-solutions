@@ -100,8 +100,8 @@ For one workspace, a workspace admin's CLI login is enough. For an account, use 
 | 3 | Results schema | blank | Blank = `ug_migration` for the default app name, else the app name with `_` for `-`. A blank widget reuses the schema of an existing install of the same app |
 | 4 | SQL warehouse | first one | Warehouse the app and the notebook's checks use |
 | 5 | Operators | blank | Emails, comma-separated; blank = you. Required when the notebook runs as a service principal |
-| 6 | App name | `unity-gateway-migration` | 2 to 30 characters |
-| 7 | Install folder | blank | Blank = `/Workspace/Users/<you>/<app name>-toolkit` (the older folder for the default app name). A blank widget reuses the folder of an existing install of the same app |
+| 6 | App name | `ug-migration-toolkit` | 2 to 30 characters (Databricks app names can't be longer or renamed later) |
+| 7 | Install folder | blank | Blank = `/Workspace/Users/<you>/<app name>-toolkit` (just `<app name>` when the name already ends in `-toolkit`, so the default is `/Workspace/Users/<you>/ug-migration-toolkit`). A blank widget reuses the folder of an existing install of the same app |
 | 8 | Adopt existing app | no | Lets install or uninstall replace or delete an app whose description isn't a toolkit app |
 | 9 | Allow downgrade | no | Needed to install an older version over a newer one |
 | 10 | Allow a second install | no | Lets a second install (another app name) run in the same workspace. It still needs its own results schema and install folder |
@@ -122,8 +122,8 @@ On update the installer also keeps the app's own settings (budget policy, usage 
 
 #### Upgrading from 0.8.0 or 0.7.0
 
-- **From 0.8.0:** run the 0.9.0 installer with the same widgets. Schemas and folders from 0.8.0 are reused. Allowed secret schemas is blank, so Unity Catalog secret mapping stays off until you list the schemas (section 4). Downgrades are refused unless **Allow downgrade** is `yes`.
-- **From 0.7.0:** the default app name was `ug-migration`. In 0.9.0 the default is `unity-gateway-migration`, so the installer stops and names the existing install. To update that install in place, set **App name** to `ug-migration`. Otherwise uninstall the old install first (keeping its results and apply logs as needed), then install with the new default name.
+- **From 0.8.0:** the default app name changed from `unity-gateway-migration` to `ug-migration-toolkit`, so the installer stops and names the existing install. To update it in place, set **App name** to `unity-gateway-migration`; its schema and folder are reused. To move to the new name, uninstall the old install first (an app can't be renamed), then install with the default. Allowed secret schemas is blank, so Unity Catalog secret mapping stays off until you list the schemas (section 4). Downgrades are refused unless **Allow downgrade** is `yes`.
+- **From 0.7.0:** the default app name was `ug-migration`. In 0.9.0 the default is `ug-migration-toolkit`, so the installer stops and names the existing install. To update that install in place, set **App name** to `ug-migration`. Otherwise uninstall the old install first (keeping its results and apply logs as needed), then install with the new default name.
 - **Changes to know, from both:**
   - The app's charts and exports are in the app (Overview and Scans). The old dashboard is no longer created.
   - **Grants are off by default in the app** (tick "Copy legacy endpoint permissions" to include them). The command-line tool still copies grants unless you pass `--no-grants`.
@@ -549,7 +549,7 @@ How it works:
 - Scan and apply runs record **who asked for them** (`requested_by`); snapshot runs show up in the job's run history. Secret values never go to the results tables or logs; apply results are masked. With "read the workspace secret values" (`--allow-secret-read`), apply copies the key value into the Unity Gateway provider service itself; prefer Unity Catalog secret references. Endpoints that use a plaintext API key stop as `manual`: store the key as a Unity Catalog secret first.
 - **Rollback** rebuilds the undo list from the stored execute results (or, if the execute run was interrupted, from the log it wrote as it went, in `apply_logs/` next to the toolkit files). Each execute run can be rolled back once. Rollback keeps objects that another execute run created, and provider services that another run's new model services use. Re-running the same selection doesn't take ownership: roll back the run that created the services.
 
-Install it with the installer notebook (section 3) or the bundle (next section), then open the app from **Compute, Apps** (`unity-gateway-migration` by default for the installer, `ug-migration-bundle` for the bundle; with the bundle, start it with `databricks bundle run ug_migration_app -t dev --var ...`). Use one install method per workspace, or set **Allow a second install** on the installer. The jobs' identity needs the permissions in section 2 (system table access, workspace admin or read access to what you scan, `CREATE SERVICE` on the target schema for apply) plus `USE CATALOG`, `USE SCHEMA`, `CREATE TABLE` and `MODIFY` on the results schema.
+Install it with the installer notebook (section 3) or the bundle (next section), then open the app from **Compute, Apps** (`ug-migration-toolkit` by default for the installer, `ug-migration-bundle` for the bundle; with the bundle, start it with `databricks bundle run ug_migration_app -t dev --var ...`). Use one install method per workspace, or set **Allow a second install** on the installer. The jobs' identity needs the permissions in section 2 (system table access, workspace admin or read access to what you scan, `CREATE SERVICE` on the target schema for apply) plus `USE CATALOG`, `USE SCHEMA`, `CREATE TABLE` and `MODIFY` on the results schema.
 
 ### Notebooks
 

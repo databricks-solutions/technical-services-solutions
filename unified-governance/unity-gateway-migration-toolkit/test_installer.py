@@ -181,3 +181,11 @@ def test_uninstall_summary_lists_choices_and_warns_about_orphans():
     assert any(k.startswith("WARNING") for k in keep)
     remove, keep = H["uninstall_summary"](False, False, False, [], False, "c.s", "/Workspace/Users/me/t")
     assert any("no Unity Gateway services" in k for k in keep) and not any("apply_logs" in x for x in remove + keep)
+
+
+def test_default_app_name_keeps_short_schema_and_folder():
+    assert H["DEFAULT_APP"] == "ug-migration-toolkit" and len(H["DEFAULT_APP"]) <= 30
+    assert H["results_schema_for"]("", "ug-migration-toolkit") == "ug_migration"
+    assert H["folder_for"]("", "a@b.c", "ug-migration-toolkit") == "/Workspace/Users/a@b.c/ug-migration-toolkit"
+    assert H["folder_for"]("", "a@b.c", "unity-gateway-migration") == "/Workspace/Users/a@b.c/unity-gateway-migration-toolkit"
+    assert H["folder_for"]("", "a@b.c", "team-a") == "/Workspace/Users/a@b.c/team-a-toolkit"

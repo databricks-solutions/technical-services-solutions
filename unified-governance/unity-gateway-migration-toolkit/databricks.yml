@@ -7,7 +7,7 @@
 # user; only the users in `operators` can start jobs from it, everyone else can only view results.
 #
 # The bundle's app is named `ug-migration-bundle` by default, so it doesn't collide with an install made by the
-# installer notebook (`unity-gateway-migration`). The jobs carry the same tags as the installer's jobs
+# installer notebook (`ug-migration-toolkit`). The jobs carry the same tags as the installer's jobs
 # (tool, Project, app, role), so both kinds of install are seen by the installer's checks.
 #
 #   databricks bundle validate -t dev --var warehouse_id=<id> --var snapshot_catalog=<c> --var snapshot_schema=<s>

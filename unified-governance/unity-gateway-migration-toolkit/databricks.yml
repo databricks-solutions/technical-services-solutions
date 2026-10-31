@@ -1,0 +1,178 @@
+# Unity Gateway Migration Toolkit (prototype) as a Declarative Automation Bundle.
+# Deploys:
+#   - the Unity Gateway Migration Toolkit app (FastAPI + React; charts and CSV exports are in the app)
+#   - three Lakeflow jobs the app starts: account snapshot (weekly, paused), workspace scan, apply/rollback
+# Jobs run on serverless as the DEPLOYING identity, so deploy shared installs with a service principal
+# (prod target) that has the permissions in USER_GUIDE section 2. The app reads results as the signed-in
+# user; only the users in `operators` can start jobs from it, everyone else can only view results.
+#
+# The bundle's app is named `ug-migration-bundle` by default, so it doesn't collide with an install made by the
+# installer notebook (`ug-migration-toolkit`). The jobs carry the same tags as the installer's jobs
+# (tool, Project, app, role), so both kinds of install are seen by the installer's checks.
+#
+#   databricks bundle validate -t dev --var warehouse_id=<id> --var snapshot_catalog=<c> --var snapshot_schema=<s>
+#   databricks bundle deploy   -t dev --var ...
+#   databricks bundle run ug_migration_app -t dev --var ...      # start the app
+bundle:
+  name: unity-gateway-migration-toolkit
+
+variables:
+  warehouse_id:
+    description: SQL warehouse the app reads results through
+  snapshot_catalog:
+    description: Catalog for snapshot and app result tables (must exist)
+  snapshot_schema:
+    description: Schema for snapshot and app result tables (must exist)
+  app_name:
+    description: Databricks App name (lowercase letters, digits and hyphens, 2-30 characters). Must differ from the installer's app name in the same workspace.
+    default: ug-migration-bundle
+  days:
+    description: Default traffic window in days (snapshot and scans)
+    default: "30"
+  operators:
+    description: Comma-separated emails of the users who can start scans, snapshots and apply runs in the app
+    default: ${workspace.current_user.userName}
+  secret_schemas:
+    description: Allowed secret schemas for UC secret mapping (comma-separated catalog.schema). Empty = UC secret mapping disabled.
+    default: ""
+  allow_secret_read_enabled:
+    description: "Allow reading secret values (\"true\" or \"false\"). Fixed on the apply job, like the installer's widget."
+    default: "false"
+  toolkit_version:
+    description: Toolkit version the app reports (UGMIG_VERSION). Must equal __version__ in ug_migration_planner.py (check_release.py checks it).
+    default: "0.9.0"
+
+sync:
+  include:
+    - "app/frontend/static/**"
+  exclude:
+    - "test_*.py"
+    - "/dist"
+    - "__pycache__"
+    - ".pytest_cache"
+    - "package.sh"
+    - "app/frontend/node_modules"
+
+resources:
+  jobs:
+    ug_migration_snapshot:
+      name: "Unity Gateway migration snapshot"
+      description: "Account-wide legacy endpoint inventory and traffic, appended to ${var.snapshot_catalog}.${var.snapshot_schema}.ug_migration_* (prototype)"
+      max_concurrent_runs: 1
+      schedule:
+        quartz_cron_expression: "0 0 6 ? * MON"
+        timezone_id: UTC
+        pause_status: PAUSED
+      parameters:
+        - {name: days, default: "${var.days}"}
+        - {name: snapshot_table, default: "${var.snapshot_catalog}.${var.snapshot_schema}.ug_migration"}
+        - {name: out_dir, default: "${workspace.root_path}/output/account"}
+        - {name: deep_scan, default: "0"}
+        - {name: deep_warehouse_id, default: "${var.warehouse_id}"}
+        - {name: requested_by, default: "schedule"}
+      tasks:
+        - task_key: account_snapshot
+          notebook_task:
+            notebook_path: ./notebook/run_account.py
+      tags:
+        tool: ug-migration-toolkit
+        Project: unity-gateway-migration-toolkit
+        app: ${var.app_name}
+        role: snapshot
+
+    ug_migration_scan:
+      name: "Unity Gateway migration workspace scan"
+      description: "Read-only workspace scan for the Unity Gateway Migration app (prototype)"
+      max_concurrent_runs: 1
+      parameters:
+        - {name: run_id, default: ""}
+        - {name: job_run_id, default: "{{job.run_id}}"}
+        - {name: results_schema, default: "${var.snapshot_catalog}.${var.snapshot_schema}"}
+        - {name: days, default: "${var.days}"}
+        - {name: scan_roots, default: ""}
+        - {name: target_catalog, default: "ai_gateway"}
+        - {name: target_schema, default: "migrated"}
+        - {name: requested_by, default: ""}
+      tasks:
+        - task_key: scan
+          notebook_task:
+            notebook_path: ./notebook/run_scan.py
+      tags:
+        tool: ug-migration-toolkit
+        Project: unity-gateway-migration-toolkit
+        app: ${var.app_name}
+        role: scan
+
+    ug_migration_apply:
+      name: "Unity Gateway migration apply"
+      description: "Dry run, execute or roll back Unity Gateway services for the app (prototype)"
+      max_concurrent_runs: 1
+      parameters:
+        - {name: apply_id, default: ""}
+        - {name: job_run_id, default: "{{job.run_id}}"}
+        - {name: results_schema, default: "${var.snapshot_catalog}.${var.snapshot_schema}"}
+        - {name: mode, default: "dry_run"}
+        - {name: endpoints, default: ""}
+        - {name: target_catalog, default: ""}
+        - {name: target_schema, default: ""}
+        - {name: uc_secret_map, default: ""}
+        - {name: allow_secret_read, default: "false"}
+        - {name: grants, default: "true"}
+        - {name: rollback_of, default: ""}
+        - {name: scan_run_id, default: ""}
+        - {name: requested_by, default: ""}
+        - {name: secret_schemas, default: "${var.secret_schemas}"}
+        - {name: allow_secret_read_enabled, default: "${var.allow_secret_read_enabled}"}
+        - {name: ack_guardrails, default: "false"}
+      tasks:
+        - task_key: apply
+          notebook_task:
+            notebook_path: ./notebook/run_apply.py
+      tags:
+        tool: ug-migration-toolkit
+        Project: unity-gateway-migration-toolkit
+        app: ${var.app_name}
+        role: apply
+
+  apps:
+    ug_migration_app:
+      name: ${var.app_name}
+      description: "Unity Gateway Migration Toolkit: account overview, workspace scans, readiness, code fixes and apply (prototype)"
+      source_code_path: ./app
+      user_api_scopes:
+        - sql
+      config:
+        command: ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+        env:
+          - {name: DATABRICKS_WAREHOUSE_ID, value_from: sql-warehouse}
+          - {name: SNAPSHOT_JOB_ID, value_from: snapshot-job}
+          - {name: SCAN_JOB_ID, value_from: scan-job}
+          - {name: APPLY_JOB_ID, value_from: apply-job}
+          - {name: RESULTS_SCHEMA, value: "${var.snapshot_catalog}.${var.snapshot_schema}"}
+          - {name: SNAPSHOT_PREFIX, value: "ug_migration"}
+          - {name: OPERATORS, value: "${var.operators}"}
+          - {name: UGMIG_VERSION, value: "${var.toolkit_version}"}
+          - {name: UGMIG_SECRET_SCHEMAS, value: "${var.secret_schemas}"}
+          - {name: UGMIG_ALLOW_SECRET_READ, value: "${var.allow_secret_read_enabled}"}
+          - {name: UGMIG_MAX_SCAN_AGE_DAYS, value: "14"}
+      resources:
+        - name: sql-warehouse
+          sql_warehouse: {id: "${var.warehouse_id}", permission: CAN_USE}
+        - name: snapshot-job
+          job: {id: "${resources.jobs.ug_migration_snapshot.id}", permission: CAN_MANAGE_RUN}
+        - name: scan-job
+          job: {id: "${resources.jobs.ug_migration_scan.id}", permission: CAN_MANAGE_RUN}
+        - name: apply-job
+          job: {id: "${resources.jobs.ug_migration_apply.id}", permission: CAN_MANAGE_RUN}
+
+targets:
+  dev:
+    # Dev mode prefixes job names with [dev <user>]; the names above don't add a target prefix of their own.
+    mode: development
+    default: true
+  prod:
+    # Deploy as a service principal: jobs then run as it and the files live in its home folder,
+    # which other users can't edit. Pass --var operators=<emails of the people who run the migration>.
+    mode: production
+    workspace:
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}

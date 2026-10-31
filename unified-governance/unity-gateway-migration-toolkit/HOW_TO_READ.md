@@ -1,10 +1,10 @@
 # How to read the migration results
 
-This guide is for the team that runs the Unity Gateway migration toolkit in its own Databricks account. The toolkit is a prototype from Databricks Shared Technical Services, provided as is. Scans only read your workspace. Results (including matched code lines) are stored in the results schema; apply and rollback create or delete Unity Gateway services; snapshots append rows to tables, and the dashboard step creates a dashboard. Nothing else is changed.
+This guide is for the team that runs the Unity Gateway Migration Toolkit in its own Databricks account. The toolkit is a prototype from Databricks Shared Technical Services, provided as is. Scans only read your workspace. Results (including matched code lines) are stored in the results schema; apply and rollback create or delete Unity Gateway services; snapshots append rows to tables. Nothing else is changed.
 
 **Why this matters:** Legacy v2 workspace endpoints stop serving first (on **November 30, 2026**) and v1 endpoints stop serving on **March 30, 2027**. These dates come from Databricks migration communications as of October 30, 2026; confirm them with your account team. Nothing moves automatically, and settings on legacy endpoints (rate limits, guardrails, inference tables, permissions) don't carry over to Unity Gateway.
 
-**Using the app?** The Unity Gateway Migration app shows the same results: the Scans tab has Readiness (READINESS.md), Endpoints (migration_plan.csv), Callers (callers.csv) and Code fixes (CODE_FIXES.md). Everything below applies to both.
+**Using the app?** The Unity Gateway Migration Toolkit app shows the same results, and each scan can export these files: the Scans tab has Readiness (READINESS.md), Endpoints (migration_plan.csv), Callers (callers.csv) and Code fixes (CODE_FIXES.md). Everything below applies to both.
 
 ---
 
@@ -72,7 +72,7 @@ The toolkit doesn't change your code. Apply fixes in the source (and its Git rep
 
 ---
 
-## ACCOUNT_SUMMARY.md and the dashboard
+## ACCOUNT_SUMMARY.md and the Overview
 
 - **Waves:**
   - `v2 first`: has v2 traffic, which stops serving on November 30, 2026.
@@ -82,7 +82,7 @@ The toolkit doesn't change your code. Apply fixes in the source (and its Git rep
   - `2: high volume`: plan these with the owners.
 - **Share on UG:** Unity Gateway requests divided by all model requests (legacy v1 + legacy v2 + Unity Gateway). Requests are distinct request IDs.
 - **Name collisions:** custom endpoint names used in several workspaces. Give each workspace its own target schema.
-- **Dashboard:** fills in from snapshots (Refresh account snapshot in the app, or the weekly snapshot job once you unpause it). The trend lines should show legacy traffic going down and ready workspaces going up.
+- **Overview charts:** fill in from snapshots (Refresh snapshot in the app, or the weekly snapshot job once you unpause it). Legacy traffic should go down and workspaces ready to enforce should go up. Export the data as CSV from the Overview.
 
 ---
 

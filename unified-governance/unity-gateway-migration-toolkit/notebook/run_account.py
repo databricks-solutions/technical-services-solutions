@@ -2,7 +2,7 @@
 # MAGIC %md
 # MAGIC # Unity Gateway migration: account view
 # MAGIC Ranks every workspace in the account by legacy (v1/v2) traffic, proposes migration waves and, optionally,
-# MAGIC appends a snapshot to Delta tables for the progress dashboard.
+# MAGIC appends a snapshot to Delta tables for the app's Overview.
 # MAGIC
 # MAGIC - Reads `system.serving.*`, `system.ai_gateway.usage` and `system.access.workspaces_latest` (account admin by default).
 # MAGIC - The only write is the optional snapshot (`snapshot_table`).

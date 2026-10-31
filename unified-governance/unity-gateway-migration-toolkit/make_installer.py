@@ -1,6 +1,6 @@
 """Build dist/INSTALL_unity_gateway_migration_toolkit_<version>.py: one notebook that installs the app inside a workspace.
 
-The notebook embeds the runtime files (modules, job notebooks, app backend, built frontend, dashboard, docs) as a
+The notebook embeds the runtime files (modules, job notebooks, app backend, built frontend, docs) as a
 base64 zip, so customers only import this one file and click Run all.
 """
 
@@ -12,11 +12,10 @@ import sys
 import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-FILES = ["ug_migration_planner.py", "ug_migration_apply.py", "ug_migration_account.py", "ug_migration_dashboard.py",
+FILES = ["ug_migration_planner.py", "ug_migration_apply.py", "ug_migration_account.py",
          "ug_migration_store.py", "README.md", "USER_GUIDE.md", "HOW_TO_READ.md",
          "notebook/run_planner.py", "notebook/run_account.py", "notebook/run_scan.py", "notebook/run_apply.py",
-         "app/requirements.txt", "app/backend/__init__.py", "app/backend/main.py",
-         "dashboard/ug_migration_progress.lvdash.json"]
+         "app/requirements.txt", "app/backend/__init__.py", "app/backend/main.py"]
 
 
 def main() -> str:

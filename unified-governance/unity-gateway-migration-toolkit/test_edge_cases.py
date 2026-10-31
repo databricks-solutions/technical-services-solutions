@@ -12,7 +12,6 @@ import pytest
 
 import ug_migration_account as acct
 import ug_migration_apply as a
-import ug_migration_dashboard as dash
 import ug_migration_planner as m
 from test_planner import _ep
 
@@ -536,12 +535,3 @@ def test_account_collision_across_workspaces_listed():
            for w in "12"]
     res = acct.build(inv, [], [], [], 30)
     assert [c["endpoint_name"] for c in res["collisions"]] == ["proj"]
-
-
-# ---------------------------------------------------------------------------
-# Dashboard
-# ---------------------------------------------------------------------------
-
-def test_dashboard_builds_with_odd_prefix():
-    out = dash.build("cat.sch.tbl_x")
-    assert out

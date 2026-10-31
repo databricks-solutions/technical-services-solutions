@@ -1,8 +1,7 @@
-# Unity Gateway migration toolkit (prototype) as a Declarative Automation Bundle.
+# Unity Gateway Migration Toolkit (prototype) as a Declarative Automation Bundle.
 # Deploys:
-#   - the Unity Gateway Migration app (FastAPI + React)
+#   - the Unity Gateway Migration Toolkit app (FastAPI + React; charts and CSV exports are in the app)
 #   - three Lakeflow jobs the app starts: account snapshot (weekly, paused), workspace scan, apply/rollback
-#   - the progress dashboard
 # Jobs run on serverless as the DEPLOYING identity, so deploy shared installs with a service principal
 # (prod target) that has the permissions in USER_GUIDE section 2. The app reads results as the signed-in
 # user; only the users in `operators` can start jobs from it, everyone else can only view results.
@@ -15,7 +14,7 @@ bundle:
 
 variables:
   warehouse_id:
-    description: SQL warehouse for the app and the dashboard
+    description: SQL warehouse the app reads results through
   snapshot_catalog:
     description: Catalog for snapshot and app result tables (must exist)
   snapshot_schema:
@@ -112,8 +111,8 @@ resources:
 
   apps:
     ug_migration_app:
-      name: ug-migration-app
-      description: "Unity Gateway Migration: account overview, workspace scans, readiness, code fixes and apply (prototype)"
+      name: unity-gateway-migration
+      description: "Unity Gateway Migration Toolkit: account overview, workspace scans, readiness, code fixes and apply (prototype)"
       source_code_path: ./app
       user_api_scopes:
         - sql
@@ -136,14 +135,6 @@ resources:
           job: {id: "${resources.jobs.ug_migration_scan.id}", permission: CAN_MANAGE_RUN}
         - name: apply-job
           job: {id: "${resources.jobs.ug_migration_apply.id}", permission: CAN_MANAGE_RUN}
-
-  dashboards:
-    ug_migration_progress:
-      display_name: "Unity Gateway migration progress"
-      file_path: ./dashboard/ug_migration_progress.lvdash.json
-      warehouse_id: ${var.warehouse_id}
-      dataset_catalog: ${var.snapshot_catalog}
-      dataset_schema: ${var.snapshot_schema}
 
 targets:
   dev:

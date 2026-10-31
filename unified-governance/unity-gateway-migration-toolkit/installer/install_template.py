@@ -1,6 +1,6 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Install the Unity Gateway Migration app
+# MAGIC # Install the Unity Gateway Migration Toolkit
 # MAGIC
 # MAGIC This one notebook installs everything inside this workspace: no CLI, no Git, no local setup.
 # MAGIC
@@ -11,13 +11,13 @@
 # MAGIC - The toolkit files in the **Install folder**.
 # MAGIC - The results schema (if it doesn't exist).
 # MAGIC - Three Lakeflow jobs the app starts: account snapshot (weekly schedule, paused), workspace scan, and apply/rollback.
-# MAGIC - The **Unity Gateway Migration** app and the progress dashboard.
+# MAGIC - The **Unity Gateway Migration Toolkit** app (charts and exports are in the app).
 # MAGIC
 # MAGIC **Who the jobs run as:** you (the person running this notebook). Scans and apply act with your permissions, so
 # MAGIC run it as a workspace admin with access to the system tables, or as a service principal for a shared install.
 # MAGIC Only the people in **Operators** can start jobs from the app; everyone else can only view results.
 # MAGIC
-# MAGIC Run it again to update (same widgets). Set **Action** to `uninstall` to remove the app, jobs and dashboard
+# MAGIC Run it again to update (same widgets). Set **Action** to `uninstall` to remove the app and jobs
 # MAGIC (results tables are kept unless **Drop results tables** is `yes`).
 # MAGIC
 # MAGIC Prototype from Databricks Shared Technical Services, provided as is. Version __VERSION__.
@@ -41,7 +41,7 @@ dbutils.widgets.text("results_catalog", "main", "2. Results catalog (must exist)
 dbutils.widgets.text("results_schema", "ug_migration", "3. Results schema")
 dbutils.widgets.dropdown("warehouse", wh_choices[0], wh_choices, "4. SQL warehouse")
 dbutils.widgets.text("operators", me, "5. Operators (emails, comma-separated)")
-dbutils.widgets.text("app_name", "ug-migration", "6. App name")
+dbutils.widgets.text("app_name", "unity-gateway-migration", "6. App name")
 dbutils.widgets.text("install_folder", f"/Workspace/Users/{me}/unity-gateway-migration-toolkit", "7. Install folder")
 dbutils.widgets.dropdown("drop_data", "no", ["no", "yes"], "8. Drop results tables (uninstall)")
 
@@ -55,7 +55,6 @@ import zipfile
 
 from databricks.sdk.errors import NotFound, ResourceDoesNotExist
 from databricks.sdk.service import apps, jobs
-from databricks.sdk.service.dashboards import Dashboard
 from databricks.sdk.service.workspace import ImportFormat, Language
 
 g = dbutils.widgets.get
@@ -75,8 +74,8 @@ problems = []
 for label, v in (("results catalog", CATALOG), ("results schema", SCHEMA)):
     if not re.fullmatch(r"[A-Za-z0-9_]+", v):
         problems.append(f"{label} must use letters, digits and underscores")
-if not re.fullmatch(r"[a-z0-9-]{2,26}", APP_NAME):
-    problems.append("app name: 2-26 lowercase letters, digits or hyphens")
+if not re.fullmatch(r"[a-z0-9-]{2,30}", APP_NAME):
+    problems.append("app name: 2-30 lowercase letters, digits or hyphens")
 if not FOLDER.startswith("/Workspace/"):
     problems.append("install folder must start with /Workspace/")
 if ACTION == "install" and not WAREHOUSE_ID:
@@ -103,11 +102,11 @@ def find_jobs() -> dict[str, list[int]]:
     return found
 
 
-DASH_NAME = "Unity Gateway migration progress"
+DASH_NAME = "Unity Gateway migration progress"  # created by versions before 0.8.0; the app replaces it
 
 
 def find_dashboard_id() -> str | None:
-    """The dashboard this installer created (the dashboards list API doesn't return paths)."""
+    """The dashboard an earlier version of this installer created (the dashboards list API doesn't return paths)."""
     try:
         return w.workspace.get_status(f"{FOLDER}/{DASH_NAME}.lvdash.json").resource_id
     except (NotFound, ResourceDoesNotExist):
@@ -257,7 +256,7 @@ resources = [
       for role in ("snapshot", "scan", "apply")],
 ]
 spec = apps.App(name=APP_NAME, resources=resources, user_api_scopes=["sql"],
-                description="Unity Gateway Migration: account overview, workspace scans, readiness, code fixes and apply")
+                description="Unity Gateway Migration Toolkit: account overview, workspace scans, readiness, code fixes and apply")
 if get_app():
     w.apps.update(APP_NAME, spec)
     print("updated app", APP_NAME)
@@ -282,25 +281,14 @@ print("deployment:", d.status.state.value if d.status and d.status.state else d.
 
 # COMMAND ----------
 
-# MAGIC %md ## 5. Dashboard
+old_dash = find_dashboard_id()
+if old_dash:  # charts and exports now live in the app
+    w.lakeview.trash(old_dash)
+    print("moved the dashboard from an earlier version to Trash:", DASH_NAME)
 
 # COMMAND ----------
 
-dash_json = open(f"{FILES}/dashboard/ug_migration_progress.lvdash.json").read()
-dash_id = find_dashboard_id()
-if dash_id:
-    dash = w.lakeview.update(dash_id, Dashboard(display_name=DASH_NAME, serialized_dashboard=dash_json,
-                                                warehouse_id=WAREHOUSE_ID),
-                             dataset_catalog=CATALOG, dataset_schema=SCHEMA)
-else:
-    dash = w.lakeview.create(Dashboard(display_name=DASH_NAME, serialized_dashboard=dash_json,
-                                       warehouse_id=WAREHOUSE_ID, parent_path=FOLDER),
-                             dataset_catalog=CATALOG, dataset_schema=SCHEMA)
-print("dashboard ready (it fills in after the first snapshot)")
-
-# COMMAND ----------
-
-# MAGIC %md ## 6. Grants for app users
+# MAGIC %md ## 5. Grants for app users
 # MAGIC Users who open the app read results as themselves. Grant read access to the people or groups who should see
 # MAGIC them (the exact statements for this install are printed at the end), for example:
 # MAGIC
@@ -317,15 +305,13 @@ print("dashboard ready (it fills in after the first snapshot)")
 app = w.apps.get(APP_NAME)
 host = w.config.host.rstrip("/")
 print("App:", app.url)
-print("Dashboard:", f"{host}/sql/dashboardsv3/{dash.dashboard_id}")
 for r, i in JOB_IDS.items():
     print(f"Job ({r}):", f"{host}/jobs/{i}")
 displayHTML(f"""
-<h3>Unity Gateway Migration is installed</h3>
+<h3>Unity Gateway Migration Toolkit is installed</h3>
 <p><b>Open the app:</b> <a href="{app.url}" target="_blank">{app.url}</a></p>
-<p>Dashboard: <a href="{host}/sql/dashboardsv3/{dash.dashboard_id}" target="_blank">Unity Gateway migration progress</a>
-&nbsp;|&nbsp; Jobs: {", ".join(f'<a href="{host}/jobs/{i}" target="_blank">{r}</a>' for r, i in JOB_IDS.items())}</p>
-<p>First steps in the app: <b>Overview</b> (Refresh account snapshot), then <b>Scans</b> (Start scan).
+<p>Jobs: {", ".join(f'<a href="{host}/jobs/{i}" target="_blank">{r}</a>' for r, i in JOB_IDS.items())}</p>
+<p>First steps in the app: <b>Overview</b> (Refresh snapshot), then <b>Scans</b> (Start scan). Charts and CSV exports are in the app.
 Operators: {OPERATORS or "(none)"}. Results: {RESULTS}. The user guide is in {FILES}/USER_GUIDE.md.</p>
 <p>To let others view results, run (replace <code>migration-team</code> with your group):<br>
 <code>GRANT USE CATALOG ON CATALOG `{CATALOG}` TO `migration-team`;<br>
@@ -335,5 +321,4 @@ GRANT USE SCHEMA, SELECT ON SCHEMA `{CATALOG}`.`{SCHEMA}` TO `migration-team`;</
 # COMMAND ----------
 
 # Also return the links as the notebook result, so they're visible when the installer runs as a job.
-dbutils.notebook.exit(json.dumps({"app": app.url, "dashboard": f"{host}/sql/dashboardsv3/{dash.dashboard_id}",
-                                  "jobs": {r: f"{host}/jobs/{i}" for r, i in JOB_IDS.items()}}))
+dbutils.notebook.exit(json.dumps({"app": app.url, "jobs": {r: f"{host}/jobs/{i}" for r, i in JOB_IDS.items()}}))

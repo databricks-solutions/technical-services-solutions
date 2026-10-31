@@ -1,5 +1,5 @@
-import { Component, ReactNode, useEffect, useMemo, useState } from "react";
-import { JobState, TERMINAL_LIFE_CYCLES } from "./api";
+import { Component, KeyboardEvent, ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
+import { JobState, TERMINAL_LIFE_CYCLES, fmt } from "./api";
 
 export class ErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
   state = { error: null as string | null };
@@ -8,27 +8,36 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { error: s
   }
   render() {
     if (this.state.error) {
-      return (
-        <div className="alert bad" role="alert">
-          Something on this page failed to render: {this.state.error}{" "}
-          <button className="ghost small" onClick={() => this.setState({ error: null })}>Try again</button>
-        </div>
-      );
+      return <ErrorState error={`This page failed to display: ${this.state.error}`} onRetry={() => this.setState({ error: null })} />;
     }
     return this.props.children;
   }
 }
 
-export function Card({ title, children, actions, note }: { title?: string; children: ReactNode; actions?: ReactNode; note?: ReactNode }) {
+export function PageHeader({ title, description, actions }: { title: string; description?: ReactNode; actions?: ReactNode }) {
   return (
-    <section className="card">
+    <div className="page-head">
+      <div className="stack-sm">
+        <h2>{title}</h2>
+        {description && <p className="muted small">{description}</p>}
+      </div>
+      {actions && <div className="row">{actions}</div>}
+    </div>
+  );
+}
+
+export function Card({ title, children, actions, note, id }: { title?: ReactNode; children: ReactNode; actions?: ReactNode; note?: ReactNode; id?: string }) {
+  return (
+    <section className="card" aria-labelledby={id}>
       {(title || actions) && (
         <header className="card-head">
-          <h3>{title}</h3>
-          <div>{actions}</div>
+          <div className="stack-sm">
+            {title && <h3 id={id}>{title}</h3>}
+            {note && <p className="muted small">{note}</p>}
+          </div>
+          {actions && <div className="actions">{actions}</div>}
         </header>
       )}
-      {note && <p className="muted small">{note}</p>}
       {children}
     </section>
   );
@@ -45,10 +54,10 @@ export function Kpi({ label, value, sub, tone }: { label: string; value: ReactNo
 }
 
 const TONE: Record<string, string> = {
-  READY: "good", SUCCEEDED: "good", ok: "good", created: "good", granted: "good", deleted: "good", exists: "neutral",
+  READY: "good", SUCCEEDED: "good", SUCCESS: "good", ok: "good", created: "good", granted: "good", deleted: "good", exists: "neutral",
   READY_WITH_WARNINGS: "warn", INCOMPLETE: "warn", NEEDS_ATTENTION: "warn", manual: "warn", would_create: "info",
   would_grant: "info", would_delete: "info", RUNNING: "info", PENDING: "info", QUEUED: "info", creating: "info",
-  BLOCKED: "bad", FAILED: "bad", error: "bad", mismatch: "bad", kept: "neutral", skipped: "neutral",
+  BLOCKED: "bad", FAILED: "bad", error: "bad", mismatch: "bad", CANCELED: "bad", TIMEDOUT: "bad", kept: "neutral", skipped: "neutral",
 };
 
 export function Badge({ value, tone }: { value: any; tone?: string }) {
@@ -56,48 +65,149 @@ export function Badge({ value, tone }: { value: any; tone?: string }) {
   return <span className={`badge ${t}`}>{String(value ?? "-").replace(/_/g, " ")}</span>;
 }
 
-export function Loading({ text = "Loading" }: { text?: string }) {
+/* ---------- States: loading, empty, error, notices ---------- */
+
+export function Skeleton({ lines = 3, block = false, label = "Loading" }: { lines?: number; block?: boolean; label?: string }) {
   return (
-    <div className="state" role="status" aria-live="polite">
-      <div className="spinner" /> {text}...
+    <div className="stack-sm" role="status" aria-live="polite" aria-busy="true">
+      <span className="sr-only">{label}</span>
+      {block ? <span className="skeleton block" /> : Array.from({ length: lines }, (_, i) => (
+        <span key={i} className="skeleton line" style={{ width: `${[92, 78, 85, 64, 70][i % 5]}%` }} />
+      ))}
     </div>
   );
 }
 
+export function SkeletonTable({ rows = 6, label = "Loading table" }: { rows?: number; label?: string }) {
+  return (
+    <div className="skeleton-table" role="status" aria-live="polite" aria-busy="true">
+      <span className="sr-only">{label}</span>
+      <span className="skeleton line" style={{ height: 30 }} />
+      {Array.from({ length: rows }, (_, i) => <span key={i} className="skeleton line" />)}
+    </div>
+  );
+}
+
+export function SkeletonKpis() {
+  return (
+    <div className="kpis" aria-hidden="true">
+      {[0, 1, 2, 3].map((i) => (
+        <div className="kpi" key={i}><span className="skeleton line" style={{ width: "50%" }} /><span className="skeleton line" style={{ width: "70%", height: 26, marginTop: 8 }} /></div>
+      ))}
+    </div>
+  );
+}
+
+export function SkeletonCard({ title, block = false }: { title?: string; block?: boolean }) {
+  return (
+    <Card title={title}>
+      {block ? <Skeleton block label={`Loading ${title || ""}`} /> : <SkeletonTable label={`Loading ${title || ""}`} />}
+    </Card>
+  );
+}
+
+export function Empty({ title, children, action }: { title?: ReactNode; children?: ReactNode; action?: ReactNode }) {
+  return (
+    <div className="empty">
+      {title && <div className="empty-title">{title}</div>}
+      {children && <div className="small">{children}</div>}
+      {action}
+    </div>
+  );
+}
+
+export function ErrorState({ error, onRetry, title = "Couldn't load this" }: { error: string; onRetry?: () => void; title?: string }) {
+  return (
+    <Notice tone="error" title={title} action={onRetry && <button className="btn secondary sm" onClick={onRetry}>Try again</button>}>
+      {friendly(error)}
+    </Notice>
+  );
+}
+
+/** Short inline error for a failed action (keeps the HTTP status out of the user's way). */
 export function ErrorBox({ error }: { error: string }) {
-  return <div className="alert bad" role="alert">{error}</div>;
+  return <Notice tone="error">{friendly(error)}</Notice>;
 }
 
-export function Empty({ children }: { children: ReactNode }) {
-  return <div className="state muted">{children}</div>;
+function friendly(error: string) {
+  const m = /^(\d{3}): ([\s\S]*)$/.exec(error);
+  if (!m) return error;
+  const [, code, text] = m;
+  if (code === "401") return "Your session has no user token. Ask the person who installed the app to enable user authorization.";
+  if (code === "403") return text || "You don't have permission for this.";
+  if (code === "504") return "The SQL warehouse took too long to answer (it may be starting). Try again in a minute.";
+  return text || `Request failed (${code}).`;
 }
 
-export function JobLine({ state, label }: { state: JobState | null; label: string }) {
-  if (!state) return <div className="muted small" role="status">{label}: starting...</div>;
-  if (state.error) return <div className="alert bad small" role="alert">{label}: {state.error}</div>;
-  const running = !TERMINAL_LIFE_CYCLES.includes(state.life_cycle || "");
+export function Notice({ tone, title, children, action, onClose }: {
+  tone: "success" | "error" | "warning" | "info"; title?: ReactNode; children?: ReactNode; action?: ReactNode; onClose?: () => void;
+}) {
+  const icon = { success: "✓", error: "!", warning: "!", info: "i" }[tone];
   return (
-    <div className="jobline" role="status" aria-live="polite">
-      {running && <div className="spinner" />}
-      <span>{label}:</span> <Badge value={state.result || state.life_cycle} />
-      {state.url && (
-        <a href={state.url} target="_blank" rel="noreferrer">
-          job run
-        </a>
-      )}
-      {state.message && !running && state.result !== "SUCCESS" && <span className="muted small">{state.message}</span>}
+    <div className={`notice ${tone}`} role={tone === "error" ? "alert" : "status"} aria-live={tone === "error" ? "assertive" : "polite"}>
+      <span className="notice-icon" aria-hidden="true">{icon}</span>
+      <div className="notice-body">
+        {title && <strong>{title}</strong>}
+        {children && <div>{children}</div>}
+        {action && <div className="row">{action}</div>}
+      </div>
+      {onClose && <button className="btn link sm" onClick={onClose} aria-label="Dismiss">Dismiss</button>}
     </div>
   );
 }
 
-export type Column<T> = { key: string; label: string; render?: (row: T) => ReactNode; num?: boolean; width?: string };
+/** Status of a started job, then the outcome (success or failure) once it ends. */
+export function JobLine({ state, label, done }: { state: JobState | null; label: string; done?: ReactNode }) {
+  if (!state) return <div className="jobline" role="status"><div className="spinner" aria-hidden="true" />{label}: starting</div>;
+  if (state.error) return <Notice tone="error" title={`${label}: status unknown`}>{state.error}</Notice>;
+  const running = !TERMINAL_LIFE_CYCLES.includes(state.life_cycle || "");
+  const link = state.url && <a href={state.url} target="_blank" rel="noreferrer">View job run</a>;
+  if (running) {
+    return (
+      <div className="jobline" role="status" aria-live="polite">
+        <div className="spinner" aria-hidden="true" /><span>{label}: {String(state.life_cycle || "starting").toLowerCase()}</span>{link}
+      </div>
+    );
+  }
+  if (state.result === "SUCCESS") return <Notice tone="success" title={`${label} finished`} action={link}>{done}</Notice>;
+  return <Notice tone="error" title={`${label} ${String(state.result || state.life_cycle).toLowerCase()}`} action={link}>{state.message}</Notice>;
+}
 
-export function Table<T extends Record<string, any>>({ rows, columns, search, pageSize = 25, empty, label }: {
-  rows: T[]; columns: Column<T>[]; search?: boolean; pageSize?: number; empty?: ReactNode; label?: string;
+/* ---------- Tabs (arrow keys move between tabs) ---------- */
+
+export function Tabs({ tabs, value, onChange, className = "subtabs", label }: {
+  tabs: readonly (readonly [string, ReactNode])[]; value: string; onChange: (k: string) => void; className?: string; label: string;
+}) {
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  const onKey = (e: KeyboardEvent, i: number) => {
+    const next = e.key === "ArrowRight" ? i + 1 : e.key === "ArrowLeft" ? i - 1 : e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : null;
+    if (next === null) return;
+    e.preventDefault();
+    const j = (next + tabs.length) % tabs.length;
+    onChange(tabs[j][0]);
+    refs.current[j]?.focus();
+  };
+  return (
+    <div className={className} role="tablist" aria-label={label}>
+      {tabs.map(([k, l], i) => (
+        <button key={k} ref={(el) => (refs.current[i] = el)} role="tab" aria-selected={value === k} tabIndex={value === k ? 0 : -1}
+                onClick={() => onChange(k)} onKeyDown={(e) => onKey(e, i)}>{l}</button>
+      ))}
+    </div>
+  );
+}
+
+/* ---------- Table ---------- */
+
+export type Column<T> = { key: string; label: string; render?: (row: T) => ReactNode; num?: boolean; width?: string; sortable?: boolean };
+
+export function Table<T extends Record<string, any>>({ rows, columns, search, pageSize = 25, empty, label, tools }: {
+  rows: T[]; columns: Column<T>[]; search?: boolean; pageSize?: number; empty?: ReactNode; label: string; tools?: ReactNode;
 }) {
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 } | null>(null);
   const [page, setPage] = useState(0);
+  const searchId = useId();
   const filtered = useMemo(() => {
     let r = rows;
     if (q) {
@@ -119,24 +229,38 @@ export function Table<T extends Record<string, any>>({ rows, columns, search, pa
   useEffect(() => { if (page > pages - 1) setPage(pages - 1); }, [page, pages]);
   const p = Math.min(page, pages - 1);
   const view = filtered.slice(p * pageSize, p * pageSize + pageSize);
+  const toggle = (key: string) => setSort((s) => ({ key, dir: s?.key === key && s.dir === -1 ? 1 : -1 }));
   return (
     <div>
-      {search && (
-        <input className="search" placeholder="Filter..." aria-label={`Filter ${label || "rows"}`} value={q} onChange={(e) => { setQ(e.target.value); setPage(0); }} />
+      {(search || tools) && (
+        <div className="table-tools">
+          {search ? (
+            <div>
+              <label htmlFor={searchId} className="sr-only">Filter {label}</label>
+              <input id={searchId} type="search" className="search" placeholder="Filter" value={q} onChange={(e) => { setQ(e.target.value); setPage(0); }} />
+            </div>
+          ) : <span />}
+          {tools && <div className="row">{tools}</div>}
+        </div>
       )}
-      {filtered.length === 0 ? (
-        <Empty>{empty || "Nothing to show."}</Empty>
+      {rows.length === 0 ? (
+        typeof empty === "string" || !empty ? <Empty title={empty || "Nothing to show"} /> : empty
+      ) : filtered.length === 0 ? (
+        <Empty title="No matches" action={<button className="btn secondary sm" onClick={() => setQ("")}>Clear filter</button>}>Nothing matches “{q}”.</Empty>
       ) : (
         <div className="table-wrap">
-          <table aria-label={label}>
+          <table>
+            <caption className="sr-only">{label}</caption>
             <thead>
               <tr>
                 {columns.map((c) => (
-                  <th key={c.key} style={{ width: c.width }} className={c.num ? "num" : ""} tabIndex={c.label ? 0 : -1}
-                      aria-sort={sort?.key === c.key ? (sort.dir === -1 ? "descending" : "ascending") : "none"}
-                      onClick={() => setSort((s) => ({ key: c.key, dir: s?.key === c.key && s.dir === -1 ? 1 : -1 }))}
-                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSort((s) => ({ key: c.key, dir: s?.key === c.key && s.dir === -1 ? 1 : -1 })); } }}>
-                    {c.label}{sort?.key === c.key ? (sort.dir === -1 ? " ▾" : " ▴") : ""}
+                  <th key={c.key} scope="col" style={{ width: c.width }} className={c.num ? "num" : ""}
+                      aria-sort={sort?.key === c.key ? (sort.dir === -1 ? "descending" : "ascending") : undefined}>
+                    {c.label && c.sortable !== false ? (
+                      <button className="sort" onClick={() => toggle(c.key)}>
+                        {c.label}<span aria-hidden="true">{sort?.key === c.key ? (sort.dir === -1 ? "▾" : "▴") : ""}</span>
+                      </button>
+                    ) : c.label ? c.label : <span className="sr-only">Actions</span>}
                   </th>
                 ))}
               </tr>
@@ -154,81 +278,101 @@ export function Table<T extends Record<string, any>>({ rows, columns, search, pa
         </div>
       )}
       {pages > 1 && (
-        <div className="pager">
-          <button disabled={p === 0} onClick={() => setPage(p - 1)}>Prev</button>
-          <span className="muted small">Page {p + 1} of {pages} ({filtered.length} rows)</span>
-          <button disabled={p >= pages - 1} onClick={() => setPage(p + 1)}>Next</button>
-        </div>
+        <Pager page={p} pages={pages} total={filtered.length} onPage={setPage} />
       )}
     </div>
   );
 }
 
-/** Two-series line chart (legacy vs Unity Gateway), drawn as SVG. */
-export function TrendChart({ points, series }: {
-  points: Record<string, any>[]; series: { key: string; label: string; cls: string }[];
+export function Pager({ page, pages, total, onPage, busy }: { page: number; pages: number; total: number; onPage: (p: number) => void; busy?: boolean }) {
+  return (
+    <nav className="pager" aria-label="Pages">
+      <button className="btn secondary sm" disabled={page === 0 || busy} onClick={() => onPage(page - 1)}>Previous</button>
+      <span className="small muted" aria-live="polite">Page {page + 1} of {pages} · {fmt(total)} rows</span>
+      <button className="btn secondary sm" disabled={page >= pages - 1 || busy} onClick={() => onPage(page + 1)}>Next</button>
+    </nav>
+  );
+}
+
+/* ---------- Charts ---------- */
+
+type Series = { key: string; label: string; cls: "legacy" | "ug" | "single" };
+
+/** Line chart over snapshots, drawn as SVG. Each point has a tooltip; the data is also exportable as CSV. */
+export function TrendChart({ points, series, label, valueFmt = fmtShort }: {
+  points: Record<string, any>[]; series: Series[]; label: string; valueFmt?: (v: number) => string;
 }) {
-  if (points.length === 0) return <Empty>No snapshots yet.</Empty>;
-  const W = 640, H = 200, P = { l: 56, r: 12, t: 12, b: 28 };
+  if (points.length === 0) return <Empty title="No snapshots yet" />;
+  const W = 640, H = 210, P = { l: 52, r: 16, t: 12, b: 30 };
   const max = Math.max(1, ...points.flatMap((p) => series.map((s) => Number(p[s.key]) || 0)));
   const x = (i: number) => P.l + (points.length === 1 ? (W - P.l - P.r) / 2 : (i * (W - P.l - P.r)) / (points.length - 1));
   const y = (v: number) => H - P.b - (v / max) * (H - P.t - P.b);
   const ticks = [0, 0.5, 1].map((f) => max * f);
+  const last = points[points.length - 1];
+  const summary = `${label}. ${points.length} snapshots. Latest (${String(last.snapshot_time).slice(0, 10)}): ` +
+    series.map((s) => `${s.label} ${valueFmt(Number(last[s.key]) || 0)}`).join(", ") + ".";
   return (
-    <div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="chart" role="img" aria-label="Traffic trend">
+    <figure className="stack-sm" style={{ margin: 0 }}>
+      <svg viewBox={`0 0 ${W} ${H}`} className="chart" role="img" aria-label={summary}>
         {ticks.map((t) => (
           <g key={t}>
             <line x1={P.l} x2={W - P.r} y1={y(t)} y2={y(t)} className="grid" />
-            <text x={P.l - 6} y={y(t) + 4} textAnchor="end" className="axis">{fmtShort(t)}</text>
+            <text x={P.l - 8} y={y(t) + 4} textAnchor="end" className="axis">{valueFmt(t)}</text>
           </g>
         ))}
         {series.map((s) => (
           <g key={s.key}>
-            <polyline className={`line ${s.cls}`} fill="none"
-                      points={points.map((p, i) => `${x(i)},${y(Number(p[s.key]) || 0)}`).join(" ")} />
-            {points.map((p, i) => <circle key={i} cx={x(i)} cy={y(Number(p[s.key]) || 0)} r={3} className={`dot ${s.cls}`} />)}
+            <polyline className={`line ${s.cls}`} points={points.map((p, i) => `${x(i)},${y(Number(p[s.key]) || 0)}`).join(" ")} />
+            {points.map((p, i) => (
+              <circle key={i} cx={x(i)} cy={y(Number(p[s.key]) || 0)} r={3.5} className={`dot ${s.cls}`}>
+                <title>{`${String(p.snapshot_time).slice(0, 16)} · ${s.label}: ${valueFmt(Number(p[s.key]) || 0)}`}</title>
+              </circle>
+            ))}
           </g>
         ))}
         {points.map((p, i) => (i === 0 || i === points.length - 1) && (
-          <text key={i} x={x(i)} y={H - 8} textAnchor={i === 0 && points.length > 1 ? "start" : "end"} className="axis">
-            {String(p.snapshot_time).slice(0, 16)}
+          <text key={i} x={x(i)} y={H - 10} textAnchor={points.length === 1 ? "middle" : i === 0 ? "start" : "end"} className="axis">
+            {String(p.snapshot_time).slice(0, 10)}
           </text>
         ))}
       </svg>
-      <div className="legend">
-        {series.map((s) => <span key={s.key}><i className={`swatch ${s.cls}`} />{s.label}</span>)}
-      </div>
-    </div>
+      {series.length > 1 && (
+        <figcaption className="legend">
+          {series.map((s) => <span key={s.key}><i className={`swatch ${s.cls}`} aria-hidden="true" />{s.label}</span>)}
+        </figcaption>
+      )}
+    </figure>
   );
 }
 
-function fmtShort(v: number) {
+export function fmtShort(v: number) {
   if (v >= 1e6) return (v / 1e6).toFixed(1) + "M";
   if (v >= 1e3) return (v / 1e3).toFixed(0) + "K";
   return String(Math.round(v));
 }
 
-export function Bars({ rows, labelKey, valueKey }: { rows: Record<string, any>[]; labelKey: string; valueKey: string }) {
-  if (rows.length === 0) return <Empty>No workspaces in the latest snapshot.</Empty>;
+export function Bars({ rows, labelKey, valueKey, label }: { rows: Record<string, any>[]; labelKey: string; valueKey: string; label: string }) {
+  if (rows.length === 0) return <Empty title="No workspaces in the latest snapshot" />;
   const max = Math.max(1, ...rows.map((r) => Number(r[valueKey]) || 0));
   return (
-    <div className="bars">
+    <ul className="bars" aria-label={label}>
       {rows.map((r) => (
-        <div className="bar-row" key={r[labelKey]}>
-          <span className="bar-label">{r[labelKey]}</span>
-          <span className="bar-track"><span className="bar-fill" style={{ width: `${(100 * (Number(r[valueKey]) || 0)) / max}%` }} /></span>
-          <span className="bar-value">{r[valueKey]}</span>
-        </div>
+        <li className="bar-row" key={r[labelKey]}>
+          <span>{r[labelKey]}</span>
+          <span className="bar-track" aria-hidden="true"><span className="bar-fill" style={{ width: `${(100 * (Number(r[valueKey]) || 0)) / max}%` }} /></span>
+          <span className="bar-value">{fmt(r[valueKey])}</span>
+        </li>
       ))}
-    </div>
+    </ul>
   );
 }
+
+/* ---------- Actions ---------- */
 
 export function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
   const [done, setDone] = useState<string | null>(null);
   return (
-    <button className="ghost small" onClick={() => {
+    <button className="btn secondary sm" aria-live="polite" onClick={() => {
       navigator.clipboard.writeText(text).then(() => setDone("Copied"), () => setDone("Copy failed")).finally(() => setTimeout(() => setDone(null), 1500));
     }}>
       {done || label}
@@ -236,26 +380,65 @@ export function CopyButton({ text, label = "Copy" }: { text: string; label?: str
   );
 }
 
+/** Download menu: each item is a plain link to an export endpoint (the browser downloads the file). */
+export function ExportMenu({ items, label = "Export" }: { items: { href: string; label: string; hint?: string }[]; label?: string }) {
+  const ref = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const close = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) ref.current.open = false; };
+    const esc = (e: globalThis.KeyboardEvent) => { if (e.key === "Escape" && ref.current?.open) { ref.current.open = false; (ref.current.querySelector("summary") as HTMLElement)?.focus(); } };
+    document.addEventListener("click", close);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("click", close); document.removeEventListener("keydown", esc); };
+  }, []);
+  return (
+    <details className="menu" ref={ref}>
+      <summary className="btn secondary sm">{label}<span aria-hidden="true">▾</span></summary>
+      <div className="menu-list">
+        {items.map((i) => (
+          <a key={i.href} href={i.href} download onClick={() => { if (ref.current) ref.current.open = false; }}>
+            {i.label}{i.hint && <span className="muted small">{i.hint}</span>}
+          </a>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 export function Confirm({ word, title, body, onConfirm, onCancel, busy }: {
   word: string; title: string; body: ReactNode; onConfirm: () => void; onCancel: () => void; busy?: boolean;
 }) {
   const [typed, setTyped] = useState("");
+  const dialog = useRef<HTMLDivElement>(null);
+  const opener = useRef<Element | null>(document.activeElement);
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !busy) onCancel(); };
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape" && !busy) onCancel();
+      if (e.key === "Tab" && dialog.current) { // keep focus inside the dialog
+        const f = dialog.current.querySelectorAll<HTMLElement>("input, button:not(:disabled)");
+        if (!f.length) return;
+        const first = f[0], last = f[f.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
+    };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    const back = opener.current;
+    return () => { window.removeEventListener("keydown", onKey); (back as HTMLElement | null)?.focus?.(); };
   }, [busy, onCancel]);
+  const ok = typed === word && !busy;
   return (
     <div className="modal-back">
-      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title" ref={dialog}>
         <h3 id="confirm-title">{title}</h3>
-        <div>{body}</div>
-        <label className="small" htmlFor="confirm-word">Type <b>{word}</b> to continue.</label>
-        <input id="confirm-word" autoFocus value={typed} onChange={(e) => setTyped(e.target.value)} />
-        <div className="row end">
-          <button className="ghost" onClick={onCancel}>Cancel</button>
-          <button className="danger" disabled={typed !== word || busy} onClick={onConfirm}>{busy ? "Starting..." : title}</button>
-        </div>
+        <div className="stack-sm">{body}</div>
+        <form className="stack-sm" onSubmit={(e) => { e.preventDefault(); if (ok) onConfirm(); }}>
+          <label className="field" htmlFor="confirm-word">Type {word} to confirm</label>
+          <input id="confirm-word" autoFocus autoComplete="off" value={typed} onChange={(e) => setTyped(e.target.value)} />
+          <div className="row">
+            <button type="button" className="btn secondary" onClick={onCancel} disabled={busy}>Cancel</button>
+            <button type="submit" className="btn danger" disabled={!ok}>{busy ? "Starting…" : title}</button>
+          </div>
+        </form>
       </div>
     </div>
   );

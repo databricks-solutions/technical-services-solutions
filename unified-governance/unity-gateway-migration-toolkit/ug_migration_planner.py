@@ -31,9 +31,9 @@ from typing import Iterable
 
 from databricks.sdk import WorkspaceClient
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 DISCLAIMER = ("Prototype from Databricks Shared Technical Services, provided as is. It only reads unless you run apply or "
-              "rollback, snapshots, or the dashboard step; review results before acting.")
+              "rollback, or snapshots; review results before acting.")
 
 # ---------------------------------------------------------------------------
 # Data shapes

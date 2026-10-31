@@ -12,6 +12,8 @@ Prototype from Databricks Shared Technical Services, provided as is.
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import os
 import re
@@ -24,7 +26,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import DatabricksError, NotFound, PermissionDenied
 from databricks.sdk.service.sql import StatementParameterListItem, StatementState
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -477,6 +479,99 @@ def start_apply(body: ApplyRequest, request: Request) -> dict:
 DIST = Path(__file__).resolve().parent.parent / "frontend" / "static"
 if (DIST / "assets").exists():
     app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
+
+
+# ---------------------------------------------------------------------------
+# Exports (CSV / Markdown downloads of what the pages show, read as the signed-in user)
+# ---------------------------------------------------------------------------
+
+EXPORT_ROW_LIMIT = 200_000
+
+
+def _cell(v: Any) -> str:
+    """CSV cell: lists and dicts as JSON; values that a spreadsheet would run as a formula are prefixed."""
+    if v is None:
+        return ""
+    if isinstance(v, (list, dict)):
+        v = json.dumps(v, default=str)
+    v = str(v)
+    return "'" + v if v[:1] in ("=", "+", "-", "@", "\t", "\r") else v
+
+
+def _csv_response(rows: list[dict], filename: str, columns: list[str] | None = None) -> Response:
+    cols = columns or list(dict.fromkeys(k for r in rows for k in r))
+    buf = io.StringIO()
+    out = csv.writer(buf)
+    out.writerow(cols)
+    for r in rows:
+        out.writerow([_cell(r.get(c)) for c in cols])
+    return Response(buf.getvalue(), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+def _stamp(t: Any) -> str:
+    return re.sub(r"[^0-9]", "", str(t or ""))[:12] or "latest"
+
+
+@app.get("/api/export/overview/{kind}")
+def export_overview(kind: str, request: Request) -> Response:
+    """Latest account snapshot: workspaces, all endpoints (not only the top 100 shown), or the trend."""
+    ws_t, ep_t = table(f"{SNAPSHOT_PREFIX}_workspaces"), table(f"{SNAPSHOT_PREFIX}_endpoints")
+    if kind == "trend":
+        rows = query(request, f"""
+            SELECT CAST(snapshot_time AS STRING) AS snapshot_time, count(*) AS workspaces,
+                   count_if(wave LIKE '0%') AS enforce_candidates, sum(legacy_requests) AS legacy_requests,
+                   sum(v1_requests) AS v1_requests, sum(v2_requests) AS v2_requests, sum(v3_requests) AS v3_requests,
+                   sum(active_legacy_endpoints) AS active_legacy_endpoints
+            FROM {ws_t} GROUP BY snapshot_time ORDER BY snapshot_time""")
+        return _csv_response(rows, "ug_migration_trend.csv")
+    if kind not in ("workspaces", "endpoints"):
+        raise HTTPException(400, "kind must be workspaces, endpoints or trend")
+    latest = query(request, f"SELECT CAST(max(snapshot_time) AS STRING) AS t FROM {ws_t}")
+    t = latest[0]["t"] if latest else None
+    if not t:
+        raise HTTPException(404, "no snapshot yet")
+    src = ws_t if kind == "workspaces" else ep_t
+    rows = query(request, f"""SELECT * EXCEPT (snapshot_time), CAST(snapshot_time AS STRING) AS snapshot_time
+                              FROM {src} WHERE snapshot_time = CAST(:t AS TIMESTAMP) LIMIT {EXPORT_ROW_LIMIT}""", {"t": t})
+    return _csv_response(rows, f"ug_migration_{kind}_{_stamp(t)}.csv")
+
+
+SCAN_EXPORTS = {"plan": "plan", "callers": "caller", "providers": "provider", "references": "ref"}
+SCAN_DOCS = {"readiness": "READINESS.md", "code-fixes": "CODE_FIXES.md", "summary": "SUMMARY.md"}
+
+
+@app.get("/api/scans/{run_id}/export/{kind}")
+def export_scan(run_id: str, kind: str, request: Request) -> Response:
+    """One scan's plan, callers, provider services or references as CSV, or its reports as Markdown."""
+    check_id(run_id, "scan id")
+    short = run_id[:8]
+    if kind in SCAN_DOCS:
+        rows = query(request, f"SELECT payload FROM {table('ug_migration_scan_items')} "
+                              "WHERE run_id = :r AND item_type = :t", {"r": run_id, "t": "doc:" + SCAN_DOCS[kind]})
+        if not rows:
+            raise HTTPException(404, "this scan has no such report")
+        text = _load(rows[0]["payload"]).get("markdown", "")
+        name = SCAN_DOCS[kind].replace(".md", f"_{short}.md")
+        return Response(text, media_type="text/markdown; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="{name}"'})
+    if kind not in SCAN_EXPORTS:
+        raise HTTPException(400, f"kind must be one of {', '.join([*SCAN_EXPORTS, *SCAN_DOCS])}")
+    rows = query(request, f"SELECT payload FROM {table('ug_migration_scan_items')} WHERE run_id = :r AND item_type = :t "
+                          f"ORDER BY seq LIMIT {EXPORT_ROW_LIMIT}", {"r": run_id, "t": SCAN_EXPORTS[kind]})
+    return _csv_response([_load(r["payload"]) for r in rows], f"ug_migration_{kind}_{short}.csv")
+
+
+@app.get("/api/applies/{apply_id}/export")
+def export_apply(apply_id: str, request: Request) -> Response:
+    check_id(apply_id, "apply id")
+    rows = query(request, f"SELECT payload FROM {table('ug_migration_apply_items')} WHERE apply_id = :a "
+                          f"ORDER BY seq LIMIT {EXPORT_ROW_LIMIT}", {"a": apply_id})
+    items = [_load(r["payload"]) for r in rows]
+    return _csv_response(items, f"ug_migration_apply_{apply_id[:8]}.csv",
+                         ["type", "name", "action", "reason", "issues", "grants", "time", "execute"]
+                         + sorted({k for i in items for k in i} - {"type", "name", "action", "reason", "issues",
+                                                                     "grants", "time", "execute", "body"}))
 
 
 @app.get("/{path:path}")

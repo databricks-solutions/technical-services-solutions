@@ -1,8 +1,8 @@
 # Unity Gateway Migration Toolkit: User Guide
 
-Version 0.7.0 (prototype)
+Version 0.8.0 (prototype)
 
-> Prototype from Databricks Shared Technical Services (STS), provided as is. Planning and scans only read your workspace and system tables. Things are written only when you ask: the app and its jobs store results in the results schema (including matched code lines), snapshots append to tables, apply and rollback create or delete Unity Gateway services, and the dashboard step creates a dashboard. Review every result before acting on it.
+> Prototype from Databricks Shared Technical Services (STS), provided as is. Planning and scans only read your workspace and system tables. Things are written only when you ask: the app and its jobs store results in the results schema (including matched code lines), snapshots append to tables, and apply and rollback create or delete Unity Gateway services. Review every result before acting on it.
 
 ---
 
@@ -16,7 +16,7 @@ Version 0.7.0 (prototype)
 6. [Workspace planner (`ug_migration_planner.py`)](#6-workspace-planner)
 7. [Reading the results](#7-reading-the-results)
 8. [Apply, rollback and Terraform (`ug_migration_apply.py`)](#8-apply-rollback-and-terraform)
-9. [Progress tracking: snapshots and dashboard](#9-progress-tracking)
+9. [Progress tracking: snapshots, charts and exports](#9-progress-tracking)
 10. [Running in Databricks: the app, notebooks and bundle](#10-running-in-databricks)
 11. [Safety and data handling](#11-safety-and-data-handling)
 12. [Troubleshooting](#12-troubleshooting)
@@ -39,7 +39,7 @@ The toolkit turns the migration into a guided, measurable process:
 | **Fix code** | Every notebook, job, query, function, app, agent and repo that still calls a legacy endpoint, with the exact old and new line | Workspace planner |
 | **Decide** | Whether each workspace is safe to enforce, and what's blocking it | Workspace planner (readiness report) |
 | **Create** | The Unity Gateway services and grants for external model and PT endpoints, with rollback, or the same as Terraform | Apply |
-| **Track** | Weekly snapshots and a dashboard showing legacy traffic falling and ready workspaces rising | Account view + dashboard |
+| **Track** | Weekly snapshots and in-app charts showing legacy traffic falling and ready workspaces rising, with CSV exports | Account view + app |
 
 What it **doesn't** do: it never edits your code, never changes or deletes legacy endpoints, and never turns on *Enforce Unity Gateway*. Those stay human decisions.
 
@@ -77,7 +77,6 @@ What it **doesn't** do: it never edits your code, never changes or deletes legac
 | Apply | `USE CATALOG`, `USE SCHEMA` and `CREATE SERVICE` on the target schema; `EXECUTE` on the underlying model for PT wrappers; `MANAGE` or ownership to grant; access to the provider secrets |
 | Callers after migration | `EXECUTE` on the model service plus `USE CATALOG` and `USE SCHEMA` on its catalog and schema. All account users have `EXECUTE` on `system.ai` services by default |
 | Snapshots | `USE CATALOG`, `USE SCHEMA`, `CREATE TABLE` and `MODIFY` on the snapshot schema |
-| Dashboard | Permission to create dashboards in the target folder and `CAN USE` on the warehouse |
 | Deep scan of other workspaces | An identity that can log in to each of them, ideally one service principal assigned to all of them |
 
 ### Pick an identity
@@ -91,19 +90,19 @@ For one workspace, a workspace admin's CLI login is enough. For an account, use 
 **Recommended: the installer notebook (everything inside the workspace, about 5 minutes).**
 
 1. In the workspace, open **Workspace**, go to your home folder, and choose **Import**. Import the file `INSTALL_unity_gateway_migration_toolkit_<version>.py`.
-2. Open the notebook. At the top, set **Results catalog** (an existing catalog where you can create a schema) and pick a **SQL warehouse**. The other widgets have defaults: results schema `ug_migration`, **Operators** = you, app name `ug-migration`, install folder in your home folder.
-3. Click **Run all**. At the end it prints the link to the app, the dashboard and the three jobs (if you run it as a job, the links are also the notebook's result in the run output).
+2. Open the notebook. At the top, set **Results catalog** (an existing catalog where you can create a schema) and pick a **SQL warehouse**. The other widgets have defaults: results schema `ug_migration`, **Operators** = you, app name `unity-gateway-migration` (app names are limited to 30 characters), install folder in your home folder.
+3. Click **Run all**. At the end it prints the link to the app and the three jobs (if you run it as a job, the links are also the notebook's result in the run output).
 
 Before you apply anything from the app, create the target schema for the new model services (the scan form's **Target catalog** and **Target schema**, `ai_gateway.migrated` by default) and give the identity that runs the jobs `CREATE SERVICE` on it. Scans work without it; apply, including a dry run, stops if the schema is missing.
 
-It needs: serverless compute for notebooks and jobs, Databricks Apps, and permission to create apps, jobs and (if missing) the schema. The jobs run as the person who runs the installer, so run it as someone with the permissions in section 2 (or as a service principal). To update, import the newer installer and run it again with the same widgets; history is kept. To change the operators, run it again with the **Operators** widget updated. To remove it, set **Action** to `uninstall` and run it again: the app, jobs, toolkit files and the `output` folder are deleted and the dashboard moves to Trash; results tables stay unless **Drop results tables** is `yes`; Unity Gateway services created by apply and the `apply_logs` folder stay (roll back first, section 8, if you want those services gone).
+It needs: serverless compute for notebooks and jobs, Databricks Apps, and permission to create apps, jobs and (if missing) the schema. The jobs run as the person who runs the installer, so run it as someone with the permissions in section 2 (or as a service principal). To update, import the newer installer and run it again with the same widgets; history is kept. To change the operators, run it again with the **Operators** widget updated. To remove it, set **Action** to `uninstall` and run it again: the app, jobs, toolkit files and the `output` folder are deleted; results tables stay unless **Drop results tables** is `yes`; Unity Gateway services created by apply and the `apply_logs` folder stay (roll back first, section 8, if you want those services gone).
 
 The other ways to install, for command-line use, CI/CD, or to change the bundle:
 
 **A. Local (laptop or CI)**
 
 ```bash
-unzip unity-gateway-migration-toolkit-0.7.0.zip && cd unity-gateway-migration-toolkit-0.7.0
+unzip unity-gateway-migration-toolkit-0.8.0.zip && cd unity-gateway-migration-toolkit-0.8.0
 python -m venv .venv && . .venv/bin/activate
 pip install "databricks-sdk>=0.158.0" requests
 python ug_migration_planner.py --help
@@ -111,7 +110,7 @@ python ug_migration_planner.py --help
 
 **B. In a workspace as notebooks.** Upload the folder (or just `ug_migration_*.py` and `notebook/`) to a workspace folder, keeping the layout. Open `notebook/run_planner` or `notebook/run_account`. See [section 10](#10-running-in-databricks).
 
-**C. As a Declarative Automation Bundle (CI/CD, or a Git folder).** Deploys the same things as the installer: the app, the snapshot job (paused), the scan and apply jobs, and the dashboard. From a Git folder in the workspace you can also deploy it with the bundle **Deploy** button instead of the CLI:
+**C. As a Declarative Automation Bundle (CI/CD, or a Git folder).** Deploys the same things as the installer: the app, the snapshot job (paused), and the scan and apply jobs. From a Git folder in the workspace you can also deploy it with the bundle **Deploy** button instead of the CLI:
 
 ```bash
 databricks bundle deploy -t dev \
@@ -133,7 +132,7 @@ Then start the app with `databricks bundle run ug_migration_app -t dev --var ...
 | **4. Move callers** | Owners apply code fixes, move tokens to the `ai-gateway` scope, redeploy apps and jobs, and grant each caller `EXECUTE` on its model service plus `USE CATALOG` and `USE SCHEMA` (apply copies the legacy endpoint permissions when grants are on) | `CODE_FIXES.md` |
 | **5. Validate** | Re-run the planner. Traffic on legacy endpoints should drop to zero; `target_status` should be `exists` | Planner, `READINESS.md` |
 | **6. Close** | Optionally rate-limit unused legacy endpoints to 0 (commands in `READINESS.md`). When the status is `READY`, a workspace admin enables *Enforce Unity Gateway* | `READINESS.md` |
-| **7. Track** | Schedule weekly snapshots and share the dashboard | Bundle job + dashboard |
+| **7. Track** | Schedule weekly snapshots and follow the Overview charts (export them to share) | Snapshot job + app |
 
 Typical order inside a workspace: **coding agents and simple SDK callers first, then apps, then `ai_query` jobs, then AI Search and agents last.**
 
@@ -404,23 +403,17 @@ FROM main.ug_migration.snap_workspaces
 GROUP BY snapshot_time ORDER BY snapshot_time
 ```
 
-### Dashboard
+### Charts and exports
 
-```bash
-python ug_migration_dashboard.py --profile <p> --warehouse-id <id> \
-  --snapshot-table main.ug_migration.snap --parent-path /Workspace/Users/me@x.com/ug-migration --publish
-# Update later (same link)
-python ug_migration_dashboard.py --profile <p> --warehouse-id <id> \
-  --snapshot-table main.ug_migration.snap --dashboard-id <id> --publish
-```
+The app's **Overview** charts every snapshot: legacy (v1 + v2) vs Unity Gateway requests, workspaces ready to enforce, and workspaces by wave, next to the latest workspaces and busiest legacy endpoints. Use **Export** on each page to download the data:
 
-**Contents:**
-- **KPIs:** legacy requests (v1 + v2), share of model traffic on Unity Gateway, active legacy endpoints, enforce candidates.
-- **Trends:** legacy vs Unity Gateway traffic; active endpoints vs ready workspaces.
-- **Waves:** workspaces by wave.
-- **Tables:** workspaces and busiest legacy endpoints from the latest snapshot.
+| Page | Exports |
+|---|---|
+| Overview | Workspaces, all legacy endpoints (not only the top 100 shown) and the trend across snapshots (CSV) |
+| Scan | Readiness report, code fixes and summary (Markdown); endpoint plan, callers, all references and provider services (CSV) |
+| Apply run | Every object the run created, checked or skipped (CSV) |
 
-`--json-only file.json` writes the definition without deploying (no warehouse needed).
+Exports read the results tables as you, like the pages.
 
 ---
 
@@ -428,11 +421,11 @@ python ug_migration_dashboard.py --profile <p> --warehouse-id <id> \
 
 ### The app (recommended)
 
-The installer (or the bundle) deploys **Unity Gateway Migration**, a Databricks App that keeps the day-to-day process in one place: snapshots, scans, readiness, code fixes and apply. Account deep scans of other workspaces, Terraform output and scanning local folders stay command-line only.
+The installer (or the bundle) deploys **Unity Gateway Migration Toolkit**, a Databricks App that keeps the day-to-day process in one place: snapshots and charts, scans, readiness, code fixes, apply and exports. Account deep scans of other workspaces, Terraform output and scanning local folders stay command-line only.
 
 | Tab | What you do there |
 |---|---|
-| **Overview** | See every workspace with legacy endpoints or Unity Gateway traffic, its wave, the share already on Unity Gateway and the trend across snapshots. **Refresh account snapshot** starts the account snapshot job. |
+| **Overview** | See every workspace with legacy endpoints or Unity Gateway traffic, its wave, the share already on Unity Gateway and the trend across snapshots. Charts show the traffic and ready-to-enforce trends. **Refresh snapshot** starts the account snapshot job; **Export** downloads the data. |
 | **Scans** | Start a workspace scan (traffic window, extra scan roots, target catalog and schema). It reads the workspace; results go to the results schema. Open a scan to see readiness, endpoints, callers, code fixes (diffs) and all client references, plus copyable close and undo commands. |
 | **Apply** | Pick a scan, choose external model and PT endpoints, map API keys to UC secrets (or allow reading the existing secret), then **Dry run**. **Execute** needs the word `EXECUTE` typed in. Every run is kept in the history; **Roll back** an execute run by typing `ROLLBACK`. |
 | **About** | Dates, the recommended order of work and the identity model. |
@@ -447,7 +440,7 @@ How it works:
 - Scan and apply runs record **who asked for them** (`requested_by`); snapshot runs show up in the job's run history. Secret values never go to the results tables or logs; apply results are masked. With "read the workspace secret values" (`--allow-secret-read`), apply copies the key value into the Unity Gateway provider service itself; prefer Unity Catalog secret references. Endpoints that use a plaintext API key stop as `manual`: store the key as a Unity Catalog secret first.
 - **Rollback** rebuilds the undo list from the stored execute results (or, if the execute run was interrupted, from the log it wrote as it went, in `apply_logs/` next to the toolkit files). Each execute run can be rolled back once. Rollback keeps objects that another execute run created, and provider services that another run's new model services use. Re-running the same selection doesn't take ownership: roll back the run that created the services.
 
-Install it with the installer notebook (section 3) or the bundle (next section), then open the app from **Compute, Apps** (`ug-migration` by default with the installer, `ug-migration-app` with the bundle; with the bundle, start it with `databricks bundle run ug_migration_app -t dev --var ...`). The jobs' identity needs the permissions in section 2 (system table access, workspace admin or read access to what you scan, `CREATE SERVICE` on the target schema for apply) plus `USE CATALOG`, `USE SCHEMA`, `CREATE TABLE` and `MODIFY` on the results schema.
+Install it with the installer notebook (section 3) or the bundle (next section), then open the app from **Compute, Apps** (`unity-gateway-migration` by default, with the installer or the bundle, so use one install method per workspace; with the bundle, start it with `databricks bundle run ug_migration_app -t dev --var ...`). The jobs' identity needs the permissions in section 2 (system table access, workspace admin or read access to what you scan, `CREATE SERVICE` on the target schema for apply) plus `USE CATALOG`, `USE SCHEMA`, `CREATE TABLE` and `MODIFY` on the results schema.
 
 ### Notebooks
 
@@ -464,10 +457,9 @@ They run on serverless job compute (the bundle sets no cluster, so the workspace
 
 `databricks.yml` deploys:
 - The toolkit files and the notebooks.
-- **`ug_migration_app`:** the app described above (name `ug-migration-app`).
+- **`ug_migration_app`:** the app described above (name `unity-gateway-migration`).
 - **`ug_migration_snapshot`:** a weekly job (Mondays 06:00 UTC), **deployed paused**, that runs the account view and appends to `<snapshot_catalog>.<snapshot_schema>.ug_migration_*`.
 - **`ug_migration_scan`** and **`ug_migration_apply`:** the jobs the app starts (no schedule).
-- **`ug_migration_progress`:** the dashboard, bound to the snapshot schema.
 
 ```bash
 databricks bundle validate -t dev --var warehouse_id=<id> --var snapshot_catalog=<c> --var snapshot_schema=<s>
@@ -475,12 +467,12 @@ databricks bundle deploy   -t dev --var ...
 databricks bundle run ug_migration_snapshot -t dev --var ...   # first snapshot now
 databricks bundle run ug_migration_app -t dev --var ...        # start the app
 # Unpause the job in the UI (or set pause_status: UNPAUSED) for weekly runs
-databricks bundle destroy  -t dev --var ...                    # remove the app, jobs, dashboard and files
+databricks bundle destroy  -t dev --var ...                    # remove the app, jobs and files
 ```
 
 | Variable | Meaning |
 |---|---|
-| `warehouse_id` | Warehouse for the app and the dashboard |
+| `warehouse_id` | Warehouse the app reads results through |
 | `snapshot_catalog`, `snapshot_schema` | Where snapshot tables go (must exist) |
 | `days` | Traffic window (default 30) |
 | `operators` | Emails of the users who can start jobs from the app (default: you) |
@@ -489,7 +481,7 @@ databricks bundle destroy  -t dev --var ...                    # remove the app,
 
 **Update:** unzip the new version and run `databricks bundle deploy` again with the same variables; history in the results tables is kept. A redeploy (and a rerun of the installer) sets the weekly snapshot schedule back to paused; unpause it again if you use it. **Uninstall:** `bundle destroy` doesn't delete data. Drop the results tables (`ug_migration_scans`, `_scan_items`, `_applies`, `_apply_items`, `_workspaces`, `_endpoints`) and the `apply_logs` folder when you no longer need them. Unity Gateway services created by apply stay until you roll them back or delete them.
 
-Use catalog and schema names made of letters, digits and underscores for the results schema. **One dashboard is enough:** the installer and the bundle each create the progress dashboard; use `ug_migration_dashboard.py --publish` only when you run snapshots from the command line without either.
+Use catalog and schema names made of letters, digits and underscores for the results schema.
 
 ---
 
@@ -498,13 +490,13 @@ Use catalog and schema names made of letters, digits and underscores for the res
 | Topic | Behavior |
 |---|---|
 | **Read-only by default** | The planner, account view and code scan only make GET calls and run read-only SQL |
-| **Writes** | Only `apply --execute`, `rollback --execute`, snapshots and dashboard deployment write anything |
+| **Writes** | Only `apply --execute`, `rollback --execute`, snapshots and the app's result tables write anything |
 | **Legacy endpoints** | Never modified or deleted by the toolkit. The rate-limit-0 commands are printed for you to run |
 | **Code** | Never edited. Fixes are proposals |
 | **Secrets** | Reports show secret names (`scope/key`), never values; literal keys found on legacy endpoints are redacted. Apply reads a value only with `--allow-secret-read --execute`, and never prints or logs it. Environment variables that reference secrets are skipped by the scan |
 | **What's in the reports** | Endpoint names, user and service principal identifiers, workspace names and code lines that mention legacy endpoints. Treat outputs as internal to the organization |
 | **Scope** | Only scan workspaces you're authorized to review |
-| **Tag** | The toolkit's jobs (snapshot, scan and apply, from the installer or the bundle) carry the tag `Project = unity-gateway-migration-toolkit`, so the usage of this toolkit can be identified. It's only a label: it doesn't send data anywhere and doesn't change how the jobs run. Nothing else the toolkit creates is tagged (the app, dashboard and Unity Gateway services don't accept tags). To list the jobs: `SELECT job_id, name FROM system.lakeflow.jobs WHERE tags['Project'] = 'unity-gateway-migration-toolkit'` |
+| **Tag** | The toolkit's jobs (snapshot, scan and apply, from the installer or the bundle) carry the tag `Project = unity-gateway-migration-toolkit`, so the usage of this toolkit can be identified. It's only a label: it doesn't send data anywhere and doesn't change how the jobs run. Nothing else the toolkit creates is tagged (the app and the Unity Gateway services don't accept tags). To list the jobs: `SELECT job_id, name FROM system.lakeflow.jobs WHERE tags['Project'] = 'unity-gateway-migration-toolkit'` |
 
 ---
 
@@ -525,7 +517,7 @@ Use catalog and schema names made of letters, digits and underscores for the res
 | Account summary shows "Query errors" | A system table query failed | No snapshot is written for that run; fix access and run again |
 | Deep scan: `can't authenticate` | No credentials for that workspace | Use a service principal assigned to it, or `databricks auth login --host <url>` |
 | Code fix points to `ai_gateway.migrated.*` but you created services elsewhere | Planner run with default target | Re-run the planner with the same `--target-catalog`/`--target-schema` as apply |
-| Dashboard shows nothing | No snapshots yet, or wrong schema | Run the account view with `--snapshot-table`, or the bundle job once |
+| Overview shows "No snapshot yet" | No snapshot in the results schema | Click **Refresh snapshot** (operators), or run the snapshot job once |
 | Numbers differ from other Databricks dashboards | Different sources and windows | Base decisions on the toolkit's numbers (from your own system tables) and expect differences from other dashboards |
 | Installer: `Results catalog ... doesn't exist` | Catalog missing or not visible to you | Pick an existing catalog you can create a schema in |
 | App shows "No user token" (401) | User authorization isn't enabled for the app | Re-run the installer (it sets the `sql` scope), or add `user_api_scopes: [sql]` to the bundle app |
@@ -581,14 +573,12 @@ Yes. The planner and account view are read-only. Apply skips existing objects. S
 | `ug_migration_planner.py` | Workspace inventory, traffic, plan, code scan, readiness, code fixes |
 | `ug_migration_account.py` | Account view, waves, deep scans, snapshots |
 | `ug_migration_apply.py` | Apply, rollback, Terraform export |
-| `ug_migration_dashboard.py` | Progress dashboard |
 | `ug_migration_store.py` | Delta tables for the app's scan and apply runs |
 | `notebook/run_planner.py`, `notebook/run_account.py` | Notebook entry points (one workspace, account view and snapshots) |
 | `notebook/run_scan.py`, `notebook/run_apply.py` | Job notebooks the app starts (scan; dry run, execute and rollback) |
-| `app/` | The Unity Gateway Migration app (FastAPI backend, React frontend build in `app/frontend/static`) |
+| `app/` | The Unity Gateway Migration Toolkit app (FastAPI backend, React frontend build in `app/frontend/static`) |
 | `INSTALL_unity_gateway_migration_toolkit_<version>.py` | Installer notebook (shipped separately): installs, updates or removes everything inside a workspace |
-| `dashboard/ug_migration_progress.lvdash.json` | Dashboard definition used by the bundle |
-| `databricks.yml` | Bundle: app, snapshot, scan and apply jobs, dashboard |
+| `databricks.yml` | Bundle: app, snapshot, scan and apply jobs |
 | `HOW_TO_READ.md` | Short guide to the outputs |
 | `README.md` | Technical overview |
 
@@ -611,8 +601,4 @@ python ug_migration_apply.py --profile P apply (--endpoints a,b | --all) --targe
 python ug_migration_apply.py --profile P terraform (--endpoints a,b | --all) --target-catalog C --target-schema S \
   [--uc-secret-map MAP] [--no-grants] [--out FILE.tf]
 python ug_migration_apply.py --profile P rollback --log FILE [--execute]
-
-# Dashboard
-python ug_migration_dashboard.py --profile P --warehouse-id W --snapshot-table c.s.prefix \
-  --parent-path /Workspace/... [--dashboard-id ID] [--publish] [--json-only FILE]
 ```

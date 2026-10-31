@@ -1,21 +1,21 @@
-# Unity Gateway migration toolkit (prototype, v0.7.0)
+# Unity Gateway Migration Toolkit (prototype, v0.8.0)
 
-Toolkit and Databricks App for moving legacy model serving endpoints (AI Gateway v1/v2) to Unity Gateway (v3). Planning and scans only read (GET calls and read-only SQL). Writes happen only when you ask: results tables for the app, snapshots, the dashboard, and apply/rollback of Unity Gateway services.
+Toolkit and Databricks App for moving legacy model serving endpoints (AI Gateway v1/v2) to Unity Gateway (v3). Planning and scans only read (GET calls and read-only SQL). Writes happen only when you ask: results tables for the app, snapshots, and apply/rollback of Unity Gateway services.
 
 Written by Databricks Shared Technical Services (STS) as a prototype. Not an official Databricks tool. Review the output before acting on it.
 
 ## Quick start (inside the workspace, about 5 minutes)
 
-1. In your workspace, open **Workspace**, go to your home folder and choose **Import**. Import `INSTALL_unity_gateway_migration_toolkit_0_7_0.py`.
+1. In your workspace, open **Workspace**, go to your home folder and choose **Import**. Import `INSTALL_unity_gateway_migration_toolkit_0_8_0.py`.
 2. Open it, set **Results catalog** (an existing catalog) and pick a **SQL warehouse**. The other widgets have defaults.
-3. Click **Run all**. It prints the link to the **Unity Gateway Migration** app.
-4. In the app: **Overview**, Refresh account snapshot; then **Scans**, Start scan; then **Apply** for external model and Provisioned Throughput endpoints (dry run first).
+3. Click **Run all**. It prints the link to the **Unity Gateway Migration Toolkit** app.
+4. In the app: **Overview**, Refresh snapshot; then **Scans**, Start scan; then **Apply** for external model and Provisioned Throughput endpoints (dry run first).
 
 Run the installer as a workspace admin with access to the system tables (the app's jobs run as you), or as a service principal. To update, run a newer installer with the same widgets; to remove, set **Action** to `uninstall`. Full details: [USER_GUIDE.md](USER_GUIDE.md) (section 3 for install, section 10 for the app) and [HOW_TO_READ.md](HOW_TO_READ.md) for the results.
 
 Prefer the command line or CI/CD? The same toolkit runs as Python scripts and as a Declarative Automation Bundle (`databricks.yml`); see below.
 
-**Tag:** The toolkit's jobs (snapshot, scan and apply, from the installer or the bundle) carry the tag `Project = unity-gateway-migration-toolkit`, so the usage of this toolkit can be identified. It's only a label: it doesn't send data anywhere and doesn't change how the jobs run. Nothing else the toolkit creates is tagged (the app, dashboard and Unity Gateway services don't accept tags).
+**Tag:** The toolkit's jobs (snapshot, scan and apply, from the installer or the bundle) carry the tag `Project = unity-gateway-migration-toolkit`, so the usage of this toolkit can be identified. It's only a label: it doesn't send data anywhere and doesn't change how the jobs run. Nothing else the toolkit creates is tagged (the app and the Unity Gateway services don't accept tags).
 
 ## What it does
 
@@ -86,18 +86,9 @@ SELECT snapshot_time, sum(legacy_requests) AS legacy, sum(v3_requests) AS v3,
 FROM main.ug_migration.snap_workspaces GROUP BY snapshot_time ORDER BY snapshot_time
 ```
 
-## Progress dashboard
+## Progress tracking
 
-`ug_migration_dashboard.py` builds an AI/BI dashboard on the snapshot tables: KPIs (legacy requests, share of traffic on Unity Gateway, active legacy endpoints, enforce candidates), trend lines (legacy vs Unity Gateway traffic; active endpoints vs ready workspaces), workspaces by wave, and tables of workspaces and busiest legacy endpoints from the latest snapshot.
-
-```bash
-python ug_migration_dashboard.py --profile P --warehouse-id W --snapshot-table main.ug_migration.snap \
-  --parent-path /Workspace/Users/me@x.com/ug-migration --publish
-# Later: update the same dashboard (links keep working)
-python ug_migration_dashboard.py --profile P --warehouse-id W --snapshot-table main.ug_migration.snap --dashboard-id <id> --publish
-```
-
-Schedule `ug_migration_account.py --snapshot-table ...` (for example weekly, as a job) and the dashboard fills in by itself. `--json-only file.json` (no warehouse needed) writes the dashboard definition without deploying.
+Schedule `ug_migration_account.py --snapshot-table ...` (for example weekly, as a job), or use the app: its **Overview** charts every snapshot (legacy vs Unity Gateway traffic, workspaces ready to enforce, waves) and exports the workspaces, all legacy endpoints and the trend as CSV.
 
 ## Terraform
 
@@ -109,9 +100,9 @@ Writes `databricks_ai_gateway_model_provider_service`, `databricks_ai_gateway_mo
 
 ## App, bundle and notebooks (for customers)
 
-`databricks.yml` deploys the toolkit as a Declarative Automation Bundle: the **Unity Gateway Migration app** (`app/`, FastAPI + React), the scan, apply and snapshot jobs it starts (`notebook/run_scan.py`, `run_apply.py`, `run_account.py`), `notebook/run_planner.py` for ad hoc runs, and the progress dashboard bound to the snapshot schema. The snapshot job is deployed **paused**.
+`databricks.yml` deploys the toolkit as a Declarative Automation Bundle: the **Unity Gateway Migration Toolkit app** (`app/`, FastAPI + React), the scan, apply and snapshot jobs it starts (`notebook/run_scan.py`, `run_apply.py`, `run_account.py`) and `notebook/run_planner.py` for ad hoc runs. The snapshot job is deployed **paused**.
 
-The app has four tabs: Overview (account snapshot), Scans (readiness, callers, code fixes), Apply (dry run, execute with typed confirmation, rollback) and About. Jobs write results to Delta (`ug_migration_scans`, `_scan_items`, `_applies`, `_apply_items` via `ug_migration_store.py`); pages read them as the signed-in user through the SQL warehouse. The app's service principal can only start the three jobs. See USER_GUIDE section 10.
+The app has four tabs: Overview (account snapshot with charts), Scans (readiness, callers, code fixes), Apply (dry run, execute with typed confirmation, rollback) and About. Every view exports its data (CSV, or Markdown for the reports). Jobs write results to Delta (`ug_migration_scans`, `_scan_items`, `_applies`, `_apply_items` via `ug_migration_store.py`); pages read them as the signed-in user through the SQL warehouse. The app's service principal can only start the three jobs. See USER_GUIDE section 10.
 
 Frontend development: `cd app/frontend && npm install && npm run build` (output goes to `app/frontend/static`, which the bundle syncs; `npm run dev` proxies `/api` to a local `uvicorn backend.main:app --port 8000` started from `app/`).
 

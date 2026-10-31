@@ -6,7 +6,7 @@ Written by Databricks Shared Technical Services (STS) as a prototype. Not an off
 
 ## Quick start (inside the workspace, about 5 minutes)
 
-1. In your workspace, open **Workspace**, go to your home folder and choose **Import**. Import `INSTALL_ug_migration_toolkit_0_7_0.py`.
+1. In your workspace, open **Workspace**, go to your home folder and choose **Import**. Import `INSTALL_unity_gateway_migration_toolkit_0_7_0.py`.
 2. Open it, set **Results catalog** (an existing catalog) and pick a **SQL warehouse**. The other widgets have defaults.
 3. Click **Run all**. It prints the link to the **Unity Gateway Migration** app.
 4. In the app: **Overview**, Refresh account snapshot; then **Scans**, Start scan; then **Apply** for external model and Provisioned Throughput endpoints (dry run first).
@@ -14,6 +14,8 @@ Written by Databricks Shared Technical Services (STS) as a prototype. Not an off
 Run the installer as a workspace admin with access to the system tables (the app's jobs run as you), or as a service principal. To update, run a newer installer with the same widgets; to remove, set **Action** to `uninstall`. Full details: [USER_GUIDE.md](USER_GUIDE.md) (section 3 for install, section 10 for the app) and [HOW_TO_READ.md](HOW_TO_READ.md) for the results.
 
 Prefer the command line or CI/CD? The same toolkit runs as Python scripts and as a Declarative Automation Bundle (`databricks.yml`); see below.
+
+**Tag:** The toolkit's jobs (snapshot, scan and apply, from the installer or the bundle) carry the tag `Project = unity-gateway-migration-toolkit`, so the usage of this toolkit can be identified. It's only a label: it doesn't send data anywhere and doesn't change how the jobs run. Nothing else the toolkit creates is tagged (the app, dashboard and Unity Gateway services don't accept tags).
 
 ## What it does
 

@@ -4,7 +4,7 @@ set -e
 cd "$(dirname "$0")"
 VERSION=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' ug_migration_planner.py)
 (cd app/frontend && npm run build >/dev/null)  # never ship a stale frontend
-NAME="ug-migration-toolkit-$VERSION"
+NAME="unity-gateway-migration-toolkit-$VERSION"
 rm -rf "dist/$NAME" "dist/$NAME.zip"
 mkdir -p "dist/$NAME/notebook" "dist/$NAME/dashboard" "dist/$NAME/app/backend" "dist/$NAME/app/frontend"
 cp ug_migration_planner.py ug_migration_apply.py ug_migration_account.py ug_migration_dashboard.py \

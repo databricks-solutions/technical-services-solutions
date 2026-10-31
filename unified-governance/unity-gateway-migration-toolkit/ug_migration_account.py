@@ -227,7 +227,7 @@ def summary_md(result: dict) -> str:
     total = v1_total + v2_total + v3_total
     lines = ["# Unity Gateway migration: account view (prototype, read-only)", "",
              f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}, traffic window {days} days, "
-             f"by ug-migration-toolkit {planner.__version__}", "", f"> {planner.DISCLAIMER}", "",
+             f"by unity-gateway-migration-toolkit {planner.__version__}", "", f"> {planner.DISCLAIMER}", "",
              f"- Workspaces with legacy endpoints or Unity Gateway traffic: **{len(ws)}**",
              f"- Legacy model endpoints in scope (live): **{len(in_scope)}** "
              f"(plus {len(eps) - len(in_scope)} custom ML / feature serving endpoints, not affected)",

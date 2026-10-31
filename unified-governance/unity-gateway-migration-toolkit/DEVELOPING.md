@@ -7,15 +7,15 @@ This file, the tests and `test_fixtures.py` stay in the source repo; they aren't
 ```bash
 cd app/frontend && npm install && cd ../..   # once (or after package.json changes)
 ./package.sh
-cp dist/INSTALL_ug_migration_toolkit_*.py .    # the committed installer customers download
+cp dist/INSTALL_unity_gateway_migration_toolkit_*.py .    # the committed installer customers download
 ```
 
-`package.sh` rebuilds the frontend (`app/frontend/static`), writes `dist/ug-migration-toolkit-<version>.zip` (command-line and bundle users) and runs `make_installer.py`, which writes `dist/INSTALL_ug_migration_toolkit_<version>.py` (the installer notebook most customers use; it embeds the runtime files, so commit the regenerated copy in this folder whenever the code changes). Bump `__version__` in `ug_migration_planner.py` and `version` in `app/frontend/package.json` together.
+`package.sh` rebuilds the frontend (`app/frontend/static`), writes `dist/unity-gateway-migration-toolkit-<version>.zip` (command-line and bundle users) and runs `make_installer.py`, which writes `dist/INSTALL_unity_gateway_migration_toolkit_<version>.py` (the installer notebook most customers use; it embeds the runtime files, so commit the regenerated copy in this folder whenever the code changes). Bump `__version__` in `ug_migration_planner.py` and `version` in `app/frontend/package.json` together.
 
 Then check the bundle from the zip:
 
 ```bash
-cd /tmp && unzip -o ~/path/to/dist/ug-migration-toolkit-<version>.zip && cd ug-migration-toolkit-<version>
+cd /tmp && unzip -o ~/path/to/dist/unity-gateway-migration-toolkit-<version>.zip && cd unity-gateway-migration-toolkit-<version>
 databricks bundle validate -t dev --var warehouse_id=<id> --var snapshot_catalog=<c> --var snapshot_schema=<s>
 databricks bundle validate -t prod --var warehouse_id=<id> --var snapshot_catalog=<c> --var snapshot_schema=<s>
 ```

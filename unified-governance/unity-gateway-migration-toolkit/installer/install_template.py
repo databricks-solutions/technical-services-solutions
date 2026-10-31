@@ -7,7 +7,7 @@
 # MAGIC 1. Fill in the widgets at the top (only **Results catalog** and **SQL warehouse** usually need a change).
 # MAGIC 2. Click **Run all**. It takes about 5 minutes; the link to the app is printed at the end.
 # MAGIC
-# MAGIC What it creates (all tagged `tool = ug-migration-toolkit`):
+# MAGIC What it creates (the jobs are tagged `Project = unity-gateway-migration-toolkit`, so the usage of this toolkit can be identified):
 # MAGIC - The toolkit files in the **Install folder**.
 # MAGIC - The results schema (if it doesn't exist).
 # MAGIC - Three Lakeflow jobs the app starts: account snapshot (weekly schedule, paused), workspace scan, and apply/rollback.
@@ -42,7 +42,7 @@ dbutils.widgets.text("results_schema", "ug_migration", "3. Results schema")
 dbutils.widgets.dropdown("warehouse", wh_choices[0], wh_choices, "4. SQL warehouse")
 dbutils.widgets.text("operators", me, "5. Operators (emails, comma-separated)")
 dbutils.widgets.text("app_name", "ug-migration", "6. App name")
-dbutils.widgets.text("install_folder", f"/Workspace/Users/{me}/ug-migration-toolkit", "7. Install folder")
+dbutils.widgets.text("install_folder", f"/Workspace/Users/{me}/unity-gateway-migration-toolkit", "7. Install folder")
 dbutils.widgets.dropdown("drop_data", "no", ["no", "yes"], "8. Drop results tables (uninstall)")
 
 # COMMAND ----------
@@ -68,7 +68,7 @@ OPERATORS = ",".join(e.strip() for e in g("operators").split(",") if e.strip())
 APP_NAME = g("app_name").strip()
 FOLDER = g("install_folder").rstrip("/")
 FILES = f"{FOLDER}/files"
-TAG = {"tool": "ug-migration-toolkit"}
+TAG = {"tool": "ug-migration-toolkit", "Project": "unity-gateway-migration-toolkit"}
 JOB_PREFIX = f"[{APP_NAME}] Unity Gateway migration"
 
 problems = []

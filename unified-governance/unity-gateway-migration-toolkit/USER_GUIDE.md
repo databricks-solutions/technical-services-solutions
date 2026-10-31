@@ -90,7 +90,7 @@ For one workspace, a workspace admin's CLI login is enough. For an account, use 
 
 **Recommended: the installer notebook (everything inside the workspace, about 5 minutes).**
 
-1. In the workspace, open **Workspace**, go to your home folder, and choose **Import**. Import the file `INSTALL_ug_migration_toolkit_<version>.py`.
+1. In the workspace, open **Workspace**, go to your home folder, and choose **Import**. Import the file `INSTALL_unity_gateway_migration_toolkit_<version>.py`.
 2. Open the notebook. At the top, set **Results catalog** (an existing catalog where you can create a schema) and pick a **SQL warehouse**. The other widgets have defaults: results schema `ug_migration`, **Operators** = you, app name `ug-migration`, install folder in your home folder.
 3. Click **Run all**. At the end it prints the link to the app, the dashboard and the three jobs (if you run it as a job, the links are also the notebook's result in the run output).
 
@@ -103,7 +103,7 @@ The other ways to install, for command-line use, CI/CD, or to change the bundle:
 **A. Local (laptop or CI)**
 
 ```bash
-unzip ug-migration-toolkit-0.7.0.zip && cd ug-migration-toolkit-0.7.0
+unzip unity-gateway-migration-toolkit-0.7.0.zip && cd unity-gateway-migration-toolkit-0.7.0
 python -m venv .venv && . .venv/bin/activate
 pip install "databricks-sdk>=0.158.0" requests
 python ug_migration_planner.py --help
@@ -504,6 +504,7 @@ Use catalog and schema names made of letters, digits and underscores for the res
 | **Secrets** | Reports show secret names (`scope/key`), never values; literal keys found on legacy endpoints are redacted. Apply reads a value only with `--allow-secret-read --execute`, and never prints or logs it. Environment variables that reference secrets are skipped by the scan |
 | **What's in the reports** | Endpoint names, user and service principal identifiers, workspace names and code lines that mention legacy endpoints. Treat outputs as internal to the organization |
 | **Scope** | Only scan workspaces you're authorized to review |
+| **Tag** | The toolkit's jobs (snapshot, scan and apply, from the installer or the bundle) carry the tag `Project = unity-gateway-migration-toolkit`, so the usage of this toolkit can be identified. It's only a label: it doesn't send data anywhere and doesn't change how the jobs run. Nothing else the toolkit creates is tagged (the app, dashboard and Unity Gateway services don't accept tags). To list the jobs: `SELECT job_id, name FROM system.lakeflow.jobs WHERE tags['Project'] = 'unity-gateway-migration-toolkit'` |
 
 ---
 
@@ -585,7 +586,7 @@ Yes. The planner and account view are read-only. Apply skips existing objects. S
 | `notebook/run_planner.py`, `notebook/run_account.py` | Notebook entry points (one workspace, account view and snapshots) |
 | `notebook/run_scan.py`, `notebook/run_apply.py` | Job notebooks the app starts (scan; dry run, execute and rollback) |
 | `app/` | The Unity Gateway Migration app (FastAPI backend, React frontend build in `app/frontend/static`) |
-| `INSTALL_ug_migration_toolkit_<version>.py` | Installer notebook (shipped separately): installs, updates or removes everything inside a workspace |
+| `INSTALL_unity_gateway_migration_toolkit_<version>.py` | Installer notebook (shipped separately): installs, updates or removes everything inside a workspace |
 | `dashboard/ug_migration_progress.lvdash.json` | Dashboard definition used by the bundle |
 | `databricks.yml` | Bundle: app, snapshot, scan and apply jobs, dashboard |
 | `HOW_TO_READ.md` | Short guide to the outputs |

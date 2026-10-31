@@ -1,4 +1,4 @@
-"""Build dist/INSTALL_ug_migration_toolkit_<version>.py: one notebook that installs the app inside a workspace.
+"""Build dist/INSTALL_unity_gateway_migration_toolkit_<version>.py: one notebook that installs the app inside a workspace.
 
 The notebook embeds the runtime files (modules, job notebooks, app backend, built frontend, dashboard, docs) as a
 base64 zip, so customers only import this one file and click Run all.
@@ -39,7 +39,7 @@ def main() -> str:
     tpl = open(os.path.join(HERE, "installer/install_template.py")).read()
     out = tpl.replace("__VERSION__", version).replace("__PAYLOAD__", payload)
     os.makedirs(os.path.join(HERE, "dist"), exist_ok=True)
-    path = os.path.join(HERE, "dist", f"INSTALL_ug_migration_toolkit_{version.replace('.', '_')}.py")
+    path = os.path.join(HERE, "dist", f"INSTALL_unity_gateway_migration_toolkit_{version.replace('.', '_')}.py")
     open(path, "w").write(out)
     return path
 

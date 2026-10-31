@@ -1406,7 +1406,7 @@ def readiness_md(ws_url: str, r: dict, days: int) -> str:
     from collections import Counter
     lines = ["# Enforce Unity Gateway readiness", "", f"Workspace: {ws_url}",
              f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} (traffic window {days} days) "
-             f"by ug-migration-toolkit {__version__}", "", f"> {DISCLAIMER}", "",
+             f"by unity-gateway-migration-toolkit {__version__}", "", f"> {DISCLAIMER}", "",
              f"**Status: {r['status']}**", ""]
     if r["blockers"]:
         lines += ["## Blockers", "", "| Type | Count |", "|---|---|",
@@ -1492,7 +1492,7 @@ def summary_md(ws_url: str, endpoints: list[LegacyEndpoint], rows: list[PlanRow]
         "# Unity Gateway migration plan (prototype, read-only)",
         "",
         f"Workspace: {ws_url}",
-        f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} by ug-migration-toolkit {__version__}",
+        f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} by unity-gateway-migration-toolkit {__version__}",
         "",
         f"> {DISCLAIMER}",
         "",

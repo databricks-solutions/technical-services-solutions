@@ -11,7 +11,7 @@
 #   databricks bundle deploy   -t dev --var ...
 #   databricks bundle run ug_migration_app -t dev --var ...      # start the app
 bundle:
-  name: ug-migration-toolkit
+  name: unity-gateway-migration-toolkit
 
 variables:
   warehouse_id:
@@ -61,6 +61,7 @@ resources:
             notebook_path: ./notebook/run_account.py
       tags:
         tool: ug-migration-toolkit
+        Project: unity-gateway-migration-toolkit
 
     ug_migration_scan:
       name: "[${bundle.target}] Unity Gateway migration workspace scan"
@@ -81,6 +82,7 @@ resources:
             notebook_path: ./notebook/run_scan.py
       tags:
         tool: ug-migration-toolkit
+        Project: unity-gateway-migration-toolkit
 
     ug_migration_apply:
       name: "[${bundle.target}] Unity Gateway migration apply"
@@ -106,6 +108,7 @@ resources:
             notebook_path: ./notebook/run_apply.py
       tags:
         tool: ug-migration-toolkit
+        Project: unity-gateway-migration-toolkit
 
   apps:
     ug_migration_app:

@@ -1,0 +1,11 @@
+# Local build output and state
+dist/
+.databricks/
+__pycache__/
+.pytest_cache/
+app/frontend/node_modules/
+app/frontend/package-lock.json
+ug_migration_out/
+ug_account_out/
+apply_log.jsonl
+*.tf

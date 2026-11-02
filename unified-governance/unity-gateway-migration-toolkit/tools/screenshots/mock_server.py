@@ -348,10 +348,10 @@ WARNINGS = [
          item="databricks-bge-large-en",
          detail="no requests in 30 days and no code found that calls it: a job that runs monthly or quarterly would not show up in the window",
          action="confirm infrequent callers (monthly or quarterly jobs) with the owners before enforcing"),
-    dict(type="pt_wrapper_on_legacy_endpoint", label="Unity Gateway wrapper routes to a legacy PT endpoint",
-         item="claims-summary-pt",
-         detail="the Unity Gateway service routes to serving-endpoints/claims-summary-pt, a legacy endpoint that retires (March 30, 2027)",
-         action="point callers at the Unity Gateway service; the legacy endpoint retires on March 30, 2027"),
+    dict(type="skipped_paths_not_scanned", label="Some folders or file types were not scanned",
+         item="workspace files",
+         detail="workspace files: 2 dependency or build folders skipped (node_modules, .venv)",
+         action="check the listed folders and file types for calls to legacy endpoints, or confirm they hold none (vendored packages and build output usually don't)"),
 ]
 CLOSE_CANDIDATES = [
     dict(endpoint="legacy-summarizer-openai", target_ready=True,

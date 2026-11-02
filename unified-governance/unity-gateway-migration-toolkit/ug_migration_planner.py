@@ -1317,7 +1317,7 @@ class Scanner:
     def _add(self, asset_type, asset, line, pattern, match, legacy_endpoint, suggestion, fixable: bool = True) -> None:
         if legacy_endpoint and EMBEDDING_RE.search(legacy_endpoint) and asset_type != "vector_search_index":
             suggestion += ("; embedding model: if this feeds an AI Search index, keep it until AI Search "
-                           "accepts system.ai embeddings")
+                           "supports a system.ai embedding service for it")
         line_text = getattr(self, "_line", None) if line else None
         fixed, confidence = (None, None)
         if line_text is not None and fixable and len(line_text) <= MAX_FIX_LINE:
@@ -1893,12 +1893,14 @@ def scan_vector_search(w: WorkspaceClient, scanner: Scanner) -> None:
     _log(f"  scanned {n} AI Search indexes")
 
 
-AI_SEARCH_KEEP_TEXT = ("keep this embedding endpoint: AI Search indexes can't embed with a system.ai service yet, "
-                       "so don't enforce Unity Gateway or rate-limit the endpoint to 0 while the index uses it. "
-                       "Check the current AI Search docs for when re-indexing on Unity Gateway is supported. "
-                       "Self-managed embeddings are a possible workaround: check the docs before relying on one")
-AI_SEARCH_KEEP_ACTION = ("keep the endpoint and don't enforce Unity Gateway until AI Search supports system.ai "
-                         "embeddings (check the current AI Search docs)")
+AI_SEARCH_KEEP_TEXT = ("keep this embedding endpoint while the index uses it: don't enforce Unity Gateway or "
+                       "rate-limit the endpoint to 0. AI Search support for system.ai embedding services is rolling "
+                       "out model by model, so check the current AI Search docs for whether your model is supported "
+                       "before you re-index on one. Self-managed embeddings are a possible workaround: check the docs "
+                       "before relying on one")
+AI_SEARCH_KEEP_ACTION = ("keep the endpoint and don't enforce Unity Gateway until the index can re-embed with a "
+                         "supported system.ai embedding service (support is rolling out model by model; check the "
+                         "current AI Search docs)")
 
 
 def annotate_dependencies(rows: list[PlanRow], refs: list[ClientReference], days: int = 30) -> None:
@@ -1917,8 +1919,8 @@ def annotate_dependencies(rows: list[PlanRow], refs: list[ClientReference], days
         apps = [d.asset.removeprefix("app ") for d in deps if d.asset_type == "app"]
         if indexes:
             row.needs_human.append(f"embedding model for {len(indexes)} AI Search index(es) "
-                                   f"({', '.join(indexes[:3])}): keep the endpoint; blocks Enforce until AI Search "
-                                   "supports system.ai embeddings")
+                                   f"({', '.join(indexes[:3])}): keep the endpoint; blocks Enforce until the index "
+                                   "can re-embed with a supported system.ai embedding service")
         if apps:
             row.needs_human.append(f"app resource in {', '.join(apps[:3])}: update the app before Enforce")
         if row.requests_window == 0 and any(n.startswith(NO_TRAFFIC_NEED) for n in row.needs_human):
@@ -2220,13 +2222,8 @@ def readiness(rows: list[PlanRow], refs: list[ClientReference], traffic_ok: bool
                                       "Agent endpoint has no traffic in the window",
                                       "confirm with the owner that it is unused; if it is still used, redeploy it on "
                                       "Databricks Apps before enforcing"))
-        if r.kind == "provisioned_throughput" and r.action == "create_model_service":
-            # The wrapper routes to the legacy endpoint itself, so the endpoint's own retirement applies to it.
-            warnings.append(_flag("pt_wrapper_on_legacy_endpoint", r.legacy_endpoint,
-                                  f"the Unity Gateway service routes to serving-endpoints/{r.legacy_endpoint}, "
-                                  f"a legacy endpoint that retires ({deadline_text()})",
-                                  "Unity Gateway wrapper routes to a legacy PT endpoint",
-                                  f"plan the PT move before legacy endpoints retire ({deadline_text()})"))
+        # A PT endpoint behind a Unity Gateway model service keeps serving after the deadline (the service routes to
+        # its capacity), so the wrapper itself needs no warning; direct callers of the endpoint are flagged as traffic.
     for x in refs:
         loc = x.asset + (f":{x.line}" if x.line else "")
         if x.asset_type == "vector_search_index":

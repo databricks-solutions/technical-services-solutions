@@ -55,7 +55,7 @@ Blocker types:
 | `pay_per_token_call` | Code calls a Databricks pay-per-token endpoint | Code references a `databricks-*` endpoint. The call fails once Enforce is on. If the endpoint also embeds for an AI Search index, switch only the direct calls and keep the endpoint. |
 | `v2_workspace_call` | Code calls a v2 workspace endpoint | Code calls a workspace-bound v2 endpoint by its flat name. Fix: keep the `/ai-gateway/` route and change the model (see CODE_FIXES.md). |
 | `ai_query_custom` | ai_query calls a model with no Unity Gateway service yet | Keep the call, or switch it to a `system.ai` model. |
-| `vector_search` | AI Search index embeds with a legacy endpoint | Keep the endpoint, and don't enforce Unity Gateway until AI Search supports `system.ai` embeddings. |
+| `vector_search` | AI Search index embeds with a legacy endpoint | Keep the endpoint, and don't enforce Unity Gateway until the index can re-embed with a supported `system.ai` embedding service. Support is rolling out model by model: check the AI Search docs. |
 | `unresolved_endpoint_call` | Code calls a serving endpoint the scan can't name | The endpoint name is built at run time. Find which endpoint the call reaches: move a legacy one to `/ai-gateway/`, and name a custom model or feature serving one in the code so the scan can see it. |
 | `agent_bricks_vector_search` | Agent Bricks agent uses AI Search | Check its index and embedding model. |
 | `app_resource` | App declares a legacy serving endpoint resource | Replace the resource with the Unity Gateway service. |
@@ -72,7 +72,6 @@ Warning types:
 | `no_traffic_in_window` | No requests in the window and usage tracking is off | Confirm with the owners that no infrequent job calls it. |
 | `dormant_agent_endpoint` | Agent endpoint has no traffic in the window | Confirm with the owner that it is unused. |
 | `legacy_traffic_kept_after_enforce` | Callers use an external or PT endpoint that outlives Enforce | It keeps working after Enforce and retires on the deadline in [USER_GUIDE.md](USER_GUIDE.md#the-deadline). |
-| `pt_wrapper_on_legacy_endpoint` | Unity Gateway wrapper routes to a legacy PT endpoint | Plan the PT move before the deadline. |
 
 Code-reference warnings use the reference pattern as their type, for example `sdk_serving_query` or `ai_gateway_regional_host`. Each has its fix in CODE_FIXES.md.
 

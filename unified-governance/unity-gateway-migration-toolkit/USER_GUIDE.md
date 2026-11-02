@@ -389,7 +389,7 @@ Then turn Enforce on in **Settings > Advanced > Enforce Unity Gateway**. When it
 
 - Calls to legacy `databricks-*` pay-per-token endpoints fail with `PERMISSION_DENIED` (HTTP 403). Existing callers are not redirected, so move their code first.
 - New external model and PT endpoints can only be created through Unity Gateway.
-- Existing external model and PT endpoints stay queryable until the deadline, so move their callers too.
+- Existing external model and PT endpoints stay queryable until the deadline, so move their callers too. A PT endpoint behind a Unity Gateway model service keeps serving after the deadline: only its direct callers must move.
 
 To undo it, turn the setting off in the same place. Legacy pay-per-token calls work again.
 
@@ -607,7 +607,7 @@ The `type` is the stable name in `readiness.json`. The label and action are what
 | `legacy_traffic` | Blocker | Callers still use a legacy endpoint | Move the callers to `<target>` before enforcing. Coding agents: use `ucode` |
 | `pay_per_token_call` | Blocker | Code calls a Databricks pay-per-token endpoint | Switch the calls to `<target>`, then re-scan. If the endpoint also embeds for an AI Search index, switch only the direct calls and keep the endpoint |
 | `v2_workspace_call` | Blocker | Code calls a v2 workspace endpoint | Set the model to `<target>`, keep the `/ai-gateway/` route, then re-scan |
-| `vector_search` | Blocker | AI Search index embeds with a legacy endpoint | Keep the endpoint, and don't enforce Unity Gateway until AI Search supports `system.ai` embeddings |
+| `vector_search` | Blocker | AI Search index embeds with a legacy endpoint | Keep the endpoint, and don't enforce Unity Gateway until the index can re-embed with a supported `system.ai` embedding service. Support is rolling out model by model: check the AI Search docs |
 | `unresolved_endpoint_call` | Blocker | Code calls a serving endpoint the scan can't name | Find which endpoint the call reaches at run time. A legacy one: move the call to `/ai-gateway/`. A custom model or feature serving one: name it in the code so the scan can see it |
 | `agent_bricks_vector_search` | Blocker | Agent Bricks agent uses AI Search | Check its index and embedding model before enforcing |
 | `app_resource` | Blocker | App declares a legacy serving endpoint resource | Replace it with the Unity Gateway service, grant `EXECUTE`, call `/ai-gateway/` |
@@ -615,7 +615,6 @@ The `type` is the stable name in `readiness.json`. The label and action are what
 | `agent` | Blocker | Agent endpoint runs on legacy serving | Redeploy on Databricks Apps or rebuild, then re-plan |
 | `platform_managed_traffic` | Warning | Databricks-managed callers use this endpoint | You can't change these callers. Confirm with your account team |
 | `legacy_traffic_kept_after_enforce` | Warning | Callers use an external or PT endpoint that outlives Enforce | Move them before the deadline |
-| `pt_wrapper_on_legacy_endpoint` | Warning | Unity Gateway wrapper routes to a legacy PT endpoint | Plan the PT move before the deadline |
 | `local_folders_not_scanned` | Warning | Local folders were not scanned | Re-run with `--local-path`, or confirm no local code calls a legacy endpoint. Caps the status at `READY_WITH_WARNINGS` |
 | `skipped_paths_not_scanned` | Warning | Some folders or file types were not scanned | Check the listed folders and file types for calls to legacy endpoints, or confirm they hold none (vendored packages and build output usually don't). Caps the status at `READY_WITH_WARNINGS` |
 | `confirm_infrequent_callers` | Warning | Pay-per-token or v2 endpoint has no traffic and no known callers | Confirm monthly or quarterly jobs with owners. v2 endpoints seen in the last year count, even with no traffic in the window |

@@ -390,10 +390,11 @@ def test_system_ppt_names_the_settings_it_drops():
     assert any("(rate limits)" in n for n in rows[0].needs_human)
 
 
-def test_pt_wrapper_is_a_readiness_warning():
+def test_pt_wrapper_is_not_a_readiness_warning():
+    # The PT endpoint keeps serving behind its Unity Gateway model service after the deadline.
     rows, _ = m.plan([_ep(PT)], {}, {}, "c", "s", traffic_known=False)
     r = m.readiness(rows, [], True, 30, [])
-    assert any(w["type"] == "pt_wrapper_on_legacy_endpoint" for w in r["warnings"])
+    assert not any(w["type"] == "pt_wrapper_on_legacy_endpoint" for w in r["warnings"])
 
 
 def test_pay_per_token_calls_block_even_without_traffic():

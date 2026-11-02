@@ -18,6 +18,8 @@ Brief description of what this PR does and why.
 - [ ] Enhancement
 - [ ] Documentation
 
+If this is a new downloadable solution, add a row to `.github/releases.yml`.
+
 ## Project Details
 **Project Name:** 
 **Purpose:** 

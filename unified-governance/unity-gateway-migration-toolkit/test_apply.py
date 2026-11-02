@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import databricks.sdk as sdk
 import pytest
-from databricks.sdk.errors import AlreadyExists, InternalError, NotFound, PermissionDenied
+from databricks.sdk.errors import AlreadyExists, BadRequest, InternalError, NotFound, PermissionDenied
 
 import ug_migration_apply as a
 import ug_migration_planner as m
@@ -800,6 +800,8 @@ class CutoverApi:
         if method == "PUT":
             if name in self.refuse:
                 raise PermissionDenied(f"{name} is a Databricks system endpoint")
+            if not body:
+                raise BadRequest("AI Gateway configuration must be provided.")
             self.puts.append((name, copy.deepcopy(body)))
             self.endpoints[name]["ai_gateway"] = copy.deepcopy(body)
             return {}
@@ -940,6 +942,17 @@ def test_pause_then_resume_restores_the_exact_previous_config(tmp_path):
     assert resumed[0]["action"] == "resumed"
     assert w.api_client.endpoints["ext"]["ai_gateway"] == GW_FULL
     assert resumed[0]["pause_apply_id"] == APPLY
+
+
+def test_resume_of_an_endpoint_that_had_no_gateway_settings(tmp_path):
+    # The API refuses an empty body, so resume sends usage tracking off, which reads the same as no settings.
+    w = CutoverW([_endpoint("bare", None)])
+    paused = _roundtrip(_pause(w, ["bare"], tmp_path, apply_id=APPLY)[0])
+    assert paused[0]["action"] == "paused"
+    resumed = a.resume_legacy(w, paused, None, True, str(tmp_path / "r.jsonl"), OTHER, APPLY)
+    assert resumed[0]["action"] == "resumed"
+    assert w.api_client.endpoints["bare"]["ai_gateway"] == a.NO_GATEWAY_SETTINGS
+    assert not a._zero_endpoint_limit(w.api_client.endpoints["bare"]["ai_gateway"])
 
 
 def test_resume_keeps_an_endpoint_changed_after_the_pause_unless_forced(tmp_path):

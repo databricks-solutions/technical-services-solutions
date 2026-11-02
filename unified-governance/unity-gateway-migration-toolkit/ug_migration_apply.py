@@ -1348,9 +1348,15 @@ def pause_refusal(ep: dict, kind: str) -> str | None:
     return None
 
 
+# The API refuses an empty AI Gateway body ("AI Gateway configuration must be provided"), so "no settings" is sent
+# as usage tracking off, which reads the same (same_settings) and turns nothing on.
+NO_GATEWAY_SETTINGS = {"usage_tracking_config": {"enabled": False}}
+
+
 def _put_gateway(w: WorkspaceClient, name: str, body: dict) -> None:
     # PUT replaces the whole AI Gateway config: the caller sends every setting it wants kept.
-    w.api_client.do("PUT", f"/api/2.0/serving-endpoints/{name}/ai-gateway", body=body)
+    w.api_client.do("PUT", f"/api/2.0/serving-endpoints/{name}/ai-gateway",
+                    body=body if gateway_settings(body) else copy.deepcopy(NO_GATEWAY_SETTINGS))
 
 
 def _read_endpoint(w: WorkspaceClient, name: str) -> dict:

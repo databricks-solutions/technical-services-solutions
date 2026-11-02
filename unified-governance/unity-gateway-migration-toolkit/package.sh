@@ -21,6 +21,9 @@ cp notebook/run_planner.py notebook/run_account.py notebook/run_scan.py notebook
 cp ug_migration_store.py "dist/$NAME/"
 cp app/requirements.txt "dist/$NAME/app/"
 cp app/backend/main.py app/backend/__init__.py "dist/$NAME/app/backend/"
+# The app imports the toolkit modules; the app is deployed from app/ alone, so they go next to main.py too.
+cp ug_migration_store.py ug_migration_apply.py ug_migration_planner.py "dist/$NAME/app/backend/"
+cp requirements.txt "dist/$NAME/"
 cp -R app/frontend/src app/frontend/static "dist/$NAME/app/frontend/"
 cp app/frontend/package.json app/frontend/tsconfig.json app/frontend/vite.config.ts \
    app/frontend/index.html "dist/$NAME/app/frontend/"

@@ -80,7 +80,17 @@ export default function Apply({ scanRunId, setScanRunId, operator }: { scanRunId
 function Summary({ s }: { s: string }) {
   let o: Record<string, number> = {};
   try { o = JSON.parse(s || "{}"); } catch { /* empty */ }
-  return <span className="small">{Object.entries(o).map(([k, v]) => `${k.replace(/_/g, " ")} ${v}`).join(", ") || "-"}</span>;
+  const counts = Object.entries(o).filter(([k]) => k !== "not_carried_over").map(([k, v]) => `${k.replace(/_/g, " ")} ${v}`).join(", ") || "-";
+  const notCarried = Number(o.not_carried_over) || 0;
+  return <span className="small">{counts}{notCarried > 0 && <>. {plural(notCarried, "service")} {notCarried === 1 ? "doesn't" : "don't"} get all of the legacy endpoint's governance: see <b>Not carried over</b> in the details below.</>}</span>;
+}
+
+/** A result row's details: its reason or issues, the grants it lists, and what the new service doesn't get. */
+function itemDetails(i: any): string {
+  const grants = Array.isArray(i.grants) ? i.grants.map((g: any) => `${g.principal}: ${(g.privileges || []).join("+")}`).join(", ") : "";
+  const parts = [i.reason || (i.issues || []).join("; "), grants && (i.action === "kept" ? `Kept: ${grants}` : grants)];
+  if (Array.isArray(i.not_carried_over) && i.not_carried_over.length) parts.push(`Not carried over: ${i.not_carried_over.join(", ")}`);
+  return parts.filter(Boolean).join("; ");
 }
 
 const sortedObject = (o: Record<string, string>) => Object.fromEntries(Object.entries(o).sort(([a], [b]) => a.localeCompare(b)));
@@ -235,8 +245,9 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
       setJobId(r.job_run_id);
       onStarted(r.apply_id);
     } catch (e: any) {
-      if (e.status === 409) {
-        // Another run holds the slot: link to it instead of repeating the error.
+      if (e.status === 409 && e.job) {
+        // Another run holds the slot: link to it instead of repeating the error. Other 409s (a dry run that changed
+        // or expired, a stale scan) are errors with their own reason.
         const run = await api<any[]>("/api/applies").then((rows) => rows.find((a) => a.status === "RUNNING") || null).catch(() => null);
         setConflict({ run, job: e.job ?? null });
       } else {
@@ -458,7 +469,7 @@ function ApplyDetail({ applyId, onRolledBack, onOpen, onFinished, onClose, opera
         { key: "type", label: "Object", render: (i) => i.type?.replace(/_/g, " ") },
         { key: "name", label: "Name", render: (i) => <code className="wrap">{i.name}</code> },
         { key: "action", label: "Result", render: (i) => <Badge value={i.action} /> },
-        { key: "reason", label: "Details", sortable: false, render: (i) => <span className="small">{i.reason || (i.issues || []).join("; ") || (i.grants ? i.grants.map((g: any) => `${g.principal}: ${g.privileges.join("+")}`).join(", ") : "")}</span> },
+        { key: "reason", label: "Details", sortable: false, render: (i) => <span className="small">{itemDetails(i)}</span> },
       ]} />
       {confirming && (
         <Confirm word="ROLLBACK" title="Roll back" action={`Delete ${plural(created, "object")}`} busy={busy}
@@ -466,7 +477,7 @@ function ApplyDetail({ applyId, onRolledBack, onOpen, onFinished, onClose, opera
                  body={<>
                    <p>Delete the {plural(created, "object")} this run created:</p>
                    <ul className="small">{data.items.filter((i: any) => i.action === "created").slice(0, 12).map((i: any) => <li key={i.type + i.name}><code>{i.name}</code> ({String(i.type).replace(/_/g, " ")})</li>)}</ul>
-                   <p className="small">Objects another run still uses are kept. Inference tables stay.</p>
+                   <p className="small">Objects another run still uses are kept. Inference tables stay. Grants are never revoked: a deleted service takes its grants with it, and a kept service keeps them (the results list them).</p>
                    <Notice tone="warning">If callers have already moved to these endpoints, rolling back breaks their traffic. Move them back first.</Notice>
                  </>} />
       )}

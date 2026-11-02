@@ -139,13 +139,13 @@ GROUP BY eu.workspace_id, se.endpoint_id, eu.requester
 UG_TRAFFIC_SQL = """
 -- One row per invocation in ai_gateway.usage, so count distinct request IDs.
 -- v2 = rows with no service_type (undocumented NULL in the schema; verified against live rows).
--- v2_failed: no status code, or status 0, 403, 404, 410 or 500 and up (400 and 429 are caller or rate-limit errors, not a gateway that is off) (the planner's rule). v2_tokens: total_tokens.
+-- v2_failed: no status code, or status 0 or 501 (other 4xx and 5xx can be caller, permission, rate-limit or provider errors, not a gateway that is off) (the planner's rule). v2_tokens: total_tokens.
 SELECT workspace_id,
        count(DISTINCT CASE WHEN service_type = 'MODEL_SERVICE' THEN request_id END) AS v3_requests,
        count(DISTINCT CASE WHEN service_type = 'MODEL_SERVICE' THEN requester END) AS v3_requesters,
        count(DISTINCT CASE WHEN service_type IS NULL AND endpoint_name IS NOT NULL THEN request_id END) AS v2_requests,
        count(DISTINCT CASE WHEN service_type IS NULL AND endpoint_name IS NOT NULL
-                           AND (status_code IS NULL OR status_code IN (0, 403, 404, 410) OR status_code >= 500) THEN request_id END)
+                           AND (status_code IS NULL OR status_code IN (0, 501)) THEN request_id END)
          AS v2_failed,
        coalesce(sum(CASE WHEN service_type IS NULL AND endpoint_name IS NOT NULL THEN total_tokens END), 0) AS v2_tokens,
        CAST(max(CASE WHEN service_type IS NULL AND endpoint_name IS NOT NULL THEN event_time END) AS STRING)
@@ -194,7 +194,7 @@ WHERE usage_date >= current_date() - INTERVAL {history} DAYS
 GROUP BY workspace_id, billing_origin_product
 """
 CONFIG_LABELS = {
-    "VECTOR_SEARCH": "AI Search: re-index embeddings after Unity Gateway",
+    "VECTOR_SEARCH": "AI Search: keep embedding endpoints its indexes use",
     "AGENT_BRICKS": "Agent Bricks: check its vector search and endpoints",
     "SUPERVISOR_AGENT": "Agent Bricks supervisor: check its endpoints",
     "APPS": "Databricks Apps: check serving endpoint resources",
@@ -683,7 +683,7 @@ def summary_md(result: dict) -> str:
               "scan must look; a workspace scan is the only check for ai_query, app resources and agent endpoints.",
               "- Live counts exclude endpoints deleted since, whose traffic is listed separately.",
               "- v2 failing: at least 10 v2 requests in the window and at least 95% of them failed (no status code, status "
-              "0, 403, 404, 410 or 500 and up; counted per distinct request). Those callers already get errors, so move them first.",
+              "0 or 501; counted per distinct request). Those callers already get errors, so move them first.",
               "- Tokens: input and output tokens from system.serving.endpoint_usage (v1) and total_tokens from "
               "system.ai_gateway.usage (v2). Shown for sizing only.",
               "- Enforce status (the workspace setting) is not in the account tables and isn't read here."]

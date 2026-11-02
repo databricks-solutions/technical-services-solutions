@@ -12,7 +12,7 @@ python3 check_release.py                      # must pass before a release
 ```
 
 - `package.sh` runs `npm run build` (so `app/frontend/static` is never stale), then `make_installer.py`, which writes `dist/INSTALL_unity_gateway_migration_toolkit_<version>.py` by embedding the runtime files into `installer/install_template.py`, and then writes `dist/unity-gateway-migration-toolkit-<version>.zip`.
-- The zip has one top folder, `unity-gateway-migration-toolkit-<version>/`. It holds the installer, the README, HOW_TO_READ and USER_GUIDE, the three CLI modules and the store, the four notebooks in `notebook/`, `app/` (backend `main.py` and `__init__.py`, the frontend sources and build, `requirements.txt`) and `databricks.yml` without the repo-only sync excludes. This file isn't shipped.
+- The zip has one top folder, `unity-gateway-migration-toolkit-<version>/`. It holds the installer, the README, HOW_TO_READ and USER_GUIDE, the three CLI modules and the store, the four notebooks in `notebook/`, `app/` (backend `main.py` and `__init__.py` plus copies of `ug_migration_store.py`, `ug_migration_apply.py` and `ug_migration_planner.py`, the frontend sources and build, `requirements.txt`) and `databricks.yml` without the repo-only sync excludes. This file isn't shipped.
 - The installer build is deterministic (fixed zip timestamps and permissions). Build with the same Python in CI and locally (3.12).
 
 `check_release.py` (standard library only) rebuilds the installer in a temp folder and byte-compares it with the committed root `INSTALL_unity_gateway_migration_toolkit_<version>.py`. It also checks that the versions agree. Exit 1 on any problem. Until the root installer is rebuilt and committed, it fails.
@@ -51,19 +51,20 @@ The retirement date is one value, and the customer-facing text must agree with i
 
 The override paths stay the same: the installer widget, the bundle variable, `--deadline` on the planner and account CLIs, the `deadline` notebook widget, and `UGMIG_DEADLINE`. A bad date must fail before any call is made.
 
-## Rules mirrored in two places
+## How the app gets the job-side rules
 
-The app is deployed from `app/` only (`package.sh` copies just `main.py` and `__init__.py` into `app/backend`), so `app/backend/main.py` can't import `ug_migration_store.py`, `ug_migration_apply.py` or `ug_migration_account.py`. These rules are therefore written twice, and the parity tests in `test_app.py` fail when the copies disagree:
+The app imports `ug_migration_store.py`, `ug_migration_apply.py` and `ug_migration_planner.py`, so the fingerprints, the rollback rule, run status, the v2 failing rule, cut-over options and the dry-run and pause gates exist once. `main.py` looks for the modules next to itself (`app/backend`), then in the repository root:
 
-- The selection fingerprint: `selection_fingerprint` (store, apply job) and its mirror in `main.py`. The legacy fingerprint for verify and cut-over (`legacy_fingerprint`) and the three verify builders (`legacy_traffic_since`, `ug_usage_summary`, `ug_request_lookup`) are mirrored the same way (`test_app_and_store_agree_on_the_legacy_fingerprint`).
-- The rollback rule: `rollback_done` (store) and `_rollback_done` / `_rollback_blocks` in `main.py`.
-- The v2 failing rule (`V2_FAILING_MIN_REQUESTS`, `V2_FAILING_SHARE_PERCENT`): the planner and `main.py` (the
-  verify traffic flag). `test_app.py` checks the constants agree.
-- Run status: `effective_status` (store) and `_effective_status` / `_ended_state` in `main.py`.
-- Cut-over options and problem actions: `OPERATIONS`, `API_TYPES`, the option limits and `PROBLEM_ACTIONS` (`ug_migration_apply.py`) and their mirrors in `main.py` (`test_app_and_job_agree_on_the_cutover_options`).
-- The deadline and the wave names: `ug_migration_account.py` and `main.py` (`LEGACY_WAVE_NAMES`, the wave matching in `main.py`, whose comment says so).
+- **Installer:** `make_installer.py` (`APP_MODULES`) embeds the three modules again under `app/backend/`, byte for byte, because the installer deploys `<install folder>/app`.
+- **Release zip:** `package.sh` copies them into `app/backend/`.
+- **Bundle:** the app's `source_code_path` is the bundle root and its command is `uvicorn app.backend.main:app`, so it finds them in the root. The root `requirements.txt` only includes `app/requirements.txt`.
 
-The caller rules (`caller_class`) exist in two modules, `ug_migration_planner.py` and `ug_migration_account.py`. Each copy has its own test (`test_planner.py`, `test_account.py`), but no test compares the two, so change both together. Keep the labels in `app/frontend/src/api.ts` (`CALLER_LABEL`) and the caller types in USER_GUIDE and HOW_TO_READ in step too.
+Don't commit copies of the modules under `app/backend`. `test_installer.py` (`test_the_deployed_app_gets_the_modules_it_imports`) checks all three paths.
+
+Two sets of rules are still written twice:
+
+- The deadline and the wave names: `ug_migration_account.py` and `main.py` (`LEGACY_DEADLINE`, `DEADLINE_AS_OF`, `_validate_deadline`, `LEGACY_WAVE_NAMES`). The account module isn't shipped with the app. `test_app_and_account_agree_on_the_deadline_and_old_wave_names` checks them.
+- The caller rules (`caller_class` and its token lists) in `ug_migration_planner.py` and `ug_migration_account.py`. Each copy has its own test (`test_planner.py`, `test_account.py`), but no test compares the two, so change both together. Keep the labels in `app/frontend/src/api.ts` (`CALLER_LABEL`) and the caller types in USER_GUIDE and HOW_TO_READ in step too.
 
 ## Run the app locally
 

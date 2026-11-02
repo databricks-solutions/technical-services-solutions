@@ -17,9 +17,13 @@
 # MAGIC warehouse, system tables, the install folder, and whether another toolkit install already uses the same app name,
 # MAGIC results schema or folder). If a check fails, nothing is changed, and the message says what to change and who to ask.
 # MAGIC
-# MAGIC **Who the jobs run as:** you (the person running this notebook). Scans and apply act with your permissions, so
-# MAGIC run it as a workspace admin with access to the system tables, or as a service principal for a shared install
-# MAGIC (for a service principal, set **Install: Operators** explicitly).
+# MAGIC **Who the jobs run as:** you (the person running this notebook), unless **Advanced: Run jobs as service
+# MAGIC principal** is set. Scans and apply act with that identity's permissions, so use a workspace admin with access to
+# MAGIC the system tables, or a service principal for a shared install (you need the Service Principal User role on it;
+# MAGIC when the notebook itself runs as a service principal, set **Install: Operators** explicitly).
+# MAGIC
+# MAGIC **The first snapshot starts at the end of the install** and reads account-wide system tables: legacy endpoints
+# MAGIC and traffic for every workspace in the account, not only this one. It writes them to the results schema.
 # MAGIC Only the people in **Install: Operators** can start jobs from the app; everyone else can only view results.
 # MAGIC
 # MAGIC Run it again to update (same widgets). To remove it, set **Action** to `uninstall: preview` to see what would be
@@ -61,6 +65,7 @@ dbutils.widgets.dropdown("second_install", "no", ["no", "yes"], "Advanced: Allow
 dbutils.widgets.text("secret_schemas", "", "Advanced: Allowed secret schemas (catalog.schema, comma-separated; blank = off)")
 dbutils.widgets.dropdown("allow_secret_read", "no", ["no", "yes"], "Advanced: Allow reading secret values (risk: apply copies legacy secret values, in plain text, into the new services; keep no unless needed)")
 dbutils.widgets.text("deadline", "2027-03-30", "Advanced: Legacy deadline (YYYY-MM-DD)")
+dbutils.widgets.text("run_as", "", "Advanced: Run jobs as service principal (application ID; blank = jobs run as you)")
 dbutils.widgets.dropdown("drop_data", "no", ["no", "yes"], "Uninstall: remove results tables (and the schema, if the toolkit made it and it's empty)")
 dbutils.widgets.dropdown("remove_logs", "no", ["no", "yes"], "Uninstall: remove apply logs (no = keep them, so kept services can be rolled back later)")
 dbutils.widgets.dropdown("rollback_services", "no", ["no", "yes"], "Uninstall: roll back services created by apply (yes = remove them too)")
@@ -259,7 +264,19 @@ def shared_state(others: list[dict], results: str, folder: str) -> list[dict]:
     return out
 
 
-def job_settings(app_name: str, role: str, title: str, notebook_path: str, params: list, **extra) -> jobs.JobSettings:
+def valid_run_as(application_id: str) -> str | None:
+    """Problem with Advanced: Run jobs as service principal, or None. Blank is fine (the jobs run as the installer)."""
+    if application_id and not re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+                                           application_id):
+        return ("Advanced: Run jobs as service principal must be the service principal's application ID (a UUID like "
+                f"12345678-1234-1234-1234-123456789012), not {application_id!r}")
+    return None
+
+
+def job_settings(app_name: str, role: str, title: str, notebook_path: str, params: list, run_as: str = "",
+                 **extra) -> jobs.JobSettings:
+    if run_as:
+        extra["run_as"] = jobs.JobRunAs(service_principal_name=run_as)
     return jobs.JobSettings(
         name=f"[{app_name}] Unity Gateway migration {title}",
         tags={"tool": TOOL_TAG, "Project": PROJECT_TAG, "app": app_name, "role": role},
@@ -269,21 +286,22 @@ def job_settings(app_name: str, role: str, title: str, notebook_path: str, param
 
 
 def job_specs(app_name: str, folder: str, results: str, warehouse_id: str, secret_schemas: list[str],
-              allow_secret_read: bool, deadline: str = DEFAULT_DEADLINE) -> dict[str, jobs.JobSettings]:
-    """The three toolkit jobs. Parameter names match the notebooks in notebook/ and the bundle's databricks.yml."""
+              allow_secret_read: bool, deadline: str = DEFAULT_DEADLINE, run_as: str = "") -> dict[str, jobs.JobSettings]:
+    """The three toolkit jobs. Parameter names match the notebooks in notebook/ and the bundle's databricks.yml.
+    run_as: a service principal's application ID to run them as; blank runs them as the installing user."""
     P = jobs.JobParameterDefinition
     files = f"{folder}/files"
     return {
         "snapshot": job_settings(app_name, "snapshot", "snapshot", f"{files}/notebook/run_account", [
             P("days", "30"), P("snapshot_table", f"{results}.ug_migration"), P("out_dir", f"{folder}/output/account"),
             P("deep_scan", "0"), P("deep_wave", ""), P("deep_warehouse_id", warehouse_id), P("requested_by", "schedule"),
-            P("deadline", deadline)],
+            P("deadline", deadline)], run_as=run_as,
             schedule=jobs.CronSchedule(quartz_cron_expression=SNAPSHOT_CRON, timezone_id="UTC",
                                        pause_status=jobs.PauseStatus.PAUSED)),
         "scan": job_settings(app_name, "scan", "workspace scan", f"{files}/notebook/run_scan", [
             P("run_id", ""), P("job_run_id", "{{job.run_id}}"), P("results_schema", results), P("days", "30"),
             P("scan_roots", ""), P("target_catalog", TARGET_CATALOG), P("target_schema", TARGET_SCHEMA),
-            P("requested_by", ""), P("deadline", deadline)]),
+            P("requested_by", ""), P("deadline", deadline)], run_as=run_as),
         "apply": job_settings(app_name, "apply", "apply", f"{files}/notebook/run_apply", [
             P("apply_id", ""), P("job_run_id", "{{job.run_id}}"), P("results_schema", results), P("mode", "dry_run"),
             P("endpoints", ""), P("target_catalog", ""), P("target_schema", ""), P("uc_secret_map", ""),
@@ -292,7 +310,8 @@ def job_specs(app_name: str, folder: str, results: str, warehouse_id: str, secre
             P("secret_schemas", ",".join(secret_schemas)),
             P("allow_secret_read_enabled", "true" if allow_secret_read else "false"),
             # Verify and cut over (operation other than apply); defaults match databricks.yml.
-            P("operation", "apply"), P("api_type", ""), P("prompt", "Reply with: ok"), P("services", "")]),
+            P("operation", "apply"), P("api_type", ""), P("prompt", "Reply with: ok"), P("services", ""),
+            P("dry_run_id", "")], run_as=run_as),
     }
 
 
@@ -454,6 +473,9 @@ ALLOW_SECRET_READ = g("allow_secret_read") == "yes"
 SECRET_SCHEMAS, secret_problem = parse_secret_schemas(g("secret_schemas"))
 DEADLINE = g("deadline").strip() or DEFAULT_DEADLINE
 deadline_problem = valid_deadline(DEADLINE)
+RUN_AS = g("run_as").strip()
+run_as_problem = valid_run_as(RUN_AS)
+JOB_IDENTITY = f"service principal {RUN_AS}" if RUN_AS else me
 TOOLKIT_VERSION = "__VERSION__"
 APP_DESCRIPTION = f"{APP_MARKER}: account overview, workspace scans, readiness, code fixes and apply"
 DROP = g("drop_data") == "yes"
@@ -475,6 +497,8 @@ if secret_problem:
     problems.append(secret_problem)
 if deadline_problem:
     problems.append(deadline_problem)
+if run_as_problem:
+    problems.append(run_as_problem)
 if not UNINSTALL:
     if not CATALOG_GIVEN:
         problems.append("choose Install: Results catalog (the results schema is created there; you need USE CATALOG and "
@@ -491,6 +515,7 @@ if problems:
 # COMMAND ----------
 
 from databricks.sdk.errors import DatabricksError, NotFound, ResourceDoesNotExist
+from databricks.sdk.errors import NotImplemented as ApiNotImplemented  # HTTP 501; the builtin NotImplemented isn't an exception
 
 DASH_NAME = "Unity Gateway migration progress"  # created by versions before 0.8.0; the app replaces it
 RUNNING_STATES = ("PENDING", "QUEUED", "RUNNING", "STARTING", "TERMINATING")
@@ -990,6 +1015,11 @@ if UNINSTALL:
 if PROBLEMS:
     raise ValueError("Nothing was changed. Fix these first:\n- " + "\n- ".join(PROBLEMS))
 print(f"install: {VERSION_NOTE}")
+print(f"The jobs will run as {JOB_IDENTITY}. At the end, the first snapshot starts: it reads account-wide system tables "
+      "(legacy endpoints and traffic for every workspace in the account) and writes them to the results schema.")
+if RUN_AS:
+    print(f"The checks above ran as you ({me}). Service principal {RUN_AS} needs the same access: SELECT on the system "
+          "tables, USE and CREATE on the results schema, and USE CATALOG, USE SCHEMA and CREATE SERVICE on the target schema.")
 
 # COMMAND ----------
 
@@ -1021,6 +1051,17 @@ with zipfile.ZipFile(io.BytesIO(base64.b64decode(PAYLOAD))) as z:
             w.workspace.upload(target, io.BytesIO(data), format=ImportFormat.AUTO, overwrite=True)
         n += 1
 print(f"wrote {n} files to {FILES}")
+if RUN_AS:  # the jobs read the toolkit files and write apply logs in the install folder
+    from databricks.sdk.service.workspace import WorkspaceObjectAccessControlRequest, WorkspaceObjectPermissionLevel
+    try:
+        folder_id = w.workspace.get_status(FOLDER).object_id
+        w.workspace.update_permissions("directories", str(folder_id), access_control_list=[
+            WorkspaceObjectAccessControlRequest(service_principal_name=RUN_AS,
+                                                permission_level=WorkspaceObjectPermissionLevel.CAN_MANAGE)])
+        print(f"gave service principal {RUN_AS} CAN MANAGE on {FOLDER}")
+    except DatabricksError as e:
+        print(f"WARNING: couldn't give service principal {RUN_AS} CAN MANAGE on {FOLDER} ({str(e)[:200]}): set it in "
+              "the folder's Share dialog, or the jobs can't read the toolkit files or write apply logs")
 
 # COMMAND ----------
 
@@ -1038,7 +1079,8 @@ print("schema ready:", RESULTS)
 
 # COMMAND ----------
 
-SPECS = job_specs(APP_NAME, FOLDER, RESULTS, WAREHOUSE_ID, SECRET_SCHEMAS, ALLOW_SECRET_READ, DEADLINE)
+SPECS = job_specs(APP_NAME, FOLDER, RESULTS, WAREHOUSE_ID, SECRET_SCHEMAS, ALLOW_SECRET_READ, DEADLINE, RUN_AS)
+print(f"The jobs run as {JOB_IDENTITY}" + ("" if RUN_AS else " (set Advanced: Run jobs as service principal to change it)"))
 JOB_IDS = {}
 for role, settings in SPECS.items():
     current_jobs = sorted(i["job_id"] for i in MINE if i["role"] == role)
@@ -1076,7 +1118,7 @@ if existing_app:
     try:
         w.apps.create_update_and_wait(APP_NAME, APP_UPDATE_MASK, app=apps.App(
             name=APP_NAME, description=APP_DESCRIPTION, resources=resources, user_api_scopes=["sql"]))
-    except (NotFound, NotImplemented, AttributeError):  # workspaces or SDKs without the update API
+    except (NotFound, ApiNotImplemented, AttributeError):  # workspaces or SDKs without the update API; others raise
         spec = app_update_spec(existing_app, name=APP_NAME, description=APP_DESCRIPTION, resources=resources,
                                user_api_scopes=["sql"])
         spec.compute_size = None  # the full-replace API refuses compute size
@@ -1136,6 +1178,8 @@ app = w.apps.get(APP_NAME)
 host = w.config.host.rstrip("/")
 for r, i in JOB_IDS.items():
     print(f"Job ({r}):", f"{host}/jobs/{i}")
+print(f"Starting the first snapshot as {JOB_IDENTITY}. It reads account-wide system tables: legacy endpoints and "
+      f"traffic for every workspace in the account, not only this one, and writes them to {RESULTS}.")
 try:  # starts the first snapshot without waiting, so the Overview has data in a few minutes
     snap = w.jobs.run_now(job_id=JOB_IDS["snapshot"], job_parameters={"requested_by": me})
     snapshot_note = f"First snapshot started: {host}/jobs/{JOB_IDS['snapshot']}/runs/{snap.run_id} (Overview fills in within a few minutes)."
@@ -1144,11 +1188,11 @@ except DatabricksError as e:
 target = f"{TARGET_CATALOG}.{TARGET_SCHEMA}"
 try:
     w.schemas.get(target)
-    target_note = (f"Apply writes model services to {target}. It exists. The apply job runs as {me}: that identity needs "
+    target_note = (f"Apply writes model services to {target}. It exists. The apply job runs as {JOB_IDENTITY}: that identity needs "
                    f"USE CATALOG, USE SCHEMA and CREATE SERVICE on it.")
 except (NotFound, ResourceDoesNotExist):
     target_note = (f"Apply needs the target schema {target}, and it doesn't exist yet (apply stops until it does). The "
-                   "installer doesn't create it. Run this as a catalog admin, or ask one:\n  " + "\n  ".join(target_schema_lines(me)))
+                   "installer doesn't create it. Run this as a catalog admin, or ask one:\n  " + "\n  ".join(target_schema_lines(RUN_AS or me)))
 print("App:", app.url)
 print(f"Open the app: {app.url}  (or Compute > Apps > {APP_NAME})")
 print("First steps: wait for the snapshot (a few minutes), then in the app open Scans and click Start scan.")
@@ -1158,16 +1202,17 @@ print(f"The weekly snapshot job is paused. To run it every Monday at 06:00 UTC, 
 print(target_note)
 print("Unity Catalog secret mapping is off. To turn it on, run this installer again with Advanced: Allowed secret schemas "
       "set to the catalog.schema that holds the secrets (for example main.secrets), and grant the apply job's identity READ on them.")
-print(f"Results: {RESULTS}. Operators: {', '.join(OPERATOR_LIST) or '(none)'}. Version {TOOLKIT_VERSION}. "
+print(f"Results: {RESULTS}. Operators: {', '.join(OPERATOR_LIST) or '(none)'}. Jobs run as {JOB_IDENTITY}. Version {TOOLKIT_VERSION}. "
       f"The user guide is in {FILES}/USER_GUIDE.md.")
 displayHTML(f"""
 <h3>Unity Gateway Migration Toolkit is installed</h3>
 <p><b>Open the app:</b> <a href="{app.url}" target="_blank">{app.url}</a> (Compute &gt; Apps &gt; {APP_NAME})</p>
 <p>Jobs: {", ".join(f'<a href="{host}/jobs/{i}" target="_blank">{r}</a>' for r, i in JOB_IDS.items())}</p>
+<p>The first snapshot reads account-wide system tables (every workspace in the account).</p>
 <p>First steps: wait for the snapshot (Overview), then <b>Scans</b> &gt; Start scan. {snapshot_note}</p>
 <p>The weekly snapshot job is paused: unpause its schedule in Jobs to run it every Monday.</p>
 <p>{target_note}</p>
-<p>Operators: {", ".join(OPERATOR_LIST) or "(none)"}. Results: {RESULTS}. Version {TOOLKIT_VERSION}.</p>
+<p>Operators: {", ".join(OPERATOR_LIST) or "(none)"}. Results: {RESULTS}. Jobs run as {JOB_IDENTITY}. Version {TOOLKIT_VERSION}.</p>
 <p>To let others view results, run (replace <code>migration-team</code> with your group):<br>
 <code>GRANT USE CATALOG ON CATALOG `{CATALOG}` TO `migration-team`;<br>
 GRANT USE SCHEMA, SELECT ON SCHEMA `{CATALOG}`.`{SCHEMA}` TO `migration-team`;</code></p>

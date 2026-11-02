@@ -17,6 +17,9 @@ FILES = ["ug_migration_planner.py", "ug_migration_apply.py", "ug_migration_accou
          "ug_migration_store.py", "README.md", "USER_GUIDE.md", "HOW_TO_READ.md",
          "notebook/run_planner.py", "notebook/run_account.py", "notebook/run_scan.py", "notebook/run_apply.py",
          "app/requirements.txt", "app/backend/__init__.py", "app/backend/main.py"]
+# The app imports these modules (one copy of the rules for the app and the jobs). The app is deployed from app/
+# alone, so the installer also writes them next to main.py: app/backend/<module> in the zip, from the root file.
+APP_MODULES = ["ug_migration_store.py", "ug_migration_apply.py", "ug_migration_planner.py"]
 
 
 def build(out_dir: str, check_fresh: bool = True) -> str:
@@ -31,16 +34,16 @@ def build(out_dir: str, check_fresh: bool = True) -> str:
         newest_src = max(os.path.getmtime(os.path.join(r, n)) for r, _, ns in os.walk(src) for n in ns)
         if newest_src > os.path.getmtime(os.path.join(static, "index.html")):
             sys.exit("app/frontend/static is older than app/frontend/src: run ./package.sh (or npm run build) first")
-    files = list(FILES)
+    files = [(f, f) for f in FILES] + [(f"app/backend/{m}", m) for m in APP_MODULES]  # (name in the zip, source)
     for root, _, names in os.walk(static):
-        files += [os.path.relpath(os.path.join(root, n), HERE) for n in names]
+        files += [(f, f) for f in (os.path.relpath(os.path.join(root, n), HERE) for n in names)]
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        for f in sorted(files):
+        for f, src in sorted(files):
             info = zipfile.ZipInfo(f, date_time=(1980, 1, 1, 0, 0, 0))
             info.external_attr = 0o644 << 16
             info.compress_type = zipfile.ZIP_DEFLATED
-            with open(os.path.join(HERE, f), "rb") as fh:
+            with open(os.path.join(HERE, src), "rb") as fh:
                 z.writestr(info, fh.read())
     payload = base64.b64encode(buf.getvalue()).decode()
     tpl = open(os.path.join(HERE, "installer/install_template.py")).read()

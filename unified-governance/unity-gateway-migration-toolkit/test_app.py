@@ -56,7 +56,7 @@ def fake_sdk():
 
 def make_query(store):
     """Answers the SQL the app sends, from the rows in the test's store (routed by the table each query reads)."""
-    def fake(request, sql, params=None):
+    def fake(request, sql, params=None, **kw):
         p = params or {}
         if "UNION ALL" in sql:  # job ownership lookup: who requested runs with this job run id
             return [{"requested_by": r.get("requested_by")} for r in store["scans"] + store["applies"]
@@ -92,6 +92,8 @@ def env(monkeypatch):
     monkeypatch.setattr(main, "JOBS", {"snapshot": "11", "scan": "22", "apply": "33"})
     monkeypatch.setattr(main, "EXPORT_ROW_LIMIT", 200_000)
     monkeypatch.setattr(main, "_identities", {})
+    monkeypatch.setattr(main, "_admins", {})
+    monkeypatch.setattr(main, "_job_identities", {})
     monkeypatch.setattr(main, "_owners", {})
     monkeypatch.setattr(main, "_started", {})
     monkeypatch.setattr(main, "WorkspaceClient", FakeWC)
@@ -100,7 +102,7 @@ def env(monkeypatch):
     store_rows = {
         "scans": [{"run_id": SCAN, "status": "SUCCEEDED", "ts": now_ts(1), "job_run_id": "900",
                    "requested_by": VIEWER_EMAIL, "workspace_url": HOST}],
-        "applies": [{"apply_id": DRY, "mode": "dry_run", "status": "SUCCEEDED", "job_run_id": "777",
+        "applies": [{"apply_id": DRY, "mode": "dry_run", "started_at": now_ts(), "status": "SUCCEEDED", "job_run_id": "777",
                      "scan_run_id": SCAN}],
         "items": [], "apply_items": [], "rollbacks": [],
     }
@@ -286,7 +288,7 @@ def test_job_status_shows_everything_to_operators(env):
 def test_job_status_hides_message_when_ownership_lookup_fails(env, monkeypatch):
     env.sdk.jobs.get_run.return_value = _run()
 
-    def boom(request, sql, params=None):
+    def boom(request, sql, params=None, **kw):
         raise main.HTTPException(502, "warehouse down")
     monkeypatch.setattr(main, "query", boom)
     r = env.client.get("/api/jobs/999", headers=as_user(VIEWER_TOKEN, VIEWER_EMAIL)).json()
@@ -369,7 +371,7 @@ def test_config_exposes_allowed_schemas_limits_and_scope(env):
 def test_scans_record_the_workspace_they_scanned(env):
     rows = env.client.get("/api/scans").json()
     assert rows[0]["workspace_url"] == HOST
-    assert env.client.get(f"/api/scans/{SCAN}").json()["meta"]["workspace_url"] == HOST
+    assert env.client.get(f"/api/scans/{SCAN}", headers=OP).json()["meta"]["workspace_url"] == HOST
 
 
 def test_readiness_items_pass_label_and_action_through(env):
@@ -377,7 +379,7 @@ def test_readiness_items_pass_label_and_action_through(env):
                                                     "label": "Move callers", "action": "Point clients at ai_gateway"}],
                  "warnings": [{"type": "x", "item": "y", "detail": "z", "label": "Review", "action": "Check"}]}
     env.store["items"] = [{"item_type": "readiness", "payload": json.dumps(readiness)}]
-    r = env.client.get(f"/api/scans/{SCAN}").json()["readiness"]
+    r = env.client.get(f"/api/scans/{SCAN}", headers=OP).json()["readiness"]
     assert r["blockers"][0]["label"] == "Move callers" and r["blockers"][0]["action"] == "Point clients at ai_gateway"
     assert r["warnings"][0]["label"] == "Review"
 
@@ -392,7 +394,8 @@ def test_execute_follows_a_matching_dry_run(env):
     env.sdk.jobs.get_run.return_value = SimpleNamespace(job_parameters=job_params())
     r = env.client.post("/api/applies", json=EXECUTE_BODY, headers=OP)
     assert r.status_code == 200
-    assert env.sdk.jobs.run_now.call_args.kwargs["job_parameters"]["mode"] == "execute"
+    params = env.sdk.jobs.run_now.call_args.kwargs["job_parameters"]
+    assert params["mode"] == "execute" and params["dry_run_id"] == EXECUTE_BODY["dry_run_id"]  # the job checks it too
 
 
 def test_legacy_dry_run_without_stored_fingerprint_uses_the_job_parameters(env):
@@ -489,7 +492,7 @@ def test_guardrails_end_to_end_from_real_plan_to_execute(env, tmp_path, monkeypa
     assert outcome == "SUCCEEDED"  # acknowledged guardrails don't make the dry run need attention
     assert [x["guardrails_not_migrated"] for x in results if x.get("type") == "model_service"][0]
     # The job stores the dry run row with the fingerprint of the parameters it received.
-    env.store["applies"].append({"apply_id": DRY_OK, "mode": "dry_run", "status": outcome, "job_run_id": "777",
+    env.store["applies"].append({"apply_id": DRY_OK, "mode": "dry_run", "started_at": now_ts(), "status": outcome, "job_run_id": "777",
                                  "scan_run_id": SCAN, "fingerprint": store.selection_fingerprint(dry_params)})
     r = env.client.post("/api/applies", json={**execute, "dry_run_id": DRY_OK, "ack_guardrails": True}, headers=OP)
     assert r.status_code == 200
@@ -498,46 +501,17 @@ def test_guardrails_end_to_end_from_real_plan_to_execute(env, tmp_path, monkeypa
     assert exec_params["smoke_test"] == "true"
 
 
-def test_dry_run_fingerprint_depends_on_selection_and_options_only():
-    a = {"scan_run_id": SCAN, "endpoints": "ep-a", "grants": "false", "unrelated": "x"}
-    b = {"grants": "false", "endpoints": "ep-a", "scan_run_id": SCAN, "requested_by": "someone"}
-    assert main.selection_fingerprint(a) == main.selection_fingerprint(b)
-    assert main.selection_fingerprint(a) != main.selection_fingerprint({**a, "endpoints": "ep-b"})
-
-
-def test_app_and_job_agree_on_the_selection_fingerprint():
-    cases = [
-        {"scan_run_id": SCAN, "endpoints": "ep-b,ep-a", "target_catalog": "c", "target_schema": "s",
-         "uc_secret_map": '{"b/k": "secrets/c.s.b", "a/k": "secrets/c.s.a"}', "allow_secret_read": "false",
-         "grants": "False", "ack_guardrails": "true", "requested_by": "x", "smoke_test": "true"},
-        {"scan_run_id": SCAN, "endpoints": "", "target_catalog": "c"},
-        {"scan_run_id": SCAN, "endpoints": "ep-a", "target_catalog": "c", "target_schema": "s", "grants": "true"},
-    ]
-    for case in cases:
-        assert main.selection_fingerprint(case) == store.selection_fingerprint(case), case
-
-
-@pytest.mark.parametrize("status, summary", [
-    ("SUCCEEDED", "{}"),
-    ("NEEDS_ATTENTION", json.dumps({"kept": 2, "kept_other_run": 2, "deleted": 1})),
-    ("NEEDS_ATTENTION", json.dumps({"kept": 2, "kept_other_run": 1})),
-    ("NEEDS_ATTENTION", json.dumps({"kept": 1, "kept_other_run": 1, "error": 1})),
-    ("NEEDS_ATTENTION", json.dumps({"error": 1, "kept_other_run": 0})),
-    ("NEEDS_ATTENTION", None),  # written before kept_other_run existed
-    ("NEEDS_ATTENTION", json.dumps({"kept": 3})),
-    ("FAILED", json.dumps({"deleted": 3})),
-    ("RUNNING", None),
-])
-def test_app_and_job_agree_on_rolled_back(status, summary):
-    assert main._rollback_done(status, summary) == store.rollback_done(status, summary)
-
-
-def test_app_and_job_agree_on_a_run_that_ended(monkeypatch):
-    for life_cycle in ("RUNNING", "TERMINATED"):
-        sdk = MagicMock()
-        sdk.jobs.get_run.return_value = _job_state(life_cycle)
-        monkeypatch.setattr(main, "_sp", sdk)
-        assert main._effective_status("RUNNING", "12") == store.effective_status(sdk, "RUNNING", "12")
+def test_app_uses_the_job_side_rules_not_copies():
+    """The app imports the store, apply and planner modules, so the app and the jobs can't disagree on these rules."""
+    import ug_migration_apply as apply_mod
+    assert main.store is store and main.planner is planner and main.apply_rules is apply_mod
+    assert main.FINGERPRINT_KEYS is store.FINGERPRINT_KEYS and main.PROBLEM_ACTIONS is apply_mod.PROBLEM_ACTIONS
+    assert main.OPERATIONS is apply_mod.OPERATIONS and main.SERVICE_NAME_RE is apply_mod.SERVICE_NAME_RE
+    assert main.CUTOVER_OPERATIONS == ("test_call", "pause_legacy", "enable_tracking", "resume_legacy")
+    assert main.DRY_RUN_TTL_HOURS == apply_mod.DRY_RUN_TTL_HOURS
+    for name in ("selection_fingerprint", "legacy_fingerprint", "rollback_done", "rollback_blocks", "effective_status",
+                 "legacy_traffic_since", "ug_usage_summary", "ug_request_lookup", "_canon", "_since"):
+        assert not hasattr(main, name) and not hasattr(main, "_" + name.lstrip("_")), name
 
 
 def test_scan_export_marks_truncation(env, monkeypatch):
@@ -604,7 +578,7 @@ def test_rollback_is_refused_while_a_rollback_is_running(env):
 
 
 def test_target_schema_missing(env, monkeypatch):
-    monkeypatch.setattr(main, "query", lambda request, sql, params=None: [])
+    monkeypatch.setattr(main, "query", lambda request, sql, params=None, **kw: [])
     r = env.client.get("/api/target-schema?catalog=ai_gateway&schema=migrated", headers=OP)
     assert r.json() == {"exists": False, "can_create_service": None, "error": None}
 
@@ -612,7 +586,7 @@ def test_target_schema_missing(env, monkeypatch):
 def test_target_schema_found_with_sql_not_rest(env, monkeypatch):
     seen = {}
 
-    def fake_query(request, sql, params=None):
+    def fake_query(request, sql, params=None, **kw):
         seen["sql"], seen["params"] = sql, params
         return [{"found": 1}]
     monkeypatch.setattr(main, "query", fake_query)
@@ -622,7 +596,7 @@ def test_target_schema_found_with_sql_not_rest(env, monkeypatch):
 
 
 def test_target_schema_says_when_it_cannot_be_read(env, monkeypatch):
-    def boom(request, sql, params=None):
+    def boom(request, sql, params=None, **kw):
         raise RuntimeError("catalog not found")
     monkeypatch.setattr(main, "query", boom)
     r = env.client.get("/api/target-schema?catalog=ai_gateway&schema=migrated", headers=OP).json()
@@ -650,58 +624,6 @@ def test_app_and_account_agree_on_the_deadline_and_old_wave_names():
         main._validate_deadline("30/03/2027")
 
 
-def test_app_and_job_agree_on_the_cutover_options():
-    import ug_migration_apply as apply_mod
-    assert main.PROBLEM_ACTIONS == apply_mod.PROBLEM_ACTIONS == store.PROBLEM_ACTIONS
-    assert "test_failed" in main.PROBLEM_ACTIONS and "refused" in main.PROBLEM_ACTIONS
-    assert main.OPERATIONS == apply_mod.OPERATIONS and main.WRITE_LEGACY_OPERATIONS == apply_mod.WRITE_LEGACY_OPERATIONS
-    assert main.CUTOVER_OPERATIONS == ("test_call", "pause_legacy", "enable_tracking", "resume_legacy")
-    assert main.API_TYPES == apply_mod.API_TYPES and main.DEFAULT_API_TYPE == apply_mod.DEFAULT_API_TYPE
-    assert main.DEFAULT_PROMPT == apply_mod.DEFAULT_PROMPT and main.MAX_PROMPT_CHARS == apply_mod.MAX_PROMPT_CHARS
-    assert main.MAX_TEST_SERVICES == apply_mod.MAX_TEST_SERVICES
-    assert main.SERVICE_NAME_RE.pattern == apply_mod.SERVICE_NAME_RE.pattern
-
-
-def test_app_and_store_agree_on_the_legacy_fingerprint():
-    cases = [
-        {"operation": "pause_legacy", "endpoints": "ep-b,ep-a", "rollback_of": "", "force": "false"},
-        {"operation": "test_call", "services": "system.ai.b, system.ai.a", "api_type": "", "prompt": "", "endpoints": ""},
-        {"operation": "test_call", "services": "system.ai.a", "api_type": "openai/v1/responses", "prompt": " hi ",
-         "force": "TRUE"},
-        {"operation": "resume_legacy", "rollback_of": PAUSE, "force": None},
-        {"operation": "enable_tracking", "endpoints": "ep-a"},
-    ]
-    for case in cases:
-        assert main.legacy_fingerprint(case) == store.legacy_fingerprint(case), case
-
-
-def test_app_and_store_build_the_same_verify_sql():
-    assert main.legacy_traffic_since(["ep-b", "ep-a", "ep-a"], "2026-10-01", "123") == \
-        store.legacy_traffic_since(["ep-b", "ep-a", "ep-a"], "2026-10-01", "123")
-    assert main.legacy_traffic_since("ep-a,ep-b", "2026-10-01T06:00", "123") == \
-        store.legacy_traffic_since("ep-a,ep-b", "2026-10-01T06:00", "123")
-    assert main.ug_usage_summary("", "2026-10-01") == store.ug_usage_summary("", "2026-10-01")
-    assert main.ug_usage_summary("system.ai.gpt-5-mini", "2026-10-01 12:30:00") == \
-        store.ug_usage_summary("system.ai.gpt-5-mini", "2026-10-01 12:30:00")
-    assert main.ug_request_lookup("req-123") == store.ug_request_lookup("req-123")
-    bad_traffic = [([], "2026-10-01", "1"), (["ep;drop"], "2026-10-01", "1"), (["ep-a"], "last week", "1")]
-    for args in bad_traffic:
-        with pytest.raises(ValueError):
-            main.legacy_traffic_since(*args)
-        with pytest.raises(ValueError):
-            store.legacy_traffic_since(*args)
-    for args in [("a.b", "2026-10-01"), ("system.ai.x", "yesterday")]:
-        with pytest.raises(ValueError):
-            main.ug_usage_summary(*args)
-        with pytest.raises(ValueError):
-            store.ug_usage_summary(*args)
-    for rid in ("", "has space", "x" * 201):
-        with pytest.raises(ValueError):
-            main.ug_request_lookup(rid)
-        with pytest.raises(ValueError):
-            store.ug_request_lookup(rid)
-
-
 def test_config_carries_the_one_deadline(env):
     body = env.client.get("/api/config").json()
     assert body["deadline"] == "2027-03-30" and body["deadline_as_of"] == "2026-11-01"
@@ -710,7 +632,7 @@ def test_config_carries_the_one_deadline(env):
 def test_apply_and_cutover_lists_use_their_own_rows(env, monkeypatch):
     seen = []
 
-    def spy(request, sql, params=None):
+    def spy(request, sql, params=None, **kw):
         seen.append(sql)
         return []
     monkeypatch.setattr(main, "query", spy)
@@ -722,6 +644,29 @@ def test_apply_and_cutover_lists_use_their_own_rows(env, monkeypatch):
 
 def _post(env, **body):
     return env.client.post("/api/cutover", json=body, headers=OP)
+
+
+def _pause_scan(env, monkeypatch, requests=0, missing=False, failing=False):
+    """A finished scan with ep-a and ep-b in its plan, and legacy traffic for ep-a (the pause gate reads it)."""
+    env.store["scans"][0].update(workspace_id="984", days=30, finished_at=now_ts(1))
+    env.store["items"] = [
+        {"item_type": "plan", "seq": 1, "payload": json.dumps({"legacy_endpoint": "ep-a", "kind": "external_model"})},
+        {"item_type": "plan", "seq": 2, "payload": json.dumps({"legacy_endpoint": "ep-b", "kind": "external_model"})},
+    ]
+    base = make_query(env.store)
+
+    def fake(request, sql, params=None, missing_ok=True):
+        if "system.serving.endpoint_usage" in sql:
+            if missing and not missing_ok:
+                raise main.TableMissing("Couldn't read a system table this check needs")
+            if missing:
+                return []
+            if failing:
+                raise main.HTTPException(502, "Query failed: warehouse stopped")
+            return [{"source": "v1", "endpoint_name": "ep-a", "requester": "a@x.com", "requests": str(requests),
+                     "last_request": "2026-11-01 10:00:00"}] if requests else []
+        return base(request, sql, params)
+    monkeypatch.setattr(main, "query", fake)
 
 
 def test_cutover_is_operator_only(env):
@@ -738,7 +683,8 @@ def test_pause_takes_one_endpoint_and_the_typed_word(env):
     assert env.sdk.jobs.run_now.call_count == 0
 
 
-def test_pause_dry_run_starts_the_apply_job_with_the_operation(env):
+def test_pause_dry_run_starts_the_apply_job_with_the_operation(env, monkeypatch):
+    _pause_scan(env, monkeypatch)
     r = _post(env, operation="pause_legacy", endpoints=["ep-a"])
     assert r.status_code == 200, r.text
     params = env.sdk.jobs.run_now.call_args.kwargs["job_parameters"]
@@ -747,23 +693,120 @@ def test_pause_dry_run_starts_the_apply_job_with_the_operation(env):
     assert params["rollback_of"] == "" and params["force"] == "false"
 
 
-def test_execute_needs_a_matching_successful_dry_run(env):
+def test_execute_needs_a_matching_successful_dry_run(env, monkeypatch):
+    _pause_scan(env, monkeypatch)
     stored = store.legacy_fingerprint({"operation": "pause_legacy", "endpoints": "ep-a"})
-    env.store["applies"].append({"apply_id": DRY_OK, "mode": "dry_run", "operation": "pause_legacy",
+    env.store["applies"].append({"apply_id": DRY_OK, "mode": "dry_run", "started_at": now_ts(), "operation": "pause_legacy",
                                  "status": "SUCCEEDED", "job_run_id": "700", "fingerprint": stored})
     assert _post(env, operation="pause_legacy", mode="execute", endpoints=["ep-a"], confirm="PAUSE ep-a").status_code == 400
     r = _post(env, operation="pause_legacy", mode="execute", endpoints=["ep-a"], confirm="PAUSE ep-a", dry_run_id=DRY_OK)
-    assert r.status_code == 200 and env.sdk.jobs.run_now.call_args.kwargs["job_parameters"]["mode"] == "execute"
+    params = env.sdk.jobs.run_now.call_args.kwargs["job_parameters"]
+    assert r.status_code == 200 and params["mode"] == "execute" and params["dry_run_id"] == DRY_OK
     r = _post(env, operation="pause_legacy", mode="execute", endpoints=["ep-b"], confirm="PAUSE ep-b", dry_run_id=DRY_OK)
     assert r.status_code == 409 and "changed" in r.json()["detail"]
 
 
 def test_a_dry_run_of_another_operation_does_not_count(env):
     stored = store.legacy_fingerprint({"operation": "enable_tracking", "endpoints": "ep-a"})
-    env.store["applies"].append({"apply_id": DRY_OK, "mode": "dry_run", "operation": "enable_tracking",
+    env.store["applies"].append({"apply_id": DRY_OK, "mode": "dry_run", "started_at": now_ts(), "operation": "enable_tracking",
                                  "status": "SUCCEEDED", "job_run_id": "700", "fingerprint": stored})
     r = _post(env, operation="pause_legacy", mode="execute", endpoints=["ep-a"], confirm="PAUSE ep-a", dry_run_id=DRY_OK)
     assert r.status_code == 400 and env.sdk.jobs.run_now.call_count == 0
+
+
+def test_pause_with_traffic_needs_the_acknowledgement_on_the_server(env, monkeypatch):
+    _pause_scan(env, monkeypatch, requests=7)
+    r = _post(env, operation="pause_legacy", endpoints=["ep-a"], scan_run_id=SCAN)
+    assert r.status_code == 409 and "7 legacy requests" in r.json()["detail"]
+    assert env.sdk.jobs.run_now.call_count == 0
+    assert _post(env, operation="pause_legacy", endpoints=["ep-a"], scan_run_id=SCAN, ack_traffic=True).status_code == 200
+    # The acknowledgement is the job's force override (the job refuses recent traffic without it), and it is part of
+    # the fingerprint, so the execute must carry it too.
+    assert env.sdk.jobs.run_now.call_args.kwargs["job_parameters"]["force"] == "true"
+    assert "dry_run_id" not in env.sdk.jobs.run_now.call_args.kwargs["job_parameters"]
+    assert _post(env, operation="pause_legacy", endpoints=["ep-a"], traffic_window="1y").status_code == 400
+
+
+@pytest.mark.parametrize("missing, failing", [(True, False), (False, True)])
+def test_pause_is_refused_when_traffic_cannot_be_read(env, monkeypatch, missing, failing):
+    _pause_scan(env, monkeypatch, missing=missing, failing=failing)
+    r = _post(env, operation="pause_legacy", endpoints=["ep-a"], ack_traffic=True)
+    assert r.status_code == 409 and "wasn't paused" in r.json()["detail"]
+    assert env.sdk.jobs.run_now.call_count == 0
+
+
+def test_traffic_check_with_a_missing_system_table_is_unknown_not_zero(env, monkeypatch):
+    _pause_scan(env, monkeypatch, missing=True)
+    r = env.client.get("/api/cutover/traffic?window=24h", headers=OP).json()
+    assert r["total_requests"] is None and r["endpoints"] == [] and "system table" in r["traffic_error"]
+
+
+def test_pause_of_an_endpoint_outside_the_plan_is_refused(env, monkeypatch):
+    _pause_scan(env, monkeypatch)
+    r = _post(env, operation="pause_legacy", endpoints=["ep-z"])
+    assert r.status_code == 409 and "plan" in r.json()["detail"]
+
+
+def test_old_dry_runs_expire(env, monkeypatch):
+    _pause_scan(env, monkeypatch)
+    stored = store.legacy_fingerprint({"operation": "pause_legacy", "endpoints": "ep-a"})
+    env.store["applies"].append({"apply_id": DRY_OK, "mode": "dry_run", "operation": "pause_legacy",
+                                 "started_at": now_ts(days_ago=main.DRY_RUN_TTL_HOURS / 24 + 0.1),
+                                 "status": "SUCCEEDED", "job_run_id": "700", "fingerprint": stored})
+    r = _post(env, operation="pause_legacy", mode="execute", endpoints=["ep-a"], confirm="PAUSE ep-a", dry_run_id=DRY_OK)
+    assert r.status_code == 409 and "hours old" in r.json()["detail"]
+    env.store["applies"][0]["started_at"] = now_ts(days_ago=2)
+    r = env.client.post("/api/applies", json=EXECUTE_BODY, headers=OP)
+    assert r.status_code == 409 and "hours old" in r.json()["detail"]
+    assert env.sdk.jobs.run_now.call_count == 0
+
+
+def test_run_details_and_exports_are_for_the_requester_operators_and_admins(env, monkeypatch):
+    viewer, other = as_user(VIEWER_TOKEN, VIEWER_EMAIL), "zz@example.com"
+    env.store["applies"][0]["requested_by"] = OP_EMAIL
+    env.store["scans"][0]["requested_by"] = other
+    paths = [f"/api/scans/{SCAN}", f"/api/scans/{SCAN}/refs", f"/api/scans/{SCAN}/export/plan",
+             f"/api/applies/{DRY}", f"/api/applies/{DRY}/export"]
+    monkeypatch.setattr(main, "APPLY_RUNS", "1 = 1")
+    for path in paths:
+        assert env.client.get(path, headers=viewer).status_code == 403, path
+        assert env.client.get(path, headers=OP).status_code == 200, path
+    env.store["scans"][0]["requested_by"] = VIEWER_EMAIL
+    assert env.client.get(f"/api/scans/{SCAN}", headers=viewer).status_code == 200
+    # A workspace admin who isn't an operator can read every run.
+    monkeypatch.setattr(main, "is_workspace_admin", lambda request: True)
+    assert env.client.get(f"/api/applies/{DRY}/export", headers=viewer).status_code == 200
+    assert env.client.get(f"/api/applies/{DRY}", headers=as_user("bogus")).status_code == 401
+
+
+def test_cutover_run_detail_and_export_check_the_requester(env):
+    run = "dddddddd-1111-2222-3333-444444444444"
+    env.store["applies"].append({"apply_id": run, "mode": "execute", "operation": "test_call", "status": "SUCCEEDED",
+                                 "requested_by": OP_EMAIL, "job_run_id": "1"})
+    viewer = as_user(VIEWER_TOKEN, VIEWER_EMAIL)
+    for path in (f"/api/cutover/{run}", f"/api/cutover/{run}/export"):
+        assert env.client.get(path, headers=viewer).status_code == 403, path
+        assert env.client.get(path, headers=OP).status_code == 200, path
+
+
+def test_workspace_admin_comes_from_the_token_groups(env, monkeypatch):
+    class AdminWC(FakeWC):
+        def me(self):
+            return SimpleNamespace(user_name=TOKENS[self._token], groups=[SimpleNamespace(display="admins")])
+    monkeypatch.setattr(main, "WorkspaceClient", AdminWC)
+    assert main.is_workspace_admin(SimpleNamespace(headers={"x-forwarded-access-token": VIEWER_TOKEN})) is True
+    monkeypatch.setattr(main, "_admins", {})
+    monkeypatch.setattr(main, "WorkspaceClient", FakeWC)
+    assert main.is_workspace_admin(SimpleNamespace(headers={"x-forwarded-access-token": VIEWER_TOKEN})) is False
+    assert main.is_workspace_admin(SimpleNamespace(headers={})) is False
+
+
+def test_test_call_says_who_it_runs_as(env):
+    env.sdk.jobs.get.return_value = SimpleNamespace(settings=SimpleNamespace(
+        run_as=SimpleNamespace(service_principal_name="sp-app-123", user_name=None)), creator_user_name="admin@x.com")
+    r = _post(env, operation="test_call", services=["system.ai.gpt-5-mini"])
+    assert r.status_code == 200 and r.json()["runs_as"] == "sp-app-123"
+    assert env.client.get("/api/config").json()["jobs_run_as"] == "sp-app-123"
 
 
 def test_test_call_checks_services_api_type_and_prompt(env):
@@ -823,7 +866,7 @@ def test_traffic_lists_every_legacy_endpoint_with_its_class_from_the_scan(env, m
     seen = {}
     base = make_query(env.store)
 
-    def fake(request, sql, params=None):
+    def fake(request, sql, params=None, **kw):
         if "system.serving.endpoint_usage" in sql:
             seen["params"] = params
             return [{"source": "v1", "endpoint_name": "ep-a", "requester": "a@x.com", "requests": "3",
@@ -851,7 +894,7 @@ def test_traffic_counts_failed_and_tokens_and_flags_v2_calls_that_fail(env, monk
     ]
     base = make_query(env.store)
 
-    def fake(request, sql, params=None):
+    def fake(request, sql, params=None, **kw):
         if "system.serving.endpoint_usage" in sql:
             return [{"source": "v1", "endpoint_name": "ep-a", "requester": "a@x.com", "requests": "10", "failed": "1",
                      "tokens": "2500", "last_request": "2026-11-01 10:00:00"},
@@ -885,7 +928,7 @@ def test_usage_inputs_are_checked_and_the_export_is_guarded(env, monkeypatch):
              "api_type": "mlflow/v1/chat/completions", "destination_model": "gpt", "requests": "2",
              "invocations": "2", "total_tokens": "10", "average_latency_ms": "100", "p95_latency_ms": "200",
              "error_invocations": "0", "last_request": "2026-11-01 10:00:00"}]
-    monkeypatch.setattr(main, "query", lambda request, sql, params=None: rows)
+    monkeypatch.setattr(main, "query", lambda request, sql, params=None, **kw: rows)
     assert env.client.get("/api/usage/summary?window=2d", headers=OP).status_code == 400
     assert env.client.get("/api/usage/summary?service=a.b", headers=OP).status_code == 400
     r = env.client.get("/api/usage/summary?window=7d&service=system.ai.gpt-5-mini", headers=OP)

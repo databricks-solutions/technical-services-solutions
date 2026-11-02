@@ -9,3 +9,6 @@ ug_migration_out/
 ug_account_out/
 apply_log.jsonl
 *.tf
+
+# The repo root ignores *conf*.json; the frontend build needs this one
+!app/frontend/tsconfig.json

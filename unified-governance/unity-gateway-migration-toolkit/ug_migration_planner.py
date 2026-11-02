@@ -113,7 +113,7 @@ class PlanRow:
     api_types: list[str] = field(default_factory=list)  # v2 routes seen in the window, e.g. mlflow/v1/chat/completions
     tokens_window: int = 0  # input + output tokens in the window (v1 and v2); shown, not used for decisions
     v2_tokens: int = 0  # part of tokens_window from AI Gateway v2 (total_tokens)
-    v2_failed: int = 0  # v2 requests with no status, or status 0, 403, 404, 410 or 500 and up (see V2_CALLER_SQL)
+    v2_failed: int = 0  # v2 requests with no status, or status 0 or 501 (see V2_CALLER_SQL)
     v2_status_501: int = 0  # v2 requests answered with HTTP 501: v2 is off for this workspace
     target_api_types: list[str] = field(default_factory=list)  # supported_api_types of the target model service
 
@@ -348,17 +348,35 @@ def inventory(w: WorkspaceClient) -> list[LegacyEndpoint]:
     return out
 
 
-def v2_workspace_endpoints(usage: dict[str, dict], known: Iterable[str]) -> list[LegacyEndpoint]:
-    """Workspace-bound AI Gateway v2 endpoints: names with v2 traffic in the window that aren't serving endpoints.
+def v2_workspace_endpoints(usage: dict[str, dict], known: Iterable[str],
+                           dormant: Iterable[str] = ()) -> list[LegacyEndpoint]:
+    """Workspace-bound AI Gateway v2 endpoints: names with v2 traffic that aren't serving endpoints.
 
     Measured: they have no serving-endpoint object, so the serving list doesn't show them. Their only trace is
-    system.ai_gateway.usage, so they are inventoried from the traffic.
+    system.ai_gateway.usage, so they are inventoried from the traffic: the ones with v2 requests in the window,
+    plus dormant ones (v2 requests only before the window, see v2_endpoint_history), so code that still names a
+    dormant v2 endpoint is found by the scan.
     """
     known = set(known)
+    names = {name for name in usage if int(usage[name].get("v2_requests") or 0)} | set(dormant)
     return [LegacyEndpoint(name=name, endpoint_id=None, kind="v2_workspace_endpoint", source=V2_SOURCE,
                            destinations=[{"served_entity": None, "type": "v2_workspace", "model": name}])
-            for name in sorted(usage)
-            if name not in known and int(usage[name].get("v2_requests") or 0)]
+            for name in sorted(names) if name and name not in known]
+
+
+# How far back to look for v2 endpoint names with no traffic in the window (system table retention permitting).
+V2_HISTORY_DAYS = 365
+
+
+def v2_endpoint_history(w: WorkspaceClient, warehouse_id: str | None, workspace_id: str,
+                        days: int = V2_HISTORY_DAYS) -> list[str]:
+    """Every endpoint name with AI Gateway v2 requests in the last `days` days (names only, no counts)."""
+    rows = _sql(w, warehouse_id, f"""
+        SELECT DISTINCT endpoint_name FROM system.ai_gateway.usage
+        WHERE workspace_id = :ws AND service_type IS NULL AND endpoint_name IS NOT NULL
+          AND event_time >= current_timestamp() - INTERVAL {int(days)} DAYS
+    """, {"ws": workspace_id})
+    return sorted({r["endpoint_name"] for r in rows if r.get("endpoint_name")})
 
 
 # Coverage value of system_ai_map when the listing says Unity Gateway isn't on here (readiness makes it a blocker).
@@ -442,13 +460,13 @@ def system_ai_map(w: WorkspaceClient, coverage: dict[str, str] | None = None,
 # AI Gateway v2 requests on legacy endpoints are logged only in system.ai_gateway.usage (rows without a
 # service_type), not in system.serving.endpoint_usage. Measured 2026-10-31: an endpoint with 2.2M v2 requests in
 # 7 days had no endpoint_usage rows, so both tables are read and summed.
-# failed counts the rows with no status code, or status 0, 403, 404, 410 or 500 and up (400 and 429 are caller or rate-limit errors, not a gateway that is off). status_501 counts HTTP 501: v2 is off
+# failed counts the rows with no status code, or status 0 or 501 (other 4xx and 5xx can be caller, permission, rate-limit or provider errors, not a gateway that is off). status_501 counts HTTP 501: v2 is off
 # for the workspace (Enforce retires v2 with 501), so those calls already fail. Both are kept apart from requests.
 # One row per (endpoint, requester, user agent, URL, API type). Everything v2 is derived from it in Python: totals,
 # requesters, routes (api_type) and caller classes (user agent and URL tell the caller apart).
 V2_CALLER_SQL = """
         SELECT endpoint_name, requester, user_agent, url, api_type, count(*) AS requests,
-               sum(CASE WHEN status_code IS NULL OR status_code IN (0, 403, 404, 410) OR status_code >= 500 THEN 1 ELSE 0 END) AS failed,
+               sum(CASE WHEN status_code IS NULL OR status_code IN (0, 501) THEN 1 ELSE 0 END) AS failed,
                sum(CASE WHEN status_code = 501 THEN 1 ELSE 0 END) AS status_501,
                coalesce(sum(total_tokens), 0) AS tokens,
                CAST(max(event_time) AS STRING) AS last_request
@@ -959,6 +977,7 @@ def plan(endpoints: list[LegacyEndpoint], sys_map: dict[str, str], usage: dict[s
 
 EMBEDDING_RE = re.compile(r"(gte|bge|e5|embedding|embed)", re.I)
 # ai_query('name', ...) across lines, allowing SQL comments between "(" and the endpoint argument.
+AI_QUERY_CALL_RE = re.compile(r"\bai_query\s*\(", re.I)
 AI_QUERY_RE = re.compile(r"ai_query\s*\((?:\s|--[^\n]*\n|/\*.*?\*/)*(['\"])([A-Za-z0-9_.\-]+)\1", re.I | re.S)
 # /serving-endpoints URLs; group 1 marks management APIs (/api/2.x/serving-endpoints), which aren't inference.
 SERVING_URL_RE = re.compile(r"(/api/2\.\d)?/serving-endpoints(?:/([A-Za-z0-9_\-]+))?(/[A-Za-z0-9_\-/]+)?")
@@ -971,6 +990,8 @@ CONFIG_KEY_RE = re.compile(r"(endpoint|model|llm|embed|serving|chat|default|depl
 ROUTE_URL_RE = re.compile(r"https?://[A-Za-z0-9.\-]+\.serving\.(?:azure)?databricks\.(?:com|net)(?:/[^\s'\"<>)]*)?")
 # "/serving-endpoints/" followed by a variable, f-string brace, format placeholder or concatenation.
 DYNAMIC_URL_RE = re.compile(r"/serving-endpoints/(?:[{$%'\"]|\s*\+)")
+DYNAMIC_URL_SUGGESTION = ("manual: the endpoint name is built at run time, so no URL can be rewritten here; "
+                          "point this call at /ai-gateway/mlflow/v1 with the model service name")
 # Short or common names ("test", "gpt") only count when the line says what they are for.
 GENERIC_NAMES = {"test", "default", "model", "llm", "chat", "prod", "dev", "demo", "embed", "embedding", "endpoint", "main"}
 KEY_CONTEXT_RE = re.compile(r"(endpoint|model|serving|llm|embed)\w*['\"]?\s*[:=(,]\s*$", re.I)
@@ -995,8 +1016,10 @@ SECRET_VALUE_RES = [
     # not. Names match only at word or underscore boundaries, so keyboard or monkey_patch don't.
     re.compile(r"(?i)(\b(?:[a-z0-9]+[_\-])*(?:api[_\-]?key|access[_\-]?key|private[_\-]?key|key|secret|token"
                r"|pass(?:word|wd|phrase)?|passwd|pwd|credential|authorization)(?:[_\-][a-z0-9_\-]*)?\b"
-               r"['\"]?\s*[:=]\s*(?:f?['\"](?:Bearer\s+)?|Bearer\s+)?)"
-               r"(?!\{\{)([^'\"\s{},;)\]]{6,})"),
+               r"['\"]?\]?\s*[:=]\s*(?:f?['\"](?:Bearer\s+)?|Bearer\s+)?)"
+               r"(?!\{\{|Bearer\b)([^'\"\s{},;)\]]{6,})"),
+    # Azure-style connection strings: AccountKey=...;  SharedAccessKey=...;
+    re.compile(r"(?i)(\b(?:Account|SharedAccess)Key\s*=\s*)([^;'\"\s]{6,})"),
 ]
 
 
@@ -1004,7 +1027,8 @@ def scrub(line: str | None) -> str | None:
     """Hide credential-looking values in a stored code line (keys, tokens, passwords), quoted or not."""
     if not line:
         return line
-    line = SECRET_VALUE_RES[1].sub(lambda m: m.group(1) + "<hidden>", line)
+    for pattern in SECRET_VALUE_RES[1:]:
+        line = pattern.sub(lambda m: m.group(1) + "<hidden>", line)
     return SECRET_VALUE_RES[0].sub("<hidden>", line)
 
 
@@ -1086,6 +1110,13 @@ class Scanner:
         if name.startswith("databricks-"):
             return f"{name} has no system.ai model service (likely retired); pick a current system.ai model"
         return "map to a system.ai model service"
+
+    def _ai_query_variable_suggestion(self, name: str) -> str:
+        target = self._target_for(name)
+        return (f"manual: this file calls ai_query, and {name} may reach it through a variable. ai_query only calls "
+                "system.ai model services, so for ai_query set the variable to a system.ai model (or keep "
+                f"{name} until ai_query can call Unity Gateway model services); other clients can use "
+                f"'{target or '<model service>'}' on /ai-gateway/")
 
     def _mlflow_predict_suggestion(self, name: str) -> str:
         target = self._target_for(name)
@@ -1218,9 +1249,7 @@ class Scanner:
                               "management API on legacy serving endpoints (create/update/permissions): move this "
                               "automation to the Unity Gateway APIs or Terraform resources; not an inference call")
                 elif not name and DYNAMIC_URL_RE.search(line):
-                    self._add(asset_type, asset, i, "serving_endpoints_url", m.group(0), None,
-                              "manual: the endpoint name is built at run time, so no URL can be rewritten here; "
-                              "point this call at /ai-gateway/mlflow/v1 with the model service name")
+                    self._add(asset_type, asset, i, "serving_endpoints_url", m.group(0), None, DYNAMIC_URL_SUGGESTION)
                 else:
                     target = self._target_for(name)
                     suggestion = ("use <workspace-url>/ai-gateway/mlflow/v1 with model="
@@ -1274,6 +1303,11 @@ class Scanner:
                     elif name in self.v2_names and MODEL_KEY_RE.search(line[:m.start()]) \
                             and "/ai-gateway/" in text[max(0, at - GATEWAY_WINDOW):at + GATEWAY_WINDOW]:
                         self._v2_model(asset_type, asset, i, m.group(0), name, text, at)
+                    elif AI_QUERY_CALL_RE.search(text) and not (self._target_for(name) or "").startswith("system.ai."):
+                        # The name likely feeds ai_query through a variable. ai_query only calls system.ai services,
+                        # so a custom model service name would break it: never rewritten.
+                        self._add(asset_type, asset, i, "legacy_endpoint_name", m.group(0), name,
+                                  self._ai_query_variable_suggestion(name), fixable=False)
                     else:
                         self._add(asset_type, asset, i, "legacy_endpoint_name", m.group(0), name,
                                   f"replace with '{self._target_for(name) or '<model service>'}' "
@@ -1352,6 +1386,33 @@ class Scanner:
 
 
 TOOLKIT_MARKERS = {"ug_migration_planner.py", "ug_migration_toolkit.marker"}
+# Binary and media files: never source code, so leaving them out is not reported as a coverage note.
+BINARY_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp", ".bmp", ".pdf", ".zip", ".gz", ".tgz",
+               ".tar", ".whl", ".jar", ".egg", ".so", ".dylib", ".dll", ".exe", ".bin", ".pyc", ".class", ".parquet",
+               ".avro", ".orc", ".delta", ".pkl", ".pickle", ".pt", ".pth", ".onnx", ".safetensors", ".h5", ".npy",
+               ".npz", ".xlsx", ".xls", ".docx", ".pptx", ".mp4", ".mp3", ".wav", ".woff", ".woff2", ".ttf", ".otf",
+               ".lock", ".dbc"}
+
+
+def _count_skipped_type(counts: dict[str, int], path: str) -> None:
+    """Count a file left out of the scan by its extension, unless it's a binary or media file."""
+    name = path.rsplit("/", 1)[-1].rsplit(os.sep, 1)[-1]
+    ext = os.path.splitext(name)[1].lower() or "(no extension)"
+    if ext not in BINARY_EXTS:
+        counts[ext] = counts.get(ext, 0) + 1
+
+
+def _skipped_note(dirs: list[str], types: dict[str, int]) -> str | None:
+    """Coverage note for what a walk left out on purpose (dependency/build folders, other file types), or None."""
+    parts = []
+    if dirs:
+        names = sorted({d.rstrip("/").rsplit("/", 1)[-1].rsplit(os.sep, 1)[-1] for d in dirs})
+        parts.append(f"{_n(len(dirs), 'dependency or build folder')} ({', '.join(names[:6])})")
+    if types:
+        top = sorted(types.items(), key=lambda kv: (-kv[1], kv[0]))
+        parts.append(f"{_n(sum(types.values()), 'file')} of other types ("
+                     + ", ".join(f"{ext} {n}" for ext, n in top[:6]) + (" ..." if len(top) > 6 else "") + ")")
+    return f"{NOT_SCANNED}: " + "; ".join(parts) if parts else None
 
 
 def _walk_workspace(w: WorkspaceClient, roots: list[str], max_objects: int, threads: int = 16,
@@ -1375,6 +1436,8 @@ def _walk_workspace(w: WorkspaceClient, roots: list[str], max_objects: int, thre
 
     roots = list(dict.fromkeys(roots))
     found, level, seen_dirs, skipped = [], [(r, r) for r in roots], set(), []
+    skipped_dirs: list[str] = []  # dependency and build folders not entered
+    skipped_types: dict[str, int] = {}  # extension -> files left out because accept() refused them
     counts = {r: 0 for r in roots}  # accepted objects per root
     with ThreadPoolExecutor(max_workers=threads) as pool:
         while level:
@@ -1389,16 +1452,23 @@ def _walk_workspace(w: WorkspaceClient, roots: list[str], max_objects: int, thre
                 for o in objects:
                     t = o.get("object_type")
                     if t in ("DIRECTORY", "REPO"):
-                        if o["path"].rsplit("/", 1)[-1] in SKIP_DIRS or o["path"] in seen_dirs:
+                        if o["path"] in seen_dirs:
+                            continue
+                        if o["path"].rsplit("/", 1)[-1] in SKIP_DIRS:
+                            skipped_dirs.append(o["path"])
                             continue
                         seen_dirs.add(o["path"])
                         next_level.append((root, o["path"]))
-                    elif t in ("NOTEBOOK", "FILE") and (accept is None or accept(o)) and counts[root] < max_objects:
+                    elif t in ("NOTEBOOK", "FILE") and accept is not None and not accept(o):
+                        _count_skipped_type(skipped_types, o.get("path", ""))
+                    elif t in ("NOTEBOOK", "FILE") and counts[root] < max_objects:
                         counts[root] += 1
                         found.append(o)
             level = next_level
     _walk_workspace.last_failures = failures
     _walk_workspace.skipped = skipped
+    _walk_workspace.skipped_dirs = skipped_dirs
+    _walk_workspace.skipped_types = skipped_types
     if skipped:
         _log(f"  skipped the toolkit's own folders: {', '.join(skipped[:5])}")
     _walk_workspace.truncated = any(c >= max_objects for c in counts.values())
@@ -1438,6 +1508,9 @@ def scan_workspace(w: WorkspaceClient, scanner: Scanner, roots: list[str], max_o
     if getattr(_walk_workspace, "skipped", None):
         scanner.note("workspace_files", f"partial: {len(_walk_workspace.skipped)} folders skipped "
                                         "(the toolkit's own install)")
+    left_out = _skipped_note(getattr(_walk_workspace, "skipped_dirs", []), getattr(_walk_workspace, "skipped_types", {}))
+    if left_out:
+        scanner.note("workspace_files_skipped", left_out)
     export_failures = []
 
     def export(o):
@@ -1492,12 +1565,16 @@ def scan_local(scanner: Scanner, paths: list[str], max_bytes: int = 2_000_000) -
     by_hash: dict[str, list[str]] = {}
     texts: dict[str, tuple[str, str]] = {}
     files = oversize = 0
+    skipped_dirs: list[str] = []
+    skipped_types: dict[str, int] = {}
     for root_path in paths:
         root_path = os.path.abspath(os.path.expanduser(root_path))
         for root, dirs, names in os.walk(root_path):
+            skipped_dirs += [os.path.join(root, d) for d in dirs if d in SKIP_DIRS]
             dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
             for n in names:
                 if not n.lower().endswith(LOCAL_EXTS) and n not in ("Dockerfile", "databricks.yml", ".env"):
+                    _count_skipped_type(skipped_types, n)
                     continue
                 path = os.path.join(root, n)
                 try:
@@ -1517,6 +1594,9 @@ def scan_local(scanner: Scanner, paths: list[str], max_bytes: int = 2_000_000) -
                 texts.setdefault(h, (rel, text))
     if oversize:
         scanner.note("local_files", f"partial: {oversize} files over {max_bytes // 1_000_000} MB not scanned")
+    left_out = _skipped_note(skipped_dirs, skipped_types)
+    if left_out:
+        scanner.note("local_files_skipped", left_out)
     for h, (rel, text) in texts.items():
         paths_for = by_hash[h]
         before = len(scanner.refs)
@@ -1805,16 +1885,20 @@ def scan_vector_search(w: WorkspaceClient, scanner: Scanner) -> None:
                     name = col.embedding_model_endpoint_name
                     if name and not name.startswith("system.ai."):
                         scanner._add("vector_search_index", f"index {idx.name}", None, "embedding_endpoint", name,
-                                     name, "re-create the index on a system.ai embedding service once AI Search "
-                                           "supports it (the source is re-embedded; check the current AI Search docs "
-                                           "for when). Until then, don't enforce or rate-limit this endpoint to 0. "
-                                           "Self-managed embeddings are a possible workaround: check the current "
-                                           "AI Search docs before relying on one")
+                                     name, AI_SEARCH_KEEP_TEXT)
     except Exception as error:
         _log(f"  could not list AI Search indexes: {error}")
         scanner.note("vector_search", f"failed: {str(error)[:120]}")
     scanner.note("vector_search", f"partial: {bad} unreadable" if bad else "ok")
     _log(f"  scanned {n} AI Search indexes")
+
+
+AI_SEARCH_KEEP_TEXT = ("keep this embedding endpoint: AI Search indexes can't embed with a system.ai service yet, "
+                       "so don't enforce Unity Gateway or rate-limit the endpoint to 0 while the index uses it. "
+                       "Check the current AI Search docs for when re-indexing on Unity Gateway is supported. "
+                       "Self-managed embeddings are a possible workaround: check the docs before relying on one")
+AI_SEARCH_KEEP_ACTION = ("keep the endpoint and don't enforce Unity Gateway until AI Search supports system.ai "
+                         "embeddings (check the current AI Search docs)")
 
 
 def annotate_dependencies(rows: list[PlanRow], refs: list[ClientReference], days: int = 30) -> None:
@@ -1833,7 +1917,8 @@ def annotate_dependencies(rows: list[PlanRow], refs: list[ClientReference], days
         apps = [d.asset.removeprefix("app ") for d in deps if d.asset_type == "app"]
         if indexes:
             row.needs_human.append(f"embedding model for {len(indexes)} AI Search index(es) "
-                                   f"({', '.join(indexes[:3])}): blocks Enforce until re-indexed")
+                                   f"({', '.join(indexes[:3])}): keep the endpoint; blocks Enforce until AI Search "
+                                   "supports system.ai embeddings")
         if apps:
             row.needs_human.append(f"app resource in {', '.join(apps[:3])}: update the app before Enforce")
         if row.requests_window == 0 and any(n.startswith(NO_TRAFFIC_NEED) for n in row.needs_human):
@@ -2037,7 +2122,7 @@ def _class_text(classes: dict[str, int]) -> str:
 
 
 # v2 calls are "already failing" when at least V2_FAILING_MIN_REQUESTS v2 requests were made and at least
-# V2_FAILING_SHARE_PERCENT of them failed. Failed means no status code, or status 0, 403, 404, 410 or 500 and up (400 and 429 are caller or rate-limit errors, not a gateway that is off).
+# V2_FAILING_SHARE_PERCENT of them failed. Failed means no status code, or status 0 or 501 (other 4xx and 5xx can be caller, permission, rate-limit or provider errors, not a gateway that is off).
 V2_FAILING_MIN_REQUESTS = 10
 V2_FAILING_SHARE_PERCENT = 95
 V2_OFF_LABEL = "v2 calls are already failing in this workspace"
@@ -2077,6 +2162,9 @@ def readiness(rows: list[PlanRow], refs: list[ClientReference], traffic_ok: bool
     by_name = {e.name: e for e in endpoints or []}
     row_by = {r.legacy_endpoint: r for r in rows}
     v2_names = {e.name for e in endpoints or [] if e.kind == "v2_workspace_endpoint"}
+    # Endpoints that retire (custom model and feature serving don't): unresolved calls only matter if any exist.
+    retiring = any(r.action != "out_of_scope" for r in rows)
+    index_endpoints = {x.legacy_endpoint for x in refs if x.asset_type == "vector_search_index" and x.legacy_endpoint}
     classes_by_ep = _classes_by_endpoint(callers)
     agents_by_ep = _coding_agents_by_endpoint(callers)
     traffic_blockers: dict[str, dict] = {}
@@ -2143,10 +2231,9 @@ def readiness(rows: list[PlanRow], refs: list[ClientReference], traffic_ok: bool
         loc = x.asset + (f":{x.line}" if x.line else "")
         if x.asset_type == "vector_search_index":
             blockers.append(_flag("vector_search", x.asset.removeprefix("index "),
-                                  f"embeds with {x.legacy_endpoint}; re-index before enforcing",
-                                  "AI Search index embeds with a legacy endpoint",
-                                  "re-index it on a system.ai embedding service, or keep the endpoint until "
-                                  "AI Search supports it"))
+                                  f"embeds with {x.legacy_endpoint}; AI Search can't embed with a system.ai service "
+                                  "yet",
+                                  "AI Search index embeds with a legacy endpoint", AI_SEARCH_KEEP_ACTION))
         elif x.asset_type in ("knowledge_assistant", "supervisor_agent"):
             blockers.append(_flag("agent_bricks_vector_search", x.asset, x.suggestion,
                                   "Agent Bricks agent uses AI Search",
@@ -2169,6 +2256,17 @@ def readiness(rows: list[PlanRow], refs: list[ClientReference], traffic_ok: bool
             blockers.append(_flag("ai_query_custom", loc, detail,
                                   "ai_query calls a model with no Unity Gateway service yet",
                                   "keep this call, or switch it to a system.ai model (see CODE_FIXES.md)"))
+        elif x.pattern == "serving_endpoints_url" and not x.legacy_endpoint \
+                and x.suggestion == DYNAMIC_URL_SUGGESTION and retiring:
+            # The name is built at run time, so the scan can't tell whether this call reaches a legacy endpoint.
+            # With legacy endpoints in the workspace that is an unknown caller, so it holds readiness back.
+            blockers.append(_flag("unresolved_endpoint_call", loc,
+                                  "a /serving-endpoints/ call whose endpoint name is built at run time: the scan "
+                                  "can't tell whether it reaches a legacy endpoint",
+                                  "Code calls a serving endpoint the scan can't name",
+                                  "find which endpoint it calls at run time. A legacy endpoint: move the call to "
+                                  "/ai-gateway/ (see CODE_FIXES.md). A custom model or feature serving endpoint: "
+                                  "put the name in the code or a config value so the scan can confirm it, then re-scan"))
         elif x.asset_type == "app":
             label, action = _ref_text(x)
             warnings.append(_flag(x.pattern, loc, x.suggestion, label, action))
@@ -2210,6 +2308,13 @@ def readiness(rows: list[PlanRow], refs: list[ClientReference], traffic_ok: bool
             blockers.append(_flag("v2_workspace_call", ep_name, detail, "Code calls a v2 workspace endpoint",
                                   f"set the model to {target or 'a model service'} and keep the /ai-gateway/ route "
                                   "(see CODE_FIXES.md), then re-scan"))
+        elif ep_name in index_endpoints:
+            # The same embedding endpoint also feeds an AI Search index: only the direct calls move.
+            blockers.append(_flag("pay_per_token_call", ep_name, detail,
+                                  "Code calls a Databricks pay-per-token endpoint",
+                                  f"switch only the direct query calls to {target or 'a model service'} (see "
+                                  "CODE_FIXES.md), then re-scan. Keep the endpoint itself: an AI Search index still "
+                                  "embeds with it"))
         else:
             blockers.append(_flag("pay_per_token_call", ep_name, detail,
                                   "Code calls a Databricks pay-per-token endpoint",
@@ -2240,12 +2345,21 @@ def readiness(rows: list[PlanRow], refs: list[ClientReference], traffic_ok: bool
                               "Local folders were not scanned",
                               "re-run with --local-path for each cloned repo or bundle folder, or confirm that none "
                               "calls a legacy endpoint"))
+    left_out = {k: v for k, v in notes.items() if k.endswith("_skipped")}
+    if scanned and left_out:
+        # Dependency and build folders and other file types are left out on purpose; a caller there would be
+        # missed, so their absence caps READY the same way unscanned local folders do.
+        warnings.append(_flag("skipped_paths_not_scanned", ", ".join(sorted(left_out)),
+                              "; ".join(f"{k}: {v[len(NOT_SCANNED) + 2:]}" for k, v in sorted(left_out.items())),
+                              "Some folders or file types were not scanned",
+                              "check the listed folders and file types for calls to legacy endpoints, or confirm "
+                              "they hold none (vendored packages and build output usually don't)"))
     referenced = {x.legacy_endpoint for x in refs if x.legacy_endpoint}
     if traffic_ok:
         # Measured: endpoints with usage tracking off still log rows in system.serving.endpoint_usage, so zero
         # rows isn't proof of "untracked". Warn (callers outside the window), don't hold readiness back.
         untracked = [r.legacy_endpoint for r in rows if not r.requests_window and r.legacy_endpoint in by_name
-                     and by_name[r.legacy_endpoint].usage_tracking is not True]
+                     and r.kind != "v2_workspace_endpoint" and by_name[r.legacy_endpoint].usage_tracking is not True]
         if untracked:
             warnings.append(_flag(
                 "no_traffic_in_window", _n(len(untracked), "endpoint"),
@@ -2254,12 +2368,14 @@ def readiness(rows: list[PlanRow], refs: list[ClientReference], traffic_ok: bool
                 "No requests in the window and usage tracking is off",
                 "confirm with the owners that no infrequent job (monthly, quarterly) calls them"))
         for r in rows:
-            if r.kind == "system_ppt" and not r.requests_window and r.legacy_endpoint not in referenced:
+            if r.kind in ("system_ppt", "v2_workspace_endpoint") and not r.requests_window \
+                    and r.legacy_endpoint not in referenced:
                 warnings.append(_flag(
                     "confirm_infrequent_callers", r.legacy_endpoint,
                     f"no requests in {days} days and no code found that calls it: a job that runs monthly or "
                     "quarterly would not show up in the window",
-                    "Pay-per-token endpoint has no traffic and no known callers",
+                    "Pay-per-token endpoint has no traffic and no known callers" if r.kind == "system_ppt"
+                    else "v2 endpoint had traffic before the window but none in it, and no known callers",
                     "confirm infrequent callers (monthly or quarterly jobs) with the owners before enforcing"))
     candidates = []
     if traffic_ok and not gaps:
@@ -2564,8 +2680,18 @@ def _run(w, out_dir, warehouse_id, days, target_catalog, target_schema, scan_roo
         traffic_status = f"failed: {str(error)[:200]}"
     if not traffic_ok:
         _log(f"  traffic not confirmed: {traffic_status}")
-    # Workspace-bound v2 endpoints exist only in the traffic: add the ones with v2 requests in the window.
-    v2_endpoints = v2_workspace_endpoints(usage, (e.name for e in endpoints))
+    # Workspace-bound v2 endpoints exist only in the traffic: add the ones with v2 requests in the window, and the
+    # dormant ones seen before it, so the scan still finds code that names them.
+    dormant: list[str] = []
+    if traffic_ok:
+        try:
+            dormant = [n for n in v2_endpoint_history(w, warehouse_id, workspace_id, max(days, V2_HISTORY_DAYS))
+                       if not int((usage.get(n) or {}).get("v2_requests") or 0)]
+        except Exception as error:
+            coverage["v2_history"] = f"failed: {str(error)[:120]}"
+        else:
+            coverage["v2_history"] = "ok"
+    v2_endpoints = v2_workspace_endpoints(usage, (e.name for e in endpoints), dormant)
     if v2_endpoints:
         _log(f"  {len(v2_endpoints)} workspace-bound AI Gateway v2 endpoints (not in the serving list)")
     endpoints += v2_endpoints
@@ -2589,7 +2715,8 @@ def _run(w, out_dir, warehouse_id, days, target_catalog, target_schema, scan_roo
         roots += [r for r in app_roots if r not in roots]
         scanner = Scanner((e.name for e in endpoints), sys_map, rows,
                           {e.endpoint_url: e.name for e in endpoints if e.endpoint_url},
-                          v2_names=[n for n, u in usage.items() if int(u.get("v2_requests") or 0)],
+                          v2_names=[e.name for e in endpoints if e.kind == "v2_workspace_endpoint"]
+                          + [n for n, u in usage.items() if int(u.get("v2_requests") or 0)],
                           target_api_types=target_api_types)
         scan_workspace(w, scanner, roots, max_objects, threads)
         scan_jobs(w, scanner)

@@ -50,12 +50,13 @@ Blocker types:
 | `type` | Label in the file | Meaning |
 |---|---|---|
 | `unity_gateway_unavailable` | Unity Gateway isn't available in this workspace | Listing the `system.ai` model services failed with a not-enabled, disabled or 403 error, so Unity Gateway is off for this workspace or account. Nothing can be migrated until it is enabled. The detail gives the error. |
-| `v2_off_failing_calls` | v2 calls are already failing in this workspace | At least 95% of at least 10 v2 requests failed (no status code, or status 0, 403, 404, 410 or 500 and up). v2 is already off, so the callers get errors now. The detail gives failed out of total, and the HTTP 501 count. Move the callers to the `system.ai` target first, keeping the `/ai-gateway/` route. |
+| `v2_off_failing_calls` | v2 calls are already failing in this workspace | At least 95% of at least 10 v2 requests failed (no status code, status 0 or status 501; 403 and 404 aren't counted, because they usually come from the caller). v2 is already off, so the callers get errors now. The detail gives failed out of total, and the HTTP 501 count. Move the callers to the `system.ai` target first, keeping the `/ai-gateway/` route. |
 | `legacy_traffic` | Callers still use a legacy endpoint | Callers other than Databricks-managed ones still send requests. The detail gives requests by caller type, for example `callers by type (requests): coding_agent 1,200, no_client_info 300`. |
-| `pay_per_token_call` | Code calls a Databricks pay-per-token endpoint | Code references a `databricks-*` endpoint. The call fails once Enforce is on. |
+| `pay_per_token_call` | Code calls a Databricks pay-per-token endpoint | Code references a `databricks-*` endpoint. The call fails once Enforce is on. If the endpoint also embeds for an AI Search index, switch only the direct calls and keep the endpoint. |
 | `v2_workspace_call` | Code calls a v2 workspace endpoint | Code calls a workspace-bound v2 endpoint by its flat name. Fix: keep the `/ai-gateway/` route and change the model (see CODE_FIXES.md). |
 | `ai_query_custom` | ai_query calls a model with no Unity Gateway service yet | Keep the call, or switch it to a `system.ai` model. |
-| `vector_search` | AI Search index embeds with a legacy endpoint | Re-index on a `system.ai` embedding service, or keep the endpoint. |
+| `vector_search` | AI Search index embeds with a legacy endpoint | Keep the endpoint, and don't enforce Unity Gateway until AI Search supports `system.ai` embeddings. |
+| `unresolved_endpoint_call` | Code calls a serving endpoint the scan can't name | The endpoint name is built at run time. Find which endpoint the call reaches: move a legacy one to `/ai-gateway/`, and name a custom model or feature serving one in the code so the scan can see it. |
 | `agent_bricks_vector_search` | Agent Bricks agent uses AI Search | Check its index and embedding model. |
 | `app_resource` | App declares a legacy serving endpoint resource | Replace the resource with the Unity Gateway service. |
 | `agent` | Agent endpoint runs on legacy serving | The agent has requests in the window. Redeploy it on Databricks Apps. |
@@ -66,7 +67,8 @@ Warning types:
 |---|---|---|
 | `platform_managed_traffic` | Databricks-managed callers use this endpoint | Only Databricks-managed callers (class `platform`) send traffic. A warning, not a blocker. You can't change these callers. |
 | `local_folders_not_scanned` | Local folders were not scanned | No `--local-path` was given, so cloned repos and bundle folders were not searched. This caps the status at READY_WITH_WARNINGS. |
-| `confirm_infrequent_callers` | Pay-per-token endpoint has no traffic and no known callers | A monthly or quarterly job wouldn't show in the window. Confirm with the owners. |
+| `skipped_paths_not_scanned` | Some folders or file types were not scanned | The scan skipped dependency or build folders, or file types it doesn't read. The detail lists them. Check them, or confirm they hold no calls. This caps the status at READY_WITH_WARNINGS. |
+| `confirm_infrequent_callers` | Pay-per-token or v2 endpoint has no traffic and no known callers | A monthly or quarterly job wouldn't show in the window. v2 endpoints seen in the last year are included. Confirm with the owners. |
 | `no_traffic_in_window` | No requests in the window and usage tracking is off | Confirm with the owners that no infrequent job calls it. |
 | `dormant_agent_endpoint` | Agent endpoint has no traffic in the window | Confirm with the owner that it is unused. |
 | `legacy_traffic_kept_after_enforce` | Callers use an external or PT endpoint that outlives Enforce | It keeps working after Enforce and retires on the deadline in [USER_GUIDE.md](USER_GUIDE.md#the-deadline). |
@@ -177,7 +179,7 @@ One row per legacy endpoint. The columns that changed in 0.10.0:
 - `api_types`: the API types callers use in the window (for example `mlflow/v1/chat/completions` or `openai/v1/responses`).
 - `target_api_types`: what the target service supports. Empty when unknown.
 - `tokens_window`: input plus output tokens in the traffic window (v1 and v2). Shown for sizing; readiness uses requests.
-- `v2_tokens`, `v2_failed`, `v2_status_501`: the v2 part of the window. `v2_failed` counts v2 requests with no status code, or status 0, 403, 404, 410 or 500 and up. `v2_status_501` counts HTTP 501 (v2 is off for the workspace).
+- `v2_tokens`, `v2_failed`, `v2_status_501`: the v2 part of the window. `v2_failed` counts v2 requests with no status code, status 0 or status 501. `v2_status_501` counts HTTP 501 (v2 is off for the workspace).
 
 A `manual` row with a note in `needs_human` means a person has to decide. Typical cases: the target doesn't support an API type callers use, or no `system.ai` model fits.
 

@@ -18,6 +18,7 @@ import io
 import json
 import os
 import re
+import sys
 import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
@@ -31,6 +32,18 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+
+# The toolkit modules (ug_migration_*.py) hold the rules the jobs use; the app imports them so both sides use one
+# copy. A release puts them next to this file (app/backend); in a source checkout they're in the repository root.
+_HERE = Path(__file__).resolve().parent
+for _dir in (_HERE, _HERE.parent.parent):
+    if (_dir / "ug_migration_store.py").exists():
+        if str(_dir) not in sys.path:
+            sys.path.insert(0, str(_dir))
+        break
+import ug_migration_apply as apply_rules  # noqa: E402
+import ug_migration_planner as planner  # noqa: E402
+import ug_migration_store as store  # noqa: E402
 
 WAREHOUSE_ID = os.environ.get("DATABRICKS_WAREHOUSE_ID", "")
 RESULTS_SCHEMA = os.environ.get("RESULTS_SCHEMA", "")
@@ -53,20 +66,18 @@ ID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 SECRET_KEY_RE = re.compile(r"[^/\s{}]+/[^/\s{}]+")
 SECRET_REF_RE = re.compile(r"secrets/([A-Za-z0-9_\-]+)\.([A-Za-z0-9_\-]+)\.([A-Za-z0-9_\-]+)")
 TERMINAL = ("SUCCEEDED", "NEEDS_ATTENTION", "FAILED")
-# Mirrors of the job-side rules in ug_migration_store.py and ug_migration_apply.py. The app is deployed from app/
-# alone, so it can't import them; test_app.py checks that both sides agree on every input it tests.
-# Options that decide what an apply run does; an execute must match the dry run it follows on all of them.
-FINGERPRINT_KEYS = ("scan_run_id", "endpoints", "target_catalog", "target_schema", "uc_secret_map",
-                    "allow_secret_read", "grants", "ack_guardrails")
-FLAG_KEYS = ("allow_secret_read", "grants", "ack_guardrails")
-PROBLEM_ACTIONS = ("error", "manual", "mismatch", "kept", "needs_attention", "smoke_failed", "test_failed", "refused")
+# The job-side rules, used as they are (see the imports above).
+FINGERPRINT_KEYS = store.FINGERPRINT_KEYS  # options that decide what an apply run does; an execute must match its dry run
+PROBLEM_ACTIONS = apply_rules.PROBLEM_ACTIONS
+# An execute must follow a successful dry run of the same settings started at most this many hours ago.
+DRY_RUN_TTL_HOURS = apply_rules.DRY_RUN_TTL_HOURS
 JOB_ENDED_STATES = ("TERMINATED", "INTERNAL_ERROR", "SKIPPED")
 APPLY_RUNS = "(operation IS NULL OR operation = 'apply')"  # apply runs; rows from before cut-over ops have NULL
 CUTOVER_RUNS = "(operation IS NOT NULL AND operation <> 'apply')"
 STARTING_WINDOW_S = 3600  # an id the app started without a result row is "still starting" for this long at most
 
 # One legacy deadline for every legacy endpoint (v1 and v2). Override with UGMIG_DEADLINE (YYYY-MM-DD); the installer
-# sets it. Mirrors ug_migration_planner.LEGACY_DEADLINE and ug_migration_account.LEGACY_DEADLINE (test_app.py checks).
+# sets it. The same value as ug_migration_planner.LEGACY_DEADLINE (test_app.py checks).
 DEADLINE_AS_OF = "2026-11-01"
 
 
@@ -79,12 +90,15 @@ def _validate_deadline(value: str) -> str:
 
 
 LEGACY_DEADLINE = _validate_deadline(os.environ.get("UGMIG_DEADLINE") or "2027-03-30")
-# Old wave names still found in snapshots, shown under the current names (mirrors ug_migration_account).
+# Old wave names still found in snapshots, shown under the current names. A copy of ug_migration_account's (the app
+# doesn't ship that module); test_app.py checks they agree.
 LEGACY_WAVE_NAMES = {"v2 first": "v2 traffic", "0: enforce candidate": "0: no legacy traffic"}
 
 app = FastAPI(title="Unity Gateway Migration")
 _sp: WorkspaceClient | None = None
 _identities: dict[str, tuple[float, str]] = {}  # sha256(token) -> (expires at, user name)
+_admins: dict[str, tuple[float, bool]] = {}  # sha256(token) -> (expires at, in the workspace admins group)
+_job_identities: dict[str, tuple[float, str]] = {}  # job kind -> (expires at, who its runs run as)
 _owners: dict[str, str] = {}  # job run id -> who started it, for runs this process started
 _started: dict[str, dict] = {}  # scan run id / apply id -> {"job_run_id", "at"}, for runs started but not yet stored
 
@@ -166,6 +180,45 @@ def verified_user(request: Request) -> str | None:
     return None
 
 
+def is_workspace_admin(request: Request) -> bool:
+    """The signed-in user is in the workspace admins group (asked of Databricks with their token, cached per token)."""
+    token = request.headers.get("x-forwarded-access-token")
+    if not token:
+        return False
+    key = hashlib.sha256(token.encode()).hexdigest()
+    hit = _admins.get(key)
+    if hit and hit[0] > time.time():
+        return hit[1]
+    try:
+        me = WorkspaceClient(host=sp().config.host, token=token, auth_type="pat").current_user.me()
+        admin = any((g.display or "") == "admins" for g in (getattr(me, "groups", None) or []))
+    except Exception:  # fail closed
+        admin = False
+    if len(_admins) > 1000:
+        _admins.clear()
+    _admins[key] = (time.time() + IDENTITY_TTL_S, admin)
+    return admin
+
+
+def require_run_access(request: Request, requested_by: Any) -> None:
+    """A run's details and exports (results, request ids, replies, errors) are for the person who started it, the
+    app's operators and workspace admins. Lists and the overview stay readable by everyone with access to the app."""
+    user = who(request)
+    if LOCAL_DEV or user in OPERATORS or user == str(requested_by or "").strip().lower() or is_workspace_admin(request):
+        return
+    raise HTTPException(403, "Only the person who started this run, the app's operators and workspace admins can "
+                             "see its details and exports.")
+
+
+def _run_owner(request: Request, kind: str, run_id: str) -> str:
+    """requested_by of a scan or apply run (404 when there is no such run)."""
+    tbl, key = ("ug_migration_scans", "run_id") if kind == "scan" else ("ug_migration_applies", "apply_id")
+    rows = query(request, f"SELECT requested_by FROM {table(tbl)} WHERE {key} = :k", {"k": run_id})
+    if not rows:
+        raise HTTPException(404, "not found")
+    return str(rows[0].get("requested_by") or "")
+
+
 def is_name(v: str) -> bool:
     return bool(v) and bool(NAME_RE.fullmatch(v))
 
@@ -190,7 +243,17 @@ def table(name: str) -> str:
     return ".".join(f"`{part}`" for part in (*RESULTS_SCHEMA.split("."), name))
 
 
-def query(request: Request, sql: str, params: dict | None = None) -> list[dict]:
+class TableMissing(HTTPException):
+    """A table a check reads doesn't exist, or the signed-in user can't see it (both read as TABLE_OR_VIEW_NOT_FOUND)."""
+
+    def __init__(self, message: str):
+        super().__init__(409, message)
+
+
+def query(request: Request, sql: str, params: dict | None = None, missing_ok: bool = True) -> list[dict]:
+    """Rows of one SQL statement, run as the signed-in user. A missing table gives no rows (the toolkit's own tables
+    before the first run). Checks on system tables pass missing_ok=False: they raise TableMissing instead, so a
+    table the user can't see never reads as "no traffic"."""
     w = user_client(request)
     resp = w.statement_execution.execute_statement(
         warehouse_id=WAREHOUSE_ID, statement=sql, wait_timeout="50s",
@@ -205,7 +268,11 @@ def query(request: Request, sql: str, params: dict | None = None) -> list[dict]:
     if resp.status.state != StatementState.SUCCEEDED:
         msg = resp.status.error.message if resp.status.error else str(resp.status.state)
         if "TABLE_OR_VIEW_NOT_FOUND" in msg:
-            return []
+            if missing_ok:
+                return []
+            raise TableMissing(f"Couldn't read a system table this check needs: {msg[:300]} It doesn't exist or you "
+                               "can't see it. Ask an admin to grant you SELECT on the system.serving and "
+                               "system.ai_gateway system tables, then check again.")
         raise HTTPException(502, f"Query failed: {msg[:400]}")
     cols = [c.name for c in resp.manifest.schema.columns]
     if resp.result is None:
@@ -253,7 +320,7 @@ def active_run(kind: str, what: str) -> dict | None:
 
 
 def _ended_state(job_run_id) -> Any:
-    """The state of a job run that has ended, else None. Mirrors store.effective_status (the job side)."""
+    """The state of a job run that has ended, else None (the same rule as store.effective_status)."""
     if not re.fullmatch(r"[0-9]{1,18}", str(job_run_id or "")):
         return None
     try:
@@ -261,13 +328,6 @@ def _ended_state(job_run_id) -> Any:
     except Exception:
         return None
     return st if st and st.life_cycle_state and st.life_cycle_state.value in JOB_ENDED_STATES else None
-
-
-def _effective_status(status: str | None, job_run_id) -> str | None:
-    """A RUNNING row whose job run has ended counts as FAILED (killed job). Mirrors store.effective_status."""
-    if status != "RUNNING":
-        return status
-    return "FAILED" if _ended_state(job_run_id) else status
 
 
 def reconcile(rows: list[dict]) -> list[dict]:
@@ -283,36 +343,6 @@ def reconcile(rows: list[dict]) -> list[dict]:
                 r["error"] = r.get("error") or (f"The job run ended ({st.result_state.value if st.result_state else st.life_cycle_state.value}) "
                                                 "without recording a result.")
     return rows
-
-
-def _summary_dict(summary: Any) -> dict:
-    if isinstance(summary, dict):
-        return summary
-    try:
-        v = json.loads(summary or "{}")
-    except (TypeError, ValueError):
-        return {}
-    return v if isinstance(v, dict) else {}
-
-
-def _rollback_done(status: str | None, summary: Any) -> bool:
-    """Mirrors store.rollback_done: SUCCEEDED, or NEEDS_ATTENTION where every kept object is kept for another run."""
-    if status == "SUCCEEDED":
-        return True
-    if status != "NEEDS_ATTENTION":
-        return False
-    s = _summary_dict(summary)
-    if "kept_other_run" not in s:  # written before this rule: NEEDS_ATTENTION counted as done
-        return True
-    if s.get("kept", 0) != s.get("kept_other_run", 0):
-        return False
-    return not any(s.get(a) for a in PROBLEM_ACTIONS if a != "kept")
-
-
-def _rollback_blocks(rows: list[dict]) -> bool:
-    """Mirrors store.rollback_blocks: a done rollback, or one still really running, blocks another rollback."""
-    return any(_rollback_done(r.get("status"), r.get("summary"))
-               or _effective_status(r.get("status"), r.get("job_run_id")) == "RUNNING" for r in rows)
 
 
 def who(request: Request) -> str:
@@ -365,6 +395,8 @@ def config() -> dict:
             "secret_schemas": sorted(SECRET_SCHEMAS), "allow_secret_read": ALLOW_SECRET_READ,
             "max_scan_age_days": MAX_SCAN_AGE_DAYS, "export_row_limit": EXPORT_ROW_LIMIT,
             "deadline": LEGACY_DEADLINE, "deadline_as_of": DEADLINE_AS_OF,
+            # Scans, apply and the test call run as the jobs' identity, not as the signed-in user.
+            "jobs_run_as": job_identity("apply") or None,
             # Scans read the workspace the app's jobs run in, and only that one.
             "workspace_url": host, "scan_scope": f"This app scans only {host}." if host else
             "This app scans only the workspace it runs in."}
@@ -747,6 +779,7 @@ def scan_detail(run_id: str, request: Request):
         if job_run_id:
             return starting_response("run_id", run_id, job_run_id)
         raise HTTPException(404, "not found")
+    require_run_access(request, meta[0].get("requested_by"))
     items = _items(request, run_id)
     plan = [_parse_row(p) for p in items.get("plan", [])]
     counts = query(request, f"""
@@ -775,6 +808,7 @@ def scan_refs(run_id: str, request: Request, kind: str = "all", q: str = Query("
     check_id(run_id, "scan id")
     if kind not in ("all", "fixes"):
         raise HTTPException(400, "kind must be all or fixes")
+    require_run_access(request, _run_owner(request, "scan", run_id))
     where = "run_id = :r AND item_type = 'ref'"
     params: dict = {"r": run_id}
     if kind == "fixes":
@@ -815,26 +849,6 @@ class ApplyRequest(BaseModel):
     # There is no force field: rollback of changed objects is a command-line decision (USER_GUIDE.md, "Apply from the command line").
 
 
-def _canon(key: str, value: Any) -> Any:
-    """Mirrors ug_migration_store._canon: the same selection gives the same value however it was written."""
-    s = "" if value is None else str(value).strip()
-    if key == "endpoints":
-        return sorted(e.strip() for e in s.split(",") if e.strip())
-    if key == "uc_secret_map" and s:
-        try:
-            return json.dumps(json.loads(s), sort_keys=True)
-        except ValueError:
-            return s
-    return s.lower() if key in FLAG_KEYS else s
-
-
-def selection_fingerprint(params: dict[str, Any]) -> str:
-    """Hash of the selection and options an apply run was started with. An execute must match its dry run's hash.
-    Mirrors ug_migration_store.selection_fingerprint: the dry run stores it on its row, the execute compares."""
-    body = json.dumps({k: _canon(k, params.get(k)) for k in FINGERPRINT_KEYS}, sort_keys=True)
-    return hashlib.sha256(body.encode()).hexdigest()
-
-
 def _age_days(ts: str | None) -> float | None:
     """Days since a UTC timestamp string from the results tables; None if it can't be read."""
     try:
@@ -860,6 +874,13 @@ def _check_scan(request: Request, scan_run_id: str, allow_stale: bool) -> None:
                                  "anyway with allow_stale set.")
 
 
+def _check_dry_run_age(row: dict) -> None:
+    """An execute follows a dry run started at most DRY_RUN_TTL_HOURS ago (the job checks the same)."""
+    if apply_rules.dry_run_expired(row.get("started_at")):
+        raise HTTPException(409, f"That dry run is more than {DRY_RUN_TTL_HOURS} hours old, or its start time can't be "
+                                 "read. Things may have changed since: run a dry run again.")
+
+
 def _verify_dry_run(request: Request, dry_run_id: str, scan_run_id: str, params: dict[str, Any]) -> None:
     """Execute only follows a successful dry run of the same scan, with the same endpoints and options.
 
@@ -869,14 +890,16 @@ def _verify_dry_run(request: Request, dry_run_id: str, scan_run_id: str, params:
     if not dry_run_id:
         raise HTTPException(400, "Run a dry run with this selection first")
     check_id(dry_run_id, "dry run id")
-    rows = reconcile(query(request, f"SELECT mode, status, job_run_id, scan_run_id, fingerprint, operation "
+    rows = reconcile(query(request, f"SELECT mode, status, job_run_id, scan_run_id, fingerprint, operation, "
+                                    f"CAST(started_at AS STRING) AS started_at "
                                     f"FROM {table('ug_migration_applies')} WHERE apply_id = :a", {"a": dry_run_id}))
     if not rows or rows[0]["mode"] != "dry_run" or (rows[0].get("operation") or "apply") != "apply":
         raise HTTPException(400, "dry_run_id must be a dry run")
     if rows[0]["status"] != "SUCCEEDED" or rows[0]["scan_run_id"] != scan_run_id:
         raise HTTPException(409, "That dry run didn't succeed for this scan; run a dry run with this selection first")
+    _check_dry_run_age(rows[0])
     if rows[0].get("fingerprint"):
-        if rows[0]["fingerprint"] != selection_fingerprint(params):
+        if rows[0]["fingerprint"] != store.selection_fingerprint(params):
             raise HTTPException(409, "The endpoints or options changed since that dry run; run a dry run with these settings")
         return
     job_run_id = str(rows[0].get("job_run_id") or "")
@@ -887,7 +910,7 @@ def _verify_dry_run(request: Request, dry_run_id: str, scan_run_id: str, params:
     except DatabricksError as e:
         raise HTTPException(502, f"Couldn't read the dry run's settings: {str(e)[:200]}")
     dry = {p.name: (p.value if p.value is not None else p.default) for p in (job.job_parameters or [])}
-    if selection_fingerprint(dry) != selection_fingerprint(params):
+    if store.selection_fingerprint(dry) != store.selection_fingerprint(params):
         raise HTTPException(409, "The endpoints or options changed since that dry run; run a dry run with these settings")
 
 
@@ -907,7 +930,7 @@ def list_applies(request: Request) -> list[dict]:
                rollback_of, status, summary, error, CAST(started_at AS STRING) AS started_at,
                CAST(finished_at AS STRING) AS finished_at
         FROM {table('ug_migration_applies')} WHERE {APPLY_RUNS} ORDER BY started_at DESC LIMIT 50"""))
-    done = {r["rollback_of"] for r in _rollback_rows(request) if _rollback_done(r.get("status"), r.get("summary"))}
+    done = {r["rollback_of"] for r in _rollback_rows(request) if store.rollback_done(r.get("status"), r.get("summary"))}
     for r in rows:
         r["rolled_back"] = r.get("mode") == "execute" and r.get("apply_id") in done
     return rows
@@ -928,11 +951,12 @@ def apply_detail(apply_id: str, request: Request):
         if job_run_id:
             return starting_response("apply_id", apply_id, job_run_id)
         raise HTTPException(404, "not found")
+    require_run_access(request, meta[0].get("requested_by"))
     items = query(request, f"SELECT seq, payload FROM {table('ug_migration_apply_items')} "
                            "WHERE apply_id = :a ORDER BY seq", {"a": apply_id})
     rollbacks = _rollback_rows(request, apply_id)
     out = reconcile(meta)[0]
-    out["rolled_back"] = out.get("mode") == "execute" and any(_rollback_done(r.get("status"), r.get("summary"))
+    out["rolled_back"] = out.get("mode") == "execute" and any(store.rollback_done(r.get("status"), r.get("summary"))
                                                               for r in rollbacks)
     return {"meta": out, "items": [_load(i["payload"]) for i in items],
             "rollbacks": [{"apply_id": r["apply_id"], "status": r["status"]} for r in rollbacks]}
@@ -958,7 +982,7 @@ def start_apply(body: ApplyRequest, request: Request) -> dict:
                                      "Verify & cut over.")
         if src[0]["status"] not in TERMINAL:
             raise HTTPException(409, "That execute run hasn't finished yet")
-        if _rollback_blocks(_rollback_rows(request, body.rollback_of)):
+        if store.rollback_blocks(_rollback_rows(request, body.rollback_of), sp()):
             raise HTTPException(409, "That execute run has already been rolled back, or a rollback of it is running")
         body.endpoints, body.target_catalog, body.target_schema, body.uc_secret_map = [], "", "", {}
         body.allow_secret_read = False
@@ -1014,7 +1038,10 @@ def start_apply(body: ApplyRequest, request: Request) -> dict:
     if run:
         raise RunActive("An apply run", run)
     apply_id = str(uuid.uuid4())
-    job_run_id = run_job("apply", {"apply_id": apply_id, **params, "requested_by": who(request)}, item_id=apply_id)
+    # The job checks the dry run again itself (same fingerprint, same requester, not expired), so it needs its id.
+    gate = {"dry_run_id": body.dry_run_id} if body.mode == "execute" else {}
+    job_run_id = run_job("apply", {"apply_id": apply_id, **params, **gate, "requested_by": who(request)},
+                         item_id=apply_id)
     return {"apply_id": apply_id, "job_run_id": job_run_id}
 
 
@@ -1022,17 +1049,16 @@ def start_apply(body: ApplyRequest, request: Request) -> dict:
 # Verify and cut over (runs of the apply job with an operation other than apply)
 # ---------------------------------------------------------------------------
 
-# Mirrors of ug_migration_apply.py (options) and ug_migration_store.py (verify builders and fingerprints). The app is
-# deployed from app/ alone, so test_app.py checks that both sides agree on the same inputs.
-OPERATIONS = ("apply", "test_call", "pause_legacy", "enable_tracking", "resume_legacy")
-WRITE_LEGACY_OPERATIONS = ("pause_legacy", "enable_tracking", "resume_legacy")
-CUTOVER_OPERATIONS = ("test_call", "pause_legacy", "enable_tracking", "resume_legacy")
-API_TYPES = ("mlflow/v1/chat/completions", "openai/v1/responses", "mlflow/v1/embeddings")
-DEFAULT_API_TYPE = API_TYPES[0]
-DEFAULT_PROMPT = "Reply with: ok"
-MAX_PROMPT_CHARS = 200
-MAX_TEST_SERVICES = 10  # each service gets one billable request
-SERVICE_NAME_RE = re.compile(r"[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+")
+# Options of the apply job (ug_migration_apply.py); the verify SQL and fingerprints come from ug_migration_store.py.
+OPERATIONS = apply_rules.OPERATIONS
+WRITE_LEGACY_OPERATIONS = apply_rules.WRITE_LEGACY_OPERATIONS
+CUTOVER_OPERATIONS = tuple(o for o in OPERATIONS if o != "apply")
+API_TYPES = apply_rules.API_TYPES
+DEFAULT_API_TYPE = apply_rules.DEFAULT_API_TYPE
+DEFAULT_PROMPT = apply_rules.DEFAULT_PROMPT
+MAX_PROMPT_CHARS = apply_rules.MAX_PROMPT_CHARS
+MAX_TEST_SERVICES = apply_rules.MAX_TEST_SERVICES  # each service gets one billable request
+SERVICE_NAME_RE = apply_rules.SERVICE_NAME_RE
 # Traffic windows the cut-over page offers (the scan's own window is "scan").
 TRAFFIC_WINDOWS = {"24h": timedelta(hours=24), "7d": timedelta(days=7), "30d": timedelta(days=30)}
 # Plan kinds that aren't legacy endpoints for the traffic check, and kinds the pause and tracking lists don't offer.
@@ -1045,170 +1071,14 @@ USAGE_COLUMNS = ["service_name", "workspace_id", "requester", "api_type", "desti
                  "invocations", "total_tokens", "average_latency_ms", "p95_latency_ms", "error_invocations",
                  "last_request"]
 
-# v2 calls already failing (v2 is off for the workspace): the planner's rule. Mirrors
-# ug_migration_planner.V2_FAILING_MIN_REQUESTS and V2_FAILING_SHARE_PERCENT (test_app.py checks them).
-V2_FAILING_MIN_REQUESTS = 10
-V2_FAILING_SHARE_PERCENT = 95
+# v2 calls already failing (v2 is off for the workspace): the planner's rule, on the traffic counts.
+V2_FAILING_MIN_REQUESTS = planner.V2_FAILING_MIN_REQUESTS
+V2_FAILING_SHARE_PERCENT = planner.V2_FAILING_SHARE_PERCENT
 
 
 def v2_mostly_failing(v2_requests: int, v2_failed: int) -> bool:
     """At least V2_FAILING_MIN_REQUESTS v2 requests, and at least V2_FAILING_SHARE_PERCENT of them failed."""
     return v2_requests >= V2_FAILING_MIN_REQUESTS and 100 * v2_failed >= V2_FAILING_SHARE_PERCENT * v2_requests
-
-
-# Verify builders and fingerprint: copied from ug_migration_store.py
-_SINCE_RE = re.compile(r"\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?)?")
-
-
-_SERVICE_RE = re.compile(r"[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+")
-
-
-_ENDPOINT_RE = re.compile(r"[A-Za-z0-9_\-]+")
-
-
-MAX_REQUEST_ID_CHARS = 200
-
-
-def _since(since) -> str:
-    s = str(since or "").strip()
-    if not _SINCE_RE.fullmatch(s):
-        raise ValueError("since must look like 2026-10-01 or 2026-10-01 00:00:00")
-    return s.replace("T", " ")
-
-
-def _split_names(value) -> list[str]:
-    if isinstance(value, (list, tuple)):
-        parts = [str(v) for v in value]
-    else:
-        parts = str(value or "").split(",")
-    return sorted({p.strip() for p in parts if p.strip()})
-
-
-def legacy_traffic_since(endpoints, since, workspace_id) -> tuple[str, dict]:
-    """Traffic per legacy v1 endpoint and requester since a time (README step 4: is traffic stopped?).
-
-    One query, two sources, UNION ALL. 'v1' is system.serving.endpoint_usage joined to served_entities. 'v2' is
-    system.ai_gateway.usage rows with no service_type (AI Gateway v2 requests on legacy endpoints). Columns:
-    source, endpoint_name, requester, requests, failed (no status, or status 0, 403, 404, 410 or 500 and up), tokens (input plus output
-    for v1, total_tokens for v2), last_request (string). Both sources are filtered to workspace_id."""
-    names = _split_names(endpoints)
-    if not names:
-        raise ValueError("legacy_traffic_since needs at least one endpoint name")
-    bad = [n for n in names if not _ENDPOINT_RE.fullmatch(n)]
-    if bad:
-        raise ValueError(f"bad endpoint name(s) {bad}")
-    v1 = {f"v1_{i}": n for i, n in enumerate(names)}
-    v2 = {f"v2_{i}": n for i, n in enumerate(names)}
-    in_v1 = ", ".join(f":{k}" for k in v1)
-    in_v2 = ", ".join(f":{k}" for k in v2)
-    params = {"workspace_id": str(workspace_id).strip(), "since": _since(since), **v1, **v2}
-    sql = f"""
-        SELECT 'v1' AS source, se.endpoint_name AS endpoint_name, eu.requester AS requester,
-               count(*) AS requests,
-               sum(CASE WHEN eu.status_code IS NULL OR eu.status_code IN (0, 403, 404, 410) OR eu.status_code >= 500 THEN 1 ELSE 0 END)
-                 AS failed,
-               coalesce(sum(coalesce(eu.input_token_count, 0) + coalesce(eu.output_token_count, 0)), 0) AS tokens,
-               CAST(max(eu.request_time) AS STRING) AS last_request
-        FROM system.serving.endpoint_usage AS eu
-        JOIN system.serving.served_entities AS se
-          ON eu.served_entity_id = se.served_entity_id
-        WHERE eu.workspace_id = :workspace_id
-          AND eu.request_time >= CAST(:since AS TIMESTAMP)
-          AND se.endpoint_name IN ({in_v1})
-        GROUP BY se.endpoint_name, eu.requester
-        UNION ALL
-        SELECT 'v2' AS source, endpoint_name, requester,
-               count(*) AS requests,
-               sum(CASE WHEN status_code IS NULL OR status_code IN (0, 403, 404, 410) OR status_code >= 500 THEN 1 ELSE 0 END) AS failed,
-               coalesce(sum(total_tokens), 0) AS tokens,
-               CAST(max(event_time) AS STRING) AS last_request
-        FROM system.ai_gateway.usage
-        WHERE workspace_id = :workspace_id
-          AND service_type IS NULL
-          AND endpoint_name IN ({in_v2})
-          AND event_time >= CAST(:since AS TIMESTAMP)
-        GROUP BY endpoint_name, requester
-        ORDER BY endpoint_name, source, requester
-    """
-    return sql, params
-
-
-def ug_usage_summary(service, since) -> tuple[str, dict]:
-    """Model Service usage since a time, per service, workspace, requester, API type and destination (runbook cell 47).
-
-    service is a three-part name, or blank for every visible Model Service. Only service_type = 'MODEL_SERVICE' rows
-    are counted (legacy v2 rows have no Model Service). Columns: service_name, workspace_id, requester, api_type,
-    destination_model, requests (distinct request_id), invocations, total_tokens, average_latency_ms,
-    p95_latency_ms, error_invocations (status >= 400), last_request (string)."""
-    params = {"since": _since(since)}
-    service_filter = ""
-    svc = str(service or "").strip()
-    if svc:
-        if not _SERVICE_RE.fullmatch(svc):
-            raise ValueError("service must be a three-part catalog.schema.name, or blank for all")
-        params["service"] = svc
-        service_filter = "AND service_name = :service"
-    sql = f"""
-        SELECT
-          service_name, workspace_id, requester, api_type, destination_model,
-          count(DISTINCT request_id) AS requests,
-          count(*) AS invocations,
-          coalesce(sum(total_tokens), 0) AS total_tokens,
-          round(avg(latency_ms), 1) AS average_latency_ms,
-          percentile_approx(latency_ms, 0.95) AS p95_latency_ms,
-          sum(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) AS error_invocations,
-          CAST(max(event_time) AS STRING) AS last_request
-        FROM system.ai_gateway.usage
-        WHERE event_time >= CAST(:since AS TIMESTAMP)
-          AND service_type = 'MODEL_SERVICE'
-          {service_filter}
-        GROUP BY service_name, workspace_id, requester, api_type, destination_model
-        ORDER BY total_tokens DESC, requests DESC
-    """
-    return sql, params
-
-
-def ug_request_lookup(request_id) -> tuple[str, dict]:
-    """Usage rows for one request id (runbook cell 14). A request can have several rows, one per routed invocation.
-
-    Usage can take 20 to 30 minutes to appear after the call, so an empty result is not a failure."""
-    rid = str(request_id or "").strip()
-    if not rid or len(rid) > MAX_REQUEST_ID_CHARS or any(c.isspace() for c in rid):
-        raise ValueError("request_id must be a non-empty id without spaces")
-    sql = """
-        SELECT event_time, invocation_id, service_name, destination_model, status_code,
-               input_tokens, output_tokens, total_tokens, latency_ms
-        FROM system.ai_gateway.usage
-        WHERE request_id = :request_id
-        ORDER BY event_time DESC
-    """
-    return sql, {"request_id": rid}
-
-
-def _names(value) -> list[str]:
-    return sorted({s.strip() for s in str(value or "").split(",") if s.strip()})
-
-
-def _sha256(text: str) -> str:
-    import hashlib
-    return hashlib.sha256(text.encode()).hexdigest()
-
-
-def legacy_fingerprint(params: dict) -> str:
-    """Hash of the options a verify-and-cut-over run (any operation but apply) was started with.
-
-    Same rule as selection_fingerprint: an execute must match the dry run it follows. Names are sorted, the API type
-    and prompt use their defaults when blank, and the force flag is compared as a boolean."""
-    body = json.dumps({
-        "operation": str(params.get("operation") or "").strip(),
-        "endpoints": _names(params.get("endpoints")),
-        "services": _names(params.get("services")),
-        "api_type": str(params.get("api_type") or "").strip() or DEFAULT_API_TYPE,
-        "prompt": str(params.get("prompt") or "").strip() or DEFAULT_PROMPT,
-        "rollback_of": str(params.get("rollback_of") or "").strip(),
-        "force": str(params.get("force") or "").strip().lower() in ("true", "1"),
-    }, sort_keys=True)
-    return _sha256(body)
 
 
 def _unique(names) -> list[str]:
@@ -1268,6 +1138,8 @@ class CutoverRequest(BaseModel):
     rollback_of: str = ""  # resume: the pause run
     dry_run_id: str = ""  # execute: the successful dry run of this same selection
     confirm: str = ""
+    traffic_window: str = "24h"  # pause: the window the traffic check covers (24h, 7d, 30d or scan)
+    ack_traffic: bool = False  # pause: the endpoint had requests in that window, and callers will get errors
 
 
 def _cutover_params(body: CutoverRequest) -> dict[str, str]:
@@ -1300,8 +1172,11 @@ def _cutover_params(body: CutoverRequest) -> dict[str, str]:
         raise HTTPException(400, "Pause one endpoint per run")
     if op == "enable_tracking" and not endpoints:
         raise HTTPException(400, "Choose at least one endpoint to turn usage tracking on for")
+    # Pause: the job refuses an endpoint with legacy requests in the last 24 hours unless force is set. The operator's
+    # traffic acknowledgement is that override, sent on the dry run and the execute alike (force is in the fingerprint).
+    force = op == "pause_legacy" and body.ack_traffic
     return {"operation": op, "endpoints": ",".join(endpoints), "services": "", "api_type": "", "prompt": "",
-            "rollback_of": "", "force": "false"}
+            "rollback_of": "", "force": str(force).lower()}
 
 
 def _verify_cutover_dry_run(request: Request, dry_run_id: str, params: dict) -> None:
@@ -1309,15 +1184,17 @@ def _verify_cutover_dry_run(request: Request, dry_run_id: str, params: dict) -> 
     if not dry_run_id:
         raise HTTPException(400, "Run a dry run with these settings first")
     check_id(dry_run_id, "dry run id")
-    rows = reconcile(query(request, f"SELECT mode, status, job_run_id, fingerprint, operation "
+    rows = reconcile(query(request, f"SELECT mode, status, job_run_id, fingerprint, operation, "
+                                    f"CAST(started_at AS STRING) AS started_at "
                                     f"FROM {table('ug_migration_applies')} WHERE apply_id = :a", {"a": dry_run_id}))
     if not rows or rows[0]["mode"] != "dry_run" or (rows[0].get("operation") or "apply") != params["operation"]:
         raise HTTPException(400, "dry_run_id must be a dry run of this operation")
     if rows[0]["status"] != "SUCCEEDED":
         raise HTTPException(409, "That dry run didn't succeed. Run a dry run with these settings again.")
+    _check_dry_run_age(rows[0])
     if not rows[0].get("fingerprint"):
         raise HTTPException(409, "Couldn't find the settings of that dry run. Run a dry run again.")
-    if rows[0]["fingerprint"] != legacy_fingerprint(params):
+    if rows[0]["fingerprint"] != store.legacy_fingerprint(params):
         raise HTTPException(409, "The endpoints or options changed since that dry run; run a dry run with these settings")
 
 
@@ -1334,20 +1211,21 @@ def _start_resume(body: CutoverRequest, request: Request) -> dict:
         raise HTTPException(400, "Resume needs a pause run that was executed")
     if src[0]["status"] not in TERMINAL:
         raise HTTPException(409, "That pause run hasn't finished yet")
-    if _rollback_blocks(_rollback_rows(request, body.rollback_of)):
+    if store.rollback_blocks(_rollback_rows(request, body.rollback_of), sp()):
         raise HTTPException(409, "That pause run has already been resumed, or a resume of it is running")
     params = {"operation": "resume_legacy", "endpoints": "", "services": "", "api_type": "", "prompt": "",
               "rollback_of": body.rollback_of, "force": "false"}
     return _launch_cutover(request, "execute", params, scan_run_id="")
 
 
-def _launch_cutover(request: Request, mode: str, params: dict, scan_run_id: str) -> dict:
+def _launch_cutover(request: Request, mode: str, params: dict, scan_run_id: str, dry_run_id: str = "") -> dict:
     run = active_run("apply", "a verify or cut-over run")
     if run:
         raise RunActive("A verify or cut-over run", run)
     apply_id = str(uuid.uuid4())
+    gate = {"dry_run_id": dry_run_id} if dry_run_id else {}  # the job checks the dry run again itself
     job_run_id = run_job("apply", {"apply_id": apply_id, "results_schema": RESULTS_SCHEMA, "mode": mode,
-                                   **params, "scan_run_id": scan_run_id, "requested_by": who(request)},
+                                   **params, **gate, "scan_run_id": scan_run_id, "requested_by": who(request)},
                          item_id=apply_id)
     return {"apply_id": apply_id, "job_run_id": job_run_id, "operation": params["operation"], "mode": mode}
 
@@ -1373,8 +1251,57 @@ def start_cutover(body: CutoverRequest, request: Request) -> dict:
         word = _confirm_word(op, params["endpoints"])
         if body.confirm != word:
             raise HTTPException(400, f"type {word} to confirm")
+    if body.mode == "execute":
         _verify_cutover_dry_run(request, body.dry_run_id, params)
-    return _launch_cutover(request, body.mode, params, scan_run_id=body.scan_run_id)
+    if op == "pause_legacy":
+        _pause_traffic_gate(request, body, params["endpoints"])
+    out = _launch_cutover(request, body.mode, params, scan_run_id=body.scan_run_id,
+                          dry_run_id=body.dry_run_id if body.mode == "execute" else "")
+    if op == "test_call":
+        out["runs_as"] = job_identity("apply")
+    return out
+
+
+def _pause_traffic_gate(request: Request, body: CutoverRequest, endpoint: str) -> None:
+    """Pause only after the traffic check, on the server too (the page has the same gate). The endpoint's legacy
+    requests in the chosen window must be zero, or the operator confirms (ack_traffic) that callers will get errors.
+    Traffic that can't be read (missing table, no access, query error) refuses the pause: unknown isn't zero."""
+    if body.traffic_window != "scan" and body.traffic_window not in TRAFFIC_WINDOWS:
+        raise HTTPException(400, "traffic_window must be 24h, 7d, 30d or scan")
+    scan = _scan_meta(request, body.scan_run_id)
+    if not scan:
+        raise HTTPException(409, "Pause checks the endpoint's traffic against a finished scan. Run a scan first.")
+    try:
+        traffic = _endpoint_traffic(request, scan, body.traffic_window, only=[endpoint])
+    except HTTPException as e:
+        raise HTTPException(409, f"Couldn't check {endpoint}'s legacy traffic, so it wasn't paused. {e.detail}")
+    e = next((t for t in traffic["endpoints"] if t["endpoint_name"] == endpoint), None)
+    if e is None:
+        raise HTTPException(409, f"{endpoint} isn't a legacy endpoint in that scan's plan. Scan again.")
+    if e["requests"] and not body.ack_traffic:
+        raise HTTPException(409, f"{endpoint} had {e['requests']} legacy requests since {traffic['since']} UTC. Callers "
+                                 "still on it get errors once it's paused. Move them first, or confirm that you "
+                                 "accept this.")
+
+
+def job_identity(kind: str) -> str:
+    """Who a job's runs run as: its run_as user or service principal, else its owner. Cached for a few minutes."""
+    hit = _job_identities.get(kind)
+    if hit and hit[0] > time.time():
+        return hit[1]
+    name = ""
+    job_id = JOBS.get(kind)
+    if job_id:
+        try:
+            job = sp().jobs.get(int(job_id))
+            run_as = getattr(job.settings, "run_as", None) if job.settings else None
+            name = (getattr(run_as, "service_principal_name", None) or getattr(run_as, "user_name", None)
+                    or getattr(job, "run_as_user_name", None) or getattr(job, "creator_user_name", None) or "")
+        except Exception:
+            name = ""
+    name = str(name) if isinstance(name, str) else ""
+    _job_identities[kind] = (time.time() + IDENTITY_TTL_S, name)
+    return name
 
 
 @app.get("/api/cutover/runs")
@@ -1384,7 +1311,7 @@ def list_cutover(request: Request) -> list[dict]:
         SELECT apply_id, job_run_id, requested_by, operation, mode, endpoints, services, api_type, rollback_of, status,
                summary, error, CAST(started_at AS STRING) AS started_at, CAST(finished_at AS STRING) AS finished_at
         FROM {table('ug_migration_applies')} WHERE {CUTOVER_RUNS} ORDER BY started_at DESC LIMIT 50"""))
-    done = {r["rollback_of"] for r in _rollback_rows(request) if _rollback_done(r.get("status"), r.get("summary"))}
+    done = {r["rollback_of"] for r in _rollback_rows(request) if store.rollback_done(r.get("status"), r.get("summary"))}
     for r in rows:
         r["resumed"] = r.get("operation") == "pause_legacy" and r.get("apply_id") in done
     return rows
@@ -1422,13 +1349,24 @@ def cutover_traffic(request: Request, window: str = "24h", scan_run_id: str = ""
     scan = _scan_meta(request, scan_run_id)
     if not scan:
         return {"scan_run_id": None, "window": window, "since": None, "total_requests": 0, "endpoints": []}
+    try:
+        return _endpoint_traffic(request, scan, window)
+    except TableMissing as e:  # unknown, never "no requests": the page shows the reason and pause stays off
+        return {"scan_run_id": scan["run_id"], "workspace_id": scan.get("workspace_id"), "window": window,
+                "since": None, "checked_at": _utc_now(), "total_requests": None, "traffic_error": e.detail,
+                "endpoints": []}
+
+
+def _endpoint_traffic(request: Request, scan: dict, window: str, only: list[str] | None = None) -> dict:
+    """Legacy requests per endpoint of the scan's plan since the window (all of them, or only those named)."""
     ws = str(scan.get("workspace_id") or "")
     if not ws:
         raise HTTPException(409, "That scan doesn't record its workspace. Scan again to check traffic.")
     span = TRAFFIC_WINDOWS[window] if window != "scan" else timedelta(days=_num(scan.get("days")) or 30)
     since = _window_since(span)
     plan, callers = _scan_items(request, scan)
-    legacy = [p for p in plan if p.get("legacy_endpoint") and p.get("kind") not in NOT_LEGACY_KINDS]
+    legacy = [p for p in plan if p.get("legacy_endpoint") and p.get("kind") not in NOT_LEGACY_KINDS
+              and (only is None or p["legacy_endpoint"] in only)]
     names = sorted({p["legacy_endpoint"] for p in legacy})
     kinds = {p["legacy_endpoint"]: p.get("kind") for p in legacy}
     classes = {(c.get("endpoint_name"), c.get("requester")): c.get("caller_class") for c in callers}
@@ -1436,10 +1374,10 @@ def cutover_traffic(request: Request, window: str = "24h", scan_run_id: str = ""
               "v2_failed": 0, "v2_tokens": 0, "last_request": None, "callers": []} for n in names}
     if names:
         try:
-            sql, params = legacy_traffic_since(names, since, ws)
+            sql, params = store.legacy_traffic_since(names, since, ws)
         except ValueError as e:
             raise HTTPException(400, str(e))
-        for r in query(request, sql, params):
+        for r in query(request, sql, params, missing_ok=False):
             e = by.get(r.get("endpoint_name"))
             if e is None:
                 continue
@@ -1508,10 +1446,10 @@ def _usage_rows(request: Request, service: str, window: str) -> tuple[str, list[
         raise HTTPException(400, "window must be 24h, 7d or 30d")
     since = _window_since(TRAFFIC_WINDOWS[window])
     try:
-        sql, params = ug_usage_summary(service, since)
+        sql, params = store.ug_usage_summary(service, since)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    return since, query(request, sql, params)
+    return since, query(request, sql, params, missing_ok=False)
 
 
 @app.get("/api/usage/summary")
@@ -1532,10 +1470,10 @@ def export_usage(request: Request, window: str = "7d", service: str = "") -> Res
 def usage_request(request_id: str, request: Request) -> dict:
     """Usage rows for one request id (runbook cell 14). Usage takes 20 to 30 minutes to appear, so none yet is expected."""
     try:
-        sql, params = ug_request_lookup(request_id)
+        sql, params = store.ug_request_lookup(request_id)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    return {"request_id": request_id, "rows": query(request, sql, params)}
+    return {"request_id": request_id, "rows": query(request, sql, params, missing_ok=False)}
 
 
 @app.get("/api/cutover/{run_id}")
@@ -1551,12 +1489,13 @@ def cutover_detail(run_id: str, request: Request):
         if job_run_id:
             return starting_response("run_id", run_id, job_run_id)
         raise HTTPException(404, "not found")
+    require_run_access(request, meta[0].get("requested_by"))
     items = query(request, f"SELECT seq, payload FROM {table('ug_migration_apply_items')} "
                            "WHERE apply_id = :a ORDER BY seq", {"a": run_id})
     rollbacks = _rollback_rows(request, run_id)
     out = reconcile(meta)[0]
     out["resumed"] = out.get("operation") == "pause_legacy" and any(
-        _rollback_done(r.get("status"), r.get("summary")) for r in rollbacks)
+        store.rollback_done(r.get("status"), r.get("summary")) for r in rollbacks)
     return {"meta": out, "items": [_load(i["payload"]) for i in items],
             "rollbacks": [{"apply_id": r["apply_id"], "status": r["status"]} for r in rollbacks]}
 
@@ -1564,6 +1503,7 @@ def cutover_detail(run_id: str, request: Request):
 @app.get("/api/cutover/{run_id}/export")
 def export_cutover(run_id: str, request: Request) -> Response:
     check_id(run_id, "run id")
+    require_run_access(request, _run_owner(request, "apply", run_id))
     rows = query(request, f"SELECT payload FROM {table('ug_migration_apply_items')} WHERE apply_id = :a "
                           f"ORDER BY seq LIMIT {EXPORT_ROW_LIMIT}", {"a": run_id})
     items = [_load(r["payload"]) for r in rows]
@@ -1641,6 +1581,7 @@ SCAN_DOCS = {"readiness": "READINESS.md", "code-fixes": "CODE_FIXES.md", "summar
 def export_scan(run_id: str, kind: str, request: Request) -> Response:
     """One scan's plan, callers, provider services or references as CSV, or its reports as Markdown."""
     check_id(run_id, "scan id")
+    require_run_access(request, _run_owner(request, "scan", run_id))
     short = run_id[:8]
     if kind in SCAN_DOCS:
         rows = query(request, f"SELECT payload FROM {table('ug_migration_scan_items')} "
@@ -1662,6 +1603,7 @@ def export_scan(run_id: str, kind: str, request: Request) -> Response:
 @app.get("/api/applies/{apply_id}/export")
 def export_apply(apply_id: str, request: Request) -> Response:
     check_id(apply_id, "apply id")
+    require_run_access(request, _run_owner(request, "apply", apply_id))
     rows = query(request, f"SELECT payload FROM {table('ug_migration_apply_items')} WHERE apply_id = :a "
                           f"ORDER BY seq LIMIT {EXPORT_ROW_LIMIT}", {"a": apply_id})
     items = [_load(r["payload"]) for r in rows]

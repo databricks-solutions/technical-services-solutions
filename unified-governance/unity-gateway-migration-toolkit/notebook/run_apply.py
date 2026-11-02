@@ -18,6 +18,11 @@
 # MAGIC - `resume_legacy`, `mode = dry_run | execute | rollback`: restores what the pause run `rollback_of` changed.
 # MAGIC   `mode = rollback` on a pause run does the same.
 # MAGIC
+# MAGIC Every execute except a resume and an apply rollback needs `dry_run_id`: the apply_id of a successful dry run
+# MAGIC of the same operation and settings, by the same `requested_by`, started in the last 24 hours. The job checks
+# MAGIC this itself, so starting it directly can't skip the dry run. A pause also refuses an endpoint with legacy
+# MAGIC requests in the last 24 hours unless `force` is `true` (the person confirms those callers will get errors).
+# MAGIC
 # MAGIC Job-level settings the installer sets on the job definition (the app must not pass them):
 # MAGIC `secret_schemas` (comma list of catalog.schema allowed for UC secrets) and `allow_secret_read_enabled`.
 # MAGIC
@@ -35,7 +40,8 @@ for name, default in (("apply_id", ""), ("job_run_id", ""), ("results_schema", "
                       ("allow_secret_read", "false"), ("grants", "false"), ("rollback_of", ""),
                       ("scan_run_id", ""), ("requested_by", ""), ("ack_guardrails", "false"), ("smoke_test", "false"),
                       ("force", "false"), ("secret_schemas", ""), ("allow_secret_read_enabled", "false"),
-                      ("operation", "apply"), ("api_type", ""), ("prompt", "Reply with: ok"), ("services", "")):
+                      ("operation", "apply"), ("api_type", ""), ("prompt", "Reply with: ok"), ("services", ""),
+                      ("dry_run_id", "")):
     dbutils.widgets.text(name, default)
 
 # COMMAND ----------
@@ -46,6 +52,7 @@ import re
 import sys
 import tempfile
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from databricks.sdk import WorkspaceClient
 
@@ -78,7 +85,7 @@ if operation not in ("apply", "resume_legacy") and mode == "rollback":
     raise ValueError(f"{operation} runs as dry_run or execute; rollback is for apply runs and pause runs")
 apply_id = g("apply_id") or str(uuid.uuid4())
 ID_RE = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-for v in (apply_id, g("rollback_of"), g("scan_run_id")):
+for v in (apply_id, g("rollback_of"), g("scan_run_id"), g("dry_run_id")):
     if v and not re.fullmatch(ID_RE, v):
         raise ValueError(f"bad run id {v!r}")
 endpoints = [e.strip() for e in g("endpoints").split(",") if e.strip()]
@@ -121,6 +128,19 @@ fingerprint = None if (operation == "apply" and mode == "rollback") else store.r
     "allow_secret_read": g("allow_secret_read"), "grants": g("grants"), "ack_guardrails": g("ack_guardrails"),
     "services": g("services"), "api_type": g("api_type"), "prompt": g("prompt"), "rollback_of": g("rollback_of"),
     "force": g("force")})
+# Execute follows a successful, recent dry run of the same settings (the app checks this too; the job doesn't rely
+# on it). Checked before this run's row is written, so a refused execute leaves no RUNNING row behind.
+if mode == "execute" and operation in apply_mod.DRY_RUN_GATED:
+    dry = None
+    if g("dry_run_id"):
+        found = spark.sql(
+            f"SELECT mode, operation, status, fingerprint, scan_run_id, requested_by, "  # epoch: no session time zone
+            f"unix_timestamp(started_at) AS started_at FROM {store.q(schema)}.ug_migration_applies "
+            f"WHERE apply_id = '{g('dry_run_id')}'").collect()  # dry_run_id matched ID_RE above
+        dry = found[0].asDict() if found else None
+    problem = apply_mod.dry_run_gate_error(dry, operation, fingerprint, g("scan_run_id"), g("requested_by"))
+    if problem:
+        raise ValueError(f"execute refused: {problem}")
 # A resume that executes is stored as a rollback row, so the rollback rules (already rolled back, protection) apply.
 stored_mode = "rollback" if (operation == "resume_legacy" and mode == "execute") else mode
 store.upsert(spark, schema, "ug_migration_applies", store.APPLY_COLUMNS, "apply_id", {
@@ -207,7 +227,19 @@ try:
     elif operation == "pause_legacy":
         if execute:
             _check_no_other_legacy_write(w)
-        results = apply_mod.pause_legacy(w, endpoints, execute, log_path, apply_id)
+        recent = None  # None: traffic couldn't be checked, so pause refuses unless force is set (fail closed)
+        if not flag("force"):
+            try:
+                since = (datetime.now(timezone.utc) - timedelta(hours=apply_mod.PAUSE_TRAFFIC_HOURS)
+                         ).strftime("%Y-%m-%d %H:%M:%S")
+                rows = store.run_built(spark, store.legacy_traffic_since(endpoints, since, w.get_workspace_id()))
+                recent = {}
+                for r in rows:
+                    recent[r["endpoint_name"]] = recent.get(r["endpoint_name"], 0) + int(r["requests"] or 0)
+            except Exception as terr:
+                print(f"could not check recent traffic: {str(terr)[:300]}")
+        results = apply_mod.pause_legacy(w, endpoints, execute, log_path, apply_id, recent_requests=recent,
+                                         force=flag("force"))
     elif operation == "enable_tracking":
         if execute:
             _check_no_other_legacy_write(w)

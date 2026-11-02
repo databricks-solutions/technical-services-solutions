@@ -620,3 +620,94 @@ def test_run_applies_the_deadline_override_only_for_its_call(monkeypatch, tmp_pa
     with pytest.raises(ValueError):
         m.run(mock.MagicMock(), str(tmp_path), deadline="2028-02-31")
     assert m.LEGACY_DEADLINE == "2027-03-30"
+
+
+# ---------------------------------------------------------------------------
+# Review fixes: no false READY, consistent AI Search and ai_query advice
+# ---------------------------------------------------------------------------
+
+def test_skipped_folders_and_file_types_cap_ready(tmp_path):
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "x.js").write_text("ai_query('gpt-5', 'hi')")
+    (tmp_path / "job.kt").write_text("val e = \"gpt-5\"")
+    (tmp_path / "logo.png").write_bytes(b"\x89PNG")
+    s = m.Scanner(["gpt-5"], {}, [])
+    m.scan_local(s, [str(tmp_path)])
+    note = s.coverage["local_files_skipped"]
+    assert note.startswith(m.NOT_SCANNED) and "node_modules" in note and ".kt 1" in note and ".png" not in note
+    r = m.readiness([], [], True, 30, [], dict(s.coverage), True, None)
+    assert r["status"] == "READY_WITH_WARNINGS"
+    assert [w["type"] for w in r["warnings"]] == ["skipped_paths_not_scanned"]
+    assert "local_files_skipped" not in r["coverage_gaps"]
+
+
+def test_workspace_walk_reports_skipped_build_folders_and_types(monkeypatch):
+    tree = {"/Repos": [{"path": "/Repos/p", "object_type": "REPO"}],
+            "/Repos/p": [{"path": "/Repos/p/.venv", "object_type": "DIRECTORY"},
+                         {"path": "/Repos/p/main.py", "object_type": "FILE"},
+                         {"path": "/Repos/p/App.kt", "object_type": "FILE"}]}
+    monkeypatch.setattr(m, "_get", lambda w, path, params: {"objects": tree.get(params["path"], [])})
+    found = m._walk_workspace(None, ["/Repos"], 100, 2,
+                              accept=lambda o: o["path"].lower().endswith(m.WORKSPACE_EXTS))
+    assert [o["path"] for o in found] == ["/Repos/p/main.py"]
+    assert m._walk_workspace.skipped_dirs == ["/Repos/p/.venv"]
+    assert m._walk_workspace.skipped_types == {".kt": 1}
+
+
+def test_dormant_v2_endpoint_is_inventoried_and_scanned_for():
+    usage = {"proj-live": {"requests": 5, "v2_requests": 5}}
+    eps = m.v2_workspace_endpoints(usage, ["serving-a"], dormant=["proj-old", "serving-a"])
+    assert [e.name for e in eps] == ["proj-live", "proj-old"]
+    rows, _ = m.plan(eps, {}, usage, "c", "s", True, False, None)
+    r = m.readiness(rows, [], True, 30, eps, {}, True, None)
+    dormant = [w for w in r["warnings"] if w["type"] == "confirm_infrequent_callers"]
+    assert [w["item"] for w in dormant] == ["proj-old"] and "v2 endpoint" in dormant[0]["label"]
+    assert not any(w["type"] == "no_traffic_in_window" for w in r["warnings"])
+
+
+def test_dormant_v2_history_query_reads_names_only(monkeypatch):
+    seen = {}
+
+    def fake_sql(w, wh, sql, params=None):
+        seen["sql"] = sql
+        return [{"endpoint_name": "b"}, {"endpoint_name": "a"}, {"endpoint_name": None}]
+
+    monkeypatch.setattr(m, "_sql", fake_sql)
+    assert m.v2_endpoint_history(None, "wh", "1", 365) == ["a", "b"]
+    assert "service_type IS NULL" in seen["sql"] and "365 DAYS" in seen["sql"]
+
+
+def test_run_time_serving_url_blocks_when_legacy_endpoints_exist():
+    refs = scan(["gpt-5"], 'requests.post(f"{host}/serving-endpoints/{name}/invocations", json=b)', {})
+    assert refs and refs[0].legacy_endpoint is None
+    usage = {"databricks-x": {"requests": 0, "v2_requests": 0}}
+    eps = m.v2_workspace_endpoints({}, [], dormant=["databricks-x"])
+    rows, _ = m.plan(eps, {}, usage, "c", "s", True, False, None)
+    r = m.readiness(rows, refs, True, 30, eps, {}, True, None)
+    assert "unresolved_endpoint_call" in [b["type"] for b in r["blockers"]] and r["status"] == "BLOCKED"
+    # No legacy endpoints in the workspace: nothing it could reach retires, so it stays a warning.
+    assert m.readiness([], refs, True, 30, [], {}, True, None)["status"] == "READY_WITH_WARNINGS"
+
+
+def test_ai_search_advice_keeps_the_embedding_endpoint():
+    idx = m.ClientReference(asset_type="vector_search_index", asset="index c.s.docs", line=None,
+                            pattern="embedding_endpoint", match="databricks-gte-large-en",
+                            legacy_endpoint="databricks-gte-large-en", suggestion=m.AI_SEARCH_KEEP_TEXT)
+    call = scan(["databricks-gte-large-en"], 'client.embeddings.create(model="databricks-gte-large-en")',
+                {"databricks-gte-large-en": "system.ai.gte-large-en"})
+    r = m.readiness([], [idx] + call, True, 30, [], {}, True, None)
+    by_type = {b["type"]: b for b in r["blockers"]}
+    assert "keep the endpoint" in by_type["vector_search"]["action"]
+    assert "re-index it on a system.ai" not in str(r)
+    assert "switch only the direct query calls" in by_type["pay_per_token_call"]["action"]
+    assert "Keep the endpoint" in by_type["pay_per_token_call"]["action"]
+
+
+def test_name_that_may_feed_ai_query_is_never_rewritten_to_a_custom_service():
+    text = 'MODEL = "proj-openai"\nspark.sql(f"SELECT ai_query(\'{MODEL}\', prompt) FROM t")'
+    refs = scan(["proj-openai"], text, {"proj-openai": "c.s.proj_openai"})
+    ref = next(r for r in refs if r.pattern == "legacy_endpoint_name")
+    assert ref.fixed_line is None and "only calls system.ai" in ref.suggestion
+    # A system.ai target is still proposed: ai_query can call it.
+    refs2 = scan(["databricks-gpt-5"], 'MODEL = "databricks-gpt-5"\nai_query(MODEL, p)', {"databricks-gpt-5": "system.ai.gpt-5"})
+    assert next(r for r in refs2 if r.pattern == "legacy_endpoint_name").fixed_line

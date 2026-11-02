@@ -3,6 +3,7 @@
 import copy
 import json
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -113,8 +114,12 @@ class FakeAI:
         self.calls.append(("delete_model_provider_service", key, etag))
         self.providers.pop(key)
 
-    def list_model_services(self, page_size=None, page_token=None):
-        return [Obj({"name": f"model-services/{k}", **v}) for k, v in self.services.items()]
+    def list_model_services(self, parent=None, view=None, page_size=None, page_token=None):
+        # Like the API: parent (schemas/catalog.schema) is required, and only that schema is listed.
+        assert parent and parent.startswith("schemas/"), "list_model_services needs parent=schemas/<catalog>.<schema>"
+        prefix = parent[len("schemas/"):] + "."
+        return [Obj({"name": f"model-services/{k}", **v}) for k, v in self.services.items()
+                if k.startswith(prefix) and k.count(".") == 2]
 
 
 class FakeGrants:
@@ -153,7 +158,21 @@ class FakeW:
         self.ai_gateway = FakeAI()
         self.grants = FakeGrants()
         self.secrets_uc = FakeSecretsUc(uc_known)
-        self.schemas = SimpleNamespace(get=lambda full: None)
+        self.extra_schemas = set()  # catalog.schema names visible without a service in them
+        self.unlistable = set()  # catalogs whose schemas can't be listed
+        self.schemas = SimpleNamespace(get=lambda full: None, list=self._list_schemas)
+        self.catalogs = SimpleNamespace(list=lambda: [SimpleNamespace(name=c) for c in sorted(
+            {n.split(".")[0] for n in self._visible()} | {"system"})])
+
+    def _visible(self) -> set:
+        return ({k.rsplit(".", 1)[0] for k in list(self.ai_gateway.services) + list(self.ai_gateway.providers)}
+                | self.extra_schemas)
+
+    def _list_schemas(self, catalog_name):
+        if catalog_name in self.unlistable:
+            raise PermissionDenied(f"no USE CATALOG on {catalog_name}")
+        return [SimpleNamespace(name=n.split(".", 1)[1]) for n in sorted(self._visible())
+                if n.split(".")[0] == catalog_name] + [SimpleNamespace(name="information_schema")]
 
 
 def _run(monkeypatch, tmp_path, w, eps, uc_map=None, allowed=("c.s",), execute=True, **kw):
@@ -217,6 +236,40 @@ def test_fallback_only_when_legacy_fallback_enabled():
     rows, providers = _plan([ep])
     fqn = {p["provider_key"]: p["provider_service"] for p in providers}
     assert "fallback" not in a.build_model_service(ep, rows[0], fqn, ack_guardrails=True)["config"]["routing"]
+
+
+def _split(ep):
+    names = [d["served_entity"] for d in ep.destinations]
+    ep.traffic_routes = [{"served_entity_name": n, "traffic_percentage": 100 // len(names)} for n in names]
+    return ep
+
+
+def test_split_traffic_with_fallback_on_is_left_for_a_person():
+    ep = _split(_ep(EXTERNAL))
+    rows, providers = _plan([ep])
+    fqn = {p["provider_key"]: p["provider_service"] for p in providers}
+    with pytest.raises(a.Manual, match="can't carry the fallback over"):
+        a.build_model_service(ep, rows[0], fqn, ack_guardrails=True)
+    ep.fallback_enabled = False  # no fallback to lose: the split is carried over as is
+    body = a.build_model_service(ep, rows[0], fqn, ack_guardrails=True)
+    assert [d["traffic_percentage"] for d in body["config"]["routing"]["destinations"]] == [50, 50]
+
+
+def test_not_carried_over_lists_the_governance_the_service_does_not_get(tmp_path, monkeypatch):
+    ep = _ep(EXTERNAL)
+    ep.tags, ep.usage_tracking, ep.route_optimized, ep.budget_policy_id = [{"key": "team", "value": "a"}], True, True, "bp"
+    ep.can_query = [{"principal": "data-sci", "principal_type": "group", "levels": ["CAN_QUERY"]}]
+    rows, _ = _plan([ep])
+    dropped = a.not_carried_over(ep, rows[0], grants=False)
+    joined = "; ".join(dropped)
+    for word in ("guardrails", "inference table history", "usage tracking", "endpoint tags (1)", "route optimization",
+                 "budget policy", "grants were not copied"):
+        assert word in joined, word
+    w = FakeW()
+    res, _ = _run(monkeypatch, tmp_path, w, [ep], uc_map=UC_MAP, execute=False, grants=False)
+    svc = [r for r in res if r["type"] == "model_service"]
+    assert svc and svc[0]["not_carried_over"] == dropped
+    assert a.run_outcome(res)[1]["not_carried_over"] == 1
 
 
 def test_model_service_pt():
@@ -524,7 +577,7 @@ def test_reused_provider_is_deleted_only_after_its_owner_is_rolled_back(tmp_path
     assert any(r["action"] == "deleted" for r in out) and "c.s.p" not in w.ai_gateway.providers
 
 
-def test_rollback_revokes_only_added_grants_on_surviving_service(tmp_path):
+def test_rollback_never_revokes_grants_on_a_service_it_keeps(tmp_path):
     w = FakeW()
     w.ai_gateway.services["c.s.svc"] = {"comment": f"ug-migration-toolkit apply={APPLY}", "etag": "now"}
     w.grants.privs["c.s.svc"] = {"data-sci": {"EXECUTE"}, "ml": {"EXECUTE", "MANAGE"}}
@@ -534,9 +587,44 @@ def test_rollback_revokes_only_added_grants_on_surviving_service(tmp_path):
              "added": [{"principal": "data-sci", "privileges": ["EXECUTE"]}]}]
     log = _log(tmp_path, rows, "reuse.jsonl")
     out = a.rollback(w, str(log), True, apply_id=OTHER, released={APPLY})
-    assert any(r["action"] == "kept" for r in out)  # changed since apply, so the service survives
-    assert any(r["action"] == "revoked" for r in out)
-    assert w.grants.privs["c.s.svc"]["data-sci"] == set() and w.grants.privs["c.s.svc"]["ml"] == {"EXECUTE", "MANAGE"}
+    assert any(r["action"] == "kept" and r["type"] == "model_service" for r in out)  # changed since apply: survives
+    kept = [r for r in out if r["type"] == "grant"]
+    assert kept and kept[0]["action"] == "kept" and kept[0]["grants"] == [{"principal": "data-sci", "privileges": ["EXECUTE"]}]
+    assert w.grants.updates == []  # callers may depend on the grant now: listed, never revoked
+    assert w.grants.privs["c.s.svc"]["data-sci"] == {"EXECUTE"} and w.grants.privs["c.s.svc"]["ml"] == {"EXECUTE", "MANAGE"}
+
+
+def test_rollback_reports_no_grant_for_a_deleted_service(tmp_path):
+    w = FakeW()
+    w.ai_gateway.services["c.s.svc"] = {"comment": f"ug-migration-toolkit apply={APPLY}", "etag": "e1"}
+    rows = [_created("c.s.svc", etag="e1"),
+            {"type": "grant", "name": "c.s.svc", "action": "granted", "execute": True, "apply_id": APPLY,
+             "added": [{"principal": "data-sci", "privileges": ["EXECUTE"]}]}]
+    for execute in (False, True):
+        out = a.rollback(w, str(_log(tmp_path, rows, f"g{execute}.jsonl")), execute, apply_id=APPLY)
+        assert not [r for r in out if r["type"] == "grant"] and w.grants.updates == []
+
+
+def test_provider_used_by_a_service_in_another_schema_is_kept(tmp_path):
+    w = FakeW()
+    w.ai_gateway.providers["c.s.p"] = {"comment": f"ug-migration-toolkit apply={APPLY}", "etag": "p1", "config": {}}
+    w.ai_gateway.services["other.team.svc"] = {"comment": "by hand", "config": {"routing": {"destinations": [], "fallback": {
+        "destinations": [{"external_model_config": {"model_provider_service": "model-provider-services/c.s.p"}}]}}}}
+    log = _log(tmp_path, [_created("c.s.p", etag="p1", typ="model_provider_service")])
+    out = a.rollback(w, str(log), True, apply_id=APPLY)
+    assert out[0]["action"] == "kept" and "other.team.svc" in out[0]["reason"]
+    assert "c.s.p" in w.ai_gateway.providers
+
+
+def test_provider_is_kept_when_a_catalog_cannot_be_checked(tmp_path):
+    w = FakeW()
+    w.ai_gateway.providers["c.s.p"] = {"comment": f"ug-migration-toolkit apply={APPLY}", "etag": "p1", "config": {}}
+    w.extra_schemas.add("locked.x")
+    w.unlistable.add("locked")
+    log = _log(tmp_path, [_created("c.s.p", etag="p1", typ="model_provider_service")])
+    out = a.rollback(w, str(log), True, apply_id=APPLY)
+    assert out[0]["action"] == "kept" and "couldn't check" in out[0]["reason"]
+    assert "c.s.p" in w.ai_gateway.providers
 
 
 def test_rollback_audit_is_written_as_it_happens_and_marked_complete(tmp_path):
@@ -622,7 +710,7 @@ def test_killed_execute_does_not_block_its_target(tmp_path, monkeypatch):
 
 def test_run_outcome_status_and_summary():
     assert a.run_outcome([{"action": "created"}, {"action": "would_create"}]) == \
-        ("SUCCEEDED", {"created": 1, "would_create": 1, "kept_other_run": 0})
+        ("SUCCEEDED", {"created": 1, "would_create": 1, "kept_other_run": 0, "not_carried_over": 0})
     status, summary = a.run_outcome([{"action": "created"}, {"action": "manual"}])
     assert status == "NEEDS_ATTENTION" and summary["manual"] == 1
     assert a.run_outcome([{"action": "kept", "other_run": True}])[1]["kept_other_run"] == 1
@@ -738,9 +826,10 @@ def _roundtrip(results):
     return [json.loads(json.dumps(r, default=str)) for r in results]
 
 
-def _pause(w, names, tmp_path, execute=True, apply_id=APPLY):
+def _pause(w, names, tmp_path, execute=True, apply_id=APPLY, recent=None, force=False):
     log = tmp_path / "pause.jsonl"
-    return a.pause_legacy(w, names, execute, str(log), apply_id), log
+    recent = {} if recent is None else recent  # traffic checked: no recent requests
+    return a.pause_legacy(w, names, execute, str(log), apply_id, recent_requests=recent, force=force), log
 
 
 @pytest.mark.parametrize("ep, reason", [
@@ -774,7 +863,52 @@ def test_pause_execute_resends_every_setting_and_reads_back(tmp_path):
     assert body["fallback_config"] == {"enabled": True}
     assert res[0]["action"] == "paused"
     assert a._zero_endpoint_limit(w.api_client.endpoints["ext"]["ai_gateway"])
-    assert json.loads(log.read_text().splitlines()[0])["action"] == "paused"
+    lines = [json.loads(x) for x in log.read_text().splitlines()]
+    assert [x["action"] for x in lines] == ["pausing", "paused"]  # pausing is durable before the write
+    assert lines[0]["previous_ai_gateway"] == GW_FULL and len(res) == 1
+
+
+def test_pause_refuses_an_endpoint_with_recent_traffic_unless_forced(tmp_path):
+    w = CutoverW([_endpoint("ext", GW_FULL)])
+    res, _ = _pause(w, ["ext"], tmp_path, recent={"ext": 12})
+    assert res[0]["action"] == "refused" and "12 legacy request" in res[0]["reason"] and res[0]["recent_requests"] == 12
+    assert w.api_client.puts == []
+    forced, _ = _pause(w, ["ext"], tmp_path, recent={"ext": 12}, force=True)
+    assert forced[0]["action"] == "paused"
+
+
+def test_pause_fails_closed_when_traffic_could_not_be_checked(tmp_path):
+    w = CutoverW([_endpoint("ext", GW_FULL)])
+    res = a.pause_legacy(w, ["ext"], True, str(tmp_path / "p.jsonl"), APPLY, recent_requests=None)
+    assert res[0]["action"] == "refused" and "couldn't check" in res[0]["reason"] and w.api_client.puts == []
+
+
+def test_a_pause_whose_read_back_failed_can_still_be_resumed(tmp_path):
+    w = CutoverW([_endpoint("ext", GW_FULL)])
+    real_get = w.api_client.do
+    state = {"reads": 0}
+
+    def flaky(method, path, body=None, **kw):
+        if method == "GET" and path.endswith("/serving-endpoints/ext"):
+            state["reads"] += 1
+            if state["reads"] == 2:  # the read-back after the PUT
+                raise InternalError("timeout")
+        return real_get(method, path, body=body, **kw)
+
+    w.api_client.do = flaky
+    res, log = _pause(w, ["ext"], tmp_path)
+    assert res[0]["action"] == "mismatch" and res[0]["write_attempted"] and "resume" in res[0]["reason"]
+    resumed = a.resume_legacy(w, _roundtrip(res), None, True, str(tmp_path / "r.jsonl"), OTHER, APPLY)
+    assert resumed[0]["action"] == "resumed" and w.api_client.endpoints["ext"]["ai_gateway"] == GW_FULL
+
+
+def test_a_pause_killed_mid_write_is_resumed_from_its_durable_log(tmp_path):
+    w = CutoverW([_endpoint("ext", GW_FULL)])
+    _pause(w, ["ext"], tmp_path)
+    durable = [json.loads(x) for x in (tmp_path / "pause.jsonl").read_text().splitlines()][:1]  # killed after the PUT
+    assert durable[0]["action"] == "pausing"
+    resumed = a.resume_legacy(w, durable, None, True, str(tmp_path / "r.jsonl"), OTHER, APPLY)
+    assert resumed[0]["action"] == "resumed" and w.api_client.endpoints["ext"]["ai_gateway"] == GW_FULL
 
 
 def test_pause_skips_an_endpoint_already_at_zero(tmp_path):
@@ -1005,7 +1139,29 @@ def test_outcome_counts_refusals_and_test_failures_but_not_no_op_actions():
 NB_PATH = Path(__file__).parent / "notebook" / "run_apply.py"
 
 
-def _notebook(monkeypatch, params, fake_w, apply_rows=None, legacy_entries=None):
+class DryRunSpark:
+    """spark for the job notebook: answers only the dry-run lookup, from rows keyed by apply_id."""
+
+    def __init__(self, rows):
+        self.rows, self.queries = rows or {}, []
+
+    def sql(self, text, args=None):
+        self.queries.append(text)
+        m = re.search(r"WHERE apply_id = '([0-9a-f-]+)'", text)
+        row = self.rows.get(m.group(1)) if m else None
+        return SimpleNamespace(collect=lambda: [SimpleNamespace(asDict=lambda: dict(row))] if row else [])
+
+
+def _dry_row(calls, apply_id, **override):
+    """The dry run's row as the job wrote it (its first upsert), the way the execute reads it back."""
+    first = next(r for r in calls["upserts"] if r.get("apply_id") == apply_id and r.get("status") == "RUNNING")
+    row = {k: first.get(k) for k in ("mode", "operation", "fingerprint", "scan_run_id", "requested_by", "started_at")}
+    row["status"] = _final(calls, apply_id)["status"]
+    row.update(override)
+    return row
+
+
+def _notebook(monkeypatch, params, fake_w, apply_rows=None, legacy_entries=None, dry_rows=None, traffic=None):
     import ug_migration_store as st
 
     calls = {"upserts": [], "items": {}, "exits": []}
@@ -1028,10 +1184,14 @@ def _notebook(monkeypatch, params, fake_w, apply_rows=None, legacy_entries=None)
     monkeypatch.setattr(st, "running_legacy", lambda *a, **k: [])
     monkeypatch.setattr(st, "legacy_run_entries",
                         lambda spark, schema, apply_id, durable=None: list((legacy_entries or {}).get(apply_id, [])))
+    monkeypatch.setattr(st, "run_built", lambda spark, built: [
+        {"endpoint_name": n, "requests": c} for n, c in (traffic or {}).items()])
+    if not hasattr(fake_w, "get_workspace_id"):
+        fake_w.get_workspace_id = lambda: 1234
     monkeypatch.setattr(os, "makedirs", lambda *a, **k: None)  # the job's log folder doesn't exist here
     monkeypatch.setattr(sdk, "WorkspaceClient", lambda *a, **k: fake_w)
     code = compile(NB_PATH.read_text(), str(NB_PATH), "exec")
-    exec(code, {"dbutils": dbutils, "spark": object(), "__name__": "run_apply_test"})
+    exec(code, {"dbutils": dbutils, "spark": DryRunSpark(dry_rows), "__name__": "run_apply_test"})
     return calls
 
 
@@ -1058,10 +1218,16 @@ def test_notebook_refuses_a_test_call_without_services_before_writing_anything(m
                                 "mode": "dry_run", "services": ""}, CutoverW([]))
 
 
+DRY = "dddddddd-0000-0000-0000-000000000001"
+
+
 def test_notebook_pause_then_rollback_of_the_pause_resumes_it(monkeypatch):
     w = CutoverW([_endpoint("ext", GW_FULL)])
-    paused = _notebook(monkeypatch, {"apply_id": APPLY, "results_schema": "c.s", "operation": "pause_legacy",
-                                     "mode": "execute", "endpoints": "ext", "job_run_id": "7"}, w)
+    base = {"results_schema": "c.s", "operation": "pause_legacy", "endpoints": "ext", "requested_by": "me@x.com"}
+    dry = _notebook(monkeypatch, {**base, "apply_id": DRY, "mode": "dry_run", "job_run_id": "6"}, w)
+    assert dry["items"][DRY][0]["action"] == "would_pause"
+    paused = _notebook(monkeypatch, {**base, "apply_id": APPLY, "mode": "execute", "job_run_id": "7",
+                                     "dry_run_id": DRY}, w, dry_rows={DRY: _dry_row(dry, DRY)})
     assert paused["items"][APPLY][0]["action"] == "paused"
     assert _final(paused, APPLY)["status"] == "SUCCEEDED"
     assert w.api_client.endpoints["ext"]["ai_gateway"] != GW_FULL  # paused
@@ -1124,3 +1290,69 @@ def test_other_listing_errors_do_not_stop_the_apply(tmp_path, monkeypatch):
     w.ai_gateway.list_model_services = flaky
     res, _ = _run(monkeypatch, tmp_path, w, [_ep(EXTERNAL)])
     assert res and not any("isn't available" in str(r) for r in res)  # the run went on past the listing
+
+
+def _gate_case(monkeypatch, w, dry_override=None, execute_params=None, traffic=None):
+    base = {"results_schema": "c.s", "operation": "enable_tracking", "endpoints": "ext", "requested_by": "me@x.com"}
+    dry = _notebook(monkeypatch, {**base, "apply_id": DRY, "mode": "dry_run", "job_run_id": "6"}, w, traffic=traffic)
+    params = {**base, "apply_id": APPLY, "mode": "execute", "job_run_id": "7", "dry_run_id": DRY, **(execute_params or {})}
+    return _notebook(monkeypatch, params, w, dry_rows={DRY: _dry_row(dry, DRY, **(dry_override or {}))}, traffic=traffic)
+
+
+def test_notebook_execute_without_a_dry_run_is_refused_before_any_write(monkeypatch):
+    w = CutoverW([_endpoint("ext", GW_FULL)])
+    for op, extra in (("enable_tracking", {"endpoints": "ext"}), ("pause_legacy", {"endpoints": "ext"}),
+                      ("test_call", {"services": SVC})):
+        with pytest.raises(ValueError, match="needs dry_run_id"):
+            _notebook(monkeypatch, {"apply_id": APPLY, "results_schema": "c.s", "operation": op,
+                                            "mode": "execute", **extra}, w)
+    assert w.api_client.puts == []
+
+
+def test_notebook_apply_execute_without_a_dry_run_is_refused(monkeypatch):
+    with pytest.raises(ValueError, match="needs dry_run_id"):
+        _notebook(monkeypatch, {"apply_id": APPLY, "results_schema": "c.s", "mode": "execute", "endpoints": "ext",
+                                "target_catalog": "c", "target_schema": "s", "scan_run_id": "33333333-3333-3333-3333-333333333333"}, FakeW())
+
+
+@pytest.mark.parametrize("override, params, match", [
+    ({}, {"endpoints": "ext,other"}, "changed since"),
+    ({"status": "FAILED"}, {}, "didn't succeed"),
+    ({"operation": "pause_legacy"}, {}, "dry run of enable_tracking"),
+    ({"requested_by": "someone@x.com"}, {}, "someone else"),
+    ({"started_at": "2020-01-01 00:00:00"}, {}, "24 hours"),
+])
+def test_notebook_execute_needs_a_matching_recent_dry_run(monkeypatch, override, params, match):
+    w = CutoverW([_endpoint("ext", GW_FULL), _endpoint("other", GW_FULL)])
+    with pytest.raises(ValueError, match=match):
+        _gate_case(monkeypatch, w, override, params)
+    assert w.api_client.puts == []
+
+
+def test_notebook_execute_after_its_dry_run_runs(monkeypatch):
+    w = CutoverW([_endpoint("ext", GW_FULL)])
+    calls = _gate_case(monkeypatch, w)
+    assert calls["items"][APPLY][0]["action"] == "tracking_enabled" and len(w.api_client.puts) == 1
+
+
+def test_notebook_pause_refuses_recent_traffic_unless_forced(monkeypatch):
+    w = CutoverW([_endpoint("ext", GW_FULL)])
+    base = {"results_schema": "c.s", "operation": "pause_legacy", "endpoints": "ext", "job_run_id": "6"}
+    busy = _notebook(monkeypatch, {**base, "apply_id": DRY, "mode": "dry_run"}, w, traffic={"ext": 3})
+    assert busy["items"][DRY][0]["action"] == "refused" and _final(busy, DRY)["status"] == "NEEDS_ATTENTION"
+    forced = _notebook(monkeypatch, {**base, "apply_id": OTHER, "mode": "dry_run", "force": "true"}, w,
+                       traffic={"ext": 3})
+    assert forced["items"][OTHER][0]["action"] == "would_pause"
+
+
+def test_dry_run_gate_rules():
+    now = datetime(2026, 11, 2, 12, tzinfo=timezone.utc)
+    ok = {"mode": "dry_run", "operation": "apply", "status": "SUCCEEDED", "fingerprint": "f", "scan_run_id": "s1",
+          "requested_by": "me", "started_at": "2026-11-02 01:00:00"}
+    assert a.dry_run_gate_error(ok, "apply", "f", "s1", "me", now) is None
+    assert "different scan" in a.dry_run_gate_error(ok, "apply", "f", "s2", "me", now)
+    assert "24 hours" in a.dry_run_gate_error({**ok, "started_at": "2026-11-01 11:59:00"}, "apply", "f", "s1", "me", now)
+    assert "24 hours" in a.dry_run_gate_error({**ok, "started_at": None}, "apply", "f", "s1", "me", now)
+    assert "changed" in a.dry_run_gate_error({**ok, "fingerprint": None}, "apply", None, "s1", "me", now)
+    assert a.dry_run_gate_error({**ok, "requested_by": ""}, "apply", "f", "s1", "anyone", now) is None
+    assert a.DRY_RUN_TTL_HOURS == 24 and "resume_legacy" not in a.DRY_RUN_GATED

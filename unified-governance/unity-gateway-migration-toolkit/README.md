@@ -8,13 +8,13 @@ Moves legacy model serving endpoints (v1, and v2 workspace-bound endpoints) to U
 
 ## Quick start (about 5 minutes, inside the workspace)
 
-1. Download `unity-gateway-migration-toolkit-0.10.0.zip` and unzip it. In the workspace, import `INSTALL_unity_gateway_migration_toolkit_0_10_0.py` from the zip's top folder.
+1. Download `unity-gateway-migration-toolkit.zip` from the [release page](https://github.com/databricks-solutions/technical-services-solutions/releases/tag/unity-gateway-migration-toolkit-latest) and unzip it. In the workspace, import `INSTALL_unity_gateway_migration_toolkit_0_10_0.py` from the zip's top folder.
 2. Open the notebook. Set **Install: Results catalog** and **Install: SQL warehouse**. Leave the other widgets.
 3. Click **Run all**. The last cell prints the app link.
 4. Open **Compute > Apps > ug-migration-toolkit**.
 5. Work through the tabs in order: **Overview** (refresh the snapshot), **Scans** (scan this workspace), **Apply** (dry run, then execute), **Verify & cut over** (traffic, tracking, pause, test call, Enforce checklist).
 
-Run the installer as a workspace admin with system table access, because the jobs run as you. If the installer says the target schema `ai_gateway.migrated` is missing, create it first. The installer prints the SQL.
+Run the installer as a workspace admin with system table access, because the jobs run as you (or set **Advanced: Run jobs as service principal**). The first snapshot reads account-wide system tables, so it covers every workspace in the account. If the installer says the target schema `ai_gateway.migrated` is missing, create it first. The installer prints the SQL.
 
 ![Account overview with headline counts, the deadline countdown, a trend chart and workspaces by wave](docs/screenshots/overview.png)
 

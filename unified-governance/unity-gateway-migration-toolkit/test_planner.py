@@ -1,6 +1,7 @@
 """Offline tests for ug_migration_planner using synthetic endpoint payloads."""
 
 import base64
+import inspect
 import json
 from dataclasses import asdict
 from types import SimpleNamespace
@@ -1065,8 +1066,8 @@ def test_v2_failures_and_tokens_are_summed_next_to_requests(monkeypatch):
     assert t["a"]["tokens"] == 1000 and t["a"]["v2_tokens"] == 700
     assert t["a"]["v2_failed"] == 2 and t["a"]["v2_status_501"] == 0
     assert t["b"]["v2_failed"] == 4 and t["b"]["v2_status_501"] == 4 and t["b"]["tokens"] == 0
-    # The SQL counts failures per row: no status, or status 0, 403, 404, 410 or 500 and up; HTTP 501 is counted apart.
-    assert "status_code IS NULL OR status_code IN (0, 403, 404, 410) OR status_code >= 500" in m.V2_CALLER_SQL
+    # The SQL counts failures per row: no status, status 0 or HTTP 501; 501 is also counted apart.
+    assert "status_code IS NULL OR status_code IN (0, 501)" in m.V2_CALLER_SQL
     assert "sum(CASE WHEN status_code = 501" in m.V2_CALLER_SQL and "coalesce(sum(total_tokens), 0)" in m.V2_CALLER_SQL
     seen = []
     monkeypatch.setattr(m, "_sql", lambda w, wh, statement, params=None: seen.append(statement) or [])
@@ -1181,6 +1182,33 @@ def test_serving_endpoint_with_failing_v2_calls_keeps_its_own_blockers():
     assert "requests from" in r["blockers"][1]["detail"]
 
 
-def test_client_and_rate_limit_errors_are_not_counted_as_v2_off():
-    sql = m.V2_CALLER_SQL
-    assert "IN (0, 403, 404, 410) OR status_code >= 500" in sql and ">= 400" not in sql
+
+def test_scrub_hides_header_env_and_connection_string_secrets():
+    cases = {
+        "headers['api-key'] = 'abcd1234efgh'": "headers['api-key'] = '<hidden>'",
+        'headers["Authorization"] = "Bearer abcd1234efgh5678"': 'headers["Authorization"] = "Bearer <hidden>"',
+        "os.environ['OPENAI_API_KEY'] = 'abcd1234efgh'": "os.environ['OPENAI_API_KEY'] = '<hidden>'",
+        'os.environ["DATABRICKS_TOKEN"] = "abcd1234efgh"': 'os.environ["DATABRICKS_TOKEN"] = "<hidden>"',
+        "h = {'x-api-key': 'abcd1234efgh'}": "h = {'x-api-key': '<hidden>'}",
+        "d = {'token': 'abcd1234efgh'}": "d = {'token': '<hidden>'}",
+        'c = "AccountName=foo;AccountKey=abcd1234efgh==;EndpointSuffix=core"':
+            'c = "AccountName=foo;AccountKey=<hidden>;EndpointSuffix=core"',
+        'c = "SharedAccessKeyName=root;SharedAccessKey=abcd1234efgh="':
+            'c = "SharedAccessKeyName=root;SharedAccessKey=<hidden>"',
+    }
+    for line, want in cases.items():
+        assert m.scrub(line) == want, line
+    for safe in ('headers["Authorization"] = f"Bearer {tok}"', "headers['Content-Type'] = 'application/json'"):
+        assert m.scrub(safe) == safe
+
+
+def test_client_permission_and_provider_errors_are_not_counted_as_v2_off():
+    # Only no status, status 0 and HTTP 501 (v2 retired) count as failed. 400, 403, 404, 429 and other 5xx can
+    # come from the caller, its permissions, rate limits or the provider, so they never mark v2 as off.
+    import ug_migration_account as acct
+    import ug_migration_store as store
+    for sql in (m.V2_CALLER_SQL, acct.UG_TRAFFIC_SQL,
+                inspect.getsource(store.legacy_traffic_since)):
+        assert "IN (0, 501)" in sql
+        for broad in ("403", "404", "410", ">= 500", ">= 400"):
+            assert broad not in sql, broad

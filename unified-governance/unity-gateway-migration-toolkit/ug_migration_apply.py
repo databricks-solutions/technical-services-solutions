@@ -3,8 +3,11 @@
 Creates the Unity Gateway objects that ug_migration_planner proposes for
 external model and Provisioned Throughput endpoints: model provider services,
 model services (routing, fallback, rate limits, inference table) and EXECUTE /
-MANAGE grants. Legacy endpoints are not touched, and clients keep calling them
-until their code changes, so applying is safe to do ahead of the cutover.
+MANAGE grants. Applying doesn't change legacy endpoints, and clients keep
+calling them until their code changes, so applying is safe to do ahead of the
+cutover. The cut-over operations do change legacy endpoints: pause_legacy sets
+the rate limit to 0 and enable_tracking turns usage tracking on (both re-send
+the rest of the AI Gateway config; resume_legacy undoes a pause).
 
 DRY RUN BY DEFAULT: without --execute it only prints what it would create.
 Every object it creates is written to a log, and `rollback` deletes only the
@@ -321,6 +324,41 @@ def guardrail_items(row: planner.PlanRow) -> list[str]:
     return out
 
 
+CARRIED_GATEWAY_KEYS = ("rate_limits", "guardrails", "inference_table_config", "usage_tracking_config", "fallback_config")
+
+
+def not_carried_over(ep: planner.LegacyEndpoint, row: planner.PlanRow, grants: bool) -> list[str]:
+    """Governance on the legacy endpoint that the new model service doesn't get. Every apply item for the service
+    lists these (not_carried_over), so the result says plainly what a person still has to redo or decide."""
+    out = []
+    if ep.guardrails:
+        out.append("guardrails (Unity Gateway model services don't take the legacy guardrails)")
+    if ep.rate_limits and not row.rate_limits:
+        out.append("rate limits")
+    if (ep.inference_table or ep.auto_capture) and not row.inference_table:
+        out.append("inference table logging")
+    elif row.inference_table:
+        out.append("inference table history (the new service logs to a new <prefix>_ug_payload table)")
+    if ep.usage_tracking:
+        out.append("usage tracking setting (Unity Gateway usage is in system.ai_gateway.usage, not "
+                   "system.serving.endpoint_usage)")
+    if ep.tags:
+        out.append(f"endpoint tags ({len(ep.tags)})")
+    if ep.route_optimized:
+        out.append("route optimization and its endpoint URL")
+    if ep.budget_policy_id:
+        out.append("budget policy")
+    if ep.usage_policy_id:
+        out.append("usage policy")
+    if ep.can_query and not (grants and row.grants):
+        out.append("endpoint permissions (grants were not copied)" if not grants
+                   else "endpoint permissions (none map to Unity Catalog grants)")
+    other = [k for k in ep.gateway_settings if k not in CARRIED_GATEWAY_KEYS]
+    if other:
+        out.append(f"AI Gateway settings {', '.join(sorted(other))}")
+    return out
+
+
 def build_model_service(ep: planner.LegacyEndpoint, row: planner.PlanRow, provider_fqn: dict[str, str],
                         apply_id: str | None = None, ack_guardrails: bool = False) -> dict:
     """ModelService body: destinations, fallback, rate limits and inference table."""
@@ -381,8 +419,14 @@ def build_model_service(ep: planner.LegacyEndpoint, row: planner.PlanRow, provid
                 if p > 0:
                     d["traffic_percentage"] = p
         # Legacy fallback tries the other served entities in listing order. Destinations that carry traffic
-        # are primaries; when every served entity carries traffic (a split), no fallback destination is added.
+        # are primaries and 0% destinations become the fallback. When every served entity carries traffic (a split)
+        # there is nothing to fall back to without making a primary also a fallback, which the toolkit doesn't do:
+        # the endpoint is left for a person rather than silently losing its fallback.
         fallback = [d for d, p in dests if p == 0] if ep.fallback_enabled else []
+        if ep.fallback_enabled and not fallback:
+            raise Manual(f"fallback is on and traffic is split across {len(primary)} served entities with no 0% "
+                         "entity, so the toolkit can't carry the fallback over. Add a 0% served entity to use as the "
+                         "fallback, or create this model service by hand")
         if len(fallback) > MAX_FALLBACKS:
             raise Manual(f"{len(fallback)} fallback destinations; Unity Gateway allows {MAX_FALLBACKS}")
     if len(primary) > MAX_DESTINATIONS:
@@ -742,6 +786,9 @@ def apply(w: WorkspaceClient, endpoint_names: list[str] | None, target_catalog: 
                 body = build_model_service(ep, r, provider_fqn, apply_id, ack_guardrails)
                 guard = guardrail_items(r) if ack_guardrails else []
                 extra = {"guardrails_not_migrated": guard} if guard else {}
+                dropped = not_carried_over(ep, r, grants)
+                if dropped:
+                    extra["not_carried_over"] = dropped
                 state = a.ensure_model_service(r.target_service, body, **extra)
                 if not execute:
                     if grants and r.grants:
@@ -776,7 +823,8 @@ def apply(w: WorkspaceClient, endpoint_names: list[str] | None, target_catalog: 
 def run_outcome(results: list[dict]) -> tuple[str, dict]:
     """Status and summary of a finished run (job notebooks store both; the app reads them).
 
-    Summary: how many items had each action, plus kept_other_run (kept objects that another apply run still uses).
+    Summary: how many items had each action, plus kept_other_run (kept objects that another apply run still uses)
+    and not_carried_over (model services whose legacy governance isn't all carried over).
     Guardrails that were acknowledged are not a problem: the item records guardrails_not_migrated and the run
     still SUCCEEDED."""
     summary: dict = {}
@@ -784,6 +832,10 @@ def run_outcome(results: list[dict]) -> tuple[str, dict]:
         act = r.get("action") or "unknown"
         summary[act] = summary.get(act, 0) + 1
     summary["kept_other_run"] = sum(1 for r in results if r.get("action") == "kept" and r.get("other_run"))
+    # Services whose legacy governance isn't fully carried over (their items list not_carried_over). Not a problem
+    # status: the run did what it could, and the result says what a person still has to redo.
+    summary["not_carried_over"] = len({r.get("name") for r in results if r.get("not_carried_over")
+                                       and r.get("action") in ("created", "exists", "would_create")})
     status = "NEEDS_ATTENTION" if any(summary.get(a) for a in PROBLEM_ACTIONS) else "SUCCEEDED"
     return status, summary
 
@@ -867,7 +919,7 @@ def rollback(w: WorkspaceClient, log_path: str, execute: bool, protect=None, app
                 stamp[key] = e
     grant_entries = [e for e in entries if not e.get("rollback_of") and e.get("type") == "grant"
                      and e.get("action") == "granted" and e.get("added")]
-    deleted, still_mine = set(), set()
+    deleted = set()  # deleted, or would be deleted in a dry run
     for key in reversed(targets):
         typ, name = key
         try:
@@ -891,9 +943,14 @@ def rollback(w: WorkspaceClient, log_path: str, execute: bool, protect=None, app
                           else "no apply mark and not created by this run")
                 emit({"type": typ, "name": name, "action": "kept", "reason": reason, "other_run": bool(tag)})
                 continue
-            still_mine.add(key)
             if typ == "model_provider_service":
-                refs = services_referencing(w, name)
+                try:
+                    refs = services_referencing(w, name)
+                except ReferenceCheckError as rce:
+                    emit({"type": typ, "name": name, "action": "kept",
+                          "reason": f"couldn't check every catalog and schema for model services that use it ({rce}); "
+                                    "delete it by hand once nothing uses it"})
+                    continue
                 if refs:
                     # Shared when every service that still uses it belongs to another run that hasn't been rolled back.
                     shared = all(("model_service", r) in protect for r in refs)
@@ -917,6 +974,7 @@ def rollback(w: WorkspaceClient, log_path: str, execute: bool, protect=None, app
                 emit({"type": typ, "name": name, "action": "note",
                       "reason": "create was interrupted; the object exists and carries this run's mark"})
             if not execute:
+                deleted.add(key)
                 emit({"type": typ, "name": name, "action": "would_delete"})
                 continue
             kw = {} if force else {"etag": d.get("etag")}  # conditional delete when not forcing
@@ -925,30 +983,25 @@ def rollback(w: WorkspaceClient, log_path: str, execute: bool, protect=None, app
             else:
                 w.ai_gateway.delete_model_provider_service(name=f"model-provider-services/{name}", **kw)
             deleted.add(key)
-            emit({"type": typ, "name": name, "action": "deleted"})
+            emit({"type": typ, "name": name, "action": "deleted",
+                  **({"note": "checked the model services in every catalog and schema this identity can see"}
+                     if typ == "model_provider_service" else {})})
         except NotFound:
+            deleted.add(key)  # its grants went with it
             emit({"type": typ, "name": name, "action": "already_gone"})
         except Exception as ex:
             emit({"type": typ, "name": name, "action": "error", "reason": str(ex)[:300]})
 
-    # Grants this run added to services that survive the rollback are revoked (only what it added).
+    # Grants are never revoked. A deleted service takes its grants with it. A service the rollback keeps (another
+    # run uses it, it changed since apply, it existed before, or it couldn't be deleted) keeps every grant, because
+    # callers may depend on them now: the privileges this run added are listed so an owner can revoke them by hand.
     for e in grant_entries:
         key = ("model_service", e["name"])
-        if key in deleted or key not in still_mine or key in protect:
+        if key in deleted:
             continue
-        changes = [catalog.PermissionsChange(principal=a["principal"],
-                                             remove=[catalog.Privilege(p) for p in a["privileges"]])
-                   for a in e["added"]]
-        if not execute:
-            emit({"type": "grant", "name": e["name"], "action": "would_revoke", "grants": e["added"]})
-            continue
-        try:
-            w.grants.update(securable_type="model_service", full_name=e["name"], changes=changes)
-            emit({"type": "grant", "name": e["name"], "action": "revoked", "grants": e["added"]})
-        except NotFound:
-            emit({"type": "grant", "name": e["name"], "action": "already_gone"})
-        except Exception as ex:
-            emit({"type": "grant", "name": e["name"], "action": "error", "reason": str(ex)[:300]})
+        emit({"type": "grant", "name": e["name"], "action": "kept", "grants": e["added"],
+              "reason": "the service is kept, so the privileges this run added stay; revoke them by hand if they are "
+                        "no longer needed"})
 
     if execute and audit_path:
         with open(audit_path, "a") as f:
@@ -957,22 +1010,46 @@ def rollback(w: WorkspaceClient, log_path: str, execute: bool, protect=None, app
     return out
 
 
-def services_referencing(w: WorkspaceClient, provider_fqn: str) -> list[str]:
-    """Model services in the provider's schema whose destinations or fallback use it. Raises if it can't check."""
-    target = f"model-provider-services/{provider_fqn}"
-    prefix = "model-services/" + provider_fqn.rsplit(".", 1)[0] + "."
-    refs = []
-    for svc in w.ai_gateway.list_model_services():
-        d = svc.as_dict() or {}
-        name = d.get("name") or ""
-        if not name.startswith(prefix):
+class ReferenceCheckError(Exception):
+    """services_referencing couldn't check everywhere a service might use the provider."""
+
+
+SKIP_CATALOGS = ("system", "__databricks_internal")  # Databricks-managed: their services can't use a customer provider
+
+
+def _visible_schemas(w: WorkspaceClient):
+    for cat in w.catalogs.list():
+        if not cat.name or cat.name in SKIP_CATALOGS:
             continue
-        if "config" not in d:  # the listing may omit the config
-            d = w.ai_gateway.get_model_service(name=name).as_dict() or {}
-        routing = (d.get("config") or {}).get("routing") or {}
-        dests = (routing.get("destinations") or []) + ((routing.get("fallback") or {}).get("destinations") or [])
-        if any((x.get("external_model_config") or {}).get("model_provider_service") == target for x in dests):
-            refs.append(name[len("model-services/"):])
+        for sch in w.schemas.list(catalog_name=cat.name):
+            if sch.name and sch.name != "information_schema":
+                yield f"{cat.name}.{sch.name}"
+
+
+def services_referencing(w: WorkspaceClient, provider_fqn: str) -> list[str]:
+    """Model services in every catalog and schema this identity can see whose destinations or fallback use the
+    provider, not only the provider's own schema. Raises ReferenceCheckError when a catalog, schema or service
+    can't be read, so the caller keeps the provider (fail closed). Services in schemas this identity can't see
+    aren't checked; the rollback result says so."""
+    target = f"model-provider-services/{provider_fqn}"
+    refs = []
+    try:
+        for schema in _visible_schemas(w):
+            listing = w.ai_gateway.list_model_services(parent=f"schemas/{schema}",
+                                                       view=catalog.ListModelServicesRequestView.FULL)
+            for svc in listing:
+                d = svc.as_dict() or {}
+                name = d.get("name") or ""
+                if not name.startswith("model-services/"):
+                    continue
+                if "config" not in d:  # the listing may omit the config
+                    d = w.ai_gateway.get_model_service(name=name).as_dict() or {}
+                routing = (d.get("config") or {}).get("routing") or {}
+                dests = (routing.get("destinations") or []) + ((routing.get("fallback") or {}).get("destinations") or [])
+                if any((x.get("external_model_config") or {}).get("model_provider_service") == target for x in dests):
+                    refs.append(name[len("model-services/"):])
+    except Exception as e:
+        raise ReferenceCheckError(str(e)[:300]) from e
     return refs
 
 
@@ -1004,12 +1081,76 @@ EXCERPT_CHARS = 200
 TEST_TIMEOUT_SECONDS = 120
 SERVICE_NAME_RE = re.compile(r"[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+")
 ENDPOINT_NAME_RE = re.compile(r"[A-Za-z0-9_\-]+")
+DRY_RUN_TTL_HOURS = 24  # an execute must follow a successful dry run of the same settings started this recently
+DRY_RUN_GATED = ("apply", "test_call", "pause_legacy", "enable_tracking")  # resume and apply rollback have no dry run
+PAUSE_TRAFFIC_HOURS = 24  # pause refuses an endpoint with legacy requests this recent, unless force is set
 # AI Gateway settings that PUT /ai-gateway re-sends: the companion script's list plus usage tracking.
 # An endpoint with any other setting set is refused, because the PUT would drop it.
 GATEWAY_KEYS = ("guardrails", "inference_table_config", "rate_limits", "fallback_config", "usage_tracking_config")
 ZERO_LIMIT = {"key": "endpoint", "calls": 0, "renewal_period": "minute"}
 EMBEDDING_RE = re.compile(r"embed|\bbge\b|\bgte\b", re.I)
 SEARCH_RE = re.compile(r"vector[ _-]?search|ai[ _-]?search", re.I)
+
+
+def _parse_time(ts) -> datetime | None:
+    """A UTC time from epoch seconds or an ISO string (no zone means UTC); None if it can't be read."""
+    if isinstance(ts, (int, float)) and not isinstance(ts, bool):
+        return datetime.fromtimestamp(ts, timezone.utc)
+    try:
+        t = datetime.fromisoformat(str(ts).strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
+def dry_run_expired(started_at, now: datetime | None = None) -> bool:
+    """True when a dry run started more than DRY_RUN_TTL_HOURS ago (or its start time can't be read)."""
+    t = _parse_time(started_at)
+    if t is None:
+        return True
+    return ((now or datetime.now(timezone.utc)) - t).total_seconds() > DRY_RUN_TTL_HOURS * 3600
+
+
+def dry_run_gate_error(dry: dict | None, operation: str, fingerprint: str | None, scan_run_id: str = "",
+                       requested_by: str = "", now: datetime | None = None) -> str | None:
+    """Why an execute can't run: it must follow a successful, recent dry run of the same operation and settings.
+
+    dry is the dry run's row in ug_migration_applies (mode, operation, status, fingerprint, scan_run_id,
+    requested_by, started_at as epoch seconds or a UTC string). The job checks this itself, so starting the job directly can't skip the dry run.
+    requested_by must match when the dry run recorded one; it is a consistency check, not an access control."""
+    if dry is None:
+        return "execute needs dry_run_id: the apply_id of a successful dry run of the same settings"
+    if dry.get("mode") != "dry_run" or (dry.get("operation") or "apply") != operation:
+        return f"dry_run_id must be a dry run of {operation}"
+    if dry.get("status") != "SUCCEEDED":
+        return "that dry run didn't succeed; run a dry run with these settings again"
+    if not dry.get("fingerprint") or dry.get("fingerprint") != fingerprint:
+        return "the endpoints or options changed since that dry run; run a dry run with these settings"
+    if operation == "apply" and (dry.get("scan_run_id") or "") != (scan_run_id or ""):
+        return "that dry run used a different scan; run a dry run with this scan"
+    if (dry.get("requested_by") or "") and (dry.get("requested_by") or "") != (requested_by or ""):
+        return "that dry run was started by someone else; run your own dry run first"
+    if dry_run_expired(dry.get("started_at"), now):
+        return f"that dry run is more than {DRY_RUN_TTL_HOURS} hours old; run a dry run again"
+    return None
+
+
+def pause_traffic_refusal(name: str, recent_requests: dict | None, force: bool = False) -> str | None:
+    """Why pause must not run for an endpoint that still has callers (server-side gate; the app asks first).
+
+    recent_requests maps endpoint name to legacy requests (v1 and v2) in the last PAUSE_TRAFFIC_HOURS. None means
+    traffic couldn't be checked, which refuses too (fail closed). force pauses anyway: the caller has confirmed that
+    the remaining callers will get errors. System tables lag by up to a few hours, so no traffic is not proof."""
+    if force:
+        return None
+    if recent_requests is None:
+        return (f"couldn't check the last {PAUSE_TRAFFIC_HOURS} hours of traffic; pause with force set to confirm "
+                "that any remaining callers will get errors")
+    n = int(recent_requests.get(name) or 0)
+    if n > 0:
+        return (f"{n} legacy request(s) in the last {PAUSE_TRAFFIC_HOURS} hours: those callers would get errors. Move "
+                "them first, or pause with force set to confirm")
+    return None
 
 
 def resolve_api_type(value) -> str:
@@ -1223,15 +1364,22 @@ def _refusal_or_error(e: Exception, what: str) -> tuple[str, str]:
 
 
 def pause_legacy(w: WorkspaceClient, names: list[str], execute: bool, log_path: str,
-                 apply_id: str | None = None) -> list[dict]:
+                 apply_id: str | None = None, recent_requests: dict | None = None, force: bool = False) -> list[dict]:
     """Set each legacy endpoint's endpoint-wide rate limit to 0 calls a minute (README step 5).
 
-    Every other AI Gateway setting is re-sent unchanged. The previous and written configs go in the log, so
-    resume_legacy can restore the previous config exactly. Custom model and embedding endpoints are refused, and
-    so is any endpoint the API refuses (for example databricks-* system endpoints)."""
+    Every other AI Gateway setting is re-sent unchanged. The previous and written configs go in the durable log
+    before the write (action pausing), so resume_legacy can restore the previous config exactly even when the read-back
+    fails or the run is killed. An endpoint that can't be read first is refused (fail closed). Custom model and
+    embedding endpoints are refused, and so is any endpoint the API refuses (for example databricks-* system
+    endpoints). An endpoint with recent legacy traffic is refused unless force is set (pause_traffic_refusal)."""
     a = Applier(w, execute, log_path, apply_id)
     typ = "serving_endpoint"
     for name in names:
+        refusal = pause_traffic_refusal(name, recent_requests, force)
+        if refusal:
+            a.log(type=typ, name=name, action="refused", reason=refusal,
+                  recent_requests=None if recent_requests is None else int(recent_requests.get(name) or 0))
+            continue
         try:
             ep = _read_endpoint(w, name)
         except NotFound:
@@ -1262,20 +1410,34 @@ def pause_legacy(w: WorkspaceClient, names: list[str], execute: bool, log_path: 
         if not execute:
             a.log(type=typ, name=name, action="would_pause", **facts)
             continue
+        # In the durable log before the write, so a resume can restore this endpoint even if the run is killed
+        # mid-write. Not a result row: the result row (paused, mismatch, refused or error) follows the write.
+        a._write({"type": typ, "name": name, "action": "pausing", "time": _now_iso(), "execute": True,
+                  "apply_id": a.apply_id, **facts})
         try:
             _put_gateway(w, name, paused)
         except Exception as e:
             action, why = _refusal_or_error(e, "pause the endpoint")
-            a.log(type=typ, name=name, action=action, reason=why, **facts)
+            # A failed or timed-out PUT may still have been applied; resume checks the endpoint before restoring.
+            a.log(type=typ, name=name, action=action, reason=why, write_attempted=True, **facts)
             continue
         try:
             after = _read_endpoint(w, name).get("ai_gateway") or {}
             ok = _zero_endpoint_limit(after) and same_settings(gateway_settings(after), paused)
             why = None if ok else "the endpoint reads back with different settings than were written"
         except Exception as e:
-            ok, why = False, f"could not read back: {str(e)[:300]}"
-        a.log(type=typ, name=name, action="paused" if ok else "mismatch", **facts, **({"reason": why} if why else {}))
+            ok, why = False, f"could not read back: {str(e)[:300]}; resume this run to restore the previous settings"
+        a.log(type=typ, name=name, action="paused" if ok else "mismatch", write_attempted=True, **facts,
+              **({"reason": why} if why else {}))
     return a.results
+
+
+RESUMABLE_PAUSE_ACTIONS = ("paused", "pausing", "mismatch")  # the pause wrote (or may have written) the endpoint
+
+
+def _resumable(e: dict) -> bool:
+    return (e.get("type") == "serving_endpoint" and bool(e.get("previous_ai_gateway") is not None)
+            and (e.get("action") in RESUMABLE_PAUSE_ACTIONS or bool(e.get("write_attempted"))))
 
 
 def resume_source_error(src: dict | None) -> str | None:
@@ -1298,7 +1460,7 @@ def resume_legacy(w: WorkspaceClient, paused_entries: list[dict], names: list[st
     typ = "serving_endpoint"
     by_name: dict[str, dict] = {}
     for e in paused_entries:
-        if e.get("type") == typ and e.get("action") == "paused":
+        if _resumable(e):  # paused, or written without a confirmed read-back (pausing, mismatch, a failed PUT)
             by_name.setdefault(e.get("name"), e)
     for name in (names or list(by_name)):
         if name not in by_name:

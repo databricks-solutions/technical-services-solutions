@@ -138,6 +138,8 @@ resources:
         - {name: api_type, default: ""}
         - {name: prompt, default: "Reply with: ok"}
         - {name: services, default: ""}
+        # Execute (except resume and rollback): the apply_id of a successful dry run of the same settings, < 24 hours old.
+        - {name: dry_run_id, default: ""}
       tasks:
         - task_key: apply
           notebook_task:
@@ -152,11 +154,13 @@ resources:
     ug_migration_app:
       name: ${var.app_name}
       description: "Unity Gateway Migration Toolkit: account overview, workspace scans, readiness, code fixes and apply (prototype)"
-      source_code_path: ./app
+      # The bundle root, not ./app: the app imports the toolkit modules (ug_migration_*.py) from the root, so the app
+      # and the jobs use one copy of the rules. requirements.txt at the root points at app/requirements.txt.
+      source_code_path: .
       user_api_scopes:
         - sql
       config:
-        command: ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+        command: ["uvicorn", "app.backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
         env:
           - {name: DATABRICKS_WAREHOUSE_ID, value_from: sql-warehouse}
           - {name: SNAPSHOT_JOB_ID, value_from: snapshot-job}

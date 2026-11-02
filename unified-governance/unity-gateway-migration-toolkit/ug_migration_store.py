@@ -10,8 +10,8 @@ Tables (in the snapshot catalog and schema):
   ug_migration_applies      one row per apply / dry run / rollback
   ug_migration_apply_items  apply_id, seq, payload (JSON)
 
-The app (app/backend/main.py) can't import this module (the app is deployed from app/ alone), so it mirrors
-selection_fingerprint, rollback_done, rollback_blocks and effective_status. tests in test_app.py check the copies agree.
+The app (app/backend/main.py) imports this module, so the app and the jobs share one copy of the SQL, the
+fingerprints and the rollback rules. Releases put it next to main.py (app/backend).
 """
 
 from __future__ import annotations
@@ -40,7 +40,6 @@ APPLY_COLUMNS = {
     "toolkit_version": "STRING", "fingerprint": "STRING", "started_at": "TIMESTAMP", "finished_at": "TIMESTAMP",
 }
 # The options that decide what an apply run does. An execute must match the dry run it follows on all of them.
-# Mirrored in app/backend/main.py (FINGERPRINT_KEYS); keep the two in step.
 FINGERPRINT_KEYS = ("scan_run_id", "endpoints", "target_catalog", "target_schema", "uc_secret_map",
                     "allow_secret_read", "grants", "ack_guardrails")
 FLAG_KEYS = ("allow_secret_read", "grants", "ack_guardrails")
@@ -353,7 +352,7 @@ def is_run_active(spark, w, schema: str, apply_id: str) -> bool:
 
 
 # Options of the other operations (test_call, pause_legacy, enable_tracking, resume_legacy). Stored as the
-# fingerprint of those runs; the app mirrors legacy_fingerprint the same way it mirrors selection_fingerprint.
+# fingerprint of those runs; the app compares an execute with its dry run using this same function.
 def legacy_fingerprint(params: dict) -> str:
     """Hash of the options a verify-and-cut-over run (any operation but apply) was started with.
 
@@ -426,7 +425,7 @@ def legacy_traffic_since(endpoints, since, workspace_id) -> tuple[str, dict]:
 
     One query, two sources, UNION ALL. 'v1' is system.serving.endpoint_usage joined to served_entities. 'v2' is
     system.ai_gateway.usage rows with no service_type (AI Gateway v2 requests on legacy endpoints). Columns:
-    source, endpoint_name, requester, requests, failed (no status, or status 0, 403, 404, 410 or 500 and up), tokens (input plus output
+    source, endpoint_name, requester, requests, failed (no status, or status 0 or 501), tokens (input plus output
     for v1, total_tokens for v2), last_request (string). Both sources are filtered to workspace_id."""
     names = _split_names(endpoints)
     if not names:
@@ -442,7 +441,7 @@ def legacy_traffic_since(endpoints, since, workspace_id) -> tuple[str, dict]:
     sql = f"""
         SELECT 'v1' AS source, se.endpoint_name AS endpoint_name, eu.requester AS requester,
                count(*) AS requests,
-               sum(CASE WHEN eu.status_code IS NULL OR eu.status_code IN (0, 403, 404, 410) OR eu.status_code >= 500 THEN 1 ELSE 0 END)
+               sum(CASE WHEN eu.status_code IS NULL OR eu.status_code IN (0, 501) THEN 1 ELSE 0 END)
                  AS failed,
                coalesce(sum(coalesce(eu.input_token_count, 0) + coalesce(eu.output_token_count, 0)), 0) AS tokens,
                CAST(max(eu.request_time) AS STRING) AS last_request
@@ -456,7 +455,7 @@ def legacy_traffic_since(endpoints, since, workspace_id) -> tuple[str, dict]:
         UNION ALL
         SELECT 'v2' AS source, endpoint_name, requester,
                count(*) AS requests,
-               sum(CASE WHEN status_code IS NULL OR status_code IN (0, 403, 404, 410) OR status_code >= 500 THEN 1 ELSE 0 END) AS failed,
+               sum(CASE WHEN status_code IS NULL OR status_code IN (0, 501) THEN 1 ELSE 0 END) AS failed,
                coalesce(sum(total_tokens), 0) AS tokens,
                CAST(max(event_time) AS STRING) AS last_request
         FROM system.ai_gateway.usage

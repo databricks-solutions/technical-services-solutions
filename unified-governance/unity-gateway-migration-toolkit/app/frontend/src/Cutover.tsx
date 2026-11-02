@@ -41,6 +41,14 @@ const stamp = (s: any) => (s ? String(s).replace("T", " ").slice(0, 16) + " UTC"
 const withScan = (path: string, scanId: string) =>
   scanId ? `${path}${path.includes("?") ? "&" : "?"}scan_run_id=${encodeURIComponent(scanId)}` : path;
 
+/** A result row's details, with the pause facts: recent legacy requests, and a write that may have landed. */
+function rowDetails(i: any): string {
+  const parts = [i.reason || i.note || ""];
+  if (typeof i.recent_requests === "number" && i.recent_requests > 0) parts.push(`Legacy requests in the last 24 hours: ${fmt(i.recent_requests)}.`);
+  if (i.write_attempted && i.action !== "paused") parts.push("The change may have been written. Resume restores the saved settings.");
+  return parts.filter(Boolean).join(" ");
+}
+
 /** "test_ok: 2, refused: 1" from a run's summary counts. */
 function summaryLine(summary: any): string {
   let s: any = summary;
@@ -48,11 +56,11 @@ function summaryLine(summary: any): string {
     try { s = JSON.parse(s); } catch { s = {}; }
   }
   if (!s || typeof s !== "object") return "";
-  return Object.entries(s).filter(([k, v]) => typeof v === "number" && v > 0 && k !== "kept_other_run")
+  return Object.entries(s).filter(([k, v]) => typeof v === "number" && v > 0 && k !== "kept_other_run" && k !== "not_carried_over")
     .map(([k, v], i) => `${i === 0 ? humanize(k) : humanize(k).toLowerCase()}: ${v}`).join(", ");
 }
 
-export default function Cutover({ operator, maxScanAgeDays }: { operator: boolean; maxScanAgeDays: number }) {
+export default function Cutover({ operator, maxScanAgeDays, jobsRunAs }: { operator: boolean; maxScanAgeDays: number; jobsRunAs?: string | null }) {
   const scans = useApi<any[]>("/api/scans");
   const succeeded = useMemo(() => (scans.data || []).filter((s) => s.status === "SUCCEEDED"), [scans.data]);
   const [picked, setPicked] = useState<string | null>(null);
@@ -69,7 +77,7 @@ export default function Cutover({ operator, maxScanAgeDays }: { operator: boolea
   return (
     <div className="stack">
       <PageHeader title="Verify & cut over"
-                  description="Check that legacy traffic has stopped, pause legacy endpoints one at a time, test Unity Gateway, then decide to enforce. Operators run the steps that change something. Everyone can read the results." />
+                  description="Check that legacy traffic has stopped, pause legacy endpoints one at a time, test Unity Gateway, then decide to enforce. Operators run the steps that change something. Everyone can read the traffic and the run list; a run's details are for the person who started it, operators and workspace admins." />
       <Card title="Scan used for these steps" note="The endpoints, callers and services come from this scan's plan. Scan again if they've changed.">
         {scans.loading && !scans.data ? <Skeleton lines={1} label="Loading scans" /> : scans.error ? <ErrorState error={scans.error} onRetry={scans.reload} /> : !scan ? (
           <Empty title="No finished scan" action={<NavButton tab="scans" label="Go to Scans" />}>Run a workspace scan first. This page reads its plan.</Empty>
@@ -95,7 +103,7 @@ export default function Cutover({ operator, maxScanAgeDays }: { operator: boolea
       <TrafficCheck traffic={traffic} win={win} setWin={setWin} scanReady={!!scan} />
       <TrackingStep operator={operator} endpoints={endpoints} scanId={scanId} onDone={reloadAll} />
       <PauseStep operator={operator} endpoints={endpoints} traffic={traffic} win={win} scanId={scanId} runs={runs} onDone={reloadAll} />
-      <TestStep operator={operator} services={services} scanId={scanId} onDone={runs.reload} />
+      <TestStep operator={operator} services={services} scanId={scanId} jobsRunAs={jobsRunAs} onDone={runs.reload} />
       <UsageStep />
       <EnforceStep scan={scan} enforceTraffic={enforceTraffic} maxAge={maxScanAgeDays} />
       <RunHistory operator={operator} runs={runs} />
@@ -105,9 +113,10 @@ export default function Cutover({ operator, maxScanAgeDays }: { operator: boolea
 
 /* ---------- Shared: start a run, show its progress and results ---------- */
 
-export type Started = { applyId: string; jobRunId: string; mode: "dry_run" | "execute"; operation: string; sig: string };
+export type Started = { applyId: string; jobRunId: string; mode: "dry_run" | "execute"; operation: string; sig: string; runsAs?: string | null };
 
-/** Starts a verify or cut-over run (POST /api/cutover). A 409 keeps the other run's job link. */
+/** Starts a verify or cut-over run (POST /api/cutover). A 409 naming another run keeps its job link; other 409s
+ *  (traffic on the endpoint, a dry run that changed or expired) show their reason. */
 function useCutoverRun() {
   const [run, setRun] = useState<Started | null>(null);
   const [busy, setBusy] = useState(false);
@@ -119,10 +128,10 @@ function useCutoverRun() {
     setConflict(null);
     try {
       const r: any = await api("/api/cutover", { method: "POST", body: JSON.stringify(body) });
-      setRun({ applyId: r.apply_id, jobRunId: r.job_run_id, mode: body.mode, operation: body.operation, sig });
+      setRun({ applyId: r.apply_id, jobRunId: r.job_run_id, mode: body.mode, operation: body.operation, sig, runsAs: r.runs_as ?? null });
       return true;
     } catch (e: any) {
-      if (e.status === 409) setConflict({ job: e.job ?? null });
+      if (e.status === 409 && e.job) setConflict({ job: e.job });
       else setErr(e.message);
       return false;
     } finally {
@@ -169,7 +178,7 @@ function RunResult({ started, label, onDone, columns }: {
       <Table label={`${label} results`} rows={data.items} pageSize={50} columns={columns || [
         { key: "name", label: "Target", render: (i) => <code className="wrap">{i.name}</code> },
         { key: "action", label: "Result", render: (i) => <Badge value={ACTION_LABEL[i.action] || humanize(i.action)} tone={ACTION_TONE[i.action] || "neutral"} /> },
-        { key: "reason", label: "Details", sortable: false, render: (i) => <span className="small">{i.reason || i.note || ""}</span> },
+        { key: "reason", label: "Details", sortable: false, render: (i) => <span className="small">{rowDetails(i)}</span> },
       ]} empty={<Empty title="No results">This run didn't check anything.</Empty>} />
     </div>
   );
@@ -240,6 +249,10 @@ function TrafficCheck({ traffic, win, setWin, scanReady }: { traffic: any; win: 
       {!scanReady ? <Empty title="No scan yet">Scan the workspace first; the endpoints come from its plan.</Empty>
         : traffic.loading && !traffic.data ? <SkeletonTable rows={4} label="Checking legacy traffic" />
         : traffic.error ? <ErrorState error={traffic.error} onRetry={traffic.reload} title="Couldn't check traffic" />
+        : traffic.data?.traffic_error ? (
+          <Notice tone="error" title="Traffic is unknown">
+            {traffic.data.traffic_error} Until it can be read, the toolkit doesn't treat any endpoint as quiet, and pausing stays off.
+          </Notice>)
         : rows.length === 0 ? <Empty title="No legacy endpoints in this scan">Nothing to check.</Empty>
         : (
           <>
@@ -343,12 +356,14 @@ function PauseStep({ operator, endpoints, traffic, win, scanId, runs, onDone }: 
   const hasTraffic = !!current && current.requests > 0;
   const runner = useCutoverRun();
   const [dry, setDry] = useState<{ applyId: string; sig: string } | null>(null);
-  const sig = JSON.stringify({ op: "pause_legacy", e: name });
+  const sig = JSON.stringify({ op: "pause_legacy", e: name, f: hasTraffic && ack });  // ack is the job's force flag, part of the fingerprint
   const body = (mode: "dry_run" | "execute", dryId = "") => ({
     operation: "pause_legacy", mode, endpoints: [name], scan_run_id: scanId, dry_run_id: dryId,
-    confirm: mode === "execute" ? `PAUSE ${name}` : "",
+    confirm: mode === "execute" ? `PAUSE ${name}` : "", traffic_window: win, ack_traffic: hasTraffic && ack,
   });
-  const disabled = !name ? "Choose an endpoint." : hasTraffic && !ack ? "Confirm that callers still on this endpoint will get errors." : runner.busy ? "A run is starting." : null;
+  // The server checks the same traffic again before it starts the run, and refuses when it can't read it.
+  const trafficUnknown = !traffic.data || !!traffic.data.traffic_error || !!traffic.error || (!!name && !current);
+  const disabled = !name ? "Choose an endpoint." : trafficUnknown ? "Traffic for this endpoint isn't known yet (see step 1)." : hasTraffic && !ack ? "Confirm that callers still on this endpoint will get errors." : runner.busy ? "A run is starting." : null;
   const resumable: any[] = (runs.data || []).filter((r: any) => r.operation === "pause_legacy" && r.mode === "execute"
     && ["SUCCEEDED", "NEEDS_ATTENTION", "FAILED"].includes(r.status) && !r.resumed);
   const [resuming, setResuming] = useState<any | null>(null);
@@ -372,7 +387,7 @@ function PauseStep({ operator, endpoints, traffic, win, scanId, runs, onDone }: 
                 {list.map((e: any) => <option key={e.endpoint} value={e.endpoint}>{e.endpoint}</option>)}
               </select>
             </div>
-            {name && (traffic.data ? (
+            {name && (traffic.data && !traffic.data.traffic_error && current ? (
               hasTraffic ? (
                 <Notice tone="warning" title={`${fmt(current.requests)} requests in the ${windowLabel}`}>
                   Last request {stamp(current.last_request)}. Callers still on it get errors. Move them first, or confirm below.
@@ -380,7 +395,8 @@ function PauseStep({ operator, endpoints, traffic, win, scanId, runs, onDone }: 
               ) : (
                 <Notice tone="success" title={`No legacy requests since ${stamp(traffic.data.since)}`}>This endpoint is quiet for the {windowLabel}.</Notice>
               )
-            ) : <p className="small muted">Checking traffic for this endpoint…</p>)}
+            ) : traffic.loading ? <p className="small muted">Checking traffic for this endpoint…</p>
+              : <p className="small muted">Traffic for this endpoint couldn't be read, so it can't be paused from here. See step 1.</p>)}
             {hasTraffic && (
               <label className="choice"><input type="checkbox" checked={ack} disabled={!operator} onChange={(e) => setAck(e.target.checked)} />
                 <span>I understand callers still on this endpoint will get errors until it's resumed</span></label>
@@ -433,7 +449,7 @@ function PauseStep({ operator, endpoints, traffic, win, scanId, runs, onDone }: 
 
 /* ---------- 4. Test call ---------- */
 
-function TestStep({ operator, services, scanId, onDone }: { operator: boolean; services: any; scanId: string; onDone: () => void }) {
+function TestStep({ operator, services, scanId, jobsRunAs, onDone }: { operator: boolean; services: any; scanId: string; jobsRunAs?: string | null; onDone: () => void }) {
   const listed: any[] = services.data?.services || [];
   const [chosen, setChosen] = useState<Set<string>>(new Set());
   const [extra, setExtra] = useState<string[]>([]);
@@ -463,6 +479,9 @@ function TestStep({ operator, services, scanId, onDone }: { operator: boolean; s
   const disabled = !names.length ? "Choose at least one service." : !promptOk ? "The prompt must be one line of up to 200 characters." : runner.busy ? "A run is starting." : null;
   return (
     <Card title="4. Test a Unity Gateway service" note="One small request per service, so each one is billable. A dry run only checks that the services exist.">
+      <p className="small">
+        The test call runs as the apply job's identity{jobsRunAs ? <> (<code>{jobsRunAs}</code>)</> : null}, not as you. It shows that the service answers; it doesn't show that you or your callers have access. Usage rows for it name that identity as the requester.
+      </p>
       {services.loading && !services.data ? <SkeletonTable rows={2} label="Loading services" />
         : services.error ? <ErrorState error={services.error} onRetry={services.reload} title="Couldn't load services" />
         : (

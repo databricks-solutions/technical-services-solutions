@@ -263,6 +263,26 @@ def test_bundle_yaml_operators_have_no_default_for_prod():
     assert not re.search(r"^\s+operators:", prod, re.M)  # the prod target sets nothing: --var operators is required
 
 
+def test_the_deployed_app_gets_the_modules_it_imports(tmp_path):
+    """main.py imports the store, apply and planner modules. The installer deploys {FILES}/app, so its zip carries
+    them under app/backend too (byte-equal to the root files); the bundle deploys the app from its root."""
+    import sys
+    root = pathlib.Path(__file__).parent
+    sys.path.insert(0, str(root))
+    import make_installer
+    built = pathlib.Path(make_installer.build(str(tmp_path), check_fresh=False)).read_text()
+    payload = re.search(r'^PAYLOAD = "([^"]+)"', built, re.M).group(1)
+    with zipfile.ZipFile(io.BytesIO(base64.b64decode(payload))) as z:
+        names = set(z.namelist())
+        for m in make_installer.APP_MODULES:
+            assert f"app/backend/{m}" in names and m in names
+            assert z.read(f"app/backend/{m}") == (root / m).read_bytes()
+    bundle = (root / "databricks.yml").read_text()
+    assert re.search(r"^\s+source_code_path: \.$", bundle, re.M)
+    assert '"app.backend.main:app"' in bundle
+    assert "-r app/requirements.txt" in (root / "requirements.txt").read_text()
+
+
 # ---------------------------------------------------------------------------------------------------------------------
 # Notebook-level tests: the generated notebook run cell by cell against FakeWS
 
@@ -456,8 +476,12 @@ class FakeWS:
 
             def get_status(self_inner, path):
                 if path in ws.files or path in ws.dirs:
-                    return _ns(path=path, resource_id=None)
+                    return _ns(path=path, resource_id=None, object_id=abs(hash(path)) % 10**9)
                 raise sdk_errors.NotFound(path)
+
+            def update_permissions(self_inner, workspace_object_type, workspace_object_id, access_control_list=None):
+                ws.permission_updates = getattr(ws, "permission_updates", []) + [
+                    (workspace_object_type, workspace_object_id, access_control_list)]
 
             def export(self_inner, path, format=None):
                 if path not in ws.files:
@@ -569,6 +593,8 @@ class FakeWS:
 
             def create_update_and_wait(self_inner, app_name, update_mask, app=None, timeout=None):
                 # Like the real partial update: only the masked fields change.
+                if getattr(ws, "update_error", None):
+                    raise ws.update_error
                 ws.log.append(("update_app", app_name))
                 ws.update_masks = getattr(ws, "update_masks", []) + [update_mask]
                 cur = ws.apps[app_name]
@@ -1149,6 +1175,54 @@ def test_install_job_parameters_match_the_contract(monkeypatch):
     assert by_role["snapshot"]["deep_wave"] == ""
     assert by_role["scan"]["target_schema"] == "migrated"
 
+
+
+SP_ID = "5e1f7c2e-1234-4abc-9def-0123456789ab"
+
+
+def test_job_specs_run_as_a_service_principal_or_the_installer():
+    mine = H["job_specs"](APP, FOLDER, "main.ug_migration", WH_ID, [], False)
+    assert all(spec.run_as is None for spec in mine.values())  # blank: the jobs run as the installing user
+    sp = H["job_specs"](APP, FOLDER, "main.ug_migration", WH_ID, [], False, "2027-03-30", SP_ID)
+    assert all(spec.run_as == jobs.JobRunAs(service_principal_name=SP_ID) for spec in sp.values())
+    assert {p.name: p.default for p in sp["apply"].parameters}["dry_run_id"] == ""
+    assert H["valid_run_as"]("") is None and H["valid_run_as"](SP_ID) is None
+    assert "application ID" in H["valid_run_as"]("my-sp")
+
+
+def test_install_with_run_as_sets_the_jobs_and_shares_the_folder(monkeypatch):
+    ws = FakeWS()
+    res = run_notebook(monkeypatch, ws, install_widgets(run_as=SP_ID))
+    assert not res.raised, res.status
+    assert res.labels["run_as"].startswith("Advanced:") and "blank = jobs run as you" in res.labels["run_as"]
+    assert all(j.run_as == jobs.JobRunAs(service_principal_name=SP_ID) for j in ws.jobs.values())
+    ((typ, _, acl),) = ws.permission_updates
+    assert typ == "directories" and acl[0].service_principal_name == SP_ID
+    assert f"Jobs run as service principal {SP_ID}" in res.text
+    bad = run_notebook(monkeypatch, FakeWS(), install_widgets(run_as="not-a-uuid"))
+    assert bad.raised and "application ID" in bad.status
+
+
+def test_install_says_the_first_snapshot_is_account_wide_before_it_starts(monkeypatch):
+    res = run_notebook(monkeypatch, FakeWS(), install_widgets())
+    assert not res.raised, res.status
+    text = res.text
+    notice = text.index("every workspace in the account")
+    assert notice < text.index("First snapshot started")
+    assert f"The jobs will run as {ME}" in text
+    assert "account-wide system tables" in TEXT.split("\n# COMMAND ----------\n")[0]  # the intro says it too
+
+
+def test_app_update_errors_surface_and_only_a_missing_api_falls_back(monkeypatch):
+    ws = FakeWS()
+    seed_install(ws)
+    ws.update_error = sdk_errors.PermissionDenied("not allowed to update this app")
+    res = run_notebook(monkeypatch, ws, install_widgets())
+    assert res.raised and "PermissionDenied" in res.status and "not allowed" in res.status
+    ws.update_error = sdk_errors.NotImplemented("no partial update here")
+    res2 = run_notebook(monkeypatch, ws, install_widgets())
+    assert not res2.raised, res2.status
+    assert "updated app" in res2.text
 
 
 def test_update_changes_only_the_fields_the_installer_owns():

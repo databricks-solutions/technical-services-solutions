@@ -77,7 +77,8 @@ To change the date the toolkit counts down to, see [Deadline override](#deadline
 - Planning and scans only read. Scans store results, including matched code lines, in the results schema.
 - Apply creates services and grants, only when you execute. Rollback deletes what one apply run created.
 - Cut-over steps change a legacy endpoint only when you run them: tracking, pause (rate limit 0), resume, and billable test calls.
-- It never edits code, deletes a legacy endpoint or turns on Enforce. Every execute needs a dry run of the same selection and a typed word.
+- It never edits code, deletes a legacy endpoint or turns on Enforce. Every execute needs a dry run of the same selection, from the last 24 hours, and a typed word. The jobs check this too, so starting a job directly doesn't skip the dry run.
+- Run details and exports are visible to the person who started the run, operators and workspace admins. Run lists and the Overview are open to every app user.
 
 ### Terms used here
 
@@ -102,7 +103,7 @@ A **legacy endpoint** is a v1 serving endpoint (`/serving-endpoints/<name>/invoc
 
 The installer notebook is the only file you import. It creates everything inside the workspace in about 5 minutes.
 
-1. Download `unity-gateway-migration-toolkit-0.10.0.zip` and unzip it. In the workspace, go to your home folder, choose **Import**, and import `INSTALL_unity_gateway_migration_toolkit_0_10_0.py` from the zip's top folder.
+1. Download `unity-gateway-migration-toolkit.zip` from the [release page](https://github.com/databricks-solutions/technical-services-solutions/releases/tag/unity-gateway-migration-toolkit-latest) and unzip it. In the workspace, go to your home folder, choose **Import**, and import `INSTALL_unity_gateway_migration_toolkit_0_10_0.py` from the zip's top folder.
 2. Open the notebook. Set **Install: Results catalog** (a catalog where you can create a schema) and **Install: SQL warehouse**. Leave the other widgets at their defaults ([Installer widgets](#installer-widgets)). If the widget panel shows widgets from an older installer, remove them once, then run again.
 3. Click **Run all**.
 
@@ -112,7 +113,9 @@ It creates the toolkit files (default `/Workspace/Users/<you>/ug-migration-toolk
 
 **At the end** it prints the app link (**Compute > Apps > ug-migration-toolkit**), the job links and whether the first snapshot started. It also reports the target schema, that the weekly snapshot is paused, and that secret mapping is off.
 
-**Who the jobs run as.** You. Run the installer as a workspace admin with system table access, or as a service principal with **Install: Operators** set. Only people in **Install: Operators** can start jobs from the app.
+**Who the jobs run as.** You, unless you set **Advanced: Run jobs as service principal** to a service principal's application ID. Then all three jobs run as that service principal. You need the Service Principal User role on it, and it needs the system table, results schema and target schema access in [Before you start](#before-you-start). The installer gives it CAN MANAGE on the install folder. Only people in **Install: Operators** can start jobs from the app.
+
+**The first snapshot is account-wide.** It reads account-wide system tables, so it covers every workspace in the account, not only this one. The installer says so before it starts the snapshot.
 
 ### Update and upgrade
 
@@ -265,7 +268,7 @@ The target must support the route's API type (its `supported_api_types`). If it 
 
 ### Create services for external and PT endpoints
 
-Apply creates provider services, model services and grants for **external model** and **Provisioned Throughput (PT)** endpoints, next to the legacy endpoints, which keep serving until their callers change. Apply never changes a legacy endpoint or turns on Enforce. `databricks-*` endpoints need nothing, because their `system.ai` services exist.
+Apply creates provider services, model services and grants for **external model** and **Provisioned Throughput (PT)** endpoints, next to the legacy endpoints, which keep serving until their callers change. Apply never changes a legacy endpoint or turns on Enforce. Two steps in [Verify & cut over](#4-verify-and-cut-over) do change a legacy endpoint when you run them: turning on usage tracking, and pausing (resume restores the saved settings). `databricks-*` endpoints need nothing, because their `system.ai` services exist.
 
 | Object | Created from | Details |
 |---|---|---|
@@ -305,13 +308,15 @@ Apply creates provider services, model services and grants for **external model*
 
 *The execute dialog: type EXECUTE, then click the button that names what will be created.*
 
-Execute needs a successful dry run of the **same** selection and options. Click **Execute**, then type `EXECUTE`. **Check the new services after creating them** is on by default. It reads each service back but makes no inference call, so run a [test call](#step-4-test-call) to prove a request works.
+Execute needs a successful dry run of the **same** selection and options, from the last 24 hours. Click **Execute**, then type `EXECUTE`. **Check the new services after creating them** is on by default. It reads each service back but makes no inference call, so run a [test call](#step-4-test-call) to prove a request works.
 
 The run ends `SUCCEEDED`, or `NEEDS_ATTENTION` if any item needs a look ([Result actions](#result-actions)). Fix the cause and run again. Existing objects are skipped.
 
+**Not carried over.** Each service lists the legacy settings it doesn't get: guardrails, rate limits, inference tables, usage tracking, tags, route optimization, budget and usage policies, endpoint permissions and other AI Gateway settings. Set the ones you need on the service by hand. An endpoint that splits traffic across several served entities with fallback on is `manual`, because the fallback can't be carried over.
+
 #### Roll back
 
-Click **Roll back** and type `ROLLBACK`. Each execute run can be rolled back once. Rollback deletes only the objects that run created, and only while they still carry the toolkit's mark.
+Click **Roll back** and type `ROLLBACK`. Each execute run can be rolled back once. Rollback deletes only the objects that run created, and only while they still carry the toolkit's mark. It never revokes grants: a deleted service takes its grants with it, and a kept service keeps them, listed as `kept` grant rows so you can revoke them by hand. A provider is deleted only after rollback checks every catalog and schema it can see for services that still use it. If it can't check, it keeps the provider.
 
 **Rolling back after callers have moved breaks their traffic**, because it deletes the services they call. Move the callers back first, or accept the outage. A pause run isn't rolled back here. Resume it in [step 3](#step-3-pause-one-legacy-endpoint).
 
@@ -319,7 +324,7 @@ Click **Roll back** and type `ROLLBACK`. Each execute run can be rolled back onc
 
 ## 4. Verify and cut over
 
-This tab runs the verify and cut-over steps for one scan. It covers the steps of the earlier runbook notebook ([Runbook mapping](#runbook-mapping)). Operators start runs, and every change is a dry run first, then an execute with a typed word. Runs use the apply job, so one runs at a time.
+This tab runs the verify and cut-over steps for one scan. It complements the official migration runbook notebook and covers the same steps ([Runbook mapping](#runbook-mapping)). Operators start runs, and every change is a dry run first, then an execute with a typed word. Runs use the apply job, so one runs at a time.
 
 ### Step 1: Check legacy traffic
 
@@ -346,8 +351,8 @@ Tracking records each call in the system tables, so step 1 can see the traffic. 
 
 Pausing sets the endpoint's rate limit to 0 calls a minute and keeps its other settings. Callers still on it get errors until it's resumed. User-level limits stay. Pause one endpoint per run. The list offers the scan's external, PT and `databricks-*` endpoints, but not v2 workspace endpoints.
 
-- **Dry run** shows the endpoint's requests in the window. If there were requests, tick **I understand callers still on this endpoint will get errors until it's resumed** first.
-- **Execute** by typing `PAUSE <endpoint name>`. The toolkit reads the endpoint back and records `paused`.
+- **Dry run** shows the endpoint's requests in the window. If there were requests, tick **I understand callers still on this endpoint will get errors until it's resumed** first. The app and the job both check traffic: with requests in the window (the job also checks the last 24 hours) the pause needs that tick, and if traffic can't be read, the pause is refused. System tables lag, so no traffic isn't proof that no one calls it. The tick is part of the dry run, so changing it needs a new dry run.
+- **Execute** by typing `PAUSE <endpoint name>`. The toolkit saves the previous settings before it writes, then reads the endpoint back and records `paused`. If it can't read the endpoint first, it refuses. If the write or the read-back fails, the saved settings still let you resume.
 - **Refused** (nothing changes): custom model, agent or unknown endpoints; embedding endpoints (name, task or served model contains `embed`, `bge` or `gte`); AI Search or Vector Search endpoints (name or tag contains `vector search` or `ai search`); endpoints with AI Gateway settings the toolkit doesn't re-send; and endpoints the API refuses.
 - **Resume.** A pause run that executed shows **Resume** in the run history. Type `RESUME`. There's no dry run. Resume restores the previous settings and reads them back. If they changed after the pause, the result is `kept`. The app has no force, so check that endpoint by hand.
 
@@ -360,7 +365,7 @@ A test call shows that a model service answers a request. It is **billable**: on
 - **Prompt.** One line, up to 200 characters. The default is `Reply with: ok`.
 - **Dry run** sends no requests. It checks that each service exists and lists its API types. Results: `would_test`, `test_failed` or `refused`.
 - **Execute** by typing `TEST`. It sends one request per service, with a 120-second timeout and no retry. Results show the HTTP status, request ID, latency and a reply excerpt (at most 200 characters). Auth headers and tokens are never recorded.
-- **Identity.** The job runs as the identity that installed the app, which needs `EXECUTE` on each service plus `USE CATALOG` and `USE SCHEMA`.
+- **Identity.** The call runs as the apply job's identity (you, or the run-as service principal), not as the person who clicks. The Test step and the About page show which one. It needs `EXECUTE` on each service plus `USE CATALOG` and `USE SCHEMA`.
 - **Check usage** looks up a request ID in `system.ai_gateway.usage`. It takes 20 to 30 minutes, so an empty result right after the call is expected.
 
 ### Step 5: Check Unity Gateway traffic
@@ -477,6 +482,8 @@ python ug_migration_apply.py --profile <p> apply --endpoints ep1,ep2 \
 python ug_migration_apply.py --profile <p> apply --endpoints ep1,ep2 ... --execute --smoke --log wave1_log.jsonl
 ```
 
+The command line doesn't check for an earlier dry run: `--execute` is an explicit terminal command. Run the same command without `--execute` first and read its output. The app and the jobs always require a dry run.
+
 | Option (apply) | Meaning |
 |---|---|
 | `--endpoints a,b` or `--all` | One wave, or all external and PT endpoints |
@@ -584,9 +591,10 @@ Exact labels and defaults, in order. Run the installer again with the same widge
 | 11 | Advanced: Allowed secret schemas (catalog.schema, comma-separated; blank = off) | blank | Blank keeps secret mapping off |
 | 12 | Advanced: Allow reading secret values (risk: apply copies legacy secret values, in plain text, into the new services; keep no unless needed) | `no` | |
 | 13 | Advanced: Legacy deadline (YYYY-MM-DD) | `2027-03-30` | Sets the job and app deadline. A bad date stops the install before anything is created |
-| 14 | Uninstall: remove results tables (and the schema, if the toolkit made it and it's empty) | `no` | See [Uninstall](#6-uninstall-and-cleanup) |
-| 15 | Uninstall: remove apply logs (no = keep them, so kept services can be rolled back later) | `no` | |
-| 16 | Uninstall: roll back services created by apply (yes = remove them too) | `no` | |
+| 14 | Advanced: Run jobs as service principal (application ID; blank = jobs run as you) | blank | Must be an application ID (UUID). See [Who the jobs run as](#1-install) |
+| 15 | Uninstall: remove results tables (and the schema, if the toolkit made it and it's empty) | `no` | See [Uninstall](#6-uninstall-and-cleanup) |
+| 16 | Uninstall: remove apply logs (no = keep them, so kept services can be rolled back later) | `no` | |
+| 17 | Uninstall: roll back services created by apply (yes = remove them too) | `no` | |
 
 ### Blockers and warnings
 
@@ -597,9 +605,10 @@ The `type` is the stable name in `readiness.json`. The label and action are what
 | `unity_gateway_unavailable` | Blocker | Unity Gateway isn't available in this workspace | Ask your account team to enable Unity Gateway for this workspace and account. Nothing can be migrated until it is |
 | `v2_off_failing_calls` | Blocker | v2 calls are already failing in this workspace | v2 is off here: these callers get errors now. Move them to `<target>` first (keep the `/ai-gateway/` route, change the model) |
 | `legacy_traffic` | Blocker | Callers still use a legacy endpoint | Move the callers to `<target>` before enforcing. Coding agents: use `ucode` |
-| `pay_per_token_call` | Blocker | Code calls a Databricks pay-per-token endpoint | Switch the calls to `<target>`, then re-scan |
+| `pay_per_token_call` | Blocker | Code calls a Databricks pay-per-token endpoint | Switch the calls to `<target>`, then re-scan. If the endpoint also embeds for an AI Search index, switch only the direct calls and keep the endpoint |
 | `v2_workspace_call` | Blocker | Code calls a v2 workspace endpoint | Set the model to `<target>`, keep the `/ai-gateway/` route, then re-scan |
-| `vector_search` | Blocker | AI Search index embeds with a legacy endpoint | Re-index on a `system.ai` embedding service, or keep the endpoint |
+| `vector_search` | Blocker | AI Search index embeds with a legacy endpoint | Keep the endpoint, and don't enforce Unity Gateway until AI Search supports `system.ai` embeddings |
+| `unresolved_endpoint_call` | Blocker | Code calls a serving endpoint the scan can't name | Find which endpoint the call reaches at run time. A legacy one: move the call to `/ai-gateway/`. A custom model or feature serving one: name it in the code so the scan can see it |
 | `agent_bricks_vector_search` | Blocker | Agent Bricks agent uses AI Search | Check its index and embedding model before enforcing |
 | `app_resource` | Blocker | App declares a legacy serving endpoint resource | Replace it with the Unity Gateway service, grant `EXECUTE`, call `/ai-gateway/` |
 | `ai_query_custom` | Blocker | ai_query calls a model with no Unity Gateway service yet | Keep the call, or switch it to a `system.ai` model |
@@ -608,11 +617,12 @@ The `type` is the stable name in `readiness.json`. The label and action are what
 | `legacy_traffic_kept_after_enforce` | Warning | Callers use an external or PT endpoint that outlives Enforce | Move them before the deadline |
 | `pt_wrapper_on_legacy_endpoint` | Warning | Unity Gateway wrapper routes to a legacy PT endpoint | Plan the PT move before the deadline |
 | `local_folders_not_scanned` | Warning | Local folders were not scanned | Re-run with `--local-path`, or confirm no local code calls a legacy endpoint. Caps the status at `READY_WITH_WARNINGS` |
-| `confirm_infrequent_callers` | Warning | Pay-per-token endpoint has no traffic and no known callers | Confirm monthly or quarterly jobs with owners |
+| `skipped_paths_not_scanned` | Warning | Some folders or file types were not scanned | Check the listed folders and file types for calls to legacy endpoints, or confirm they hold none (vendored packages and build output usually don't). Caps the status at `READY_WITH_WARNINGS` |
+| `confirm_infrequent_callers` | Warning | Pay-per-token or v2 endpoint has no traffic and no known callers | Confirm monthly or quarterly jobs with owners. v2 endpoints seen in the last year count, even with no traffic in the window |
 | `no_traffic_in_window` | Warning | No requests in the window and usage tracking is off | Confirm with owners that no infrequent job calls it |
 | `dormant_agent_endpoint` | Warning | Agent endpoint has no traffic in the window | Confirm it is unused. If it is still used, redeploy it before enforcing |
 
-Code-reference warnings (for example `sdk_serving_query`) carry their fix in CODE_FIXES.md. Traffic from Databricks-managed callers only is a warning. Traffic that also has customer-owned callers is a `legacy_traffic` blocker. `v2_off_failing_calls` replaces the plain v2 blocker for an endpoint (its traffic and call sites are folded in, so nothing is counted twice). It needs at least 10 v2 requests in the window, and at least 95% of them failed (no status code, or status 0, 403, 404, 410 or 500 and up). The readiness blockers come in this order: `unity_gateway_unavailable`, `v2_off_failing_calls`, then the rest.
+Code-reference warnings (for example `sdk_serving_query`) carry their fix in CODE_FIXES.md. Traffic from Databricks-managed callers only is a warning. Traffic that also has customer-owned callers is a `legacy_traffic` blocker. `v2_off_failing_calls` replaces the plain v2 blocker for an endpoint (its traffic and call sites are folded in, so nothing is counted twice). It needs at least 10 v2 requests in the window, and at least 95% of them failed (no status code, status 0, or status 501, which is what a turned-off v2 gateway returns; 403 and 404 aren't counted, because they usually come from the caller). The readiness blockers come in this order: `unity_gateway_unavailable`, `v2_off_failing_calls`, then the rest.
 
 ### Caller types
 
@@ -636,12 +646,12 @@ Execute steps need the word exactly. Dry runs need no word.
 
 | Step | Type | Notes |
 |---|---|---|
-| Apply, execute | `EXECUTE` | Needs a matching dry run of the same selection and options |
+| Apply, execute | `EXECUTE` | Needs a matching dry run of the same selection and options, from the last 24 hours |
 | Apply, rollback | `ROLLBACK` | Once per execute run |
-| Usage tracking | `ENABLE` | Needs a matching dry run |
+| Usage tracking | `ENABLE` | Needs a matching dry run from the last 24 hours |
 | Pause a legacy endpoint | `PAUSE <endpoint name>` | One endpoint per run |
 | Resume a paused endpoint | `RESUME` | From the pause run. No dry run |
-| Test call | `TEST` | Billable: one request per service. Needs a matching dry run |
+| Test call | `TEST` | Billable: one request per service. Needs a matching dry run from the last 24 hours |
 
 ### Result actions
 
@@ -657,7 +667,7 @@ The `action` of each item in a run. The app's results export uses the same value
 | `error` | API error, with the message | Fix the cause, re-run |
 | `needs_attention` | Service created, grants failed; the service stays | Fix the grant, re-run |
 | `smoke_ok`, `smoke_failed` | Smoke check read-back result | Fix the service if it failed |
-| `kept` (rollback) | Changed since apply, lost the toolkit's mark, or used by another run | Read the reason. `--force` only if the change is safe to undo |
+| `kept` (rollback) | Changed since apply, lost the toolkit's mark, used by another run, or a grant on a kept service (never revoked) | Read the reason. `--force` only if the change is safe to undo |
 | `kept` (resume, cut over) | Settings changed since the pause, or settings the toolkit doesn't re-send | Check the endpoint by hand. The app has no force |
 | `test_ok` (cut over) | The service answered HTTP 200 | Check usage with the request ID after 20 to 30 minutes |
 | `test_failed` (cut over) | Not found or not visible to the job, HTTP error, or no response | Fix the name or the `EXECUTE` grant, then re-run |
@@ -691,7 +701,7 @@ Exports read the results as you, stop at 200,000 rows, and set `X-Truncated: tru
 
 ### Runbook mapping
 
-The app covers the steps of the earlier runbook notebook and its README. Cell numbers refer to that notebook.
+The toolkit complements the official runbook notebook and its README: you can use either for these steps, or both. Cell numbers refer to that notebook.
 
 | Runbook step | Where it is now |
 |---|---|
@@ -759,6 +769,8 @@ Grouped by where the problem shows up.
 |---|---|---|
 | "Target schema ... doesn't exist", or the app's SQL notice | Schema missing, or no `CREATE SERVICE` | Run the SQL shown. Apply never creates schemas |
 | "Run a dry run with this selection first" (400), or 409 "endpoints or options changed" | Execute needs a dry run of the same selection and options | Run a dry run again |
+| 409 "the dry run is older than 24 hours" (or the job fails with a missing or expired `dry_run_id`) | Dry runs expire after 24 hours, and a job started directly needs the ID of a matching dry run | Run a dry run again, then execute |
+| 403 on a run's details or export | Only the person who started the run, operators and workspace admins can open it | Ask one of them, or an admin |
 | `manual: secret ...` | Secret not mapped | Add it to `--uc-secret-map`, or fill in its row in the app |
 | "must be in an allowed Unity Catalog schema" (400) | The secret's schema isn't in **Allowed secret schemas** | Rerun the installer with the schema added. Nothing changed |
 | `manual: PT endpoint serves ..., which no longer exists` | Its model was deleted | Retire or redeploy the PT endpoint |
@@ -777,6 +789,8 @@ Grouped by where the problem shows up.
 | Pause a `databricks-*` endpoint: `refused` or `error` | The API refuses the change | Nothing changed. Leave it running, and move its callers before Enforce |
 | Test call: `test_failed` | Wrong name, or the job identity has no access | Check the name. Grant `EXECUTE`, `USE CATALOG` and `USE SCHEMA` to the job identity |
 | Test call: `refused`, "does not support ..." | The API type isn't in the service's `supported_api_types` | Pick a supported type. Never move a Responses client to Chat Completions |
+| Pause: refused, "couldn't read traffic" | The system tables can't be read, so the toolkit can't tell whether callers still use the endpoint | Grant `SELECT` on `system.serving` and `system.ai_gateway` to the app user and the job identity |
+| Pause: refused, "had requests in the last 24 hours" | Callers still use the endpoint | Move them first, or tick the acknowledgement and dry run again |
 | Resume: `kept` | Settings changed since the pause | Check the endpoint by hand. The app has no force |
 
 ---

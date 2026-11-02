@@ -66,7 +66,7 @@ export default function App() {
             <div hidden={tab !== "overview"}><ErrorBoundary><Overview operator={operator} /></ErrorBoundary></div>
             <div hidden={tab !== "scans"}><ErrorBoundary><Scans operator={operator} onApply={(id) => { setScanForApply(id); goto("apply"); }} /></ErrorBoundary></div>
             <div hidden={tab !== "apply"}><ErrorBoundary><Apply operator={operator} scanRunId={scanForApply} setScanRunId={setScanForApply} /></ErrorBoundary></div>
-            <div hidden={tab !== "cutover"}><ErrorBoundary><Cutover operator={operator} maxScanAgeDays={config.data?.max_scan_age_days ?? 14} /></ErrorBoundary></div>
+            <div hidden={tab !== "cutover"}><ErrorBoundary><Cutover operator={operator} maxScanAgeDays={config.data?.max_scan_age_days ?? 14} jobsRunAs={config.data?.jobs_run_as} /></ErrorBoundary></div>
             <div hidden={tab !== "about"}><About user={me.data} config={config.data} /></div>
           </div>
         </main>
@@ -99,11 +99,12 @@ function About({ user, config }: { user: any; config: any }) {
       <Card title="Access and safety">
         <ul>
           <li>Pages read results as you ({user?.user_authorization ? "user authorization is on" : "user authorization is off, so results can't be read until it's turned on"}). Unity Catalog permissions on the results schema{config?.results_schema ? <> (<code>{config.results_schema}</code>)</> : null} apply.</li>
-          <li>Snapshots, scans and apply runs are jobs that run as the identity that installed the app. Only operators can start them.</li>
-          <li>Execute and rollback need a typed confirmation. Execute only follows a successful dry run of the same selection. Grants are off unless you choose them.</li>
+          <li>Snapshots, scans, apply runs and test calls are jobs that run as the jobs' identity{config?.jobs_run_as ? <> (<code>{config.jobs_run_as}</code>)</> : null}, not as you. Only operators can start them.</li>
+          <li>A run's details and exports are for the person who started it, the operators and workspace admins. Everyone with access to the app sees the lists and the overview.</li>
+          <li>Execute and rollback need a typed confirmation. Execute only follows a successful dry run of the same selection, started in the last 24 hours. Grants are off unless you choose them.</li>
           <li>Scans store matched code lines with credential-looking values hidden: keep the results schema to the migration team.</li>
           <li>Provider API keys come from Unity Catalog secrets in the schemas the installer allowed. Copying key values is off unless the installer enabled it.</li>
-          <li>Pausing, usage tracking and resuming need an operator, a dry run and a typed word. A test call is billable: it sends one request per service.</li>
+          <li>Pausing, usage tracking and resuming need an operator, a dry run and a typed word. Pause also checks the endpoint's legacy traffic on the server: it's refused when the traffic can't be read, and needs your confirmation when there are requests. A test call is billable: it sends one request per service.</li>
         </ul>
       </Card>
       <Card title="Glossary">

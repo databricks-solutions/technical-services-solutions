@@ -65,8 +65,8 @@ export default function App() {
           <div {...tabPanel("sections", tab)} className="section-panel">
             <div hidden={tab !== "overview"}><ErrorBoundary><Overview operator={operator} /></ErrorBoundary></div>
             <div hidden={tab !== "scans"}><ErrorBoundary><Scans operator={operator} onApply={(id) => { setScanForApply(id); goto("apply"); }} /></ErrorBoundary></div>
-            <div hidden={tab !== "apply"}><ErrorBoundary><Apply operator={operator} scanRunId={scanForApply} setScanRunId={setScanForApply} /></ErrorBoundary></div>
-            <div hidden={tab !== "cutover"}><ErrorBoundary><Cutover operator={operator} maxScanAgeDays={config.data?.max_scan_age_days ?? 14} jobsRunAs={config.data?.jobs_run_as} /></ErrorBoundary></div>
+            <div hidden={tab !== "apply"}><ErrorBoundary><Apply operator={operator} scanRunId={scanForApply} setScanRunId={setScanForApply} active={tab === "apply"} /></ErrorBoundary></div>
+            <div hidden={tab !== "cutover"}><ErrorBoundary><Cutover operator={operator} maxScanAgeDays={config.data?.max_scan_age_days ?? 14} jobsRunAs={config.data?.jobs_run_as} active={tab === "cutover"} /></ErrorBoundary></div>
             <div hidden={tab !== "about"}><About user={me.data} config={config.data} /></div>
           </div>
         </main>

@@ -60,8 +60,10 @@ function summaryLine(summary: any): string {
     .map(([k, v], i) => `${i === 0 ? humanize(k) : humanize(k).toLowerCase()}: ${v}`).join(", ");
 }
 
-export default function Cutover({ operator, maxScanAgeDays, jobsRunAs }: { operator: boolean; maxScanAgeDays: number; jobsRunAs?: string | null }) {
+export default function Cutover({ operator, maxScanAgeDays, jobsRunAs, active = true }: { operator: boolean; maxScanAgeDays: number; jobsRunAs?: string | null; active?: boolean }) {
   const scans = useApi<any[]>("/api/scans");
+  // Tabs stay mounted: reload the scan list when the tab is opened, so a scan that just finished can be picked.
+  useEffect(() => { if (active) scans.reload(); }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
   const succeeded = useMemo(() => (scans.data || []).filter((s) => s.status === "SUCCEEDED"), [scans.data]);
   const [picked, setPicked] = useState<string | null>(null);
   const scan = succeeded.find((s) => s.run_id === picked) || succeeded[0] || null;

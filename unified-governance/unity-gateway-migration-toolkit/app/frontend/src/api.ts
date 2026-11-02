@@ -78,17 +78,20 @@ export function usePollWhileRunning(status: string | undefined, error: string | 
   // A run that is starting (202 with status STARTING) or running keeps the page polling.
   const pending = status === "RUNNING" || status === "STARTING";
   const wasPending = useRef(false);
+  // tick re-arms the timer after every reload: two polls with the same status (STARTING, STARTING) change no other
+  // dependency, so without it the page would stop polling and never see the run finish.
+  const [tick, setTick] = useState(0);
   useEffect(() => {
     if (pending) {
       wasPending.current = true;
-      const t = setTimeout(reload, ms);
+      const t = setTimeout(() => { reload(); setTick((n) => n + 1); }, ms);
       return () => clearTimeout(t);
     }
     if (wasPending.current && status) {
       wasPending.current = false;
       onFinished?.();
     }
-  }, [pending, status, error, reload, ms]);
+  }, [pending, status, error, reload, ms, tick]);
 }
 
 export type JobState = {

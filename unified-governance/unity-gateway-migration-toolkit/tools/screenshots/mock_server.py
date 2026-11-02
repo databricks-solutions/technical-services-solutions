@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import threading
 import uuid
@@ -752,6 +753,12 @@ def _handle_api(method, path, qs, body):
             return 200, {"request_id": qs.get("request_id", ""), "rows": []}
         m = re.fullmatch(r"/api/cutover/([^/]+)", path)
         if m:
+            # MOCK_STARTING_POLLS=N answers 202 "still starting" N times first, like a job that hasn't written its row.
+            left = STARTING_POLLS.get(m.group(1), int(os.environ.get("MOCK_STARTING_POLLS", "0")))
+            if left > 0:
+                STARTING_POLLS[m.group(1)] = left - 1
+                return 202, {"detail": "still starting", "status": "STARTING", "job_run_id": "1",
+                             "meta": {"run_id": m.group(1), "status": "STARTING", "job_run_id": "1"}}
             return 200, _apply_detail(m.group(1), cutover=True)
         if "/export" in path:
             raise ApiError(501, "exports aren't modelled in the mock server")
@@ -765,6 +772,9 @@ def _handle_api(method, path, qs, body):
         if path == "/api/cutover":
             return 200, _start_cutover(body)
     raise ApiError(404, "not found")
+
+
+STARTING_POLLS: dict[str, int] = {}
 
 
 def _list_scan(s):

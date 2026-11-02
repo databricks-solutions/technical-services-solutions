@@ -4,9 +4,11 @@ import { Badge, Card, Confirm, CopyButton, Elapsed, Empty, ErrorBox, ErrorState,
 
 const NOT_READY = ["INCOMPLETE", "BLOCKED"];
 
-export default function Apply({ scanRunId, setScanRunId, operator }: { scanRunId: string | null; setScanRunId: (id: string) => void; operator: boolean }) {
+export default function Apply({ scanRunId, setScanRunId, operator, active = true }: { scanRunId: string | null; setScanRunId: (id: string) => void; operator: boolean; active?: boolean }) {
   const scans = useApi<any[]>("/api/scans");
   const history = useApi<any[]>("/api/applies");
+  // Tabs stay mounted, so a scan that finished on the Scans tab only shows up here after a reload on opening the tab.
+  useEffect(() => { if (active) { scans.reload(); history.reload(); } }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
   const config = useApi<any>("/api/config");
   const maxAge: number = config.data?.max_scan_age_days ?? 14;
   const succeeded = (scans.data || []).filter((s) => s.status === "SUCCEEDED");

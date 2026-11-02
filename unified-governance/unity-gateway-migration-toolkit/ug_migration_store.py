@@ -426,7 +426,8 @@ def legacy_traffic_since(endpoints, since, workspace_id) -> tuple[str, dict]:
 
     One query, two sources, UNION ALL. 'v1' is system.serving.endpoint_usage joined to served_entities. 'v2' is
     system.ai_gateway.usage rows with no service_type (AI Gateway v2 requests on legacy endpoints). Columns:
-    source, endpoint_name, requester, requests, last_request (string). Both sources are filtered to workspace_id."""
+    source, endpoint_name, requester, requests, failed (no status, or status 0, 403, 404, 410 or 500 and up), tokens (input plus output
+    for v1, total_tokens for v2), last_request (string). Both sources are filtered to workspace_id."""
     names = _split_names(endpoints)
     if not names:
         raise ValueError("legacy_traffic_since needs at least one endpoint name")
@@ -440,7 +441,11 @@ def legacy_traffic_since(endpoints, since, workspace_id) -> tuple[str, dict]:
     params = {"workspace_id": str(workspace_id).strip(), "since": _since(since), **v1, **v2}
     sql = f"""
         SELECT 'v1' AS source, se.endpoint_name AS endpoint_name, eu.requester AS requester,
-               count(*) AS requests, CAST(max(eu.request_time) AS STRING) AS last_request
+               count(*) AS requests,
+               sum(CASE WHEN eu.status_code IS NULL OR eu.status_code IN (0, 403, 404, 410) OR eu.status_code >= 500 THEN 1 ELSE 0 END)
+                 AS failed,
+               coalesce(sum(coalesce(eu.input_token_count, 0) + coalesce(eu.output_token_count, 0)), 0) AS tokens,
+               CAST(max(eu.request_time) AS STRING) AS last_request
         FROM system.serving.endpoint_usage AS eu
         JOIN system.serving.served_entities AS se
           ON eu.served_entity_id = se.served_entity_id
@@ -450,7 +455,10 @@ def legacy_traffic_since(endpoints, since, workspace_id) -> tuple[str, dict]:
         GROUP BY se.endpoint_name, eu.requester
         UNION ALL
         SELECT 'v2' AS source, endpoint_name, requester,
-               count(*) AS requests, CAST(max(event_time) AS STRING) AS last_request
+               count(*) AS requests,
+               sum(CASE WHEN status_code IS NULL OR status_code IN (0, 403, 404, 410) OR status_code >= 500 THEN 1 ELSE 0 END) AS failed,
+               coalesce(sum(total_tokens), 0) AS tokens,
+               CAST(max(event_time) AS STRING) AS last_request
         FROM system.ai_gateway.usage
         WHERE workspace_id = :workspace_id
           AND service_type IS NULL

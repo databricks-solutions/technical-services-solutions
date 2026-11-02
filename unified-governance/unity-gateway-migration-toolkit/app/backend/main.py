@@ -539,7 +539,10 @@ def _workspace_view(r: dict, scans: dict[str, dict], window: int, now: float) ->
             "active_legacy_endpoints": _num(r.get("active_legacy_endpoints")),
             "unknown_traffic_endpoints": _num(r.get("unknown_traffic_endpoints")),
             "v1_requests": _num(r.get("v1_requests")), "v2_requests": _num(r.get("v2_requests")),
+            "v2_failed": _num(r.get("v2_failed")), "v2_failing": v2_mostly_failing(_num(r.get("v2_requests")) or 0,
+                                                                                 _num(r.get("v2_failed")) or 0),
             "legacy_requests": _num(r.get("legacy_requests")), "legacy_throttled": _num(r.get("legacy_throttled")),
+            "legacy_tokens": _num(r.get("legacy_tokens")),
             "deleted_endpoint_requests": _num(r.get("deleted_endpoint_requests")),
             "v3_requests": _num(r.get("v3_requests")), "v3_share": float(v3_share) if v3_share not in (None, "") else None,
             "last_seen": r.get("last_seen"),
@@ -555,6 +558,7 @@ def _endpoint_view(r: dict) -> dict:
             "requests": _num(r.get("requests")) or 0, "requesters": _num(r.get("requesters")) or 0,
             "throttled": _num(r.get("throttled")) or 0, "last_request": r.get("last_request"),
             "last_seen": r.get("last_seen"), "traffic_status": r.get("traffic_status"),
+            "legacy_tokens": _num(r.get("legacy_tokens")),
             "customer_requests": _num(r.get("customer_requests")), "platform_requests": _num(r.get("platform_requests")),
             "coding_agent_requests": _num(r.get("coding_agent_requests"))}
 
@@ -617,6 +621,8 @@ def _load_snapshot(request: Request) -> dict:
                  "no_endpoint_data": counts.get("no endpoint data", 0),
                  "ready": sum(1 for v in running if v["ready"]),
                  "legacy_requests": legacy, "v3_requests": v3,
+                 "legacy_tokens": _sum_known(v["legacy_tokens"] for v in running),
+                 "v2_failing_workspaces": sum(1 for v in running if v["v2_failing"]),
                  "v3_share": round(v3 / (v3 + legacy), 3) if (v3 + legacy) else None,
                  "active_legacy_endpoints": sum(v["active_legacy_endpoints"] or 0 for v in running),
                  "live_legacy_endpoints": sum(v["legacy_endpoints"] or 0 for v in running),
@@ -1039,6 +1045,17 @@ USAGE_COLUMNS = ["service_name", "workspace_id", "requester", "api_type", "desti
                  "invocations", "total_tokens", "average_latency_ms", "p95_latency_ms", "error_invocations",
                  "last_request"]
 
+# v2 calls already failing (v2 is off for the workspace): the planner's rule. Mirrors
+# ug_migration_planner.V2_FAILING_MIN_REQUESTS and V2_FAILING_SHARE_PERCENT (test_app.py checks them).
+V2_FAILING_MIN_REQUESTS = 10
+V2_FAILING_SHARE_PERCENT = 95
+
+
+def v2_mostly_failing(v2_requests: int, v2_failed: int) -> bool:
+    """At least V2_FAILING_MIN_REQUESTS v2 requests, and at least V2_FAILING_SHARE_PERCENT of them failed."""
+    return v2_requests >= V2_FAILING_MIN_REQUESTS and 100 * v2_failed >= V2_FAILING_SHARE_PERCENT * v2_requests
+
+
 # Verify builders and fingerprint: copied from ug_migration_store.py
 _SINCE_RE = re.compile(r"\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?)?")
 
@@ -1072,7 +1089,8 @@ def legacy_traffic_since(endpoints, since, workspace_id) -> tuple[str, dict]:
 
     One query, two sources, UNION ALL. 'v1' is system.serving.endpoint_usage joined to served_entities. 'v2' is
     system.ai_gateway.usage rows with no service_type (AI Gateway v2 requests on legacy endpoints). Columns:
-    source, endpoint_name, requester, requests, last_request (string). Both sources are filtered to workspace_id."""
+    source, endpoint_name, requester, requests, failed (no status, or status 0, 403, 404, 410 or 500 and up), tokens (input plus output
+    for v1, total_tokens for v2), last_request (string). Both sources are filtered to workspace_id."""
     names = _split_names(endpoints)
     if not names:
         raise ValueError("legacy_traffic_since needs at least one endpoint name")
@@ -1086,7 +1104,11 @@ def legacy_traffic_since(endpoints, since, workspace_id) -> tuple[str, dict]:
     params = {"workspace_id": str(workspace_id).strip(), "since": _since(since), **v1, **v2}
     sql = f"""
         SELECT 'v1' AS source, se.endpoint_name AS endpoint_name, eu.requester AS requester,
-               count(*) AS requests, CAST(max(eu.request_time) AS STRING) AS last_request
+               count(*) AS requests,
+               sum(CASE WHEN eu.status_code IS NULL OR eu.status_code IN (0, 403, 404, 410) OR eu.status_code >= 500 THEN 1 ELSE 0 END)
+                 AS failed,
+               coalesce(sum(coalesce(eu.input_token_count, 0) + coalesce(eu.output_token_count, 0)), 0) AS tokens,
+               CAST(max(eu.request_time) AS STRING) AS last_request
         FROM system.serving.endpoint_usage AS eu
         JOIN system.serving.served_entities AS se
           ON eu.served_entity_id = se.served_entity_id
@@ -1096,7 +1118,10 @@ def legacy_traffic_since(endpoints, since, workspace_id) -> tuple[str, dict]:
         GROUP BY se.endpoint_name, eu.requester
         UNION ALL
         SELECT 'v2' AS source, endpoint_name, requester,
-               count(*) AS requests, CAST(max(event_time) AS STRING) AS last_request
+               count(*) AS requests,
+               sum(CASE WHEN status_code IS NULL OR status_code IN (0, 403, 404, 410) OR status_code >= 500 THEN 1 ELSE 0 END) AS failed,
+               coalesce(sum(total_tokens), 0) AS tokens,
+               CAST(max(event_time) AS STRING) AS last_request
         FROM system.ai_gateway.usage
         WHERE workspace_id = :workspace_id
           AND service_type IS NULL
@@ -1407,7 +1432,8 @@ def cutover_traffic(request: Request, window: str = "24h", scan_run_id: str = ""
     names = sorted({p["legacy_endpoint"] for p in legacy})
     kinds = {p["legacy_endpoint"]: p.get("kind") for p in legacy}
     classes = {(c.get("endpoint_name"), c.get("requester")): c.get("caller_class") for c in callers}
-    by = {n: {"endpoint_name": n, "kind": kinds[n], "requests": 0, "last_request": None, "callers": []} for n in names}
+    by = {n: {"endpoint_name": n, "kind": kinds[n], "requests": 0, "failed": 0, "tokens": 0, "v2_requests": 0,
+              "v2_failed": 0, "v2_tokens": 0, "last_request": None, "callers": []} for n in names}
     if names:
         try:
             sql, params = legacy_traffic_since(names, since, ws)
@@ -1417,17 +1443,24 @@ def cutover_traffic(request: Request, window: str = "24h", scan_run_id: str = ""
             e = by.get(r.get("endpoint_name"))
             if e is None:
                 continue
-            req = _num(r.get("requests")) or 0
+            req, failed, tokens = _num(r.get("requests")) or 0, _num(r.get("failed")) or 0, _num(r.get("tokens")) or 0
             e["requests"] += req
+            e["failed"] += failed
+            e["tokens"] += tokens
+            if r.get("source") == "v2":
+                e["v2_requests"] += req
+                e["v2_failed"] += failed
+                e["v2_tokens"] += tokens
             if r.get("last_request") and (not e["last_request"] or r["last_request"] > e["last_request"]):
                 e["last_request"] = r["last_request"]
             e["callers"].append({"source": r.get("source"), "requester": r.get("requester"), "requests": req,
-                                 "last_request": r.get("last_request"),
+                                 "failed": failed, "tokens": tokens, "last_request": r.get("last_request"),
                                  "caller_class": classes.get((r.get("endpoint_name"), r.get("requester")))})
     endpoints = sorted(by.values(), key=lambda e: (-e["requests"], e["endpoint_name"]))
     for e in endpoints:
         e["callers"].sort(key=lambda c: -c["requests"])
         e["status"] = "requests" if e["requests"] else "no_requests"
+        e["v2_failing"] = v2_mostly_failing(e["v2_requests"], e["v2_failed"])
     return {"scan_run_id": scan["run_id"], "workspace_id": ws, "window": window, "since": since,
             "checked_at": _utc_now(), "total_requests": sum(e["requests"] for e in endpoints), "endpoints": endpoints}
 

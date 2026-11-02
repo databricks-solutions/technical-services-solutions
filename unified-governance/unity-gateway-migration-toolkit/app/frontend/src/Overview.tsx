@@ -10,10 +10,11 @@ type Workspace = {
   v2_requests: number | null; legacy_requests: number | null; legacy_throttled: number | null;
   deleted_endpoint_requests: number | null; v3_requests: number | null; v3_share: number | null; last_seen: string | null;
   config_signals: string[]; customer_requests: number | null; platform_requests: number | null; coding_agent_requests: number | null;
+  legacy_tokens: number | null; v2_failed: number | null; v2_failing: boolean;
 };
 type Endpoint = {
   workspace_name: string | null; endpoint_name: string; kind: string; live: boolean; requests: number; requesters: number;
-  throttled: number; last_seen: string | null; traffic_status: string | null;
+  throttled: number; last_seen: string | null; traffic_status: string | null; legacy_tokens: number | null;
 };
 type OverviewData = {
   snapshot_time: string | null; window_days: number | null; window_assumed: boolean; run_id: string | null;
@@ -242,6 +243,10 @@ function Snapshot({ data, workspaceUrl }: { data: OverviewData; workspaceUrl?: s
         <Kpi label="Databricks-managed requests" value={fmt(k.platform_requests)}
              sub={Number(k.coding_agent_requests) ? `Databricks features. Coding agents: ${fmt(k.coding_agent_requests)}` : "Databricks features. You can't change these."} />
         <Kpi label="Share on Unity Gateway" value={pct(k.v3_share)} sub={`${fmt(k.v3_requests)} requests`} />
+        <Kpi label="Legacy tokens" value={fmt(k.legacy_tokens)} sub={`Input and output, v1 and v2, ${windowDays} days. Shown for sizing; decisions use requests.`} />
+        <Kpi label="v2 already failing" value={`${fmt(k.v2_failing_workspaces)} of ${fmt(runningCount)}`}
+             sub="running workspaces where most v2 calls already error (v2 is off there). Move those callers first."
+             tone={Number(k.v2_failing_workspaces) ? "bad" : undefined} />
         <Kpi label="Days to the legacy deadline" value={daysLabel(data.deadline.days_left)}
              sub={`${dateOnly(data.deadline.date)} · as of ${data.deadline.as_of}`} tone={data.deadline.days_left < 60 ? "bad" : "warn"} />
       </div>
@@ -294,6 +299,7 @@ function Snapshot({ data, workspaceUrl }: { data: OverviewData; workspaceUrl?: s
               {r.config_signals?.length > 0 && (
                 <div className="small">Features to check: {r.config_signals.map((s: string) => SIGNAL_LABEL[s] || humanize(s)).join(", ")}</div>
               )}
+              {r.v2_failing && <div className="small"><Badge value="v2 failing" tone="bad" /> most v2 calls already error</div>}
             </>) },
           { key: "wave", label: "Wave", render: (r) => (
             <>
@@ -323,6 +329,7 @@ function Snapshot({ data, workspaceUrl }: { data: OverviewData; workspaceUrl?: s
             <><code>{r.endpoint_name}</code>{!r.live && <div className="small muted">Deleted; not in live counts</div>}</>) },
           { key: "kind", label: "Kind", render: (r) => kindLabel(r.kind) },
           { key: "requests", label: "Requests (window)", num: true, render: (r) => fmt(r.requests) },
+          { key: "legacy_tokens", label: "Tokens (window)", num: true, hideOnPhone: true, render: (r) => fmt(r.legacy_tokens) },
           { key: "requesters", label: "Callers", num: true, hideOnPhone: true, render: (r) => fmt(r.requesters) },
           { key: "throttled", label: "Throttled", num: true, hideOnPhone: true, render: (r) => fmt(r.throttled) },
           { key: "last_seen", label: "Last seen", render: (r) => (

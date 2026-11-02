@@ -111,6 +111,10 @@ class PlanRow:
     provider_status: str | None = None  # automated | manual_supported | no_ug_provider | unknown_provider
     v2_requests: int = 0  # part of requests_window that came from AI Gateway v2 (retires with all legacy endpoints)
     api_types: list[str] = field(default_factory=list)  # v2 routes seen in the window, e.g. mlflow/v1/chat/completions
+    tokens_window: int = 0  # input + output tokens in the window (v1 and v2); shown, not used for decisions
+    v2_tokens: int = 0  # part of tokens_window from AI Gateway v2 (total_tokens)
+    v2_failed: int = 0  # v2 requests with no status, or status 0, 403, 404, 410 or 500 and up (see V2_CALLER_SQL)
+    v2_status_501: int = 0  # v2 requests answered with HTTP 501: v2 is off for this workspace
     target_api_types: list[str] = field(default_factory=list)  # supported_api_types of the target model service
 
 
@@ -357,13 +361,34 @@ def v2_workspace_endpoints(usage: dict[str, dict], known: Iterable[str]) -> list
             if name not in known and int(usage[name].get("v2_requests") or 0)]
 
 
+# Coverage value of system_ai_map when the listing says Unity Gateway isn't on here (readiness makes it a blocker).
+UNAVAILABLE = "unavailable"
+UNAVAILABLE_CODES = ("FEATURE_DISABLED", "NOT_IMPLEMENTED")
+
+
+def unity_gateway_unavailable(error: Exception) -> bool:
+    """True when a failed system.ai listing means Unity Gateway isn't enabled for this workspace or account.
+
+    Rules: the API error code (FEATURE_DISABLED, NOT_IMPLEMENTED), the SDK classes for HTTP 501 (NotImplemented) and
+    403 (PermissionDenied), or "not enabled" / "disabled" in the message. Any other error is a coverage gap.
+    """
+    from databricks.sdk import errors as sdk_errors
+
+    code = str(getattr(error, "error_code", "") or "").upper()
+    if code in UNAVAILABLE_CODES or isinstance(error, (sdk_errors.NotImplemented, sdk_errors.PermissionDenied)):
+        return True
+    text = str(error).lower()
+    return "not enabled" in text or "disabled" in text
+
+
 def system_ai_map(w: WorkspaceClient, coverage: dict[str, str] | None = None,
                   api_types: dict[str, list[str]] | None = None) -> dict[str, str]:
     """Map legacy databricks-* names to system.ai model service names.
 
     Uses the PPT destination of each system.ai service (models/system.ai.<model>)
     rather than string rules, then falls back to name matching. A failed listing is
-    recorded in coverage, so readiness can't say READY on a map it never read.
+    recorded in coverage, so readiness can't say READY on a map it never read. When the failure means Unity
+    Gateway isn't available (unity_gateway_unavailable), coverage says so and readiness reports a blocker.
     When api_types is given, it is filled with each service's supported_api_types (services whose
     types can't be read are left out).
     """
@@ -373,7 +398,10 @@ def system_ai_map(w: WorkspaceClient, coverage: dict[str, str] | None = None,
     except Exception as error:
         _log(f"Could not list system.ai model services: {error}")
         if coverage is not None:
-            coverage["system_ai_map"] = f"failed: {str(error)[:120]}"
+            if unity_gateway_unavailable(error):
+                coverage["system_ai_map"] = f"{UNAVAILABLE}: {str(error)[:120]}"
+            else:
+                coverage["system_ai_map"] = f"failed: {str(error)[:120]}"
         return mapping
     if coverage is not None:
         coverage["system_ai_map"] = "ok"
@@ -414,10 +442,15 @@ def system_ai_map(w: WorkspaceClient, coverage: dict[str, str] | None = None,
 # AI Gateway v2 requests on legacy endpoints are logged only in system.ai_gateway.usage (rows without a
 # service_type), not in system.serving.endpoint_usage. Measured 2026-10-31: an endpoint with 2.2M v2 requests in
 # 7 days had no endpoint_usage rows, so both tables are read and summed.
+# failed counts the rows with no status code, or status 0, 403, 404, 410 or 500 and up (400 and 429 are caller or rate-limit errors, not a gateway that is off). status_501 counts HTTP 501: v2 is off
+# for the workspace (Enforce retires v2 with 501), so those calls already fail. Both are kept apart from requests.
 # One row per (endpoint, requester, user agent, URL, API type). Everything v2 is derived from it in Python: totals,
 # requesters, routes (api_type) and caller classes (user agent and URL tell the caller apart).
 V2_CALLER_SQL = """
         SELECT endpoint_name, requester, user_agent, url, api_type, count(*) AS requests,
+               sum(CASE WHEN status_code IS NULL OR status_code IN (0, 403, 404, 410) OR status_code >= 500 THEN 1 ELSE 0 END) AS failed,
+               sum(CASE WHEN status_code = 501 THEN 1 ELSE 0 END) AS status_501,
+               coalesce(sum(total_tokens), 0) AS tokens,
                CAST(max(event_time) AS STRING) AS last_request
         FROM system.ai_gateway.usage
         WHERE workspace_id = :ws AND service_type IS NULL AND endpoint_name IS NOT NULL
@@ -475,12 +508,17 @@ def _v2_rows(w: WorkspaceClient, warehouse_id: str | None, workspace_id: str, da
 
 
 def _v2_summary(rows: list[dict]) -> list[dict]:
-    """Per endpoint: total v2 requests, distinct requesters, last request and the routes (api types) seen."""
+    """Per endpoint: total v2 requests, failed and HTTP 501 requests, tokens, distinct requesters, last request and the
+    routes (api types) seen."""
     per: dict[str, dict] = {}
     for r in rows:
-        cur = per.setdefault(r["endpoint_name"], {"endpoint_name": r["endpoint_name"], "requests": 0,
-                                                  "requesters": set(), "last_request": None, "api_types": set()})
+        cur = per.setdefault(r["endpoint_name"], {"endpoint_name": r["endpoint_name"], "requests": 0, "failed": 0,
+                                                  "status_501": 0, "tokens": 0, "requesters": set(),
+                                                  "last_request": None, "api_types": set()})
         cur["requests"] += int(r.get("requests") or 0)
+        cur["failed"] += int(r.get("failed") or 0)
+        cur["status_501"] += int(r.get("status_501") or 0)
+        cur["tokens"] += int(r.get("tokens") or 0)
         if r.get("requester"):
             cur["requesters"].add(r["requester"])
         if r.get("api_type"):
@@ -490,18 +528,25 @@ def _v2_summary(rows: list[dict]) -> list[dict]:
 
 
 def _merge_traffic(v1: list[dict], v2: list[dict]) -> dict[str, dict]:
-    """Sum v1 (endpoint_usage) and v2 (ai_gateway.usage) rows per endpoint. Requesters can overlap, so the
-    requester count is the larger of the two (a lower bound)."""
+    """Sum v1 (endpoint_usage) and v2 (ai_gateway.usage) rows per endpoint. tokens is v1 plus v2; v2_tokens,
+    v2_failed and v2_status_501 are the v2 part. Requesters can overlap, so the requester count is the larger of
+    the two (a lower bound)."""
     out: dict[str, dict] = {}
     for r in v1:
-        out[r["endpoint_name"]] = dict(r, v2_requests=0)
+        out[r["endpoint_name"]] = dict(r, tokens=int(r.get("tokens") or 0), v2_requests=0, v2_tokens=0, v2_failed=0,
+                                       v2_status_501=0)
     for r in v2:
         cur = out.setdefault(r["endpoint_name"], {"endpoint_name": r["endpoint_name"], "requests": 0,
                                                   "requesters": 0, "last_request": None, "throttled": 0,
-                                                  "v2_requests": 0, "api_types": []})
+                                                  "tokens": 0, "v2_requests": 0, "v2_tokens": 0, "v2_failed": 0,
+                                                  "v2_status_501": 0, "api_types": []})
         n = int(r.get("requests") or 0)
         cur["requests"] = int(cur.get("requests") or 0) + n
         cur["v2_requests"] = int(cur.get("v2_requests") or 0) + n
+        cur["v2_failed"] = int(cur.get("v2_failed") or 0) + int(r.get("failed") or 0)
+        cur["v2_status_501"] = int(cur.get("v2_status_501") or 0) + int(r.get("status_501") or 0)
+        cur["v2_tokens"] = int(cur.get("v2_tokens") or 0) + int(r.get("tokens") or 0)
+        cur["tokens"] = int(cur.get("tokens") or 0) + int(r.get("tokens") or 0)
         cur["requesters"] = max(int(cur.get("requesters") or 0), int(r.get("requesters") or 0))
         cur["last_request"] = max(filter(None, [cur.get("last_request"), r.get("last_request")]), default=None)
         cur["api_types"] = sorted(set(cur.get("api_types") or []) | set(r.get("api_types") or []))
@@ -514,7 +559,8 @@ def traffic(w: WorkspaceClient, warehouse_id: str | None, workspace_id: str, day
                count(*) AS requests,
                count(DISTINCT eu.requester) AS requesters,
                CAST(max(eu.request_time) AS STRING) AS last_request,
-               sum(CASE WHEN eu.status_code = 429 THEN 1 ELSE 0 END) AS throttled
+               sum(CASE WHEN eu.status_code = 429 THEN 1 ELSE 0 END) AS throttled,
+               coalesce(sum(coalesce(eu.input_token_count, 0) + coalesce(eu.output_token_count, 0)), 0) AS tokens
         FROM system.serving.endpoint_usage AS eu
         JOIN system.serving.served_entities AS se
           ON eu.served_entity_id = se.served_entity_id
@@ -529,6 +575,7 @@ def traffic(w: WorkspaceClient, warehouse_id: str | None, workspace_id: str, day
 def traffic_by_requester(w: WorkspaceClient, warehouse_id: str | None, workspace_id: str, days: int) -> list[dict]:
     v1 = _sql(w, warehouse_id, f"""
         SELECT se.endpoint_name, eu.requester, count(*) AS requests,
+               coalesce(sum(coalesce(eu.input_token_count, 0) + coalesce(eu.output_token_count, 0)), 0) AS tokens,
                CAST(max(eu.request_time) AS STRING) AS last_request
         FROM system.serving.endpoint_usage AS eu
         JOIN system.serving.served_entities AS se
@@ -542,8 +589,9 @@ def traffic_by_requester(w: WorkspaceClient, warehouse_id: str | None, workspace
     def add(r: dict, api: str, user_agent: str | None, cls: str) -> None:
         k = (r["endpoint_name"], r["requester"], api, user_agent, cls)
         cur = merged.setdefault(k, {"endpoint_name": k[0], "requester": k[1], "api": api, "user_agent": user_agent,
-                                    "caller_class": cls, "requests": 0, "last_request": None})
+                                    "caller_class": cls, "requests": 0, "tokens": 0, "last_request": None})
         cur["requests"] += int(r.get("requests") or 0)
+        cur["tokens"] += int(r.get("tokens") or 0)
         cur["last_request"] = max(filter(None, [cur["last_request"], r.get("last_request")]), default=None)
 
     for r in v1:
@@ -750,7 +798,9 @@ def plan(endpoints: list[LegacyEndpoint], sys_map: dict[str, str], usage: dict[s
         u = usage.get(ep.name, {})
         base = dict(requests_window=int(u.get("requests") or 0), requesters=int(u.get("requesters") or 0),
                     last_request=u.get("last_request"), v2_requests=int(u.get("v2_requests") or 0),
-                    api_types=sorted(u.get("api_types") or []))
+                    api_types=sorted(u.get("api_types") or []), tokens_window=int(u.get("tokens") or 0),
+                    v2_tokens=int(u.get("v2_tokens") or 0), v2_failed=int(u.get("v2_failed") or 0),
+                    v2_status_501=int(u.get("v2_status_501") or 0))
         limits, limit_issues = _translate_rate_limits(ep.rate_limits)
         needs += [BLOCKING_PREFIX + i for i in limit_issues]
         if traffic_known and not base["requests_window"] and ep.kind != "system_ppt":
@@ -1833,7 +1883,7 @@ def link_callers(by_req: list[dict], refs: list[ClientReference], names: dict[st
                          and x.legacy_endpoint in (ep, None)})
         out.append({"endpoint_name": ep, "requester": who, "requester_name": names.get(who, who),
                     "api": r.get("api") or "v1", "caller_class": r.get("caller_class") or "unknown",
-                    "user_agent": r.get("user_agent"), "requests": r.get("requests"),
+                    "user_agent": r.get("user_agent"), "requests": r.get("requests"), "tokens": r.get("tokens"),
                     "last_request": r.get("last_request"), "linked_code": linked[:20], "linked_count": len(linked)})
     return out
 
@@ -1986,6 +2036,23 @@ def _class_text(classes: dict[str, int]) -> str:
     return "callers by type (requests): " + (", ".join(parts) or "none")
 
 
+# v2 calls are "already failing" when at least V2_FAILING_MIN_REQUESTS v2 requests were made and at least
+# V2_FAILING_SHARE_PERCENT of them failed. Failed means no status code, or status 0, 403, 404, 410 or 500 and up (400 and 429 are caller or rate-limit errors, not a gateway that is off).
+V2_FAILING_MIN_REQUESTS = 10
+V2_FAILING_SHARE_PERCENT = 95
+V2_OFF_LABEL = "v2 calls are already failing in this workspace"
+V2_OFF_ACTION = ("v2 is off here: these callers get errors now. Move them to {target} first (keep the /ai-gateway/ "
+                 "route, change the model)")
+UNAVAILABLE_LABEL = "Unity Gateway isn't available in this workspace"
+UNAVAILABLE_ACTION = ("Ask your account team to enable Unity Gateway for this workspace and account. Nothing can be "
+                      "migrated until it is.")
+
+
+def v2_mostly_failing(r: PlanRow) -> bool:
+    """Most of the endpoint's v2 requests failed (v2 is off for the workspace). Used for the blocker and the account view."""
+    return r.v2_requests >= V2_FAILING_MIN_REQUESTS and 100 * r.v2_failed >= V2_FAILING_SHARE_PERCENT * r.v2_requests
+
+
 def readiness(rows: list[PlanRow], refs: list[ClientReference], traffic_ok: bool, days: int,
               endpoints: list[LegacyEndpoint] | None = None, coverage: dict[str, str] | None = None,
               scanned: bool = True, callers: list[dict] | None = None) -> dict:
@@ -2112,6 +2179,28 @@ def readiness(rows: list[PlanRow], refs: list[ClientReference], traffic_ok: bool
         else:
             label, action = _ref_text(x)
             warnings.append(_flag(x.pattern, loc, x.suggestion, label, action))
+    # v2 calls that already fail (v2 is off for the workspace). For a workspace-bound v2 endpoint this one blocker
+    # replaces its plain v2 blocker: its traffic and call-site details are folded in, so nothing is counted twice.
+    # A serving endpoint that also gets failing v2 calls keeps its own blockers (its v1 callers still break).
+    v2_off = []
+    for ep_name, r in row_by.items():
+        if not v2_mostly_failing(r):
+            continue
+        detail = (f"{r.v2_failed:,} of {r.v2_requests:,} AI Gateway v2 requests failed in {days} days "
+                  f"({r.v2_status_501:,} with HTTP 501)")
+        traffic = None
+        if ep_name in v2_names:
+            traffic = traffic_blockers.pop(ep_name, None)
+            if traffic:
+                detail += "; " + traffic["detail"]
+            if ep_name in call_sites:
+                detail += "; " + f"{_n(len(call_sites.pop(ep_name)), 'call site')}: see CODE_FIXES.md"
+        flag = _flag("v2_off_failing_calls", ep_name, detail, V2_OFF_LABEL,
+                     V2_OFF_ACTION.format(target=r.target_service or "a model service"))
+        for key in ("caller_classes", "user_agents"):
+            if traffic and key in traffic:
+                flag[key] = traffic[key]
+        v2_off.append(flag)
     for ep_name, sites in call_sites.items():
         target = row_by[ep_name].target_service if ep_name in row_by else None
         detail = f"{_n(len(sites), 'call site')}: see CODE_FIXES.md"
@@ -2127,7 +2216,16 @@ def readiness(rows: list[PlanRow], refs: list[ClientReference], traffic_ok: bool
                                   f"switch the calls to {target or 'a model service'} (see CODE_FIXES.md), then re-scan"))
     blockers += traffic_blockers.values()
     coverage = coverage or {}
-    gaps = {k: v for k, v in coverage.items() if v != "ok" and not v.startswith(NOT_SCANNED)}
+    unavailable = coverage.get("system_ai_map", "")
+    if unavailable.startswith(UNAVAILABLE):
+        # Without the system.ai listing no replacement can be chosen, so nothing can be migrated.
+        blockers.append(_flag("unity_gateway_unavailable", "system.ai", "could not list the system.ai model services: "
+                              + unavailable[len(UNAVAILABLE) + 2:], UNAVAILABLE_LABEL, UNAVAILABLE_ACTION))
+    # The v2 and Unity Gateway blockers come first; the order of the rest is unchanged.
+    blockers = sorted(blockers + v2_off, key=lambda b: 0 if b["type"] == "unity_gateway_unavailable"
+                      else 1 if b["type"] == "v2_off_failing_calls" else 2)
+    gaps = {k: v for k, v in coverage.items() if v != "ok" and not v.startswith(NOT_SCANNED)
+            and not v.startswith(UNAVAILABLE)}
     notes = {k: v for k, v in coverage.items() if v.startswith(NOT_SCANNED)}
     if not traffic_ok:
         # A permissions or data problem, not something Enforce would break: readiness can't be decided yet.
@@ -2352,11 +2450,21 @@ def summary_md(ws_url: str, endpoints: list[LegacyEndpoint], rows: list[PlanRow]
     if v2_total:
         lines += [f"{v2_total:,} of those requests were AI Gateway v2 traffic (all legacy endpoints retire on "
                   f"{deadline_text()}).", ""]
+    failing = [r for r in rows if v2_mostly_failing(r)]
+    if failing:
+        lines += [f"v2 calls already failing (v2 is off for this workspace): "
+                  + "; ".join(f"{_md(r.legacy_endpoint)} ({r.v2_failed:,} of {r.v2_requests:,} failed, "
+                              f"{r.v2_status_501:,} with HTTP 501)" for r in failing) + ".", ""]
+    tokens_total = sum(r.tokens_window for r in rows)
+    if tokens_total:
+        lines += [f"{tokens_total:,} input and output tokens in the window (v1 and v2). Shown for sizing only: "
+                  "readiness uses requests.", ""]
     if active:
-        lines += ["| Endpoint | Kind | Requests | Requesters | Last request | Target |", "|---|---|---|---|---|---|"]
+        lines += ["| Endpoint | Kind | Requests | Tokens | Requesters | Last request | Target |",
+                  "|---|---|---|---|---|---|---|"]
         for r in sorted(active, key=lambda r: -r.requests_window)[:25]:
             lines.append(f"| {_md(r.legacy_endpoint)} | {_md(KIND_NAMES.get(r.kind, r.kind))} | {r.requests_window} | "
-                         f"{r.requesters} | {r.last_request} | {r.target_service or '-'} |")
+                         f"{r.tokens_window:,} | {r.requesters} | {r.last_request} | {r.target_service or '-'} |")
         lines.append("")
     if callers:
         lines += ["## Who calls legacy endpoints", "", "| Endpoint | Caller | Caller type | API | Requests | Last request | Code found |",

@@ -18,11 +18,11 @@ Run the installer as a workspace admin with system table access, because the job
 
 ![Account overview with headline counts, the deadline countdown, a trend chart and workspaces by wave](docs/screenshots/overview.png)
 
-*The account overview after a snapshot: counts, days to the deadline, the trend, and the migration waves.*
+*The account overview after a snapshot: counts, legacy tokens, v2 calls already failing, days to the deadline, the trend, and the migration waves.*
 
 ## What it does
 
-- Inventories every legacy endpoint, v1 and v2, with its traffic and callers, for one workspace or the whole account.
+- Inventories every legacy endpoint, v1 and v2, with its traffic (requests, and tokens for sizing) and callers, for one workspace or the whole account.
 - Finds the code that calls legacy endpoints and proposes each line change. It never edits your code.
 - Creates Unity Gateway services for external model and Provisioned Throughput endpoints when you ask, with rollback.
 - Runs the verify and cut-over steps and says whether a workspace is ready to enforce.

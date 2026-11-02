@@ -49,6 +49,8 @@ Blocker types:
 
 | `type` | Label in the file | Meaning |
 |---|---|---|
+| `unity_gateway_unavailable` | Unity Gateway isn't available in this workspace | Listing the `system.ai` model services failed with a not-enabled, disabled or 403 error, so Unity Gateway is off for this workspace or account. Nothing can be migrated until it is enabled. The detail gives the error. |
+| `v2_off_failing_calls` | v2 calls are already failing in this workspace | At least 95% of at least 10 v2 requests failed (no status code, or status 0, 403, 404, 410 or 500 and up). v2 is already off, so the callers get errors now. The detail gives failed out of total, and the HTTP 501 count. Move the callers to the `system.ai` target first, keeping the `/ai-gateway/` route. |
 | `legacy_traffic` | Callers still use a legacy endpoint | Callers other than Databricks-managed ones still send requests. The detail gives requests by caller type, for example `callers by type (requests): coding_agent 1,200, no_client_info 300`. |
 | `pay_per_token_call` | Code calls a Databricks pay-per-token endpoint | Code references a `databricks-*` endpoint. The call fails once Enforce is on. |
 | `v2_workspace_call` | Code calls a v2 workspace endpoint | Code calls a workspace-bound v2 endpoint by its flat name. Fix: keep the `/ai-gateway/` route and change the model (see CODE_FIXES.md). |
@@ -78,7 +80,7 @@ Code-reference warnings use the reference pattern as their type, for example `sd
 
 - **Title line:** `Status: <STATUS>. Start with READINESS.md.`
 - **Glossary:** the same lines as READINESS.md.
-- **Endpoints:** a count per kind, a count per plan action, and how many endpoints had traffic in the window. A line says how many of those requests were v2 traffic. All legacy endpoints stop on the deadline in [USER_GUIDE.md](USER_GUIDE.md#the-deadline). The kinds are named as follows:
+- **Endpoints:** a count per kind, a count per plan action, and how many endpoints had traffic in the window. A line says how many of those requests were v2 traffic, how many tokens the window had (input and output, v1 and v2; shown for sizing, readiness uses requests), and which v2 calls are already failing. All legacy endpoints stop on the deadline in [USER_GUIDE.md](USER_GUIDE.md#the-deadline). The kinds are named as follows:
 
 | Kind in the file | Meaning |
 |---|---|
@@ -91,7 +93,7 @@ Code-reference warnings use the reference pattern as their type, for example `sd
 
 The plan actions are "Use a system.ai model" (`use_system_ai`), "Create a Unity Gateway service" (`create_model_service`), "Out of scope (custom ML)" (`out_of_scope`) and "Manual (see needs)" (`manual`). `manual` covers a system endpoint with no `system.ai` model, and a v2 endpoint whose target doesn't support an API type its callers use.
 
-- **Active endpoints:** the top 25 with traffic: endpoint, kind, requests, requesters, last request, target service.
+- **Active endpoints:** the top 25 with traffic: endpoint, kind, requests, tokens, requesters, last request, target service.
 - **Who calls legacy endpoints:** the top 30 caller and endpoint pairs, with columns endpoint, caller, caller type, API, requests, last request and code found. "no code found: check jobs, external apps or local code" means the code isn't in a scanned folder. The caller type is explained in [Caller types](USER_GUIDE.md#caller-types).
 - **Provider services:** each service with its status: `automated` (apply creates it), `manual_supported` (Unity Gateway supports it, apply doesn't) or `no_ug_provider`.
 - **Needs a human (N endpoints):** the decisions the toolkit won't make. A line counts the plaintext API keys (values are never shown). The list is capped at 50, then "+N more in migration_plan.csv".
@@ -140,7 +142,8 @@ Caveats that appear in the notes: `ai_query` on Unity Gateway gets usage trackin
 | `0: no legacy traffic` | No v1 or v2 requests and no unknown endpoints. A candidate only. A passing workspace scan is still needed. Renamed from `0: enforce candidate` |
 
 - **Workspaces (busiest first):** legacy endpoints, the external, PT or other share, active endpoints, v1 and v2 requests, throttled requests, Unity Gateway requests, the customer-owned, Databricks-managed and coding-agent request counts, the approximate share, and the wave. Old snapshots written before these columns show "-".
-- **Workspace signals:** endpoints with unknown traffic, last seen, deleted-endpoint requests, and config signals from billing activity over the last year (AI Search, Agent Bricks, Apps, AI Functions). Signals suggest where to look. The workspace scan is the check.
+- **Tokens:** the headline gives the window's tokens (input and output, v1 and v2). Each workspace has `legacy_tokens` (v1 and v2) in the account CSV, and each endpoint has `legacy_tokens`. Snapshots written before these columns show "-" for them. Tokens are shown for sizing; waves and readiness use requests.
+- **Workspace signals:** endpoints with unknown traffic, last seen, deleted-endpoint requests, a **v2 calls** column marked "v2 failing" where most v2 requests failed (at least 10 requests and 95% failed), and config signals from billing activity over the last year (AI Search, Agent Bricks, Apps, AI Functions). Signals suggest where to look. The workspace scan is the check.
 - **Busiest legacy v1 endpoints:** the top 20.
 - **Name collisions:** custom endpoint names that exist in more than one workspace. If the workspaces share a metastore, give each its own target schema.
 
@@ -159,6 +162,7 @@ One row per (endpoint, requester, API, user agent, caller class). A requester ca
 | `caller_class` | One of the values in [Caller types](USER_GUIDE.md#caller-types). `platform` is Databricks system identities only |
 | `user_agent` | v2 rows only. The client's user agent, which tells coding agents and SDKs apart |
 | `requests`, `last_request` | Requests in the window, and the last one |
+| `tokens` | Input plus output tokens in the window (v1 usage) or `total_tokens` (v2). Shown, not used for decisions. 0 when the source has none |
 | `linked_code`, `linked_count` | The code found in the caller's folders, and how many references |
 
 ---
@@ -172,6 +176,8 @@ One row per legacy endpoint. The columns that changed in 0.10.0:
 - `action`: `use_system_ai`, `create_model_service`, `manual` or `out_of_scope`.
 - `api_types`: the API types callers use in the window (for example `mlflow/v1/chat/completions` or `openai/v1/responses`).
 - `target_api_types`: what the target service supports. Empty when unknown.
+- `tokens_window`: input plus output tokens in the traffic window (v1 and v2). Shown for sizing; readiness uses requests.
+- `v2_tokens`, `v2_failed`, `v2_status_501`: the v2 part of the window. `v2_failed` counts v2 requests with no status code, or status 0, 403, 404, 410 or 500 and up. `v2_status_501` counts HTTP 501 (v2 is off for the workspace).
 
 A `manual` row with a note in `needs_human` means a person has to decide. Typical cases: the target doesn't support an API type callers use, or no `system.ai` model fits.
 

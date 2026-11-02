@@ -176,7 +176,7 @@ On a multi-workspace account, start on the Overview. Each workspace gets one wav
 
 ![Account overview with headline counts, the deadline countdown, a trend chart and workspaces by wave](docs/screenshots/overview.png)
 
-*The account overview: headline counts, days to the deadline, the legacy and Unity Gateway trend, and waves.*
+*The account overview: headline counts, legacy tokens, v2 calls already failing, days to the deadline, the legacy and Unity Gateway trend, and waves.*
 
 | Wave | Rule | Next step |
 |---|---|---|
@@ -325,10 +325,10 @@ This tab runs the verify and cut-over steps for one scan. It covers the steps of
 
 ![Verify and cut over tab with the legacy traffic table and the usage tracking table](docs/screenshots/cutover-traffic.png)
 
-*Steps 1 and 2: the legacy traffic table for the chosen window, then usage tracking.*
+*Steps 1 and 2: the legacy traffic table for the chosen window (tokens, and a v2 endpoint whose calls are failing), then usage tracking.*
 
 - Pick a window (24 hours, 7 days or 30 days), then **Check again**.
-- The table lists every legacy endpoint in the plan, v1 and v2, with requests, last request, and callers by requester and caller type. Custom model and agent endpoints aren't listed.
+- The table lists every legacy endpoint in the plan, v1 and v2, with requests, tokens (input and output), last request, and callers by requester and caller type. Custom model and agent endpoints aren't listed. A v2 endpoint whose calls mostly fail shows **Failing** and its failed count: v2 is already off there, so its callers get errors now.
 - **Zero requests for the whole window is the check before you pause anything.** Usage can lag a few hours, so use 7 or 30 days, not 24 hours.
 
 ### Step 2: Turn on usage tracking
@@ -458,7 +458,7 @@ python ug_migration_account.py --profile <profile> --warehouse-id <id> --out ./a
 | `--deadline YYYY-MM-DD` | [the deadline](#the-deadline) | The deadline shown in the summary, for this run |
 | `--snapshot-table` | off | Append results to `<catalog.schema.prefix>_workspaces` and `_endpoints` (the only write) |
 
-**Outputs:** `ACCOUNT_SUMMARY.md` (headline counts, endpoints by kind, waves, busiest workspaces, name collisions), three CSV files, and with a deep scan `workspaces/<id>/` and `deep_scans.json`.
+**Outputs:** `ACCOUNT_SUMMARY.md` (headline counts, tokens, endpoints by kind, waves, busiest workspaces, workspace signals with a "v2 failing" mark, name collisions), three CSV files, and with a deep scan `workspaces/<id>/` and `deep_scans.json`.
 
 **Deep-scan authentication** tries, in order: the host of `--profile`; any CLI profile with that host; a service principal from `DATABRICKS_CLIENT_ID` and `DATABRICKS_CLIENT_SECRET`; a CLI login for that host. Failures go to `deep_scans.json` and don't stop the run.
 
@@ -594,6 +594,8 @@ The `type` is the stable name in `readiness.json`. The label and action are what
 
 | `type` | Blocker or warning | Label | Action |
 |---|---|---|---|
+| `unity_gateway_unavailable` | Blocker | Unity Gateway isn't available in this workspace | Ask your account team to enable Unity Gateway for this workspace and account. Nothing can be migrated until it is |
+| `v2_off_failing_calls` | Blocker | v2 calls are already failing in this workspace | v2 is off here: these callers get errors now. Move them to `<target>` first (keep the `/ai-gateway/` route, change the model) |
 | `legacy_traffic` | Blocker | Callers still use a legacy endpoint | Move the callers to `<target>` before enforcing. Coding agents: use `ucode` |
 | `pay_per_token_call` | Blocker | Code calls a Databricks pay-per-token endpoint | Switch the calls to `<target>`, then re-scan |
 | `v2_workspace_call` | Blocker | Code calls a v2 workspace endpoint | Set the model to `<target>`, keep the `/ai-gateway/` route, then re-scan |
@@ -610,7 +612,7 @@ The `type` is the stable name in `readiness.json`. The label and action are what
 | `no_traffic_in_window` | Warning | No requests in the window and usage tracking is off | Confirm with owners that no infrequent job calls it |
 | `dormant_agent_endpoint` | Warning | Agent endpoint has no traffic in the window | Confirm it is unused. If it is still used, redeploy it before enforcing |
 
-Code-reference warnings (for example `sdk_serving_query`) carry their fix in CODE_FIXES.md. Traffic from Databricks-managed callers only is a warning. Traffic that also has customer-owned callers is a `legacy_traffic` blocker.
+Code-reference warnings (for example `sdk_serving_query`) carry their fix in CODE_FIXES.md. Traffic from Databricks-managed callers only is a warning. Traffic that also has customer-owned callers is a `legacy_traffic` blocker. `v2_off_failing_calls` replaces the plain v2 blocker for an endpoint (its traffic and call sites are folded in, so nothing is counted twice). It needs at least 10 v2 requests in the window, and at least 95% of them failed (no status code, or status 0, 403, 404, 410 or 500 and up). The readiness blockers come in this order: `unity_gateway_unavailable`, `v2_off_failing_calls`, then the rest.
 
 ### Caller types
 
@@ -672,7 +674,7 @@ What each report file contains, field by field, is in [HOW_TO_READ.md](HOW_TO_RE
 
 ### Workspace-bound v2 endpoints
 
-A workspace-bound v2 endpoint is an AI Gateway (v2) endpoint that a workspace created through AI Gateway. It has no serving-endpoint object. Callers reach it on the `/ai-gateway/...` route with a flat model name, and its only trace is `system.ai_gateway.usage` (rows with a null `service_type`). The planner and account view find these there. Each gets its own plan row of kind `v2_workspace_endpoint`. The client fix is in [Fix the callers](#fix-the-callers).
+A workspace-bound v2 endpoint is an AI Gateway (v2) endpoint that a workspace created through AI Gateway. It has no serving-endpoint object. Callers reach it on the `/ai-gateway/...` route with a flat model name, and its only trace is `system.ai_gateway.usage` (rows with a null `service_type`). The planner and account view find these there. Each gets its own plan row of kind `v2_workspace_endpoint`. The client fix is in [Fix the callers](#fix-the-callers). If v2 calls fail, for example with HTTP 501, v2 is already off for that workspace: move those callers first.
 
 ### Progress and exports
 
@@ -746,6 +748,8 @@ Grouped by where the problem shows up.
 | "0 endpoints with traffic", but you know there is some | No access to `system.serving.*`, or the window is short | Grant `SELECT`, run as an account admin, or raise `--days`. Override the ID with `--workspace-id` |
 | INCOMPLETE with `traffic` or a code-scan gap | No warehouse, no system table access, a scan root cut off, or no rows for this workspace | Pass `--warehouse-id`, grant `SELECT`, raise `--max-objects`, check the workspace ID in `readiness.json`, then scan again |
 | Not `READY` after callers moved | Recent callers are still inside the window | Wait for the window to pass with no requests, or scan with a 7-day window |
+| `unity_gateway_unavailable`: "Unity Gateway isn't available in this workspace" | Listing the `system.ai` model services failed with a not-enabled, disabled or 403 error, so Unity Gateway is off here | Ask your account team to enable Unity Gateway for this workspace and account. Nothing can be migrated until it is |
+| `v2_off_failing_calls`: "v2 calls are already failing in this workspace" | v2 is off for the workspace, so most of its v2 calls fail (HTTP 501 or other errors) | Move those callers first: keep the `/ai-gateway/` route and change the model to the `system.ai` target, then scan again |
 | "This scan is N days old" | Scans older than 14 days need confirmation | Scan again, or tick **Apply with this older scan anyway** after checking callers |
 | Deep scan: `can't authenticate` | No credentials for that workspace | Use a service principal assigned to it, or `databricks auth login --host <url>` |
 
@@ -758,6 +762,7 @@ Grouped by where the problem shows up.
 | `manual: secret ...` | Secret not mapped | Add it to `--uc-secret-map`, or fill in its row in the app |
 | "must be in an allowed Unity Catalog schema" (400) | The secret's schema isn't in **Allowed secret schemas** | Rerun the installer with the schema added. Nothing changed |
 | `manual: PT endpoint serves ..., which no longer exists` | Its model was deleted | Retire or redeploy the PT endpoint |
+| "Unity Gateway isn't available in this workspace. Ask your account team ..." | Listing the `system.ai` model services fails with a not-enabled, disabled or 403 error. Apply stops before any write | Ask your account team to enable Unity Gateway for this workspace and account |
 | `already exists with a different configuration` | An object with that name differs from the plan | Rename the target schema, or reconcile by hand |
 | Guardrails error (400) | Legacy guardrails aren't migrated | Set service policies, then acknowledge |
 | `needs_attention` | Service created, grants failed | Fix the grant (the service stays), then run again |

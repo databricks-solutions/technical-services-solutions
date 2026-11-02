@@ -249,8 +249,10 @@ function TrafficCheck({ traffic, win, setWin, scanReady }: { traffic: any; win: 
             </p>
             <Table search label="Legacy traffic by endpoint" rows={rows} columns={[
               { key: "endpoint_name", label: "Endpoint", render: (e) => (
-                <><code>{e.endpoint_name}</code>{e.kind === "v2_workspace_endpoint" && <> <Badge value="v2" tone="warn" /></>}</>) },
-              { key: "requests", label: "Requests", num: true, render: (e) => fmt(e.requests) },
+                <><code>{e.endpoint_name}</code>{e.kind === "v2_workspace_endpoint" && <> <Badge value="v2" tone="warn" /></>}
+                  {e.v2_failing && <> <Badge value="Failing" tone="bad" /></>}</>) },
+              { key: "requests", label: "Requests", num: true, render: (e) => <>{fmt(e.requests)}{e.v2_failing && <div className="small muted">{fmt(e.v2_failed)} failed</div>}</> },
+              { key: "tokens", label: "Tokens", num: true, hideOnPhone: true, render: (e) => fmt(e.tokens) },
               { key: "last_request", label: "Last request", render: (e) => <span className="small">{e.last_request ? stamp(e.last_request) : "-"}</span> },
               { key: "status", label: "Status", sortable: false, render: (e) => e.status === "no_requests"
                 ? <Badge value="No requests" tone="good" />

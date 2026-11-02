@@ -139,10 +139,15 @@ GROUP BY eu.workspace_id, se.endpoint_id, eu.requester
 UG_TRAFFIC_SQL = """
 -- One row per invocation in ai_gateway.usage, so count distinct request IDs.
 -- v2 = rows with no service_type (undocumented NULL in the schema; verified against live rows).
+-- v2_failed: no status code, or status 0, 403, 404, 410 or 500 and up (400 and 429 are caller or rate-limit errors, not a gateway that is off) (the planner's rule). v2_tokens: total_tokens.
 SELECT workspace_id,
        count(DISTINCT CASE WHEN service_type = 'MODEL_SERVICE' THEN request_id END) AS v3_requests,
        count(DISTINCT CASE WHEN service_type = 'MODEL_SERVICE' THEN requester END) AS v3_requesters,
        count(DISTINCT CASE WHEN service_type IS NULL AND endpoint_name IS NOT NULL THEN request_id END) AS v2_requests,
+       count(DISTINCT CASE WHEN service_type IS NULL AND endpoint_name IS NOT NULL
+                           AND (status_code IS NULL OR status_code IN (0, 403, 404, 410) OR status_code >= 500) THEN request_id END)
+         AS v2_failed,
+       coalesce(sum(CASE WHEN service_type IS NULL AND endpoint_name IS NOT NULL THEN total_tokens END), 0) AS v2_tokens,
        CAST(max(CASE WHEN service_type IS NULL AND endpoint_name IS NOT NULL THEN event_time END) AS STRING)
          AS v2_last_request
 FROM system.ai_gateway.usage
@@ -156,6 +161,8 @@ V2_ENDPOINT_SQL = """
 SELECT workspace_id, endpoint_name,
        count(DISTINCT CASE WHEN event_time >= current_timestamp() - INTERVAL {days} DAYS THEN request_id END) AS requests,
        count(DISTINCT CASE WHEN event_time >= current_timestamp() - INTERVAL {days} DAYS THEN requester END) AS requesters,
+       coalesce(sum(CASE WHEN event_time >= current_timestamp() - INTERVAL {days} DAYS THEN total_tokens END), 0)
+         AS tokens,
        CAST(max(CASE WHEN event_time >= current_timestamp() - INTERVAL {days} DAYS THEN event_time END) AS STRING)
          AS last_request,
        CAST(max(event_time) AS STRING) AS last_seen
@@ -320,6 +327,7 @@ def build(inventory: list[dict], v1: list[dict], ug: list[dict], workspaces: lis
         t = traffic.setdefault(key, {"endpoint_name": r["endpoint_name"], "requests": 0, "requesters": 0,
                                      "throttled": 0, "tokens": 0, "last_request": None, "last_seen": None})
         t["requests"] += _int(r.get("requests"))
+        t["tokens"] += _int(r.get("tokens"))
         t["requesters"] = max(t["requesters"], _int(r.get("requesters")))
         for k in ("last_request", "last_seen"):
             if r.get(k) and (not t[k] or str(r[k]) > str(t[k])):
@@ -379,7 +387,7 @@ def build(inventory: list[dict], v1: list[dict], ug: list[dict], workspaces: lis
                      "endpoint_name": e["endpoint_name"], "kind": "+".join(sorted(kinds)),
                      "providers": ",".join(sorted(e["providers"])) or None, "served_entities": e["entities"],
                      "requests": requests, "requesters": _int(t.get("requesters")),
-                     "throttled": _int(t.get("throttled")), "tokens": _int(t.get("tokens")),
+                     "throttled": _int(t.get("throttled")), "legacy_tokens": _int(t.get("tokens")),
                      "last_request": t.get("last_request"), "last_seen": last_seen,
                      "traffic_status": status, "created_by": e["created_by"], **caller})
         wid = e["workspace_id"]
@@ -414,7 +422,7 @@ def build(inventory: list[dict], v1: list[dict], ug: list[dict], workspaces: lis
     ug_by: dict[str, Counter] = {}
     for r in ug:
         u = ug_by.setdefault(str(r["workspace_id"]), Counter())
-        for k in ("v3_requests", "v3_requesters", "v2_requests"):
+        for k in ("v3_requests", "v3_requesters", "v2_requests", "v2_failed", "v2_tokens"):
             u[k] += _int(r.get(k))
     cfg: dict[str, set] = defaultdict(set)
     for r in config or []:
@@ -428,6 +436,7 @@ def build(inventory: list[dict], v1: list[dict], ug: list[dict], workspaces: lis
         meta = ws_meta.get(wid, {})
         status = meta.get("status")
         v1n, v2, v3 = c["v1_requests"], _int(u.get("v2_requests")), _int(u.get("v3_requests"))
+        v2_failed, v2_tokens = _int(u.get("v2_failed")), _int(u.get("v2_tokens"))
         legacy = v1n + v2
         custom, unknown = c["custom_legacy_endpoints"], c["unknown_traffic_endpoints"]
         platform = ws_cls.get(wid, Counter())["platform"]
@@ -476,7 +485,8 @@ def build(inventory: list[dict], v1: list[dict], ug: list[dict], workspaces: lis
                         "v1_requests": v1n, "v2_requests": v2, "legacy_requests": legacy,
                         "customer_requests": max(legacy - platform, 0), "platform_requests": platform,
                         "coding_agent_requests": ws_cls.get(wid, Counter())["coding_agent"],
-                        "legacy_tokens": c["legacy_tokens"], "legacy_throttled": c["throttled"],
+                        "legacy_tokens": c["legacy_tokens"] + v2_tokens, "v2_tokens": v2_tokens,
+                        "v2_failed": v2_failed, "legacy_throttled": c["throttled"],
                         "deleted_endpoint_requests": c["deleted_endpoint_requests"],
                         "v3_requests": v3, "v3_requesters": _int(u.get("v3_requesters")),
                         "v3_share": round(v3 / (v3 + legacy), 3) if (v3 + legacy) else None,
@@ -524,6 +534,12 @@ def _pct(part: int, whole: int) -> str:
     return f"{part / whole:.0%}" if whole else "n/a"
 
 
+def _v2_failing(w: dict) -> bool:
+    """Most of the workspace's v2 requests failed: v2 is already off there (the planner's rule, per workspace)."""
+    v2 = _int(w.get("v2_requests"))
+    return v2 >= planner.V2_FAILING_MIN_REQUESTS and 100 * _int(w.get("v2_failed")) >= planner.V2_FAILING_SHARE_PERCENT * v2
+
+
 def summary_md(result: dict) -> str:
     ws, eps, days = result["workspaces"], result["endpoints"], result["days"]
     history = result.get("history_days", HISTORY_DAYS)
@@ -545,6 +561,8 @@ def summary_md(result: dict) -> str:
     no_traffic = waves.get(W_NO_TRAFFIC, 0)
     no_data = waves.get(W_NO_DATA, 0)
     custom_only = waves.get(W_CUSTOM_ONLY, 0)
+    legacy_tokens_total = sum(w["legacy_tokens"] or 0 for w in ws)
+    v2_failing = [w for w in ws if _v2_failing(w)]
     unknown_ws = [w for w in ws if w["unknown_traffic_endpoints"]]
     unknown_eps = sum(w["unknown_traffic_endpoints"] for w in ws)
     custom_eps = len(eps) - len(live) - len(deleted)
@@ -573,6 +591,10 @@ def summary_md(result: dict) -> str:
              + (f" (about {v3_total / total:.0%} of model traffic on Unity Gateway; approximate, since v1 rows can "
                 "include Unity Gateway backend legs)" if total else "")
              + f"; traffic to deleted endpoints (not in the live counts) **{deleted_total:,}**",
+             f"- Tokens in the last {days} days (input and output, v1 and v2): **{legacy_tokens_total:,}**. Shown for "
+             "sizing; the waves and the readiness checks use requests.",
+             f"- **v2 failing** (v2 is already off there, so most v2 calls get errors now): **{_n_ws(len(v2_failing))}**. "
+             "Marked in the workspace signals table.",
              "", "## Customer-owned vs Databricks-managed traffic", "",
              f"- Legacy requests in {days} days: **{legacy_total:,}**. Customer-owned: **{customer_total:,}** "
              f"({_pct(customer_total, legacy_total)}). Databricks-managed: **{platform_total:,}** "
@@ -616,13 +638,17 @@ def summary_md(result: dict) -> str:
                      f"{(w['customer_requests'] or 0):,} | {(w['platform_requests'] or 0):,} | "
                      f"{(w['coding_agent_requests'] or 0):,} |")
     lines += ["", "## Workspace signals", "",
-              "| Workspace | Endpoints with unknown traffic | Last seen | Deleted-endpoint requests | Config signals (last year) |",
-              "|---|---|---|---|---|"]
+              "| Workspace | Endpoints with unknown traffic | Last seen | Deleted-endpoint requests | v2 calls | "
+              "Config signals (last year) |",
+              "|---|---|---|---|---|---|"]
     for w in ws[:40]:
         signals = ", ".join(CONFIG_LABELS.get(s, s) for s in (w["config_signals"] or "").split(",") if s) or \
             ("not checked" if result.get("config_checked") is False else "none seen")
+        v2_note = (f"v2 failing: {_int(w['v2_failed']):,} of {_int(w['v2_requests']):,} requests"
+                   if _v2_failing(w) else "-")
         lines.append(f"| {_md(w['workspace_name'] or w['workspace_id'])} | {w['unknown_traffic_endpoints']} | "
-                     f"{_md(_day(w['last_seen']) or '-')} | {w['deleted_endpoint_requests']:,} | {_md(signals)} |")
+                     f"{_md(_day(w['last_seen']) or '-')} | {w['deleted_endpoint_requests']:,} | {_md(v2_note)} | "
+                     f"{_md(signals)} |")
     top = sorted((e for e in live if e["requests"]), key=lambda e: -e["requests"])[:20]
     if top:
         lines += ["", "## Busiest legacy endpoints (v1 and v2)", "",
@@ -656,6 +682,10 @@ def summary_md(result: dict) -> str:
               "- Config signals come from billing product activity (last year), not configuration. They show where a "
               "scan must look; a workspace scan is the only check for ai_query, app resources and agent endpoints.",
               "- Live counts exclude endpoints deleted since, whose traffic is listed separately.",
+              "- v2 failing: at least 10 v2 requests in the window and at least 95% of them failed (no status code, status "
+              "0, 403, 404, 410 or 500 and up; counted per distinct request). Those callers already get errors, so move them first.",
+              "- Tokens: input and output tokens from system.serving.endpoint_usage (v1) and total_tokens from "
+              "system.ai_gateway.usage (v2). Shown for sizing only.",
               "- Enforce status (the workspace setting) is not in the account tables and isn't read here."]
     if result.get("errors"):
         lines += ["", "## Query errors", "", *[f"- {_md(e)}" for e in result["errors"]],
@@ -779,15 +809,18 @@ SNAPSHOT_COLUMNS = {
     "workspaces": ["workspace_id", "workspace_name", "status", "legacy_endpoints", "custom_legacy_endpoints",
                    "active_legacy_endpoints", "unknown_traffic_endpoints", "deleted_endpoint_requests",
                    "v1_requests", "legacy_requests", "legacy_tokens", "legacy_throttled", "v2_requests",
-                   "v3_requests", "v3_share", "last_seen", "config_signals", "wave"] + CALLER_COLUMNS,
+                   "v2_failed", "v2_tokens", "v3_requests", "v3_share", "last_seen", "config_signals", "wave"]
+                  + CALLER_COLUMNS,
     "endpoints": ["workspace_id", "workspace_name", "endpoint_name", "kind", "providers", "requests",
-                  "requesters", "throttled", "tokens", "last_request", "last_seen", "traffic_status"] + CALLER_COLUMNS,
+                  "requesters", "throttled", "legacy_tokens", "last_request", "last_seen", "traffic_status"]
+                 + CALLER_COLUMNS,
 }
 # Columns every snapshot row carries; older tables get them with ALTER TABLE ADD COLUMNS.
 RUN_COLUMNS = ["run_id", "window_days", "complete"]
 NUMERIC = {"legacy_endpoints", "custom_legacy_endpoints", "active_legacy_endpoints", "unknown_traffic_endpoints",
            "deleted_endpoint_requests", "legacy_requests", "v1_requests", "legacy_tokens", "legacy_throttled",
-           "v2_requests", "v3_requests", "requests", "requesters", "throttled", "tokens", "window_days"} | set(CALLER_COLUMNS)
+           "v2_requests", "v2_failed", "v2_tokens", "v3_requests", "requests", "requesters", "throttled",
+           "window_days"} | set(CALLER_COLUMNS)
 
 
 def _col_type(c: str) -> str:

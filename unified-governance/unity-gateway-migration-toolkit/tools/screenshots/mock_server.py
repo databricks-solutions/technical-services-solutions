@@ -106,6 +106,11 @@ ENDPOINTS = [
     Ep("5555555555555555", "fin-summary-openai", "external_model", 0, 0, 0, None, traffic="unknown"),
 ]
 
+# Fictional token sizing: about 900 input and output tokens per request. The v2 endpoint below is shown as failing
+# (HTTP 501 and errors on most calls, so v2 is off for this workspace): 372 of its 380 requests failed.
+TOKENS_PER_REQUEST = 900
+V2_FAILED_SHARE = {"databricks-claude-sonnet-4-5": 0.98}
+
 WAVE_ORDER = ["v2 traffic", "2: high volume", "1: small", "1: cleanup", "0: traffic unknown",
               "0: no legacy traffic", "no legacy endpoints (custom ML only)", "no endpoint data", "not running", "unknown"]
 
@@ -141,6 +146,10 @@ def build_snapshot(f_legacy: float, f_v3: float):
         v1 = sum(round(e.req * f_legacy) for e in legacy_eps if e.kind != "v2_workspace_endpoint")
         v2 = sum(round(e.req * f_legacy) for e in legacy_eps if e.kind == "v2_workspace_endpoint")
         legacy = v1 + v2
+        v2_tokens = sum(round(e.req * f_legacy) * TOKENS_PER_REQUEST for e in legacy_eps if e.kind == "v2_workspace_endpoint")
+        legacy_tokens = sum(round(e.req * f_legacy) * TOKENS_PER_REQUEST for e in legacy_eps)
+        v2_failed = sum(round(round(e.req * f_legacy) * V2_FAILED_SHARE.get(e.name, 0)) for e in legacy_eps
+                        if e.kind == "v2_workspace_endpoint")
         v3 = round(ws["v3"] * f_v3)
         wave = _wave(ws, eps, v2, legacy)
         seen = [e.last_h for e in eps if e.last_h is not None]
@@ -153,6 +162,8 @@ def build_snapshot(f_legacy: float, f_v3: float):
             "active_legacy_endpoints": sum(1 for e in legacy_eps if round(e.req * f_legacy) > 0),
             "unknown_traffic_endpoints": sum(1 for e in eps if e.traffic == "unknown"),
             "v1_requests": v1, "v2_requests": v2, "legacy_requests": legacy, "legacy_throttled": sum(e.throttled for e in eps),
+            "legacy_tokens": legacy_tokens, "v2_tokens": v2_tokens, "v2_failed": v2_failed,
+            "v2_failing": v2 >= 10 and 100 * v2_failed >= 95 * v2,
             "deleted_endpoint_requests": 0, "v3_requests": v3,
             "v3_share": round(v3 / (v3 + legacy), 3) if (v3 + legacy) else None,
             "last_seen": last_seen, "config_signals": [s for s in ws["signals"].split(",") if s],
@@ -224,6 +235,8 @@ def snapshot_overview():
         "customer_requests": sum(v["customer_requests"] for v in running),
         "platform_requests": sum(v["platform_requests"] for v in running),
         "coding_agent_requests": sum(v["coding_agent_requests"] for v in running),
+        "legacy_tokens": sum(v["legacy_tokens"] for v in running),
+        "v2_failing_workspaces": sum(1 for v in running if v["v2_failing"]),
     }
     eps = []
     for e in ENDPOINTS:
@@ -233,6 +246,7 @@ def snapshot_overview():
             "live": e.kind != "deleted_or_unknown", "requests": e.req, "requesters": e.requesters,
             "throttled": e.throttled, "last_request": last, "last_seen": last, "traffic_status": e.traffic,
             "customer_requests": e.cust, "platform_requests": e.plat, "coding_agent_requests": e.coding,
+            "legacy_tokens": e.req * TOKENS_PER_REQUEST,
         })
     top = [e for e in eps if e["requests"] or e["last_seen"]]
     top.sort(key=lambda e: str(e["last_seen"] or ""), reverse=True)
@@ -287,6 +301,8 @@ PLAN = [
     dict(legacy_endpoint="databricks-bge-large-en", kind="system_ppt", action="use_system_ai",
          target_service="system.ai.bge_large_en", target_status="exists", requests_window=0, needs_human=[]),
 ]
+for _p in PLAN:  # tokens next to requests (fictional sizing, see TOKENS_PER_REQUEST)
+    _p["tokens_window"] = _p["requests_window"] * TOKENS_PER_REQUEST
 PLAN_BY_NAME = {p["legacy_endpoint"]: p for p in PLAN}
 PROVIDER_OF = {"chat-gpt4o-proxy": "openai-chat", "support-bot-openai": "openai-support",
                "legacy-summarizer-openai": "openai-support"}
@@ -970,8 +986,16 @@ def _traffic(qs):
         total = sum(c["requests"] for c in callers)
         last = max((c["last_request"] for c in callers), default=None)
         callers.sort(key=lambda c: -c["requests"])
-        out.append({"endpoint_name": name, "kind": p["kind"], "requests": total, "last_request": last,
-                    "callers": callers, "status": "requests" if total else "no_requests"})
+        failed = round(total * V2_FAILED_SHARE.get(name, 0))
+        for c in callers:  # tokens and failures split across the callers in proportion to their requests
+            c["tokens"] = c["requests"] * TOKENS_PER_REQUEST
+            c["failed"] = round(c["requests"] * failed / total) if total else 0
+        out.append({"endpoint_name": name, "kind": p["kind"], "requests": total, "failed": failed,
+                    "tokens": total * TOKENS_PER_REQUEST, "v2_requests": total if p["kind"] == "v2_workspace_endpoint" else 0,
+                    "v2_failed": failed if p["kind"] == "v2_workspace_endpoint" else 0,
+                    "v2_tokens": total * TOKENS_PER_REQUEST if p["kind"] == "v2_workspace_endpoint" else 0,
+                    "v2_failing": p["kind"] == "v2_workspace_endpoint" and total >= 10 and 100 * failed >= 95 * total,
+                    "last_request": last, "callers": callers, "status": "requests" if total else "no_requests"})
     out.sort(key=lambda e: (-e["requests"], e["endpoint_name"]))
     return {"scan_run_id": scan["run_id"], "workspace_id": WS_ID, "window": window,
             "since": sql_ts(T0 - span), "checked_at": T0.strftime("%Y-%m-%dT%H:%M:%SZ"),

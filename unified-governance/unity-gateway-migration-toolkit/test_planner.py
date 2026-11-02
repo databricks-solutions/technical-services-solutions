@@ -1040,3 +1040,147 @@ def test_mlflow_deployments_predict_is_never_rewritten():
     assert by[1].pattern == by[2].pattern == "mlflow_deployments_predict"
     assert not by[1].fixed_line and not by[2].fixed_line and "OpenAI client" in by[1].suggestion
     assert by[3].pattern == "legacy_endpoint_name" and by[3].fixed_line
+
+
+# ---------------------------------------------------------------------------
+# v2 calls that already fail, Unity Gateway unavailable, and tokens next to requests
+# ---------------------------------------------------------------------------
+
+
+def _v2_failing(name, requests=100, failed=96, status_501=90, tokens=5000):
+    """A v2-only traffic entry where most calls failed (v2 is off for the workspace)."""
+    return {"endpoint_name": name, "requests": requests, "requesters": 2, "last_request": "2026-10-30", "throttled": 0,
+            "v2_requests": requests, "v2_failed": failed, "v2_status_501": status_501, "v2_tokens": tokens,
+            "tokens": tokens, "api_types": ["mlflow/v1/chat/completions"]}
+
+
+def test_v2_failures_and_tokens_are_summed_next_to_requests(monkeypatch):
+    v1 = [{"endpoint_name": "a", "requests": "5", "requesters": "1", "last_request": "2026-10-01", "throttled": "0",
+           "tokens": "300"}]
+    v2 = [{"endpoint_name": "a", "requests": "7", "failed": "2", "status_501": "0", "tokens": "700",
+           "requesters": "1", "last_request": "2026-10-20"},
+          {"endpoint_name": "b", "requests": "4", "failed": "4", "status_501": "4", "tokens": "0",
+           "requesters": "1", "last_request": "2026-10-20"}]
+    t = m._merge_traffic(v1, v2)
+    assert t["a"]["tokens"] == 1000 and t["a"]["v2_tokens"] == 700
+    assert t["a"]["v2_failed"] == 2 and t["a"]["v2_status_501"] == 0
+    assert t["b"]["v2_failed"] == 4 and t["b"]["v2_status_501"] == 4 and t["b"]["tokens"] == 0
+    # The SQL counts failures per row: no status, or status 0, 403, 404, 410 or 500 and up; HTTP 501 is counted apart.
+    assert "status_code IS NULL OR status_code IN (0, 403, 404, 410) OR status_code >= 500" in m.V2_CALLER_SQL
+    assert "sum(CASE WHEN status_code = 501" in m.V2_CALLER_SQL and "coalesce(sum(total_tokens), 0)" in m.V2_CALLER_SQL
+    seen = []
+    monkeypatch.setattr(m, "_sql", lambda w, wh, statement, params=None: seen.append(statement) or [])
+    m.traffic(mock.MagicMock(), None, "1", 30)
+    assert any("eu.input_token_count" in s and "eu.output_token_count" in s for s in seen)
+
+
+def test_plan_rows_carry_tokens_and_v2_failures():
+    usage = {"databricks-gpt-5-5": _v2_usage("databricks-gpt-5-5", requests=900)}
+    usage["databricks-gpt-5-5"]["tokens"] = 4200
+    usage["databricks-gpt-5-5"]["v2_tokens"] = 4200
+    eps = m.v2_workspace_endpoints(usage, [])
+    rows, _ = m.plan(eps, SYS_GPT, usage, "c", "s", True, False, {"system.ai.gpt-5-5": ["mlflow/v1/chat/completions"]})
+    assert rows[0].tokens_window == 4200 and rows[0].v2_tokens == 4200
+    assert rows[0].v2_failed == 0 and rows[0].v2_status_501 == 0
+    assert asdict(rows[0])["tokens_window"] == 4200
+
+
+def test_v2_mostly_failing_needs_ten_requests_and_95_percent():
+    def failing(**kw):
+        return m.v2_mostly_failing(m.PlanRow("x", "v2_workspace_endpoint", "manual", None, None, None, [], None, None,
+                                             [], [], [], **kw))
+    assert failing(v2_requests=100, v2_failed=95) is True
+    assert failing(v2_requests=100, v2_failed=94) is False
+    assert failing(v2_requests=9, v2_failed=9) is False  # too few requests to say
+    assert failing(v2_requests=10, v2_failed=10) is True
+
+
+def test_v2_calls_already_failing_replace_the_plain_v2_blocker():
+    usage = {"databricks-gpt-5-5": _v2_failing("databricks-gpt-5-5")}
+    eps = m.v2_workspace_endpoints(usage, [])
+    rows, _ = m.plan(eps, SYS_GPT, usage, "c", "s", True, False, {"system.ai.gpt-5-5": ["mlflow/v1/chat/completions"]})
+    s = m.Scanner([e.name for e in eps], SYS_GPT, rows, v2_names=[e.name for e in eps])
+    s.scan_text("notebook", "/n", 'client.chat.completions.create(model="databricks-gpt-5-5", messages=m)')
+    r = m.readiness(rows, s.refs, True, 30, eps, {}, True, [])
+    assert r["status"] == "BLOCKED"
+    assert [b["type"] for b in r["blockers"]] == ["v2_off_failing_calls"]  # one blocker, not two
+    blocker = r["blockers"][0]
+    assert blocker["label"] == "v2 calls are already failing in this workspace"
+    assert blocker["action"] == ("v2 is off here: these callers get errors now. Move them to system.ai.gpt-5-5 first "
+                                 "(keep the /ai-gateway/ route, change the model)")
+    assert "96 of 100 AI Gateway v2 requests failed" in blocker["detail"] and "90 with HTTP 501" in blocker["detail"]
+    assert "1 call site" in blocker["detail"] and "requests from" in blocker["detail"]
+
+
+def test_healthy_v2_endpoint_keeps_the_plain_v2_blocker_and_few_failures_do_not_count():
+    usage = {"databricks-gpt-5-5": _v2_failing("databricks-gpt-5-5", requests=100, failed=3, status_501=0)}
+    eps = m.v2_workspace_endpoints(usage, [])
+    rows, _ = m.plan(eps, SYS_GPT, usage, "c", "s", True, False, {"system.ai.gpt-5-5": ["mlflow/v1/chat/completions"]})
+    s = m.Scanner([e.name for e in eps], SYS_GPT, rows, v2_names=[e.name for e in eps])
+    s.scan_text("notebook", "/n", 'client.chat.completions.create(model="databricks-gpt-5-5", messages=m)')
+    r = m.readiness(rows, s.refs, True, 30, eps, {}, True, [])
+    assert [b["type"] for b in r["blockers"]] == ["v2_workspace_call"]
+    # An endpoint with traffic and no code: the failing blocker replaces its traffic blocker (no double count).
+    usage2 = {"proj-v2-chat": _v2_failing("proj-v2-chat", requests=50, failed=50, status_501=50)}
+    eps2 = m.v2_workspace_endpoints(usage2, [])
+    rows2, _ = m.plan(eps2, {}, usage2, "c", "s", True, False, {})
+    r2 = m.readiness(rows2, [], True, 30, eps2, {}, True, [])
+    assert [b["type"] for b in r2["blockers"]] == ["v2_off_failing_calls"]
+    assert "50 of 50" in r2["blockers"][0]["detail"] and "requests from" in r2["blockers"][0]["detail"]
+    # The failing blocker comes first, ahead of a plain v2 blocker for another endpoint.
+    usage3 = dict(usage2, **{"proj-b": _v2_usage("proj-b")})
+    eps3 = m.v2_workspace_endpoints(usage3, [])
+    rows3, _ = m.plan(eps3, {}, usage3, "c", "s", True, False, {})
+    r3 = m.readiness(rows3, [], True, 30, eps3, {}, True, [])
+    assert [b["type"] for b in r3["blockers"]] == ["v2_off_failing_calls", "legacy_traffic"]
+
+
+def test_unity_gateway_unavailable_is_recognised_and_blocks_with_the_plain_message():
+    from databricks.sdk import errors as sdk_errors
+
+    assert m.unity_gateway_unavailable(sdk_errors.NotImplemented("nope"))
+    assert m.unity_gateway_unavailable(sdk_errors.PermissionDenied("denied"))
+    assert m.unity_gateway_unavailable(sdk_errors.DatabricksError("off", error_code="FEATURE_DISABLED"))
+    assert m.unity_gateway_unavailable(sdk_errors.DatabricksError("off", error_code="NOT_IMPLEMENTED"))
+    assert m.unity_gateway_unavailable(RuntimeError("Unity Gateway is not enabled for this account"))
+    assert m.unity_gateway_unavailable(RuntimeError("the AI Gateway feature is disabled"))
+    assert not m.unity_gateway_unavailable(RuntimeError("connection reset by peer"))
+    assert not m.unity_gateway_unavailable(sdk_errors.InternalError("try again"))
+
+    cov = {}
+    w = mock.MagicMock()
+    w.ai_gateway.list_model_services.side_effect = sdk_errors.NotImplemented("not implemented here")
+    assert m.system_ai_map(w, cov) == {} and cov["system_ai_map"].startswith("unavailable: ")
+    rows, _ = m.plan([_ep(SYSTEM_PPT)], {}, {}, "c", "s", traffic_known=False)
+    r = m.readiness(rows, [], True, 30, [], cov)
+    assert r["status"] == "BLOCKED" and r["coverage_gaps"] == {}
+    blocker = r["blockers"][0]
+    assert blocker["type"] == "unity_gateway_unavailable"
+    assert blocker["label"] == "Unity Gateway isn't available in this workspace"
+    assert blocker["action"] == ("Ask your account team to enable Unity Gateway for this workspace and account. "
+                                 "Nothing can be migrated until it is.")
+    assert "not implemented here" in blocker["detail"]
+    # Other errors stay a coverage gap, not a blocker.
+    cov2 = {}
+    w2 = mock.MagicMock()
+    w2.ai_gateway.list_model_services.side_effect = RuntimeError("timeout talking to the API")
+    m.system_ai_map(w2, cov2)
+    r2 = m.readiness(rows, [], True, 30, [], cov2)
+    assert r2["status"] == "INCOMPLETE" and "system_ai_map" in r2["coverage_gaps"] and not r2["blockers"]
+
+
+def test_serving_endpoint_with_failing_v2_calls_keeps_its_own_blockers():
+    # A v1 serving endpoint that also gets v2 calls which fail: the v2 blocker is added, and its own call site and
+    # v1 traffic blocker stay (the traffic is folded into the pay-per-token blocker, as before).
+    usage = {"databricks-gpt-5-5": _v2_failing("databricks-gpt-5-5")}
+    rows, _ = m.plan([_ep(SYSTEM_PPT)], SYS_GPT, usage, "c", "s", True, False, {})
+    s = m.Scanner(["databricks-gpt-5-5"], SYS_GPT, rows, v2_names=[])
+    s.scan_text("notebook", "/n", 'client.responses.create(model="databricks-gpt-5-5")')
+    r = m.readiness(rows, s.refs, True, 30, [_ep(SYSTEM_PPT)], {}, True, [])
+    assert [b["type"] for b in r["blockers"]] == ["v2_off_failing_calls", "pay_per_token_call"]
+    assert "requests from" in r["blockers"][1]["detail"]
+
+
+def test_client_and_rate_limit_errors_are_not_counted_as_v2_off():
+    sql = m.V2_CALLER_SQL
+    assert "IN (0, 403, 404, 410) OR status_code >= 500" in sql and ">= 400" not in sql

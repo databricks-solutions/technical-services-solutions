@@ -481,3 +481,27 @@ def test_calls_with_no_client_info_count_as_customer_owned_and_block():
                                "url": None, "requester": "analyst@example.com", "requests": "5"}])
     assert _by(res)["1"]["platform_requests"] == 0 and _by(res)["1"]["customer_requests"] == 5
     assert "**Blocking**: **1** running workspaces" in acct.summary_md(res)
+
+
+def test_tokens_and_v2_failures_per_workspace_and_endpoint():
+    ug = [{"workspace_id": "4", "v3_requests": "0", "v3_requesters": "0", "v2_requests": "100", "v2_failed": "96",
+           "v2_tokens": "5000"},
+          {"workspace_id": "2", "v3_requests": "0", "v3_requesters": "0", "v2_requests": "100", "v2_failed": "5",
+           "v2_tokens": "10"}]
+    v2_eps = [{"workspace_id": "4", "endpoint_name": "proj-v2", "requests": "100", "requesters": "2",
+               "tokens": "4000", "last_request": "2026-10-30", "last_seen": "2026-10-30 10:00:00"}]
+    res = acct.build(INV, V1, ug, WS, 30, v2_endpoints=v2_eps)
+    by = _by(res)
+    assert by["4"]["v2_failed"] == 96 and by["4"]["v2_tokens"] == 5000 and by["4"]["legacy_tokens"] == 5000
+    assert by["1"]["legacy_tokens"] == 1000 and by["1"]["v2_failed"] == 0  # v1 tokens are the endpoint's tokens
+    assert by["2"]["legacy_tokens"] == 10  # v2 tokens only: old-ep is deleted, so its traffic is kept apart
+    ep = next(e for e in res["endpoints"] if e["endpoint_name"] == "proj-v2")
+    assert ep["legacy_tokens"] == 4000 and ep["kind"] == "v2_workspace_endpoint"
+    assert "tokens" not in ep  # the endpoint column is legacy_tokens everywhere
+    md = acct.summary_md(res)
+    assert "v2 failing: 96 of 100 requests" in md and "**1 workspace**" in md
+    assert "Tokens in the last 30 days (input and output, v1 and v2): **" in md
+    assert acct._v2_failing(by["2"]) is False and acct._v2_failing(by["4"]) is True
+    assert "legacy_tokens" in acct.SNAPSHOT_COLUMNS["endpoints"] and "tokens" not in acct.SNAPSHOT_COLUMNS["endpoints"]
+    assert "v2_failed" in acct.SNAPSHOT_COLUMNS["workspaces"] and "v2_tokens" in acct.SNAPSHOT_COLUMNS["workspaces"]
+    assert "v2_failed" in acct.NUMERIC and "v2_tokens" in acct.NUMERIC and "legacy_tokens" in acct.NUMERIC

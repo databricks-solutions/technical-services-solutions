@@ -676,6 +676,11 @@ def apply(w: WorkspaceClient, endpoint_names: list[str] | None, target_catalog: 
     except NotFound:
         raise SystemExit(f"Target schema {target_catalog}.{target_schema} doesn't exist: create it first")
     secrets.validate_policy()  # before any change
+    try:  # the listing is lazy: reading its first page is the call that fails when Unity Gateway is off
+        next(iter(w.ai_gateway.list_model_services(parent="schemas/system.ai")), None)
+    except Exception as error:
+        if planner.unity_gateway_unavailable(error):
+            raise PolicyError(f"{planner.UNAVAILABLE_LABEL}. {planner.UNAVAILABLE_ACTION}") from None
 
     global _W
     _W = w

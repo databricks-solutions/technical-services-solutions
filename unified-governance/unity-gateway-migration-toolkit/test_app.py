@@ -843,6 +843,37 @@ def test_traffic_lists_every_legacy_endpoint_with_its_class_from_the_scan(env, m
     assert seen["params"]["workspace_id"] == "984" and seen["params"]["v2_1"] == "ep-b"
 
 
+def test_traffic_counts_failed_and_tokens_and_flags_v2_calls_that_fail(env, monkeypatch):
+    env.store["scans"][0].update(workspace_id="984", days=30, finished_at=now_ts(1))
+    env.store["items"] = [
+        {"item_type": "plan", "seq": 1, "payload": json.dumps({"legacy_endpoint": "ep-a", "kind": "external_model"})},
+        {"item_type": "plan", "seq": 2, "payload": json.dumps({"legacy_endpoint": "ep-b", "kind": "v2_workspace_endpoint"})},
+    ]
+    base = make_query(env.store)
+
+    def fake(request, sql, params=None):
+        if "system.serving.endpoint_usage" in sql:
+            return [{"source": "v1", "endpoint_name": "ep-a", "requester": "a@x.com", "requests": "10", "failed": "1",
+                     "tokens": "2500", "last_request": "2026-11-01 10:00:00"},
+                    {"source": "v2", "endpoint_name": "ep-b", "requester": "svc", "requests": "40", "failed": "40",
+                     "tokens": "0", "last_request": "2026-11-01 09:00:00"},
+                    {"source": "v2", "endpoint_name": "ep-b", "requester": "dev@x.com", "requests": "2", "failed": "1",
+                     "tokens": "900", "last_request": "2026-11-01 08:00:00"}]
+        return base(request, sql, params)
+    monkeypatch.setattr(main, "query", fake)
+    r = env.client.get("/api/cutover/traffic?window=7d", headers=OP).json()
+    by = {e["endpoint_name"]: e for e in r["endpoints"]}
+    assert by["ep-a"]["tokens"] == 2500 and by["ep-a"]["failed"] == 1 and by["ep-a"]["v2_failing"] is False
+    assert by["ep-b"]["requests"] == 42 and by["ep-b"]["failed"] == 41 and by["ep-b"]["tokens"] == 900
+    assert by["ep-b"]["v2_requests"] == 42 and by["ep-b"]["v2_failed"] == 41 and by["ep-b"]["v2_failing"] is True
+    assert by["ep-b"]["callers"][0]["failed"] == 40 and by["ep-b"]["callers"][0]["tokens"] == 0
+    # The app's rule is the planner's rule: at least 10 v2 requests and 95% of them failed.
+    assert main.V2_FAILING_MIN_REQUESTS == planner.V2_FAILING_MIN_REQUESTS
+    assert main.V2_FAILING_SHARE_PERCENT == planner.V2_FAILING_SHARE_PERCENT
+    assert main.v2_mostly_failing(9, 9) is False and main.v2_mostly_failing(10, 9) is False
+    assert main.v2_mostly_failing(100, 95) is True and main.v2_mostly_failing(100, 94) is False
+
+
 def test_traffic_window_and_scan_errors(env):
     assert env.client.get("/api/cutover/traffic?window=2d", headers=OP).status_code == 400
     env.store["scans"][0]["workspace_id"] = None

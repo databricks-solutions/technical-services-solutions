@@ -57,6 +57,8 @@ The app is deployed from `app/` only (`package.sh` copies just `main.py` and `__
 
 - The selection fingerprint: `selection_fingerprint` (store, apply job) and its mirror in `main.py`. The legacy fingerprint for verify and cut-over (`legacy_fingerprint`) and the three verify builders (`legacy_traffic_since`, `ug_usage_summary`, `ug_request_lookup`) are mirrored the same way (`test_app_and_store_agree_on_the_legacy_fingerprint`).
 - The rollback rule: `rollback_done` (store) and `_rollback_done` / `_rollback_blocks` in `main.py`.
+- The v2 failing rule (`V2_FAILING_MIN_REQUESTS`, `V2_FAILING_SHARE_PERCENT`): the planner and `main.py` (the
+  verify traffic flag). `test_app.py` checks the constants agree.
 - Run status: `effective_status` (store) and `_effective_status` / `_ended_state` in `main.py`.
 - Cut-over options and problem actions: `OPERATIONS`, `API_TYPES`, the option limits and `PROBLEM_ACTIONS` (`ug_migration_apply.py`) and their mirrors in `main.py` (`test_app_and_job_agree_on_the_cutover_options`).
 - The deadline and the wave names: `ug_migration_account.py` and `main.py` (`LEGACY_WAVE_NAMES`, the wave matching in `main.py`, whose comment says so).

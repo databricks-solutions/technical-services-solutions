@@ -352,6 +352,7 @@ def test_traffic_sql_binds_every_value_and_covers_v1_and_v2():
     assert sorted(v for k, v in params.items() if k.startswith("v1_")) == ["legacy-chat-2", "legacy-ext-1"]
     assert sorted(v for k, v in params.items() if k.startswith("v2_")) == ["legacy-chat-2", "legacy-ext-1"]
     assert "legacy-ext-1" not in sql and "legacy-chat-2" not in sql  # names are bound, never interpolated
+    assert "AS failed" in sql and "AS tokens" in sql and "input_token_count" in sql and "total_tokens" in sql
 
 
 def test_traffic_sql_rejects_bad_input():

@@ -1096,3 +1096,31 @@ def test_notebook_pause_needs_endpoints(monkeypatch):
     with pytest.raises(ValueError, match="at least one endpoint"):
         _notebook(monkeypatch, {"apply_id": APPLY, "results_schema": "c.s", "operation": "pause_legacy",
                                 "mode": "dry_run", "endpoints": ""}, CutoverW([]))
+
+
+def test_unity_gateway_off_stops_the_apply_before_any_write(tmp_path, monkeypatch):
+    from databricks.sdk import errors as sdk_errors
+
+    w = FakeW()
+
+    def off(parent=None, page_size=None, page_token=None):
+        raise sdk_errors.PermissionDenied("Unity Gateway is not enabled for this workspace")
+
+    w.ai_gateway.list_model_services = off
+    with pytest.raises(a.PolicyError) as refused:
+        _run(monkeypatch, tmp_path, w, [_ep(EXTERNAL)])
+    assert str(refused.value) == ("Unity Gateway isn't available in this workspace. Ask your account team to enable "
+                                  "Unity Gateway for this workspace and account. Nothing can be migrated until it is.")
+    assert w.ai_gateway.calls == [] and w.grants.updates == []
+    assert not (tmp_path / "apply.jsonl").exists()  # nothing was logged either
+
+
+def test_other_listing_errors_do_not_stop_the_apply(tmp_path, monkeypatch):
+    w = FakeW()
+
+    def flaky(parent=None, page_size=None, page_token=None):
+        raise RuntimeError("connection reset")
+
+    w.ai_gateway.list_model_services = flaky
+    res, _ = _run(monkeypatch, tmp_path, w, [_ep(EXTERNAL)])
+    assert res and not any("isn't available" in str(r) for r in res)  # the run went on past the listing

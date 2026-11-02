@@ -373,6 +373,7 @@ function Endpoints({ plan, providers }: { plan: any[]; providers: any[] }) {
         { key: "action", label: "Plan", render: (p) => <Badge value={actionLabel(p.action)} tone={p.action === "create_model_service" ? "info" : p.action === "use_system_ai" ? "good" : "neutral"} /> },
         { key: "target_service", label: "Target", render: (p) => p.target_service ? <><code>{p.target_service}</code> {p.target_status === "exists" && <Badge value="exists" tone="good" />}</> : "-" },
         { key: "requests_window", label: "Requests", num: true, render: (p) => fmt(p.requests_window) },
+        { key: "tokens_window", label: "Tokens", num: true, hideOnPhone: true, render: (p) => fmt(p.tokens_window) },
         { key: "needs_human", label: "Needs a person", sortable: false, render: (p) => (Array.isArray(p.needs_human) ? p.needs_human : []).map((n: string, i: number) => <div key={i} className="small">{n}</div>) },
       ]} />
       {providers.length > 0 && (

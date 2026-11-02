@@ -25,7 +25,7 @@ import os
 import re
 import sys
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Iterable
 from urllib.parse import urlsplit
@@ -590,6 +590,21 @@ def traffic(w: WorkspaceClient, warehouse_id: str | None, workspace_id: str, day
     return _merge_traffic(v1, v2)
 
 
+def unattributed_v1(w: WorkspaceClient, warehouse_id: str | None, workspace_id: str, days: int) -> int:
+    """v1 requests in the window whose served entity has no system.serving.served_entities row. traffic() joins on
+    served_entities, so these would otherwise read as no traffic for whichever endpoint they belong to."""
+    rows = _sql(w, warehouse_id, f"""
+        SELECT count(*) AS n
+        FROM system.serving.endpoint_usage AS eu
+        LEFT JOIN system.serving.served_entities AS se
+          ON eu.served_entity_id = se.served_entity_id
+        WHERE eu.workspace_id = :ws
+          AND eu.request_time >= current_timestamp() - INTERVAL {int(days)} DAYS
+          AND se.served_entity_id IS NULL
+    """, {"ws": workspace_id})
+    return int((rows[0] if rows else {}).get("n") or 0)
+
+
 def traffic_by_requester(w: WorkspaceClient, warehouse_id: str | None, workspace_id: str, days: int) -> list[dict]:
     v1 = _sql(w, warehouse_id, f"""
         SELECT se.endpoint_name, eu.requester, count(*) AS requests,
@@ -623,6 +638,32 @@ def traffic_by_requester(w: WorkspaceClient, warehouse_id: str | None, workspace
 # ---------------------------------------------------------------------------
 # 3. Plan
 # ---------------------------------------------------------------------------
+
+def retarget_name(name: str | None, catalog: str, schema: str) -> str | None:
+    """A planned service name under another catalog.schema. system.ai services (and empty names) are unchanged."""
+    if not name or name.startswith("system.ai.") or name.count(".") != 2:
+        return name
+    return f"{catalog}.{schema}.{name.split('.', 2)[2]}"
+
+
+def retarget_plan(rows: list, catalog: str, schema: str) -> list:
+    """The plan rows with their model and provider service names moved to catalog.schema (the apply-time target).
+
+    Rows are PlanRow objects or the dicts stored with a scan; copies are returned, the input is unchanged. Only
+    target_service and provider_service change (system.ai targets stay). The apply job doesn't need this: it plans
+    again from the live endpoints with the target it's given; this is for showing that plan before it runs."""
+    out = []
+    for r in rows:
+        if isinstance(r, dict):
+            d = dict(r)
+            for k in ("target_service", "provider_service"):
+                d[k] = retarget_name(d.get(k), catalog, schema)
+        else:
+            d = replace(r, target_service=retarget_name(r.target_service, catalog, schema),
+                        provider_service=retarget_name(r.provider_service, catalog, schema))
+        out.append(d)
+    return out
+
 
 WORKSPACE_LOCAL_GROUPS = {"admins", "users"}
 
@@ -1997,6 +2038,7 @@ def _gateway_body(ep: LegacyEndpoint) -> dict:
 
 
 NOT_SCANNED = "not scanned"  # coverage values that are notes (what was left out), not gaps
+UNATTRIBUTED_NOTE = "unattributed"  # coverage["v1_unattributed"]: v1 requests not matched to an endpoint (a warning)
 # Serving-endpoint resources declared by an app or bundle. Other app references are config values (warnings).
 RESOURCE_PATTERNS = {"app_serving_endpoint_resource", "bundle_serving_endpoint_resource"}
 PATTERN_TEXT = {  # code-reference pattern -> (plain label, one-line action)
@@ -2327,7 +2369,15 @@ def readiness(rows: list[PlanRow], refs: list[ClientReference], traffic_ok: bool
     blockers = sorted(blockers + v2_off, key=lambda b: 0 if b["type"] == "unity_gateway_unavailable"
                       else 1 if b["type"] == "v2_off_failing_calls" else 2)
     gaps = {k: v for k, v in coverage.items() if v != "ok" and not v.startswith(NOT_SCANNED)
-            and not v.startswith(UNAVAILABLE)}
+            and not v.startswith(UNAVAILABLE) and not v.startswith(UNATTRIBUTED_NOTE)}
+    if coverage.get("v1_unattributed", "").startswith(UNATTRIBUTED_NOTE):
+        # Their endpoint is unknown, so any endpoint's "no traffic" could be wrong: never plain READY.
+        warnings.append(_flag("unattributed_legacy_traffic", "system.serving.endpoint_usage",
+                              coverage["v1_unattributed"][len(UNATTRIBUTED_NOTE) + 2:],
+                              "Legacy requests couldn't be matched to an endpoint",
+                              "their served entity has no system.serving.served_entities row, so the traffic per "
+                              "endpoint may be low. Check SELECT access to system.serving.served_entities and "
+                              "confirm with owners before enforcing or pausing"))
     notes = {k: v for k, v in coverage.items() if v.startswith(NOT_SCANNED)}
     if not traffic_ok:
         # A permissions or data problem, not something Enforce would break: readiness can't be decided yet.
@@ -2672,6 +2722,14 @@ def _run(w, out_dir, warehouse_id, days, target_catalog, target_schema, scan_roo
             traffic_status = (f"system.serving.served_entities has no rows for workspace {workspace_id} although "
                               f"{len(endpoints)} endpoints exist: wrong workspace ID or no access to the system tables")
         _log(f"  {len(usage)} endpoints with traffic in {days} days")
+        try:
+            unmatched = unattributed_v1(w, warehouse_id, workspace_id, days)
+        except Exception as error:
+            coverage["v1_unattributed"] = f"failed: {str(error)[:120]}"
+        else:
+            coverage["v1_unattributed"] = (f"{UNATTRIBUTED_NOTE}: {unmatched:,} v1 requests in {days} days have no "
+                                           "served_entities match, so they aren't counted for any endpoint"
+                                           if unmatched else "ok")
     except Exception as error:
         traffic_ok = False
         traffic_status = f"failed: {str(error)[:200]}"

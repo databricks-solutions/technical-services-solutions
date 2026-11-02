@@ -38,6 +38,7 @@ APPLY_COLUMNS = {
     "api_type": "STRING", "target_catalog": "STRING", "target_schema": "STRING",
     "rollback_of": "STRING", "status": "STRING", "summary": "STRING", "error": "STRING",
     "toolkit_version": "STRING", "fingerprint": "STRING", "started_at": "TIMESTAMP", "finished_at": "TIMESTAMP",
+    "dry_run_id": "STRING",  # execute: the dry run it followed (each dry run is good for one execute)
 }
 # The options that decide what an apply run does. An execute must match the dry run it follows on all of them.
 FINGERPRINT_KEYS = ("scan_run_id", "endpoints", "target_catalog", "target_schema", "uc_secret_map",
@@ -49,13 +50,31 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
+_ZONE_RE = re.compile(r"(Z|[+-]\d{2}:?\d{2}|UTC)$")
+
+
+def _utc(v) -> str:
+    """A timestamp string with an explicit UTC offset. The toolkit writes and compares UTC; a string without a zone
+    would be read in the session time zone of the job or warehouse, which shifts every window when it isn't UTC."""
+    t = str(v).strip()
+    if len(t) > 10 and t[10] == "T":  # 2026-11-02T10:00 -> 2026-11-02 10:00 (only the date/time separator)
+        t = t[:10] + " " + t[11:]
+    if _ZONE_RE.search(t):
+        return t
+    if len(t) == 10:  # a date: midnight UTC
+        t += " 00:00:00"
+    elif len(t) == 16:  # minutes only
+        t += ":00"
+    return t + "+00:00"
+
+
 def _lit(v, typ: str) -> str:
     if v is None or v == "":
         return "NULL"
     if typ == "BIGINT":
         return str(int(float(v)))
     if typ == "TIMESTAMP":
-        return f"TIMESTAMP '{v}'"
+        return f"TIMESTAMP '{_utc(v)}'"
     return "'" + str(v).replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
@@ -76,8 +95,17 @@ def retry(fn, attempts: int = 4):
             time.sleep(2 * (i + 1))
 
 
+def use_utc(spark) -> None:
+    """Run the job's SQL in UTC, so CAST(... AS STRING) of the run times and any zone-less value read the same in
+    every job (the writes carry an explicit +00:00 too). A session without conf (the tests' fake) is left as is."""
+    conf = getattr(spark, "conf", None)
+    if conf is not None:
+        conf.set("spark.sql.session.timeZone", "UTC")
+
+
 def ensure_tables(spark, schema: str) -> None:
     """Create the tables, and add any column this version has that an older table lacks (ALTER TABLE ADD COLUMNS)."""
+    use_utc(spark)
     schema = q(schema)
     for name, cols in (("ug_migration_scans", SCAN_COLUMNS), ("ug_migration_applies", APPLY_COLUMNS)):
         ddl = ", ".join(f"{c} {t}" for c, t in cols.items())
@@ -217,7 +245,8 @@ def rollback_done(status: str | None, summary) -> bool:
     """THE definition of "rolled back" (the store, the job and the app all use this rule).
 
     A rollback row counts as done when it SUCCEEDED, or when it NEEDS_ATTENTION and every object it kept was kept
-    only because another apply run still uses it (summary kept_other_run == kept, and no other problems).
+    only because another apply run still uses it or it existed before the apply run (summary kept ==
+    kept_other_run + kept_preexisting, and no other problems).
     Rollback rows written before kept_other_run existed count as done when NEEDS_ATTENTION, as they always did."""
     if status == "SUCCEEDED":
         return True
@@ -226,7 +255,8 @@ def rollback_done(status: str | None, summary) -> bool:
     s = _summary_dict(summary)
     if "kept_other_run" not in s:  # written before this rule: NEEDS_ATTENTION counted as done
         return True
-    if s.get("kept", 0) != s.get("kept_other_run", 0):
+    # Kept objects that another run uses, or that existed before the apply run, don't keep a rollback from being done.
+    if s.get("kept", 0) != s.get("kept_other_run", 0) + s.get("kept_preexisting", 0):
         return False
     return not any(s.get(a) for a in PROBLEM_ACTIONS if a != "kept")
 
@@ -417,7 +447,11 @@ def _since(since) -> str:
     s = str(since or "").strip()
     if not _SINCE_RE.fullmatch(s):
         raise ValueError("since must look like 2026-10-01 or 2026-10-01 00:00:00")
-    return s.replace("T", " ")
+    return _utc(s)
+
+
+# endpoint_name of v1 requests that can't be matched to an endpoint (no served_entities row for their served entity).
+UNATTRIBUTED = "(unmatched served entity)"
 
 
 def legacy_traffic_since(endpoints, since, workspace_id) -> tuple[str, dict]:
@@ -426,7 +460,9 @@ def legacy_traffic_since(endpoints, since, workspace_id) -> tuple[str, dict]:
     One query, two sources, UNION ALL. 'v1' is system.serving.endpoint_usage joined to served_entities. 'v2' is
     system.ai_gateway.usage rows with no service_type (AI Gateway v2 requests on legacy endpoints). Columns:
     source, endpoint_name, requester, requests, failed (no status, or status 0 or 501), tokens (input plus output
-    for v1, total_tokens for v2), last_request (string). Both sources are filtered to workspace_id."""
+    for v1, total_tokens for v2), last_request (string). Both sources are filtered to workspace_id. v1 requests with no
+    served_entities match come back under endpoint_name UNATTRIBUTED (they could be any of this workspace's
+    endpoints, so a pause check counts them)."""
     names = _split_names(endpoints)
     if not names:
         raise ValueError("legacy_traffic_since needs at least one endpoint name")
@@ -452,6 +488,22 @@ def legacy_traffic_since(endpoints, since, workspace_id) -> tuple[str, dict]:
           AND eu.request_time >= CAST(:since AS TIMESTAMP)
           AND se.endpoint_name IN ({in_v1})
         GROUP BY se.endpoint_name, eu.requester
+        UNION ALL
+        -- v1 requests whose served entity isn't in served_entities can't be tied to an endpoint. They are counted
+        -- under UNATTRIBUTED so a pause check fails closed instead of reading them as no traffic.
+        SELECT 'v1' AS source, '{UNATTRIBUTED}' AS endpoint_name, eu.requester AS requester,
+               count(*) AS requests,
+               sum(CASE WHEN eu.status_code IS NULL OR eu.status_code IN (0, 501) THEN 1 ELSE 0 END)
+                 AS failed,
+               coalesce(sum(coalesce(eu.input_token_count, 0) + coalesce(eu.output_token_count, 0)), 0) AS tokens,
+               CAST(max(eu.request_time) AS STRING) AS last_request
+        FROM system.serving.endpoint_usage AS eu
+        LEFT JOIN system.serving.served_entities AS se
+          ON eu.served_entity_id = se.served_entity_id
+        WHERE eu.workspace_id = :workspace_id
+          AND eu.request_time >= CAST(:since AS TIMESTAMP)
+          AND se.served_entity_id IS NULL
+        GROUP BY eu.requester
         UNION ALL
         SELECT 'v2' AS source, endpoint_name, requester,
                count(*) AS requests,
@@ -519,6 +571,14 @@ def ug_request_lookup(request_id) -> tuple[str, dict]:
         ORDER BY event_time DESC
     """
     return sql, {"request_id": rid}
+
+
+def dry_run_used(schema: str, dry_run_id: str) -> tuple[str, dict]:
+    """The execute runs that already followed a dry run (column apply_id). Each dry run is good for one execute, so
+    a non-empty result refuses the next one. Rows written before dry_run_id existed have it NULL and match nothing."""
+    return (f"SELECT apply_id FROM {q(schema)}.ug_migration_applies "
+            "WHERE dry_run_id = :dry_run_id AND mode = 'execute' ORDER BY started_at LIMIT 1",
+            {"dry_run_id": str(dry_run_id or "")})
 
 
 def run_built(spark, built: tuple[str, dict]) -> list:

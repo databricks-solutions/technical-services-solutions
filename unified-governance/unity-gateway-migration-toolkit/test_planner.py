@@ -1213,3 +1213,26 @@ def test_client_permission_and_provider_errors_are_not_counted_as_v2_off():
         assert "IN (0, 501)" in sql
         for broad in ("403", "404", "410", ">= 500", ">= 400"):
             assert broad not in sql, broad
+
+
+def test_unmatched_v1_traffic_is_a_warning_not_a_gap():
+    rows, _ = m.plan([_ep(EXTERNAL)], {}, {}, "c", "s")
+    note = {"v1_unattributed": f"{m.UNATTRIBUTED_NOTE}: 12 v1 requests in 30 days have no served_entities match"}
+    r = m.readiness(rows, [], True, 30, coverage=note)
+    w = [x for x in r["warnings"] if x["type"] == "unattributed_legacy_traffic"]
+    assert w and "12 v1 requests" in w[0]["detail"]
+    assert r["status"] in ("READY_WITH_WARNINGS", "BLOCKED")  # a warning, never a coverage gap (INCOMPLETE)
+
+
+def test_retarget_plan_moves_services_but_not_system_ai():
+    rows, _ = m.plan([_ep(SYSTEM_PPT), _ep(EXTERNAL)], {"databricks-gpt-5-5": "system.ai.gpt-5-5"}, {}, "c", "s")
+    moved = m.retarget_plan(rows, "cat2", "sch2")
+    by = {r.legacy_endpoint: r for r in moved}
+    ext = next(r for r in moved if r.kind == "external_model")
+    assert ext.target_service.startswith("cat2.sch2.") and (ext.provider_service or "cat2.sch2.").startswith("cat2.sch2.")
+    sys_row = next(r for r in moved if r.target_service and r.target_service.startswith("system.ai."))
+    assert sys_row.target_service == "system.ai.gpt-5-5"
+    assert all(r.target_service is None or not r.target_service.startswith("cat2.") for r in rows)  # input unchanged
+    as_dicts = m.retarget_plan([{"target_service": "c.s.x", "provider_service": "c.s.p", "other": 1}], "a", "b")
+    assert as_dicts == [{"target_service": "a.b.x", "provider_service": "a.b.p", "other": 1}]
+    assert m.retarget_name("system.ai.x", "a", "b") == "system.ai.x" and m.retarget_name(None, "a", "b") is None

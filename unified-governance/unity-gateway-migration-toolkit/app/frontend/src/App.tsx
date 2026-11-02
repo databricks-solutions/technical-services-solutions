@@ -21,7 +21,11 @@ const TABS = [["overview", "Overview"], ["scans", "Scans"], ["apply", "Apply"], 
 type Route = { tab: string; anchor: string | null; seq: number };
 
 export default function App() {
-  const [route, setRoute] = useState<Route>({ tab: "overview", anchor: null, seq: 0 });
+  // The URL hash opens a section (#cutover, or #cutover/pause for one cut-over step).
+  const [route, setRoute] = useState<Route>(() => {
+    const t = (window.location.hash || "").replace(/^#/, "").split("/")[0];
+    return { tab: TABS.some(([k]) => k === t) ? t : "overview", anchor: null, seq: 0 };
+  });
   const [scanForApply, setScanForApply] = useState<string | null>(null);
   const me = useApi<any>("/api/whoami");
   const config = useApi<any>("/api/config");
@@ -30,6 +34,10 @@ export default function App() {
   // Switch section, and optionally land on an element inside it (see HowToEnforce).
   const goto: Goto = useCallback((t, anchor) => setRoute((r) => ({ tab: t, anchor: anchor ?? null, seq: r.seq + 1 })), []);
   useEffect(() => { document.title = `${TABS.find(([k]) => k === tab)?.[1]} · ${PRODUCT}`; }, [tab]);
+  // Keep the hash on the section; Verify & cut over adds its step (#cutover/pause) itself.
+  useEffect(() => {
+    if (!window.location.hash.replace(/^#/, "").startsWith(tab)) window.history.replaceState(null, "", `#${tab}`);
+  }, [tab]);
   // After the section shows, move focus to the anchor inside it.
   useEffect(() => {
     if (!route.anchor) return;
@@ -46,6 +54,11 @@ export default function App() {
         <LiveRegion />
         <header className="top">
           <h1>{PRODUCT}</h1>
+          {config.data?.app_name && config.data.app_name !== config.data.default_app_name && (
+            <span title="This isn't the default install. Check that it's the app you mean to use.">
+              <Badge value={`Second install: ${config.data.app_name}`} tone="warn" />
+            </span>
+          )}
           <Tabs className="tabs" label="Sections" tabs={TABS} value={tab} onChange={(k) => goto(k)} panelId="sections" />
           <div className="me">
             {me.data && (me.data.email

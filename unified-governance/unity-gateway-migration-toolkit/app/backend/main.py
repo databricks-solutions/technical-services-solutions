@@ -52,6 +52,8 @@ JOBS = {"snapshot": os.environ.get("SNAPSHOT_JOB_ID", ""), "scan": os.environ.ge
         "apply": os.environ.get("APPLY_JOB_ID", "")}
 OPERATORS = {e.strip().lower() for e in os.environ.get("OPERATORS", "").split(",") if e.strip()}
 IN_APP = bool(os.environ.get("DATABRICKS_APP_NAME"))  # set by Databricks Apps; unset when running locally
+APP_NAME = os.environ.get("DATABRICKS_APP_NAME", "")
+DEFAULT_APP_NAME = "ug-migration-toolkit"  # the installer's default; any other name is a second or test install
 # Local development only: UGMIG_LOCAL_DEV=1 runs as the CLI profile's user with no operator check. Ignored inside
 # Databricks Apps. Without it, every request needs a verified user from the forwarded token, and operators are required.
 LOCAL_DEV = os.environ.get("UGMIG_LOCAL_DEV") == "1" and not IN_APP
@@ -395,6 +397,8 @@ def config() -> dict:
             "secret_schemas": sorted(SECRET_SCHEMAS), "allow_secret_read": ALLOW_SECRET_READ,
             "max_scan_age_days": MAX_SCAN_AGE_DAYS, "export_row_limit": EXPORT_ROW_LIMIT,
             "deadline": LEGACY_DEADLINE, "deadline_as_of": DEADLINE_AS_OF,
+            # The app's name, so a second install (any name but the default) is labelled in the header.
+            "app_name": APP_NAME, "default_app_name": DEFAULT_APP_NAME,
             # Scans, apply and the test call run as the jobs' identity, not as the signed-in user.
             "jobs_run_as": job_identity("apply") or None,
             # Scans read the workspace the app's jobs run in, and only that one.
@@ -849,10 +853,15 @@ class ApplyRequest(BaseModel):
     # There is no force field: rollback of changed objects is a command-line decision (USER_GUIDE.md, "Apply from the command line").
 
 
-def _age_days(ts: str | None) -> float | None:
-    """Days since a UTC timestamp string from the results tables; None if it can't be read."""
+def _age_days(ts) -> float | None:
+    """Days since a time from the results tables: epoch seconds (unix_timestamp, independent of the warehouse's
+    session time zone) or a UTC string; None if it can't be read."""
+    if isinstance(ts, (int, float)) and not isinstance(ts, bool):
+        return (datetime.now(timezone.utc).timestamp() - ts) / 86400
+    if isinstance(ts, str) and re.fullmatch(r"-?[0-9]+", ts.strip()):
+        return (datetime.now(timezone.utc).timestamp() - int(ts)) / 86400
     try:
-        t = datetime.fromisoformat(str(ts).strip())
+        t = datetime.fromisoformat(str(ts).strip().replace("Z", "+00:00"))
     except ValueError:
         return None
     if t.tzinfo is None:
@@ -861,7 +870,7 @@ def _age_days(ts: str | None) -> float | None:
 
 
 def _check_scan(request: Request, scan_run_id: str, allow_stale: bool) -> None:
-    rows = query(request, f"SELECT status, CAST(coalesce(finished_at, started_at) AS STRING) AS ts "
+    rows = query(request, f"SELECT status, unix_timestamp(coalesce(finished_at, started_at)) AS ts "
                           f"FROM {table('ug_migration_scans')} WHERE run_id = :r", {"r": scan_run_id})
     if not rows:
         raise HTTPException(404, "scan not found")
@@ -874,11 +883,36 @@ def _check_scan(request: Request, scan_run_id: str, allow_stale: bool) -> None:
                                  "anyway with allow_stale set.")
 
 
+def _epoch(v):
+    """unix_timestamp() comes back from the SQL API as a string of digits; dry_run_expired reads int epochs as UTC."""
+    if isinstance(v, str) and re.fullmatch(r"-?[0-9]+", v.strip()):
+        return int(v)
+    return v
+
+
 def _check_dry_run_age(row: dict) -> None:
-    """An execute follows a dry run started at most DRY_RUN_TTL_HOURS ago (the job checks the same)."""
-    if apply_rules.dry_run_expired(row.get("started_at")):
+    """An execute follows a dry run started at most DRY_RUN_TTL_HOURS ago (the job checks the same). started_at is
+    read as epoch seconds (unix_timestamp), so the warehouse's session time zone doesn't shift the window."""
+    if apply_rules.dry_run_expired(_epoch(row.get("started_at"))):
         raise HTTPException(409, f"That dry run is more than {DRY_RUN_TTL_HOURS} hours old, or its start time can't be "
                                  "read. Things may have changed since: run a dry run again.")
+
+
+DRY_RUN_USED = "That dry run was already used by an execute. Run a new dry run, then execute."
+
+
+def _check_dry_run_unused(request: Request, dry_run_id: str) -> None:
+    """A dry run unlocks one execute: refuse when an execute already recorded this dry_run_id (the job checks the
+    same). Results tables from before the dry_run_id column read as unused (no column, nothing recorded)."""
+    try:
+        sql, params = store.dry_run_used(RESULTS_SCHEMA, dry_run_id)
+        used = query(request, sql, params)
+    except HTTPException as e:
+        if "dry_run_id" in str(e.detail) and ("UNRESOLVED_COLUMN" in str(e.detail) or "cannot be resolved" in str(e.detail)):
+            return
+        raise
+    if used:
+        raise HTTPException(409, DRY_RUN_USED)
 
 
 def _verify_dry_run(request: Request, dry_run_id: str, scan_run_id: str, params: dict[str, Any]) -> None:
@@ -891,10 +925,11 @@ def _verify_dry_run(request: Request, dry_run_id: str, scan_run_id: str, params:
         raise HTTPException(400, "Run a dry run with this selection first")
     check_id(dry_run_id, "dry run id")
     rows = reconcile(query(request, f"SELECT mode, status, job_run_id, scan_run_id, fingerprint, operation, "
-                                    f"CAST(started_at AS STRING) AS started_at "
+                                    f"unix_timestamp(started_at) AS started_at "
                                     f"FROM {table('ug_migration_applies')} WHERE apply_id = :a", {"a": dry_run_id}))
     if not rows or rows[0]["mode"] != "dry_run" or (rows[0].get("operation") or "apply") != "apply":
         raise HTTPException(400, "dry_run_id must be a dry run")
+    _check_dry_run_unused(request, dry_run_id)
     if rows[0]["status"] != "SUCCEEDED" or rows[0]["scan_run_id"] != scan_run_id:
         raise HTTPException(409, "That dry run didn't succeed for this scan; run a dry run with this selection first")
     _check_dry_run_age(rows[0])
@@ -1097,7 +1132,7 @@ def _confirm_word(operation: str, endpoints: str) -> str:
     if operation == "enable_tracking":
         return "ENABLE"
     if operation == "pause_legacy":
-        return f"PAUSE {endpoints}"
+        return "PAUSE"  # the dialog names the endpoint; "PAUSE <endpoint>" (earlier versions) is still accepted
     return "RESUME"
 
 
@@ -1185,10 +1220,11 @@ def _verify_cutover_dry_run(request: Request, dry_run_id: str, params: dict) -> 
         raise HTTPException(400, "Run a dry run with these settings first")
     check_id(dry_run_id, "dry run id")
     rows = reconcile(query(request, f"SELECT mode, status, job_run_id, fingerprint, operation, "
-                                    f"CAST(started_at AS STRING) AS started_at "
+                                    f"unix_timestamp(started_at) AS started_at "
                                     f"FROM {table('ug_migration_applies')} WHERE apply_id = :a", {"a": dry_run_id}))
     if not rows or rows[0]["mode"] != "dry_run" or (rows[0].get("operation") or "apply") != params["operation"]:
         raise HTTPException(400, "dry_run_id must be a dry run of this operation")
+    _check_dry_run_unused(request, dry_run_id)
     if rows[0]["status"] != "SUCCEEDED":
         raise HTTPException(409, "That dry run didn't succeed. Run a dry run with these settings again.")
     _check_dry_run_age(rows[0])
@@ -1249,7 +1285,8 @@ def start_cutover(body: CutoverRequest, request: Request) -> dict:
     params = _cutover_params(body)
     if body.mode == "execute":
         word = _confirm_word(op, params["endpoints"])
-        if body.confirm != word:
+        accepted = {word} | ({f"PAUSE {params['endpoints']}"} if op == "pause_legacy" else set())
+        if body.confirm.strip() not in accepted:
             raise HTTPException(400, f"type {word} to confirm")
     if body.mode == "execute":
         _verify_cutover_dry_run(request, body.dry_run_id, params)
@@ -1282,6 +1319,11 @@ def _pause_traffic_gate(request: Request, body: CutoverRequest, endpoint: str) -
         raise HTTPException(409, f"{endpoint} had {e['requests']} legacy requests since {traffic['since']} UTC. Callers "
                                  "still on it get errors once it's paused. Move them first, or confirm that you "
                                  "accept this.")
+    unmatched = next((t["requests"] for t in traffic["endpoints"] if t["endpoint_name"] == store.UNATTRIBUTED), 0)
+    if unmatched and not body.ack_traffic:
+        raise HTTPException(409, f"{unmatched} legacy requests since {traffic['since']} UTC couldn't be matched to an "
+                                 f"endpoint, so some could be calling {endpoint}. Check them first, or confirm that "
+                                 "callers may get errors.")
 
 
 def job_identity(kind: str) -> str:
@@ -1378,7 +1420,13 @@ def _endpoint_traffic(request: Request, scan: dict, window: str, only: list[str]
         except ValueError as e:
             raise HTTPException(400, str(e))
         for r in query(request, sql, params, missing_ok=False):
-            e = by.get(r.get("endpoint_name"))
+            name = r.get("endpoint_name")
+            if name == store.UNATTRIBUTED and name not in by:
+                # v1 requests with no served_entities match: they could be any endpoint's, so they count as possible
+                # traffic for each pause (fail closed), and show as their own row.
+                by[name] = {"endpoint_name": name, "kind": "unattributed", "requests": 0, "failed": 0, "tokens": 0,
+                            "v2_requests": 0, "v2_failed": 0, "v2_tokens": 0, "last_request": None, "callers": []}
+            e = by.get(name)
             if e is None:
                 continue
             req, failed, tokens = _num(r.get("requests")) or 0, _num(r.get("failed")) or 0, _num(r.get("tokens")) or 0

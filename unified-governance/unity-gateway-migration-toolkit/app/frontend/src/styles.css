@@ -282,3 +282,16 @@ pre.del { background: var(--danger-soft); color: #6e1526; } pre.add { background
 /* Verify & cut over: the enforce checklist */
 .checklist { list-style: none; margin: 0 0 16px; padding: 0; display: grid; gap: 12px; }
 .checklist li { display: flex; gap: 12px; align-items: flex-start; }
+.advanced { border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space-2) var(--space-3); }
+.advanced > summary { cursor: pointer; font-weight: 600; }
+.advanced[open] > summary { margin-bottom: var(--space-2); }
+.status-strip .next { margin: var(--space-2) 0 var(--space-3); }
+.status-strip .tiles { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: var(--space-2); }
+.status-strip .tile { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; text-align: left; padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); cursor: pointer; font: inherit; color: inherit; }
+.status-strip .tile:hover { background: var(--surface-2); }
+.status-strip .tile.current { border-color: var(--primary); box-shadow: inset 0 -3px 0 var(--primary); }
+.status-strip .tile:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.status-strip .tile-title { font-weight: 600; }
+.status-strip .phone-only { display: none; }
+@media (max-width: 900px) { .status-strip .tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .status-strip .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } .status-strip .phone-only { display: flex; flex-direction: column; margin-top: var(--space-2); } }

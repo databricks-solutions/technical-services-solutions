@@ -138,7 +138,13 @@ if mode == "execute" and operation in apply_mod.DRY_RUN_GATED:
             f"unix_timestamp(started_at) AS started_at FROM {store.q(schema)}.ug_migration_applies "
             f"WHERE apply_id = '{g('dry_run_id')}'").collect()  # dry_run_id matched ID_RE above
         dry = found[0].asDict() if found else None
-    problem = apply_mod.dry_run_gate_error(dry, operation, fingerprint, g("scan_run_id"), g("requested_by"))
+    used_by = None
+    if dry is not None:
+        used_sql, used_args = store.dry_run_used(schema, g("dry_run_id"))
+        used = spark.sql(used_sql, args=used_args).collect()
+        used_by = used[0].asDict().get("apply_id") if used else None
+    problem = apply_mod.dry_run_gate_error(dry, operation, fingerprint, g("scan_run_id"), g("requested_by"),
+                                           used_by=used_by)
     if problem:
         raise ValueError(f"execute refused: {problem}")
 # A resume that executes is stored as a rollback row, so the rollback rules (already rolled back, protection) apply.
@@ -148,6 +154,7 @@ store.upsert(spark, schema, "ug_migration_applies", store.APPLY_COLUMNS, "apply_
     "scan_run_id": g("scan_run_id"), "mode": stored_mode, "operation": operation,
     "endpoints": ",".join(endpoints), "services": ",".join(services), "api_type": api_type,
     "target_catalog": g("target_catalog"), "target_schema": g("target_schema"), "rollback_of": g("rollback_of"),
+    "dry_run_id": g("dry_run_id") if mode == "execute" else "",
     "toolkit_version": planner.__version__, "fingerprint": fingerprint, "status": "RUNNING",
     "started_at": store.now()})
 

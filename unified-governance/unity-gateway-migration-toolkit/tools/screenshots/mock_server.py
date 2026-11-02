@@ -711,6 +711,7 @@ def _handle_api(method, path, qs, body):
                 "allow_secret_read": False, "max_scan_age_days": 14, "export_row_limit": 200000,
                 "deadline": DEADLINE, "deadline_as_of": DEADLINE_AS_OF, "workspace_url": HOST,
                 "scan_scope": f"This app scans only {HOST}.",
+                "app_name": "ug-migration-toolkit", "default_app_name": "ug-migration-toolkit",
             }
         if path == "/api/target-schema":
             return 200, {"exists": True, "can_create_service": None, "error": None}
@@ -935,7 +936,7 @@ def _start_cutover(body):
         if op == "enable_tracking" and not endpoints:
             raise ApiError(400, "Choose at least one endpoint to turn usage tracking on for")
     if mode == "execute":
-        word = f"PAUSE {endpoints[0]}" if op == "pause_legacy" else CUTOVER_WORD.get(op, "")
+        word = "PAUSE" if op == "pause_legacy" else CUTOVER_WORD.get(op, "")
         if body.get("confirm") != word:
             raise ApiError(400, f"type {word} to confirm")
         dry = next((a for a in STATE["applies"] if a["apply_id"] == body.get("dry_run_id")), None)

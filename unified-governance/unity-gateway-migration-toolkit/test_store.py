@@ -12,7 +12,11 @@ def test_lit_escapes_and_types():
     assert store._lit("it's \\ ok", "STRING") == "'it\\'s \\\\ ok'"
     assert store._lit("12.0", "BIGINT") == "12"
     assert store._lit(None, "STRING") == "NULL" and store._lit("", "BIGINT") == "NULL"
-    assert store._lit("2026-10-30 10:00:00", "TIMESTAMP") == "TIMESTAMP '2026-10-30 10:00:00'"
+    # Timestamps carry an explicit UTC offset, so a job or warehouse in another time zone reads the same instant.
+    assert store._lit("2026-10-30 10:00:00", "TIMESTAMP") == "TIMESTAMP '2026-10-30 10:00:00+00:00'"
+    assert store._lit("2026-10-30T10:00:00Z", "TIMESTAMP") == "TIMESTAMP '2026-10-30 10:00:00Z'"
+    assert store._lit("2026-10-30 10:00:00+02:00", "TIMESTAMP") == "TIMESTAMP '2026-10-30 10:00:00+02:00'"
+    assert store._utc("2026-10-30") == "2026-10-30 00:00:00+00:00" and store._utc("2026-10-30 06:00") == "2026-10-30 06:00:00+00:00"
 
 
 class FakeSpark:
@@ -348,7 +352,7 @@ def test_traffic_sql_binds_every_value_and_covers_v1_and_v2():
     assert "system.serving.endpoint_usage" in sql and "system.ai_gateway.usage" in sql
     assert "service_type IS NULL" in sql and "UNION ALL" in sql
     assert ":workspace_id" in sql and "CAST(:since AS TIMESTAMP)" in sql
-    assert params["workspace_id"] == "123" and params["since"] == "2026-10-01"
+    assert params["workspace_id"] == "123" and params["since"] == "2026-10-01 00:00:00+00:00"
     assert sorted(v for k, v in params.items() if k.startswith("v1_")) == ["legacy-chat-2", "legacy-ext-1"]
     assert sorted(v for k, v in params.items() if k.startswith("v2_")) == ["legacy-chat-2", "legacy-ext-1"]
     assert "legacy-ext-1" not in sql and "legacy-chat-2" not in sql  # names are bound, never interpolated
@@ -367,12 +371,12 @@ def test_traffic_sql_rejects_bad_input():
 def test_usage_summary_counts_model_services_only():
     sql, params = store.ug_usage_summary("c.s.llama", "2026-10-01")
     assert "service_type = 'MODEL_SERVICE'" in sql and "AND service_name = :service" in sql
-    assert params == {"since": "2026-10-01", "service": "c.s.llama"}
+    assert params == {"since": "2026-10-01 00:00:00+00:00", "service": "c.s.llama"}
     for part in ("count(DISTINCT request_id)", "percentile_approx(latency_ms, 0.95)", "error_invocations",
                  "GROUP BY service_name, workspace_id, requester, api_type, destination_model"):
         assert part in sql
     sql_all, params_all = store.ug_usage_summary("", "2026-10-01T06:00")
-    assert ":service" not in sql_all and params_all == {"since": "2026-10-01 06:00"}
+    assert ":service" not in sql_all and params_all == {"since": "2026-10-01 06:00:00+00:00"}
     with pytest.raises(ValueError):
         store.ug_usage_summary("c.s.llama'; --", "2026-10-01")
 
@@ -400,3 +404,28 @@ def test_run_built_passes_the_bound_values_to_spark():
 
     assert store.run_built(Spark(), store.ug_request_lookup("req-1")) == [{"invocation_id": "i1"}]
     assert seen["args"] == {"request_id": "req-1"}
+
+
+def test_traffic_sql_counts_unmatched_v1_requests_so_pause_fails_closed():
+    sql, _ = store.legacy_traffic_since(["legacy-ext-1"], "2026-10-01", "123")
+    assert "LEFT JOIN system.serving.served_entities" in sql and "se.served_entity_id IS NULL" in sql
+    assert f"'{store.UNATTRIBUTED}' AS endpoint_name" in sql
+
+
+def test_dry_run_used_lookup_is_bound():
+    sql, params = store.dry_run_used("c.s", "11111111-1111-1111-1111-111111111111")
+    assert "`c`.`s`.ug_migration_applies" in sql and "dry_run_id = :dry_run_id" in sql and "mode = 'execute'" in sql
+    assert params == {"dry_run_id": "11111111-1111-1111-1111-111111111111"}
+    assert store.APPLY_COLUMNS["dry_run_id"] == "STRING"  # ensure_tables adds it to older tables
+
+
+def test_rollback_done_ignores_preexisting_kept_objects():
+    assert store.rollback_done("NEEDS_ATTENTION", {"kept": 2, "kept_other_run": 1, "kept_preexisting": 1}) is True
+    assert store.rollback_done("NEEDS_ATTENTION", {"kept": 2, "kept_other_run": 0, "kept_preexisting": 1}) is False
+
+
+def test_job_sessions_run_in_utc():
+    seen = {}
+    store.use_utc(SimpleNamespace(conf=SimpleNamespace(set=lambda k, v: seen.__setitem__(k, v))))
+    assert seen == {"spark.sql.session.timeZone": "UTC"}
+    store.use_utc(object())  # a session without conf is left alone

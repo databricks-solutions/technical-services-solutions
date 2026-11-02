@@ -69,6 +69,9 @@ def make_query(store):
             return [r for r in store["rollbacks"] if "a" not in p or r["rollback_of"] == p["a"]]
         if "ug_migration_scans" in sql:
             return [r for r in store["scans"] if "r" not in p or r["run_id"] == p["r"]]
+        if "ug_migration_applies" in sql and "dry_run_id = :dry_run_id" in sql:  # single use: an execute of this dry run
+            return [{"apply_id": r["apply_id"]} for r in store["applies"]
+                    if r.get("dry_run_id") == p["dry_run_id"] and r.get("mode") == "execute"]
         if "ug_migration_applies" in sql:
             return [r for r in store["applies"] if "a" not in p or r["apply_id"] == p["a"]]
         return []
@@ -417,6 +420,14 @@ def test_execute_rejects_changed_options(env):
     assert env.sdk.jobs.run_now.call_count == 0
 
 
+def test_a_dry_run_for_one_target_does_not_unlock_another(env):
+    # The target is chosen in Apply now, so it is part of what the dry run checked.
+    env.sdk.jobs.get_run.return_value = SimpleNamespace(job_parameters=job_params())
+    r = env.client.post("/api/applies", json={**EXECUTE_BODY, "target_schema": "other_schema"}, headers=OP)
+    assert r.status_code == 409 and "changed" in r.json()["detail"]
+    assert env.sdk.jobs.run_now.call_count == 0
+
+
 def test_execute_rejects_a_dry_run_that_did_not_succeed(env):
     env.store["applies"][0]["status"] = "FAILED"
     r = env.client.post("/api/applies", json=EXECUTE_BODY, headers=OP)
@@ -679,7 +690,7 @@ def test_pause_takes_one_endpoint_and_the_typed_word(env):
     assert _post(env, operation="pause_legacy", endpoints=["ep-a", "ep-b"]).status_code == 400
     assert _post(env, operation="pause_legacy", endpoints=["bad name"]).status_code == 400
     r = _post(env, operation="pause_legacy", mode="execute", endpoints=["ep-a"], dry_run_id=DRY_OK, confirm="PAUSE ep-b")
-    assert r.status_code == 400 and "PAUSE ep-a" in r.json()["detail"]
+    assert r.status_code == 400 and "type PAUSE to confirm" in r.json()["detail"]
     assert env.sdk.jobs.run_now.call_count == 0
 
 
@@ -704,6 +715,53 @@ def test_execute_needs_a_matching_successful_dry_run(env, monkeypatch):
     assert r.status_code == 200 and params["mode"] == "execute" and params["dry_run_id"] == DRY_OK
     r = _post(env, operation="pause_legacy", mode="execute", endpoints=["ep-b"], confirm="PAUSE ep-b", dry_run_id=DRY_OK)
     assert r.status_code == 409 and "changed" in r.json()["detail"]
+
+
+def test_pause_word_is_just_pause_and_the_old_form_still_works(env, monkeypatch):
+    _pause_scan(env, monkeypatch)
+    stored = store.legacy_fingerprint({"operation": "pause_legacy", "endpoints": "ep-a"})
+    env.store["applies"].append({"apply_id": DRY_OK, "mode": "dry_run", "started_at": now_ts(), "operation": "pause_legacy",
+                                 "status": "SUCCEEDED", "job_run_id": "700", "fingerprint": stored})
+    for word in ("PAUSE", "PAUSE ep-a"):
+        r = _post(env, operation="pause_legacy", mode="execute", endpoints=["ep-a"], confirm=word, dry_run_id=DRY_OK)
+        assert r.status_code == 200, (word, r.json())
+    assert _post(env, operation="pause_legacy", mode="execute", endpoints=["ep-a"], confirm="pause",
+                 dry_run_id=DRY_OK).status_code == 400
+
+
+def test_a_dry_run_unlocks_one_execute(env, monkeypatch):
+    _pause_scan(env, monkeypatch)
+    stored = store.legacy_fingerprint({"operation": "pause_legacy", "endpoints": "ep-a"})
+    env.store["applies"].append({"apply_id": DRY_OK, "mode": "dry_run", "started_at": now_ts(), "operation": "pause_legacy",
+                                 "status": "SUCCEEDED", "job_run_id": "700", "fingerprint": stored})
+    env.store["applies"].append({"apply_id": PAUSE, "mode": "execute", "started_at": now_ts(), "operation": "pause_legacy",
+                                 "status": "SUCCEEDED", "job_run_id": "701", "dry_run_id": DRY_OK})
+    r = _post(env, operation="pause_legacy", mode="execute", endpoints=["ep-a"], confirm="PAUSE", dry_run_id=DRY_OK)
+    assert r.status_code == 409 and r.json()["detail"] == main.DRY_RUN_USED
+    assert env.sdk.jobs.run_now.call_count == 0
+
+
+def test_unmatched_legacy_requests_count_as_traffic_for_a_pause(env, monkeypatch):
+    _pause_scan(env, monkeypatch)
+    base = main.query
+
+    def fake(request, sql, params=None, missing_ok=True):
+        if "system.serving.endpoint_usage" in sql:
+            return [{"source": "v1", "endpoint_name": store.UNATTRIBUTED, "requester": "x@y.com", "requests": "7",
+                     "last_request": "2026-11-01 10:00:00"}]
+        return base(request, sql, params, missing_ok=missing_ok)
+    monkeypatch.setattr(main, "query", fake)
+    r = _post(env, operation="pause_legacy", endpoints=["ep-a"], traffic_window="24h")
+    assert r.status_code == 409 and "couldn't be matched" in r.json()["detail"]
+    assert _post(env, operation="pause_legacy", endpoints=["ep-a"], traffic_window="24h", ack_traffic=True).status_code == 200
+    t = env.client.get(f"/api/cutover/traffic?window=24h&scan_run_id={SCAN}", headers=OP).json()
+    assert t["total_requests"] == 7 and any(e["endpoint_name"] == store.UNATTRIBUTED for e in t["endpoints"])
+
+
+def test_config_names_a_second_install(env, monkeypatch):
+    monkeypatch.setattr(main, "APP_NAME", "ugmig-live")
+    c = env.client.get("/api/config", headers=OP).json()
+    assert c["app_name"] == "ugmig-live" and c["default_app_name"] == "ug-migration-toolkit"
 
 
 def test_a_dry_run_of_another_operation_does_not_count(env):

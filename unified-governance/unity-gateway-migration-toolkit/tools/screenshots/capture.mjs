@@ -209,22 +209,24 @@ const SHOTS_LIST = [
   ["cutover-traffic.png", async (browser, out) => {
     const page = await open(browser, "full");
     await clickText(page, "[role=tab]", "Verify");
+    await openStep(page, "traffic");
     await waitText(page, "Legacy traffic by endpoint");
-    await waitText(page, "Endpoints and usage tracking");
-    return region(page, out, await headerHandle(page), await card(page, "2. Turn on usage tracking"));
+    return region(page, out, await headerHandle(page), await card(page, "1. Legacy traffic"));
   }],
 
   ["cutover-pause-test.png", async (browser, out) => {
     const page = await open(browser, "full");
     await clickText(page, "[role=tab]", "Verify");
+    await openStep(page, "pause");
     await waitText(page, "3. Pause a legacy endpoint");
     const pause = await card(page, "3. Pause a legacy endpoint");
     // Pause the endpoint with no traffic in the window (the traffic check shows it quiet).
     const endpointSelect = await pause.$("select");
     await endpointSelect.select("legacy-summarizer-openai");
     await waitText(page, "No legacy requests since");
-    await dryThenExecute(page, pause, "Pause endpoint", "PAUSE legacy-summarizer-openai");
+    await dryThenExecute(page, pause, "Pause legacy-summarizer-openai", "PAUSE");
     await waitText(page, "Pause: succeeded");
+    await openStep(page, "test");
     const test = await card(page, "4. Test a Unity Gateway service");
     await page.evaluate((c) => {
       const label = [...c.querySelectorAll("label.choice")].find((l) => l.textContent.includes("ai_gateway.migrated.legacy-summarizer-openai"));
@@ -233,15 +235,17 @@ const SHOTS_LIST = [
     await sleep(200);
     await dryThenExecute(page, test, "Send 1 request", "TEST");
     await waitText(page, "Test call: succeeded");
-    return region(page, out, pause, test);
+    // The strip shows the pause as done; the step below is the test call that answered.
+    return region(page, out, await card(page, "Cut-over status"), test);
   }],
 
   ["cutover-usage-enforce.png", async (browser, out) => {
     const page = await open(browser, "full");
     await clickText(page, "[role=tab]", "Verify");
-    await waitText(page, "Unity Gateway traffic");
+    await openStep(page, "enforce");
     await waitText(page, "6. Enforce Unity Gateway");
-    return region(page, out, await card(page, "5. Unity Gateway traffic"), await card(page, "6. Enforce Unity Gateway"));
+    await waitText(page, "Ready to enforce").catch(() => {});
+    return region(page, out, await card(page, "Cut-over status"), await card(page, "6. Enforce Unity Gateway"));
   }],
 ];
 
@@ -257,6 +261,13 @@ async function planner(browser) {
   await clickInCard(page, planCard, "Dry run");
   await waitText(page, "Dry run checked");
   return page;
+}
+
+/** Verify & cut over shows one step at a time: click its tile in the status strip. */
+async function openStep(page, key) {
+  await page.waitForSelector(`button.tile[data-step="${key}"]`);
+  await page.click(`button.tile[data-step="${key}"]`);
+  await sleep(250);
 }
 
 /** Clicks a button in a card by its text (exact match on the trimmed text). */

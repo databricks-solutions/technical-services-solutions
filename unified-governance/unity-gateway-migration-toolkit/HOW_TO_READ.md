@@ -68,6 +68,7 @@ Warning types:
 | `platform_managed_traffic` | Databricks-managed callers use this endpoint | Only Databricks-managed callers (class `platform`) send traffic. A warning, not a blocker. You can't change these callers. |
 | `local_folders_not_scanned` | Local folders were not scanned | No `--local-path` was given, so cloned repos and bundle folders were not searched. This caps the status at READY_WITH_WARNINGS. |
 | `skipped_paths_not_scanned` | Some folders or file types were not scanned | The scan skipped dependency or build folders, or file types it doesn't read. The detail lists them. Check them, or confirm they hold no calls. This caps the status at READY_WITH_WARNINGS. |
+| `unattributed_legacy_traffic` | Legacy requests couldn't be matched to an endpoint | Some v1 requests have no `system.serving.served_entities` row, so they can't be tied to an endpoint. Check `SELECT` on that table and confirm with the owners. This caps the status at READY_WITH_WARNINGS. |
 | `confirm_infrequent_callers` | Pay-per-token or v2 endpoint has no traffic and no known callers | A monthly or quarterly job wouldn't show in the window. v2 endpoints seen in the last year are included. Confirm with the owners. |
 | `no_traffic_in_window` | No requests in the window and usage tracking is off | Confirm with the owners that no infrequent job calls it. |
 | `dormant_agent_endpoint` | Agent endpoint has no traffic in the window | Confirm with the owner that it is unused. |

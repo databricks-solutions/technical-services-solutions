@@ -4,6 +4,7 @@ import copy
 import json
 import os
 import re
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -710,7 +711,8 @@ def test_killed_execute_does_not_block_its_target(tmp_path, monkeypatch):
 
 def test_run_outcome_status_and_summary():
     assert a.run_outcome([{"action": "created"}, {"action": "would_create"}]) == \
-        ("SUCCEEDED", {"created": 1, "would_create": 1, "kept_other_run": 0, "not_carried_over": 0})
+        ("SUCCEEDED", {"created": 1, "would_create": 1, "kept_other_run": 0, "kept_preexisting": 0,
+                       "not_carried_over": 0})
     status, summary = a.run_outcome([{"action": "created"}, {"action": "manual"}])
     assert status == "NEEDS_ATTENTION" and summary["manual"] == 1
     assert a.run_outcome([{"action": "kept", "other_run": True}])[1]["kept_other_run"] == 1
@@ -1369,3 +1371,94 @@ def test_dry_run_gate_rules():
     assert "changed" in a.dry_run_gate_error({**ok, "fingerprint": None}, "apply", None, "s1", "me", now)
     assert a.dry_run_gate_error({**ok, "requested_by": ""}, "apply", "f", "s1", "anyone", now) is None
     assert a.DRY_RUN_TTL_HOURS == 24 and "resume_legacy" not in a.DRY_RUN_GATED
+
+
+# ---------------------------------------------------------------------------
+# Review fixes: rollback preview, reused objects, unmatched traffic, single-use dry runs, gate wiring
+# ---------------------------------------------------------------------------
+
+
+def _provider_and_its_service(w):
+    w.ai_gateway.providers["c.s.p"] = {"comment": f"ug-migration-toolkit apply={APPLY}", "etag": "p1", "config": {}}
+    w.ai_gateway.services["c.s.svc"] = {"comment": f"ug-migration-toolkit apply={APPLY}", "etag": "s1", "config": {
+        "routing": {"destinations": [{"external_model_config": {"model_provider_service": "model-provider-services/c.s.p"}}]}}}
+
+
+def test_rollback_dry_run_previews_the_provider_delete_like_execute(tmp_path):
+    # The provider is used only by a service this rollback deletes: the dry run must say would_delete, as execute does.
+    log = _log(tmp_path, [_created("c.s.p", etag="p1", typ="model_provider_service"), _created("c.s.svc", etag="s1")])
+    w = FakeW()
+    _provider_and_its_service(w)
+    dry = {(r["type"], r["action"]) for r in a.rollback(w, str(log), False, apply_id=APPLY)}
+    assert dry == {("model_service", "would_delete"), ("model_provider_service", "would_delete")}
+    w = FakeW()
+    _provider_and_its_service(w)
+    done = {(r["type"], r["action"]) for r in a.rollback(w, str(log), True, apply_id=APPLY)}
+    assert done == {("model_service", "deleted"), ("model_provider_service", "deleted")}
+
+
+def test_rollback_that_keeps_only_preexisting_objects_counts_as_done(tmp_path):
+    w = FakeW()
+    w.ai_gateway.services["c.s.hand"] = {"comment": "by hand", "etag": "e4"}
+    w.ai_gateway.services["c.s.old"] = {"comment": "Created by ug-migration-toolkit, x", "etag": "e5"}
+    log = _log(tmp_path, [_created("c.s.hand", etag="e4", action="exists"),
+                          _created("c.s.old", etag="e5", action="exists")])
+    out = a.rollback(w, str(log), True, apply_id=APPLY)
+    assert [r["action"] for r in out] == ["kept", "kept"] and all(r.get("preexisting") for r in out)
+    status, summary = a.run_outcome(out)
+    assert status == "NEEDS_ATTENTION" and summary["kept_preexisting"] == 2
+    import ug_migration_store as st
+    assert st.rollback_done(status, summary) is True
+
+
+def test_pause_refuses_when_recent_traffic_cannot_be_matched_to_an_endpoint():
+    assert a.UNATTRIBUTED_TRAFFIC == __import__("ug_migration_store").UNATTRIBUTED
+    assert "couldn't be matched" in a.pause_traffic_refusal("ext", {a.UNATTRIBUTED_TRAFFIC: 4})
+    assert a.pause_traffic_refusal("ext", {a.UNATTRIBUTED_TRAFFIC: 4}, force=True) is None
+    assert a.pause_traffic_refusal("ext", {"other": 9}) is None
+
+
+def test_a_dry_run_is_good_for_one_execute():
+    now = datetime(2026, 11, 2, 12, tzinfo=timezone.utc)
+    ok = {"mode": "dry_run", "operation": "test_call", "status": "SUCCEEDED", "fingerprint": "f",
+          "requested_by": "me", "started_at": "2026-11-02 11:00:00"}
+    assert a.dry_run_gate_error(ok, "test_call", "f", "", "me", now) is None
+    assert "already used by execute E1" in a.dry_run_gate_error(ok, "test_call", "f", "", "me", now, used_by="E1")
+
+
+class UsedDryRunSpark(DryRunSpark):
+    """Also answers the single-use lookup (store.dry_run_used): ids in used were followed by an execute."""
+
+    def __init__(self, rows, used=None):
+        super().__init__(rows)
+        self.used = dict(used or {})
+
+    def sql(self, text, args=None):
+        if "dry_run_id = :dry_run_id" in text:
+            self.queries.append(text)
+            hit = self.used.get((args or {}).get("dry_run_id"))
+            return SimpleNamespace(collect=lambda: [SimpleNamespace(asDict=lambda: {"apply_id": hit})] if hit else [])
+        return super().sql(text, args)
+
+
+def test_notebook_gate_wiring_every_gated_operation_and_single_use(monkeypatch):
+    # Which operations need a dry run, and that the job looks it up and checks it hasn't been used.
+    assert set(a.DRY_RUN_GATED) == {"apply", "test_call", "pause_legacy", "enable_tracking"}
+    w = CutoverW([_endpoint("ext", GW_FULL)])
+    base = {"results_schema": "c.s", "operation": "enable_tracking", "endpoints": "ext", "requested_by": "me@x.com"}
+    dry = _notebook(monkeypatch, {**base, "apply_id": DRY, "mode": "dry_run", "job_run_id": "6"}, w)
+    row = _dry_row(dry, DRY)
+    spark = UsedDryRunSpark({DRY: row}, used={DRY: OTHER})
+    monkeypatch.setattr(sys.modules[__name__], "DryRunSpark", lambda rows: spark)
+    with pytest.raises(ValueError, match="already used by execute"):
+        _notebook(monkeypatch, {**base, "apply_id": APPLY, "mode": "execute", "job_run_id": "7", "dry_run_id": DRY},
+                  w, dry_rows={DRY: row})
+    assert any(f"WHERE apply_id = '{DRY}'" in q for q in spark.queries)
+    assert any("dry_run_id = :dry_run_id" in q for q in spark.queries)
+    assert w.api_client.puts == []
+    # The execute that does run records the dry run it used, which is what makes the next one refuse.
+    spark.used = {}
+    calls = _notebook(monkeypatch, {**base, "apply_id": APPLY, "mode": "execute", "job_run_id": "7", "dry_run_id": DRY},
+                      w, dry_rows={DRY: row})
+    first = next(r for r in calls["upserts"] if r.get("apply_id") == APPLY and r.get("status") == "RUNNING")
+    assert first["dry_run_id"] == DRY

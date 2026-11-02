@@ -82,7 +82,7 @@ export default function Apply({ scanRunId, setScanRunId, operator, active = true
 function Summary({ s }: { s: string }) {
   let o: Record<string, number> = {};
   try { o = JSON.parse(s || "{}"); } catch { /* empty */ }
-  const counts = Object.entries(o).filter(([k]) => k !== "not_carried_over").map(([k, v]) => `${k.replace(/_/g, " ")} ${v}`).join(", ") || "-";
+  const counts = Object.entries(o).filter(([k]) => k !== "not_carried_over" && k !== "kept_preexisting" && k !== "kept_other_run").map(([k, v]) => `${k.replace(/_/g, " ")} ${v}`).join(", ") || "-";
   const notCarried = Number(o.not_carried_over) || 0;
   return <span className="small">{counts}{notCarried > 0 && <>. {plural(notCarried, "service")} {notCarried === 1 ? "doesn't" : "don't"} get all of the legacy endpoint's governance: see <b>Not carried over</b> in the details below.</>}</span>;
 }
@@ -105,6 +105,30 @@ function secretError(v: string, allowed: string[]): string | null {
   const schema = v.split(".").slice(0, 2).join(".");
   if (allowed.length && !allowed.includes(schema.toLowerCase())) return `${schema} isn't an allowed schema. Allowed: ${allowed.join(", ")}.`;
   return null;
+}
+
+const DEFAULT_TARGET = ["ai_gateway", "migrated"];
+const NAME_RE = /^[A-Za-z0-9_-]{1,255}$/;
+
+/** value, once it has stopped changing for ms (so typing a schema name doesn't query on every key). */
+function useDebounced<T>(value: T, ms: number): T {
+  const [v, setV] = useState(value);
+  const key = JSON.stringify(value);
+  useEffect(() => { const t = setTimeout(() => setV(value), ms); return () => clearTimeout(t); }, [key, ms]); // eslint-disable-line react-hooks/exhaustive-deps
+  return v;
+}
+
+function TargetField({ label, value, onChange, disabled }: { label: string; value: string; onChange: (v: string) => void; disabled: boolean }) {
+  const id = useId();
+  const bad = !!value && !NAME_RE.test(value);
+  return (
+    <div className="field-group">
+      <label className="field" htmlFor={id}>{label}</label>
+      <input id={id} value={value} disabled={disabled} spellCheck={false} onChange={(e) => onChange(e.target.value)}
+             aria-invalid={bad || !value} aria-describedby={bad ? `${id}-error` : undefined} />
+      {bad && <span id={`${id}-error`} className="field-error">Use letters, digits, _ and -.</span>}
+    </div>
+  );
 }
 
 function SecretRow({ secret, value, error, disabled, onChange }: {
@@ -130,7 +154,18 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
 }) {
   const { data, error, loading, reload } = useApi<any>(`/api/scans/${scanRunId}`);
   const meta: any = data?.meta;
-  const schemaPath = meta ? `/api/target-schema?catalog=${encodeURIComponent(meta.target_catalog || "")}&schema=${encodeURIComponent(meta.target_schema || "")}` : null;
+  // The target is chosen here, not in the scan: prefilled from the scan (or the default), changeable without a new scan.
+  const [tCat, setTCat] = useState("");
+  const [tSch, setTSch] = useState("");
+  useEffect(() => {
+    if (!meta) return;
+    setTCat(meta.target_catalog || DEFAULT_TARGET[0]);
+    setTSch(meta.target_schema || DEFAULT_TARGET[1]);
+  }, [meta?.run_id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const targetOk = NAME_RE.test(tCat) && NAME_RE.test(tSch);
+  const [checkCat, checkSch] = useDebounced([tCat, tSch], 500);
+  const schemaPath = meta && NAME_RE.test(checkCat) && NAME_RE.test(checkSch)
+    ? `/api/target-schema?catalog=${encodeURIComponent(checkCat)}&schema=${encodeURIComponent(checkSch)}` : null;
   const schema = useApi<any>(schemaPath);
   const [chosen, setChosen] = useState<Set<string>>(new Set());
   const [secretMode, setSecretMode] = useState<"uc" | "read">("uc");
@@ -155,7 +190,12 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
   }, [data]);
   const allowedSchemas: string[] = (config?.secret_schemas || []).map((s: string) => s.toLowerCase());
   const copyAllowed = !!config?.allow_secret_read;
-  const target = `${meta?.target_catalog || ""}.${meta?.target_schema || ""}`;
+  const target = `${tCat}.${tSch}`;
+  const scanTarget = `${meta?.target_catalog || ""}.${meta?.target_schema || ""}`;
+  // The plan names its services in the scan's target; show them in the target chosen here (system.ai stays as is).
+  const retarget = (fqn: string) => (fqn && scanTarget !== "." && fqn.toLowerCase().startsWith(scanTarget.toLowerCase() + ".")
+    ? `${target}${fqn.slice(scanTarget.length)}` : fqn);
+  const sameTarget = target.toLowerCase() === scanTarget.toLowerCase();
   const mappingOff = secrets.length > 0 && allowedSchemas.length === 0;
 
   // Default name per secret: the target schema when the installer allowed it, else the first allowed schema.
@@ -177,7 +217,7 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
       if (!undone) String(a.endpoints || "").split(",").filter(Boolean).forEach((e) => { createdBy[e] = a.apply_id; });
     });
 
-  const sig = JSON.stringify({ e: Array.from(chosen).sort(), m: sortedObject(secretMode === "uc" ? ucMapping : {}), r: secretMode === "read", g: grants, a: ack });
+  const sig = JSON.stringify({ e: Array.from(chosen).sort(), t: target.toLowerCase(), m: sortedObject(secretMode === "uc" ? ucMapping : {}), r: secretMode === "read", g: grants, a: ack });
   const sigRef = useRef(sig);
   sigRef.current = sig;
   const job = useJob(jobId, (s: JobState) => {
@@ -207,12 +247,14 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
   const needsAck = candidates.some((p: any) => chosen.has(p.legacy_endpoint) && hasGuardrails(p));
   const dryOk = !!dry && dry.sig === sig;
   const schemaSql = [
-    ...(schemaMissing ? [`CREATE SCHEMA IF NOT EXISTS \`${meta.target_catalog}\`.\`${meta.target_schema}\`;`] : []),
-    `GRANT CREATE SERVICE ON SCHEMA \`${meta.target_catalog}\`.\`${meta.target_schema}\` TO \`<installer identity or you>\`;`,
+    ...(schemaMissing ? [`CREATE SCHEMA IF NOT EXISTS \`${tCat}\`.\`${tSch}\`;`] : []),
+    `GRANT CREATE SERVICE ON SCHEMA \`${tCat}\`.\`${tSch}\` TO \`<installer identity or you>\`;`,
   ].join("\n");
   const baseReasons = [
     !operator && "Only operators can start apply runs.",
     !chosen.size && "Select at least one endpoint.",
+    !targetOk && "Enter the target catalog and schema (letters, digits, _ and -).",
+    targetOk && (checkCat !== tCat || checkSch !== tSch) && "Checking the target schema.",
     running && "Another apply run is in progress.",
     schema.loading && !schema.data && "Checking the target schema.",
     schemaMissing && `The target schema ${target} doesn't exist yet (see the notice above).`,
@@ -237,8 +279,8 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
     setBusy(true);
     try {
       const r: any = await api("/api/applies", { method: "POST", body: JSON.stringify({
-        mode, scan_run_id: scanRunId, endpoints: Array.from(chosen), target_catalog: meta.target_catalog,
-        target_schema: meta.target_schema, uc_secret_map: secretMode === "uc" ? ucMapping : {},
+        mode, scan_run_id: scanRunId, endpoints: Array.from(chosen), target_catalog: tCat,
+        target_schema: tSch, uc_secret_map: secretMode === "uc" ? ucMapping : {},
         allow_secret_read: secretMode === "read", grants, ack_guardrails: ack, allow_stale: allowStale,
         smoke_test: mode === "execute" && smokeTest,
         dry_run_id: mode === "execute" ? dry?.applyId || "" : "", confirm: mode === "execute" ? "EXECUTE" : "" }) });
@@ -271,9 +313,20 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
   };
 
   return (
-    <Card title="2. Choose endpoints and options" note={<>Target <code>{target}</code> (from the scan). It must exist, and the jobs' identity needs <code>CREATE SERVICE</code> on it. Scan readiness: <Badge value={data.readiness?.status || "unknown"} /> · scanned {relativeAge(meta.finished_at)}.</>}>
+    <Card title="2. Choose endpoints and options" note={<>Scan readiness: <Badge value={data.readiness?.status || "unknown"} /> · scanned {relativeAge(meta.finished_at)}.</>}>
       {candidates.length === 0 ? <Empty title="Nothing to create">This scan has no external model or Provisioned Throughput endpoints.</Empty> : (
         <>
+          <fieldset className="panel">
+            <legend>Target schema for the new services</legend>
+            <div className="row">
+              <TargetField label="Target catalog" value={tCat} onChange={(v) => setTCat(v.trim())} disabled={!operator} />
+              <TargetField label="Target schema" value={tSch} onChange={(v) => setTSch(v.trim())} disabled={!operator} />
+            </div>
+            <p className="small muted">
+              The schema must exist, and the jobs' identity needs <code>CREATE SERVICE</code> on it. Change it here without
+              scanning again{meta.target_catalog && !sameTarget ? <> (the scan proposed <code>{scanTarget}</code>)</> : null}.
+            </p>
+          </fieldset>
           {schema.error && <ErrorBox error={schema.error} title="Couldn't check the target schema" />}
           {schema.data?.error && <Notice tone="warning" title="Couldn't check the target schema">{schema.data.error} The apply job checks it again when it runs.</Notice>}
           {(schemaMissing || schemaNoGrant) && (
@@ -302,7 +355,7 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
             { key: "legacy_endpoint", label: "Legacy endpoint", render: (p) => <code>{p.legacy_endpoint}</code> },
             { key: "kind", label: "Kind", render: (p) => kindLabel(p.kind) },
             { key: "target_service", label: "Creates", render: (p) => <>
-              <code>{p.target_service}</code> {p.target_status === "exists" && <Badge value="exists" tone="good" />}
+              <code>{retarget(p.target_service)}</code> {sameTarget && p.target_status === "exists" && <Badge value="exists" tone="good" />}
               {createdBy[p.legacy_endpoint] && <div><Badge value={`created by run ${createdBy[p.legacy_endpoint].slice(0, 8)}`} tone="info" /></div>}
             </> },
             { key: "requests_window", label: "Requests", num: true, render: (p) => fmt(p.requests_window) },
@@ -371,7 +424,7 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
                      onCancel={() => setConfirming(false)} onConfirm={() => start("execute")}
                      body={<>
                        <p>Create these model services (and the provider services they need) in <code>{target}</code>:</p>
-                       <ul className="small">{candidates.filter((p: any) => chosen.has(p.legacy_endpoint)).slice(0, 12).map((p: any) => <li key={p.legacy_endpoint}><code>{p.target_service}</code> from <code>{p.legacy_endpoint}</code></li>)}{chosen.size > 12 && <li>and {chosen.size - 12} more</li>}</ul>
+                       <ul className="small">{candidates.filter((p: any) => chosen.has(p.legacy_endpoint)).slice(0, 12).map((p: any) => <li key={p.legacy_endpoint}><code>{retarget(p.target_service)}</code> from <code>{p.legacy_endpoint}</code></li>)}{chosen.size > 12 && <li>and {chosen.size - 12} more</li>}</ul>
                        <p className="small">Grants: <b>{grants ? "copied from legacy permissions" : "none"}</b>. Keys: <b>{secretMode === "uc" ? "Unity Catalog secret references" : "copied from workspace secrets"}</b>.</p>
                        <label className="choice"><input type="checkbox" checked={smokeTest} onChange={(e) => setSmokeTest(e.target.checked)} /> <span>Check the new services after creating them</span></label>
                        <Notice tone="warning" title="Rolling back later">

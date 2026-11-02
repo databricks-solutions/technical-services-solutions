@@ -35,6 +35,9 @@ const ACTION_LABEL: Record<string, string> = {
   mismatch: "Mismatch",
 };
 
+/** endpoint_name of legacy requests that couldn't be matched to an endpoint (ug_migration_store.UNATTRIBUTED). */
+const UNATTRIBUTED = "(unmatched served entity)";
+
 const stamp = (s: any) => (s ? String(s).replace("T", " ").slice(0, 16) + " UTC" : "-");
 
 /** The query string for a scan: `path?scan_run_id=...` (or the path unchanged when there is no scan). */
@@ -56,8 +59,115 @@ function summaryLine(summary: any): string {
     try { s = JSON.parse(s); } catch { s = {}; }
   }
   if (!s || typeof s !== "object") return "";
-  return Object.entries(s).filter(([k, v]) => typeof v === "number" && v > 0 && k !== "kept_other_run" && k !== "not_carried_over")
+  return Object.entries(s).filter(([k, v]) => typeof v === "number" && v > 0 && k !== "kept_other_run" && k !== "kept_preexisting" && k !== "not_carried_over")
     .map(([k, v], i) => `${i === 0 ? humanize(k) : humanize(k).toLowerCase()}: ${v}`).join(", ");
+}
+
+/* ---------- Status strip: one tile per step, and one step shown at a time ---------- */
+
+const STEPS = [
+  ["traffic", "1. Legacy traffic"], ["tracking", "2. Usage tracking"], ["pause", "3. Pause"], ["test", "4. Test call"],
+  ["usage", "5. Unity Gateway usage"], ["enforce", "6. Enforce"], ["runs", "Runs"],
+] as const;
+type StepKey = typeof STEPS[number][0];
+type Tile = { status: "done" | "action" | "todo" | "unknown"; value: string };
+const TILE_BADGE: Record<Tile["status"], [string, string]> = {
+  done: ["Done", "good"], action: ["Needs action", "warn"], todo: ["Not started", "neutral"], unknown: ["Unknown", "bad"],
+};
+
+/** The step in the URL hash (#cutover/pause), so a link opens that step. */
+function stepFromHash(): StepKey {
+  const m = /^#cutover\/([a-z]+)/.exec(window.location.hash || "");
+  return (STEPS.find(([k]) => k === m?.[1])?.[0] as StepKey) || "traffic";
+}
+
+function StatusStrip({ tiles, next, step, setStep }: {
+  tiles: Record<StepKey, Tile | null>; next: string; step: StepKey; setStep: (s: StepKey) => void;
+}) {
+  const selectId = useId();
+  return (
+    <section className="card status-strip" aria-label="Cut-over status">
+      <h3>Cut-over status</h3>
+      <p className="next"><b>What to do next:</b> {next}</p>
+      <div className="tiles">
+        {STEPS.map(([k, label]) => {
+          const t = tiles[k];
+          const [badge, tone] = t ? TILE_BADGE[t.status] : ["", "neutral"];
+          return (
+            <button key={k} type="button" className={`tile${step === k ? " current" : ""}`} data-step={k}
+                    aria-pressed={step === k} aria-current={step === k ? "step" : undefined} aria-controls={`cut-step-${k}`}
+                    onClick={() => setStep(k)}>
+              <span className="tile-title">{label}</span>
+              {t && <span className="tile-value small">{t.value}</span>}
+              {t && k !== "runs" && <Badge value={badge} tone={tone} />}
+            </button>
+          );
+        })}
+      </div>
+      <div className="phone-only field-group">
+        <label className="field" htmlFor={selectId}>Step</label>
+        <select id={selectId} value={step} onChange={(e) => setStep(e.target.value as StepKey)}>
+          {STEPS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+        </select>
+      </div>
+    </section>
+  );
+}
+
+/** Tiles and the next-step line, from what the page already loaded. */
+function cutoverStatus(d: { traffic: any; endpoints: any; runs: any; usage: any; scan: any; enforceTraffic: any; maxAge: number }) {
+  const tiles = {} as Record<StepKey, Tile | null>;
+  const t = d.traffic;
+  const trafficRows: any[] = t.data?.endpoints || [];
+  const busy = trafficRows.filter((e) => (e.requests || 0) > 0 && e.endpoint_name !== UNATTRIBUTED);
+  const total = t.data?.total_requests;
+  tiles.traffic = !t.data && !t.error ? null
+    : t.error || t.data?.traffic_error || total === null || total === undefined ? { status: "unknown", value: "Traffic can't be read" }
+    : total === 0 ? { status: "done", value: "No legacy requests" }
+    : { status: "action", value: busy.length ? `${fmt(total)} requests on ${plural(busy.length, "endpoint")}` : `${fmt(total)} unmatched requests` };
+  const track: any[] = (d.endpoints.data?.endpoints || []).filter((e: any) => e.trackable !== false);
+  const on = track.filter((e) => e.tracking === "on").length;
+  tiles.tracking = !d.endpoints.data ? (d.endpoints.error ? { status: "unknown", value: "Couldn't load endpoints" } : null)
+    : track.length === 0 ? { status: "done", value: "Nothing to track" }
+    : { status: on === track.length ? "done" : "action", value: `${on} of ${track.length} on` };
+  const runs: any[] = d.runs.data || [];
+  const paused = runs.filter((r) => r.operation === "pause_legacy" && r.mode === "execute" && r.status === "SUCCEEDED" && !r.resumed);
+  const lastPause = runs.find((r) => r.operation === "pause_legacy" && r.mode === "execute");
+  tiles.pause = !d.runs.data ? null
+    : paused.length ? { status: "done", value: `${plural(paused.length, "endpoint")} paused` }
+    : lastPause ? { status: "todo", value: `Last pause ${relativeAge(lastPause.started_at)}, resumed` }
+    : { status: "todo", value: "No pause yet" };
+  const lastTest = runs.find((r) => r.operation === "test_call" && r.mode === "execute");
+  tiles.test = !d.runs.data ? null
+    : !lastTest ? { status: "todo", value: "No test call yet" }
+    : lastTest.status === "SUCCEEDED" ? { status: "done", value: `Answered, ${relativeAge(lastTest.started_at)}` }
+    : ["RUNNING", "STARTING"].includes(lastTest.status) ? { status: "todo", value: "Running" }
+    : { status: "action", value: `Failed, ${relativeAge(lastTest.started_at)}` };
+  const usageRows: any[] = d.usage.data?.rows || [];
+  const ugRequests = usageRows.reduce((n, r) => n + (Number(r.requests) || 0), 0);
+  tiles.usage = !d.usage.data ? (d.usage.error ? { status: "unknown", value: "Couldn't load usage" } : null)
+    : ugRequests > 0 ? { status: "done", value: `${fmt(ugRequests)} requests in 7 days` }
+    : { status: "todo", value: "No requests in 7 days" };
+  const age = ageDays(d.scan?.finished_at);
+  const scanOk = !!d.scan && PASSING.includes(String(d.scan.readiness)) && (age === null || age <= d.maxAge);
+  const et = d.enforceTraffic;
+  const quiet = et.data ? et.data.total_requests === 0 : null;
+  const blockers = [!scanOk && "the scan doesn't pass", quiet === false && "legacy traffic in the scan's window", et.error && "traffic unknown"].filter(Boolean) as string[];
+  tiles.enforce = !d.scan ? { status: "todo", value: "No scan yet" }
+    : quiet === null && !et.error ? null
+    : blockers.length ? { status: "action", value: plural(blockers.length, "check") + " not met" }
+    : { status: "done", value: "Ready to enforce" };
+  tiles.runs = !d.runs.data ? null : { status: runs.length ? "done" : "todo", value: plural(runs.length, "run") };
+  const next = !d.scan ? "Scan the workspace first: these steps read its plan."
+    : tiles.traffic?.status === "unknown" ? "Legacy traffic can't be read: check access to the system tables (step 1)."
+    : tiles.tracking?.status === "action" ? `Turn on usage tracking for ${plural(track.length - on, "endpoint")}, so their calls show in the traffic check (step 2).`
+    : tiles.traffic?.status === "action" ? (busy.length ? `Traffic is still on ${plural(busy.length, "endpoint")}: move their callers, then pause one at a time (step 3).`
+      : "Some legacy requests couldn't be matched to an endpoint: check them in step 1 before you pause anything.")
+    : tiles.test?.status !== "done" ? "Test a Unity Gateway service your callers now use (step 4)."
+    : tiles.enforce?.status === "action" ? `Not ready to enforce yet: ${blockers.join(", ")} (step 6).`
+    : tiles.enforce?.status === "done" ? "Every check passes: turn on Enforce Unity Gateway in the workspace settings (step 6)."
+    : "Checking the steps.";
+  return { tiles, next };
 }
 
 export default function Cutover({ operator, maxScanAgeDays, jobsRunAs, active = true }: { operator: boolean; maxScanAgeDays: number; jobsRunAs?: string | null; active?: boolean }) {
@@ -75,6 +185,16 @@ export default function Cutover({ operator, maxScanAgeDays, jobsRunAs, active = 
   const traffic = useApi<any>(withScan(`/api/cutover/traffic?window=${win}`, scanId));
   const enforceTraffic = useApi<any>(withScan("/api/cutover/traffic?window=scan", scanId));
   const reloadAll = () => { runs.reload(); endpoints.reload(); traffic.reload(); };
+  const usage = useApi<any>("/api/usage/summary?window=7d&service=");
+  const [step, setStepState] = useState<StepKey>(stepFromHash);
+  const setStep = (s: StepKey) => {
+    setStepState(s);
+    window.history.replaceState(null, "", `#cutover/${s}`);
+  };
+  useEffect(() => { if (active && !window.location.hash.startsWith("#cutover/")) window.history.replaceState(null, "", `#cutover/${step}`); }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
+  const status = cutoverStatus({ traffic, endpoints, runs, usage, scan, enforceTraffic, maxAge: maxScanAgeDays });
+  // Every step stays mounted (only hidden), so a running dry run keeps polling and Execute stays unlocked.
+  const panel = (k: StepKey, node: ReactNode) => <div id={`cut-step-${k}`} hidden={step !== k}>{node}</div>;
 
   return (
     <div className="stack">
@@ -102,13 +222,14 @@ export default function Cutover({ operator, maxScanAgeDays, jobsRunAs, active = 
         )}
       </Card>
 
-      <TrafficCheck traffic={traffic} win={win} setWin={setWin} scanReady={!!scan} />
-      <TrackingStep operator={operator} endpoints={endpoints} scanId={scanId} onDone={reloadAll} />
-      <PauseStep operator={operator} endpoints={endpoints} traffic={traffic} win={win} scanId={scanId} runs={runs} onDone={reloadAll} />
-      <TestStep operator={operator} services={services} scanId={scanId} jobsRunAs={jobsRunAs} onDone={runs.reload} />
-      <UsageStep />
-      <EnforceStep scan={scan} enforceTraffic={enforceTraffic} maxAge={maxScanAgeDays} />
-      <RunHistory operator={operator} runs={runs} />
+      <StatusStrip tiles={status.tiles} next={status.next} step={step} setStep={setStep} />
+      {panel("traffic", <TrafficCheck traffic={traffic} win={win} setWin={setWin} scanReady={!!scan} />)}
+      {panel("tracking", <TrackingStep operator={operator} endpoints={endpoints} scanId={scanId} onDone={reloadAll} />)}
+      {panel("pause", <PauseStep operator={operator} endpoints={endpoints} traffic={traffic} win={win} scanId={scanId} runs={runs} onDone={reloadAll} />)}
+      {panel("test", <TestStep operator={operator} services={services} scanId={scanId} jobsRunAs={jobsRunAs} onDone={runs.reload} />)}
+      {panel("usage", <UsageStep />)}
+      {panel("enforce", <EnforceStep scan={scan} enforceTraffic={enforceTraffic} maxAge={maxScanAgeDays} />)}
+      {panel("runs", <RunHistory operator={operator} runs={runs} />)}
     </div>
   );
 }
@@ -264,7 +385,7 @@ function TrafficCheck({ traffic, win, setWin, scanReady }: { traffic: any; win: 
             </p>
             <Table search label="Legacy traffic by endpoint" rows={rows} columns={[
               { key: "endpoint_name", label: "Endpoint", render: (e) => (
-                <><code>{e.endpoint_name}</code>{e.kind === "v2_workspace_endpoint" && <> <Badge value="v2" tone="warn" /></>}
+                <>{e.endpoint_name === UNATTRIBUTED ? <span>Unmatched requests <span className="small muted">(could be any endpoint)</span></span> : <code>{e.endpoint_name}</code>}{e.kind === "v2_workspace_endpoint" && <> <Badge value="v2" tone="warn" /></>}
                   {e.v2_failing && <> <Badge value="Failing" tone="bad" /></>}</>) },
               { key: "requests", label: "Requests", num: true, render: (e) => <>{fmt(e.requests)}{e.v2_failing && <div className="small muted">{fmt(e.v2_failed)} failed</div>}</> },
               { key: "tokens", label: "Tokens", num: true, hideOnPhone: true, render: (e) => fmt(e.tokens) },
@@ -355,13 +476,15 @@ function PauseStep({ operator, endpoints, traffic, win, scanId, runs, onDone }: 
   const [ack, setAck] = useState(false);
   const selectId = useId();
   const current = (traffic.data?.endpoints || []).find((e: any) => e.endpoint_name === name);
-  const hasTraffic = !!current && current.requests > 0;
+  // Requests that can't be matched to an endpoint could be this one's, so they count as traffic here (the server agrees).
+  const unmatched = Number((traffic.data?.endpoints || []).find((e: any) => e.endpoint_name === UNATTRIBUTED)?.requests) || 0;
+  const hasTraffic = (!!current && current.requests > 0) || (!!name && unmatched > 0);
   const runner = useCutoverRun();
   const [dry, setDry] = useState<{ applyId: string; sig: string } | null>(null);
   const sig = JSON.stringify({ op: "pause_legacy", e: name, f: hasTraffic && ack });  // ack is the job's force flag, part of the fingerprint
   const body = (mode: "dry_run" | "execute", dryId = "") => ({
     operation: "pause_legacy", mode, endpoints: [name], scan_run_id: scanId, dry_run_id: dryId,
-    confirm: mode === "execute" ? `PAUSE ${name}` : "", traffic_window: win, ack_traffic: hasTraffic && ack,
+    confirm: mode === "execute" ? "PAUSE" : "", traffic_window: win, ack_traffic: hasTraffic && ack,
   });
   // The server checks the same traffic again before it starts the run, and refuses when it can't read it.
   const trafficUnknown = !traffic.data || !!traffic.data.traffic_error || !!traffic.error || (!!name && !current);
@@ -391,8 +514,10 @@ function PauseStep({ operator, endpoints, traffic, win, scanId, runs, onDone }: 
             </div>
             {name && (traffic.data && !traffic.data.traffic_error && current ? (
               hasTraffic ? (
-                <Notice tone="warning" title={`${fmt(current.requests)} requests in the ${windowLabel}`}>
-                  Last request {stamp(current.last_request)}. Callers still on it get errors. Move them first, or confirm below.
+                <Notice tone="warning" title={current.requests > 0 ? `${fmt(current.requests)} requests in the ${windowLabel}` : `${fmt(unmatched)} unmatched requests in the ${windowLabel}`}>
+                  {current.requests > 0 ? <>Last request {stamp(current.last_request)}. Callers still on it get errors. Move them first, or confirm below.</>
+                    : <>They couldn't be matched to an endpoint, so some could be calling this one. Check them first, or confirm below.</>}
+                  {current.requests > 0 && unmatched > 0 && <> Another {fmt(unmatched)} requests couldn't be matched to an endpoint and could be this one's too.</>}
                 </Notice>
               ) : (
                 <Notice tone="success" title={`No legacy requests since ${stamp(traffic.data.since)}`}>This endpoint is quiet for the {windowLabel}.</Notice>
@@ -404,11 +529,12 @@ function PauseStep({ operator, endpoints, traffic, win, scanId, runs, onDone }: 
                 <span>I understand callers still on this endpoint will get errors until it's resumed</span></label>
             )}
             {!name && <p className="small muted">Choose an endpoint to see its traffic and enable the dry run.</p>}
-            <DryRunPair id="pause" operator={operator} disabledReason={disabled} dry={dry} sig={sig} word={`PAUSE ${name}`} label="Pause"
-              confirmTitle={`Pause ${name}`} confirmAction="Pause endpoint" busy={runner.busy}
+            <DryRunPair id="pause" operator={operator} disabledReason={disabled} dry={dry} sig={sig} word="PAUSE" label="Pause"
+              confirmTitle={`Pause ${name}`} confirmAction={`Pause ${name}`} busy={runner.busy}
               confirmBody={<>
-                <p>Set <code>{name}</code> to 0 calls a minute. Requests to it fail until it's resumed.</p>
-                {hasTraffic && <Notice tone="warning">It had {fmt(current.requests)} requests in the {windowLabel}.</Notice>}
+                <p>Endpoint to pause: <strong><code>{name}</code></strong></p>
+                <p>It is set to 0 calls a minute. Requests to it fail until it's resumed.</p>
+                {hasTraffic && <Notice tone="warning">{current && current.requests > 0 ? `It had ${fmt(current.requests)} requests in the ${windowLabel}.` : `${fmt(unmatched)} requests in the ${windowLabel} couldn't be matched to an endpoint and could be this one's.`}</Notice>}
               </>}
               onDryRun={async () => { const ok = await runner.start(body("dry_run"), sig); if (!ok) setDry(null); }}
               onExecute={() => { runner.start(body("execute", dry?.applyId || ""), sig); }} />

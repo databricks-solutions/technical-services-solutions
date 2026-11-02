@@ -12,9 +12,9 @@ Moves legacy model serving endpoints (v1, and v2 workspace-bound endpoints) to U
 2. Open the notebook. Set **Install: Results catalog** and **Install: SQL warehouse**. Leave the other widgets.
 3. Click **Run all**. The last cell prints the app link.
 4. Open **Compute > Apps > ug-migration-toolkit**.
-5. Work through the tabs in order: **Overview** (refresh the snapshot), **Scans** (scan this workspace), **Apply** (dry run, then execute), **Verify & cut over** (traffic, tracking, pause, test call, Enforce checklist).
+5. Work through the tabs in order: **Overview** (refresh the snapshot), **Scans** (scan this workspace), **Apply** (dry run, then execute), **Verify & cut over** (a status strip, then traffic, tracking, pause, test call and the Enforce checklist, one step at a time). The target schema for new services is chosen in Apply.
 
-Run the installer as a workspace admin with system table access, because the jobs run as you (or set **Advanced: Run jobs as service principal**). The first snapshot reads account-wide system tables, so it covers every workspace in the account. If the installer says the target schema `ai_gateway.migrated` is missing, create it first. The installer prints the SQL.
+Run the installer as a workspace admin with system table access. By default the jobs run as you, so operators who start them from the app act with your permissions. For anything beyond a trial, set **Advanced: Run jobs as service principal** to a service principal with only the access the toolkit needs ([Who the jobs run as](USER_GUIDE.md#1-install)). The first snapshot reads account-wide system tables, so it covers every workspace in the account. If the installer says the target schema `ai_gateway.migrated` is missing, create it first. The installer prints the SQL.
 
 ![Account overview with headline counts, the deadline countdown, a trend chart and workspaces by wave](docs/screenshots/overview.png)
 

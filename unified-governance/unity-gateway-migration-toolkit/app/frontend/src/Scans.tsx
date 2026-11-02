@@ -103,6 +103,9 @@ export default function Scans({ onApply, operator }: { onApply: (runId: string) 
                    value={form.scan_roots} onChange={(e) => setForm({ ...form, scan_roots: e.target.value })} />
             <span id="scan-roots-hint" className="small muted">Leave blank to scan /Users, /Shared and /Repos; folders you enter replace that list.</span>
           </div>
+          <details className="advanced" open={!NAME_OK.test(form.target_catalog) || !NAME_OK.test(form.target_schema) || undefined}>
+            <summary>Advanced: target schema for the proposed names</summary>
+            <p className="small muted">Optional. You choose the target in Apply and can change it there without scanning again. This only sets the service names the scan reports (default <code>ai_gateway.migrated</code>).</p>
           <div className="field-group">
             <label className="field" htmlFor="scan-catalog">Target catalog (Unity Catalog)</label>
             <input id="scan-catalog" required ref={(el) => { fieldRefs.current["scan-catalog"] = el; }}
@@ -117,6 +120,7 @@ export default function Scans({ onApply, operator }: { onApply: (runId: string) 
                    value={form.target_schema} onChange={(e) => setForm({ ...form, target_schema: e.target.value })} />
             {errorFor("scan-schema") && <span id="scan-schema-error" className="field-error">{errorFor("scan-schema")}</span>}
           </div>
+          </details>
           <button type="submit" className="btn" aria-disabled={startDisabled || undefined}
                   aria-describedby={reasons.length ? "scan-start-reason" : undefined}>
             {starting || running ? "Scanning…" : "Start scan"}
@@ -133,7 +137,7 @@ export default function Scans({ onApply, operator }: { onApply: (runId: string) 
             </ul>
           </Notice>
         )}
-        <p className="muted small">The target is where Apply creates model services. The schema must exist before you apply.</p>
+        <p className="muted small">You choose the target schema for new services in Apply, and can change it there without scanning again.</p>
         {reasons.length > 0 && <Reason id="scan-start-reason">Start scan is unavailable: {reasons.join(" ")}</Reason>}
         {jobId && <JobLine state={job} label="Scan" done="Results are below." />}
         {startErr && <ErrorBox error={startErr} title="Couldn't start the scan" />}

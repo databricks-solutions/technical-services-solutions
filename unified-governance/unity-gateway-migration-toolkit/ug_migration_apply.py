@@ -823,8 +823,8 @@ def apply(w: WorkspaceClient, endpoint_names: list[str] | None, target_catalog: 
 def run_outcome(results: list[dict]) -> tuple[str, dict]:
     """Status and summary of a finished run (job notebooks store both; the app reads them).
 
-    Summary: how many items had each action, plus kept_other_run (kept objects that another apply run still uses)
-    and not_carried_over (model services whose legacy governance isn't all carried over).
+    Summary: how many items had each action, plus kept_other_run (kept objects that another apply run still uses),
+    kept_preexisting (kept objects that existed before the apply run) and not_carried_over (model services whose legacy governance isn't all carried over).
     Guardrails that were acknowledged are not a problem: the item records guardrails_not_migrated and the run
     still SUCCEEDED."""
     summary: dict = {}
@@ -832,6 +832,8 @@ def run_outcome(results: list[dict]) -> tuple[str, dict]:
         act = r.get("action") or "unknown"
         summary[act] = summary.get(act, 0) + 1
     summary["kept_other_run"] = sum(1 for r in results if r.get("action") == "kept" and r.get("other_run"))
+    # Objects that existed before the apply run (reused, no apply mark): rollback rightly keeps them.
+    summary["kept_preexisting"] = sum(1 for r in results if r.get("action") == "kept" and r.get("preexisting"))
     # Services whose legacy governance isn't fully carried over (their items list not_carried_over). Not a problem
     # status: the run did what it could, and the result says what a person still has to redo.
     summary["not_carried_over"] = len({r.get("name") for r in results if r.get("not_carried_over")
@@ -933,7 +935,7 @@ def rollback(w: WorkspaceClient, log_path: str, execute: bool, protect=None, app
                 emit({"type": typ, "name": name, "action": "kept", "reason": protect[key], "other_run": True})
                 continue
             if not is_toolkit(comment):
-                emit({"type": typ, "name": name, "action": "kept",
+                emit({"type": typ, "name": name, "action": "kept", "preexisting": True,
                       "reason": "not created by this tool (comment doesn't match)"})
                 continue
             tag, created = owner_tag(comment), key in created_here
@@ -941,11 +943,15 @@ def rollback(w: WorkspaceClient, log_path: str, execute: bool, protect=None, app
             if not owned:
                 reason = (f"owned by apply {tag}, which hasn't been rolled back" if tag
                           else "no apply mark and not created by this run")
-                emit({"type": typ, "name": name, "action": "kept", "reason": reason, "other_run": bool(tag)})
+                # No mark and not created here: it existed before this run (reused), so keeping it is expected.
+                emit({"type": typ, "name": name, "action": "kept", "reason": reason, "other_run": bool(tag),
+                      **({} if tag else {"preexisting": True})})
                 continue
             if typ == "model_provider_service":
                 try:
-                    refs = services_referencing(w, name)
+                    # A model service this rollback deletes (or, in a dry run, would delete) no longer uses the
+                    # provider, so the dry run previews what execute does.
+                    refs = [r for r in services_referencing(w, name) if ("model_service", r) not in deleted]
                 except ReferenceCheckError as rce:
                     emit({"type": typ, "name": name, "action": "kept",
                           "reason": f"couldn't check every catalog and schema for model services that use it ({rce}); "
@@ -1112,12 +1118,13 @@ def dry_run_expired(started_at, now: datetime | None = None) -> bool:
 
 
 def dry_run_gate_error(dry: dict | None, operation: str, fingerprint: str | None, scan_run_id: str = "",
-                       requested_by: str = "", now: datetime | None = None) -> str | None:
+                       requested_by: str = "", now: datetime | None = None, used_by: str | None = None) -> str | None:
     """Why an execute can't run: it must follow a successful, recent dry run of the same operation and settings.
 
     dry is the dry run's row in ug_migration_applies (mode, operation, status, fingerprint, scan_run_id,
     requested_by, started_at as epoch seconds or a UTC string). The job checks this itself, so starting the job directly can't skip the dry run.
-    requested_by must match when the dry run recorded one; it is a consistency check, not an access control."""
+    requested_by must match when the dry run recorded one; it is a consistency check, not an access control.
+    used_by is the apply_id of an execute that already followed this dry run: each dry run is good for one execute."""
     if dry is None:
         return "execute needs dry_run_id: the apply_id of a successful dry run of the same settings"
     if dry.get("mode") != "dry_run" or (dry.get("operation") or "apply") != operation:
@@ -1132,7 +1139,12 @@ def dry_run_gate_error(dry: dict | None, operation: str, fingerprint: str | None
         return "that dry run was started by someone else; run your own dry run first"
     if dry_run_expired(dry.get("started_at"), now):
         return f"that dry run is more than {DRY_RUN_TTL_HOURS} hours old; run a dry run again"
+    if used_by:
+        return f"that dry run was already used by execute {used_by}; run a new dry run"
     return None
+
+
+UNATTRIBUTED_TRAFFIC = "(unmatched served entity)"  # ug_migration_store.UNATTRIBUTED
 
 
 def pause_traffic_refusal(name: str, recent_requests: dict | None, force: bool = False) -> str | None:
@@ -1150,6 +1162,12 @@ def pause_traffic_refusal(name: str, recent_requests: dict | None, force: bool =
     if n > 0:
         return (f"{n} legacy request(s) in the last {PAUSE_TRAFFIC_HOURS} hours: those callers would get errors. Move "
                 "them first, or pause with force set to confirm")
+    unmatched = int(recent_requests.get(UNATTRIBUTED_TRAFFIC) or 0)
+    if unmatched > 0:
+        # Fail closed: these requests could be this endpoint's.
+        return (f"{unmatched} legacy request(s) in the last {PAUSE_TRAFFIC_HOURS} hours couldn't be matched to an "
+                "endpoint (their served entity isn't in system.serving.served_entities), so they may be this "
+                "endpoint's callers. Check them, or pause with force set to confirm")
     return None
 
 

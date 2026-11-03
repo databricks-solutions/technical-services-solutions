@@ -1,0 +1,37 @@
+version: 1.1
+comment: Revenue compared with the previous month and the same month last year.
+source: samples.tpch.orders
+fields:
+  - name: Order Month
+    expr: DATE_TRUNC('MONTH', source.o_orderdate)
+    format:
+      type: date
+      date_format: year_month_day
+measures:
+  - name: Revenue
+    expr: SUM(source.o_totalprice)
+    format:
+      type: currency
+      currency_code: USD
+  - name: Revenue PM
+    display_name: Revenue previous month
+    expr: MEASURE(Revenue)
+    window:
+      - order: Order Month
+        range: current
+        offset: -1 month
+  - name: Revenue PY
+    display_name: Revenue same month last year
+    expr: MEASURE(Revenue)
+    window:
+      - order: Order Month
+        range: current
+        offset: -12 month
+  - name: Revenue MoM %
+    expr: (MEASURE(Revenue) - MEASURE(`Revenue PM`)) / NULLIF(MEASURE(`Revenue PM`), 0)
+    format:
+      type: percentage
+  - name: Revenue YoY %
+    expr: (MEASURE(Revenue) - MEASURE(`Revenue PY`)) / NULLIF(MEASURE(`Revenue PY`), 0)
+    format:
+      type: percentage

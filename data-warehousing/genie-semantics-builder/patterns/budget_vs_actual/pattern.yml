@@ -1,0 +1,18 @@
+title: Budget vs actual
+category: Planning
+scenario: >-
+  Budgets are set at a coarser grain than actuals, here region and year. Stack actual and budget rows in one
+  source with a kind column, then filter each measure on the kind. Compare only at the budget grain or above:
+  a monthly view has budget in January only. The budget values here are synthetic.
+question: How does each region's 1996 revenue compare with its budget?
+roles:
+  - name: event_date
+    description: The date of the actual event.
+  - name: amount
+    description: The actual amount.
+  - name: budget_table
+    description: A table with the budget grain (such as region and year) and the budget amount.
+test:
+  query: >-
+    SELECT `Region`, MEASURE(`Actual`) AS actual, MEASURE(`Budget`) AS budget, MEASURE(`Variance`) AS variance,
+    ROUND(MEASURE(`Attainment %`), 6) AS attainment FROM {{view}} WHERE `Year` = 1996 GROUP BY ALL ORDER BY ALL

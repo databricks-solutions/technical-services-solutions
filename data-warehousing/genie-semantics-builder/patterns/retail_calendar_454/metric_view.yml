@@ -1,0 +1,44 @@
+version: 1.1
+comment: Revenue by NRF 4-5-4 retail period. The calendar is generated.
+source: samples.tpch.orders
+joins:
+  - name: calendar
+    source: >-
+      SELECT cal_date, retail_year, week_of_year, q AS retail_quarter,
+        3 * (q - 1) + CASE WHEN wq <= 4 THEN 1 WHEN wq <= 9 THEN 2 ELSE 3 END AS retail_period
+      FROM (
+        SELECT cal_date, retail_year, week_of_year, q, week_of_year - 13 * (q - 1) AS wq
+        FROM (
+          SELECT cal_date, retail_year, week_of_year, LEAST(4, (week_of_year - 1) DIV 13 + 1) AS q
+          FROM (
+            SELECT cal_date, IF(cal_date > e0, YEAR(cal_date), YEAR(cal_date) - 1) AS retail_year,
+              DATEDIFF(cal_date, DATE_ADD(IF(cal_date > e0, e0, e1), 1)) DIV 7 + 1 AS week_of_year
+            FROM (
+              SELECT cal_date,
+                DATE_ADD(j0, IF(7 - DAYOFWEEK(j0) > 3, -DAYOFWEEK(j0), 7 - DAYOFWEEK(j0))) AS e0,
+                DATE_ADD(j1, IF(7 - DAYOFWEEK(j1) > 3, -DAYOFWEEK(j1), 7 - DAYOFWEEK(j1))) AS e1
+              FROM (
+                SELECT cal_date, MAKE_DATE(YEAR(cal_date), 1, 31) AS j0, MAKE_DATE(YEAR(cal_date) - 1, 1, 31) AS j1
+                FROM (SELECT EXPLODE(SEQUENCE(DATE'1991-01-01', DATE'1999-12-31')) AS cal_date)
+              )
+            )
+          )
+        )
+      )
+    'on': source.o_orderdate = calendar.cal_date
+    rely:
+      at_most_one_match: true
+fields:
+  - name: Order Date
+    expr: source.o_orderdate
+  - name: Retail Year
+    expr: calendar.retail_year
+  - name: Retail Quarter
+    expr: calendar.retail_quarter
+  - name: Retail Period
+    expr: calendar.retail_period
+measures:
+  - name: Revenue
+    expr: SUM(source.o_totalprice)
+  - name: Weeks
+    expr: COUNT(DISTINCT calendar.week_of_year)

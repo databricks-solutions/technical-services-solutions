@@ -1,0 +1,47 @@
+version: 1.1
+comment: Revenue by customer nation and supplier nation from one nation table.
+source: samples.tpch.lineitem
+joins:
+  - name: dim_orders
+    source: samples.tpch.orders
+    'on': source.l_orderkey = dim_orders.o_orderkey
+    rely:
+      at_most_one_match: true
+    joins:
+      - name: customer
+        source: samples.tpch.customer
+        'on': dim_orders.o_custkey = customer.c_custkey
+        rely:
+          at_most_one_match: true
+        joins:
+          - name: customer_nation
+            source: samples.tpch.nation
+            'on': customer.c_nationkey = customer_nation.n_nationkey
+            rely:
+              at_most_one_match: true
+  - name: supplier
+    source: samples.tpch.supplier
+    'on': source.l_suppkey = supplier.s_suppkey
+    rely:
+      at_most_one_match: true
+    joins:
+      - name: supplier_nation
+        source: samples.tpch.nation
+        'on': supplier.s_nationkey = supplier_nation.n_nationkey
+        rely:
+          at_most_one_match: true
+fields:
+  - name: Customer Nation
+    expr: dim_orders.customer.customer_nation.n_name
+  - name: Supplier Nation
+    expr: supplier.supplier_nation.n_name
+  - name: Trade Type
+    expr: >-
+      IF(dim_orders.customer.c_nationkey = supplier.s_nationkey, 'Domestic', 'Cross-border')
+  - name: Ship Month
+    expr: DATE_TRUNC('MONTH', source.l_shipdate)
+  - name: Receipt Month
+    expr: DATE_TRUNC('MONTH', source.l_receiptdate)
+measures:
+  - name: Revenue
+    expr: SUM(source.l_extendedprice * (1 - source.l_discount))

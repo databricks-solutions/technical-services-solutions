@@ -1,0 +1,19 @@
+title: Currency conversion with historical rates
+category: Currency conversion
+scenario: >-
+  Convert amounts at the exchange rate of the transaction month, and compare with a conversion at the latest
+  rate. The rate table here is synthetic and generated in a query source; use your own rate table instead.
+  Each join matches at most one rate, so amounts are not counted twice.
+question: What is monthly revenue in EUR at the historical rate and at the latest rate?
+roles:
+  - name: event_date
+    description: The date of the transaction, used to pick the rate.
+  - name: amount
+    description: The amount in the source currency.
+  - name: rate_table
+    description: A table with the rate date, the target currency and the rate.
+test:
+  query: >-
+    SELECT `Order Month`, MEASURE(`Revenue USD`) AS usd, MEASURE(`Revenue EUR`) AS eur,
+    MEASURE(`Revenue EUR at Latest Rate`) AS eur_latest FROM {{view}}
+    WHERE `Order Month` IN (DATE'1993-01-01', DATE'1995-01-01', DATE'1997-01-01') GROUP BY ALL ORDER BY ALL

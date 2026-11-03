@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { createBrowserRouter, Outlet, RouterProvider, useLocation, useMatch, useNavigate } from 'react-router';
 import {
+  BeakerIcon,
   CatalogIcon,
   ChartLineIcon,
   FolderIcon,
@@ -16,6 +17,7 @@ import { ThemeProvider, useThemePreference } from './theme';
 import type { ThemePreference } from './theme';
 import { DesignerPage } from './pages/DesignerPage';
 import { IntakePage } from './pages/IntakePage';
+import { PlaygroundPage } from './pages/PlaygroundPage';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { SourcesPage } from './pages/SourcesPage';
 
@@ -30,6 +32,7 @@ const projectModules = [
   { slug: 'intake', label: 'Intent & Context', icon: <SparkleIcon /> },
   { slug: 'sources', label: 'Source Readiness', icon: <CatalogIcon /> },
   { slug: 'designer', label: 'Metric Designer', icon: <ChartLineIcon /> },
+  { slug: 'playground', label: 'Playground', icon: <BeakerIcon /> },
 ];
 
 function ThemeSelect() {
@@ -159,6 +162,14 @@ const router = createBrowserRouter([
         element: (
           <Page title="Metric Designer">
             <DesignerPage />
+          </Page>
+        ),
+      },
+      {
+        path: '/projects/:projectId/playground',
+        element: (
+          <Page title="Playground">
+            <PlaygroundPage />
           </Page>
         ),
       },

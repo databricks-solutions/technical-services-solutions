@@ -27,8 +27,7 @@ import type { MetricViewIssue } from '../../../shared/metricView';
 import { api, useResource } from '../api';
 import { DataState } from '../components/DataState';
 import { JoinDiagram } from '../components/JoinDiagram';
-
-const MONO = { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12, lineHeight: '18px' };
+import { MONO, SqlBlock } from '../components/SqlBlock';
 
 const ADDITIVITY: Record<Additivity, string> = {
   additive: 'Additive',
@@ -203,29 +202,6 @@ const RESULT_TAG: Record<TestResult['status'], { color: 'teal' | 'coral'; label:
   failed: { color: 'coral', label: 'Failed' },
   error: { color: 'coral', label: 'Error' },
 };
-
-function SqlBlock({ label, sql }: { label: string; sql: string }) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <Typography.Text bold>{label}</Typography.Text>
-      <pre
-        style={{
-          ...MONO,
-          margin: 0,
-          padding: 12,
-          maxHeight: 320,
-          overflow: 'auto',
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-word',
-          border: '1px solid var(--db-border-base)',
-          borderRadius: 4,
-        }}
-      >
-        {sql}
-      </pre>
-    </div>
-  );
-}
 
 function ValidationResults({ run }: { run: ValidationRun }) {
   const { projectId = '' } = useParams();

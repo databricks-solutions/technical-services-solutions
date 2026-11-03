@@ -48,7 +48,7 @@ export function expandedQuery(view: MetricView, test: TestCase): string | null {
     if (depth > 10) throw new Error('measure references are too deep');
     return toDirectAliases(
       view,
-      expr.replace(/\bMEASURE\s*\(\s*(`(?:[^`]|``)+`|[A-Za-z_]\w*)\s*\)/gi, (_, ref: string) => {
+      expr.replace(/\b(?:MEASURE|AGG)\s*\(\s*(`(?:[^`]|``)+`|[A-Za-z_]\w*)\s*\)/gi, (_, ref: string) => {
         const key = (ref.startsWith('`') ? ref.slice(1, -1).replace(/``/g, '`') : ref).toLowerCase();
         const m = measures.get(key);
         if (!m || m.window) throw new Error(`cannot inline ${ref}`);

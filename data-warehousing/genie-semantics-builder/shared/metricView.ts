@@ -55,8 +55,12 @@ const field = {
 
 const windowSpec = z.strictObject({
   order: text,
-  range: z.string().regex(/^(current|cumulative|all|(trailing|leading) \d+ [a-z]+)$/i),
-  semiadditive: z.enum(['first', 'last']),
+  range: z
+    .string()
+    .trim()
+    .regex(/^(current|cumulative|all|(trailing|leading) \d+( [a-z]+)?( (inclusive|exclusive))?)$/i),
+  semiadditive: z.enum(['first', 'last']).optional(),
+  offset: z.union([z.number().int(), z.string().regex(/^-?\d+( [a-z]+)?$/i)]).optional(),
 });
 
 export interface Join {
@@ -64,6 +68,8 @@ export interface Join {
   source: string;
   on?: string;
   using?: string[];
+  cardinality?: 'many_to_one' | 'one_to_many';
+  rely?: { at_most_one_match?: boolean };
   joins?: Join[];
 }
 
@@ -74,6 +80,8 @@ const join: z.ZodType<Join> = z.lazy(() =>
       source: text,
       on: text.optional(),
       using: z.array(text).min(1).optional(),
+      cardinality: z.enum(['many_to_one', 'one_to_many']).optional(),
+      rely: z.strictObject({ at_most_one_match: z.boolean().optional() }).optional(),
       joins: z.array(join).optional(),
     })
     .refine((j) => (j.on === undefined) !== (j.using === undefined), {
@@ -81,16 +89,29 @@ const join: z.ZodType<Join> = z.lazy(() =>
     })
 );
 
-export const metricViewSchema = z.strictObject({
-  version: z.preprocess((v) => (typeof v === 'number' ? v.toFixed(1) : v), z.enum(['1.1', '0.1'])).default('1.1'),
-  source: text,
-  comment: text.optional(),
-  filter: text.optional(),
-  joins: z.array(join).optional(),
-  dimensions: z.array(z.strictObject(field)).min(1),
-  measures: z.array(z.strictObject({ ...field, window: z.array(windowSpec).min(1).optional() })).min(1),
-  materialization: z.unknown().optional(),
-});
+// `fields` is the current keyword; `dimensions` is its older synonym. Both parse to `dimensions`.
+const fieldsAsDimensions = (v: unknown) => {
+  if (!v || typeof v !== 'object' || Array.isArray(v) || !('fields' in v) || 'dimensions' in v) return v;
+  const { fields, ...rest } = v as Record<string, unknown>;
+  return { ...rest, dimensions: fields };
+};
+
+export const metricViewSchema = z.preprocess(
+  fieldsAsDimensions,
+  z
+    .strictObject({
+      version: z.preprocess((v) => (typeof v === 'number' ? v.toFixed(1) : v), z.enum(['1.1', '0.1'])).default('1.1'),
+      source: text,
+      comment: text.optional(),
+      parameters: z.unknown().optional(),
+      filter: text.optional(),
+      joins: z.array(join).optional(),
+      dimensions: z.array(z.strictObject(field)).default([]),
+      measures: z.array(z.strictObject({ ...field, window: z.array(windowSpec).min(1).optional() })).default([]),
+      materialization: z.unknown().optional(),
+    })
+    .refine((v) => v.dimensions.length + v.measures.length > 0, { message: 'Add at least one field or measure' })
+);
 
 export type MetricView = z.infer<typeof metricViewSchema>;
 
@@ -106,7 +127,8 @@ export interface MetricViewIssue {
 
 const ID = '(?:[A-Za-z_]\\w*|`(?:[^`]|``)+`)';
 const CHAIN = new RegExp(`(?<![\\w.\`])${ID}(?:\\s*\\.\\s*${ID})+(?![\\w\`(])`, 'g');
-const MEASURE_REF = new RegExp(`\\bMEASURE\\s*\\(\\s*(${ID})\\s*\\)`, 'gi');
+// AGG() is the older spelling of MEASURE() inside a measure expression.
+const MEASURE_REF = new RegExp(`\\b(?:MEASURE|AGG)\\s*\\(\\s*(${ID})\\s*\\)`, 'gi');
 const unquote = (id: string) => (id.startsWith('`') ? id.slice(1, -1).replace(/``/g, '`') : id).toLowerCase();
 const splitChain = (chain: string) => (chain.match(new RegExp(ID, 'g')) ?? []).map(unquote);
 // Blanks string literal contents, keeping offsets, so names inside strings are not treated as references.
@@ -157,7 +179,6 @@ export function semanticIssues(view: MetricView, profiles?: SourceProfiles): Met
 
   const measureNames = new Set(view.measures.map((m) => m.name.toLowerCase()));
   view.measures.forEach((m, i) => {
-    if (m.window && view.version !== '0.1') error(['measures', i, 'window'], 'Window measures need version 0.1');
     if (m.window) {
       for (const [w, spec] of m.window.entries()) {
         if (!view.dimensions.some((d) => d.name.toLowerCase() === spec.order.toLowerCase()))
@@ -271,7 +292,7 @@ export function semanticIssues(view: MetricView, profiles?: SourceProfiles): Met
       }
     }
     const profile = profileOf(n.join.source);
-    if (!profile) continue;
+    if (!profile || n.join.rely?.at_most_one_match || n.join.cardinality === 'one_to_many') continue;
     if (!profile.primaryKey.length)
       warn([...n.path, 'name'], `${n.join.source} declares no primary key, so a many-to-one join cannot be confirmed`);
     else if (!profile.primaryKey.every((k) => keyCols.includes(k.toLowerCase())))
@@ -311,7 +332,9 @@ export function validateMetricView(
       : doc.getIn(path, true);
     return (node as { range?: [number, number, number] } | undefined)?.range?.[0];
   };
-  const lineOf = (path: (string | number)[]) => {
+  const fieldsKey = doc.has('fields') ? 'fields' : 'dimensions';
+  const lineOf = (raw: (string | number)[]) => {
+    const path = raw[0] === 'dimensions' ? [fieldsKey, ...raw.slice(1)] : raw;
     for (let n = path.length; n > 0; n--) {
       const start = startOf(path.slice(0, n));
       if (start !== undefined) return lineCounter.linePos(start).line;
@@ -326,6 +349,7 @@ export function validateMetricView(
       issues: locate(
         parsed.error.issues.map((i) => {
           const path = i.path.map((p) => (typeof p === 'number' ? p : String(p)));
+          if (path[0] === 'dimensions') path[0] = fieldsKey;
           const where = path.length ? `${path.join('.')}: ` : '';
           const message =
             i.code === 'unrecognized_keys' && i.keys.includes('true')
@@ -338,9 +362,16 @@ export function validateMetricView(
   return { view: parsed.data, issues: locate(semanticIssues(parsed.data, profiles)) };
 }
 
-/** Renders a view as YAML 1.1, so keys and values such as on are quoted. */
+/** Renders a view as YAML 1.1, so keys and values such as on are quoted. Uses the current `fields` keyword. */
 export function renderMetricView(view: MetricView): string {
-  return stringify(view, { version: '1.1', lineWidth: 0 });
+  const { dimensions, measures, materialization, ...head } = view;
+  const out = {
+    ...head,
+    ...(dimensions.length ? { fields: dimensions } : {}),
+    ...(measures.length ? { measures } : {}),
+    ...(materialization === undefined ? {} : { materialization }),
+  };
+  return stringify(out, { version: '1.1', lineWidth: 0 });
 }
 
 /** Rewrites full join paths (a.b.column) to the joined table's own name (b.column), for plain SQL. */

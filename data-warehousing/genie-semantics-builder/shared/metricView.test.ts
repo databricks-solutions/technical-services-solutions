@@ -142,14 +142,28 @@ describe('validateMetricView', () => {
     expect(errors(GOLDEN.replace("'MONTH'", "'nation.n_name'"))).toEqual([]);
   });
 
-  it('rejects duplicate names and window measures on 1.1', () => {
+  it('rejects duplicate names', () => {
     const dup = GOLDEN.replace('name: Region', 'name: Nation');
     expect(errors(dup)[0]?.message).toMatch(/already used/);
-    const win = GOLDEN.replace(
-      '    expr: COUNT(DISTINCT source.l_orderkey)\n',
-      '$&    window:\n      - order: Order Month\n        range: cumulative\n        semiadditive: last\n'
-    );
-    expect(errors(win)[0]?.message).toBe('Window measures need version 0.1');
+  });
+
+  it('accepts the current spec: fields, rely, cardinality, window offset and AGG', () => {
+    const current = GOLDEN.replace('dimensions:', 'fields:')
+      .replace("    'on': source.l_orderkey = dim_orders.o_orderkey\n", '$&    rely:\n      at_most_one_match: true\n')
+      .replace(
+        '    expr: COUNT(DISTINCT source.l_orderkey)\n',
+        '$&    window:\n      - order: Order Month\n        range: trailing 3 month exclusive\n        offset: -1 month\n'
+      )
+      .replace('MEASURE(`Order Count`)', 'AGG(`Order Count`)');
+    const noPk = { ...profiles, 'samples.tpch.orders': table(['o_orderkey', 'o_custkey', 'o_orderdate']) };
+    const { view, issues } = validateMetricView(current, noPk);
+    expect(issues).toEqual([]);
+    expect(view?.dimensions).toHaveLength(4);
+    expect(renderMetricView(view!)).toMatch(/^fields:$/m);
+    const bad = current.replace('MEASURE(`Net Revenue`)', 'MEASURE(`Nope`)');
+    expect(errors(bad)[0]?.line).toBe(lineOf(bad, 'Nope'));
+    const badField = current.replace('expr: dim_orders.customer.c_mktsegment', 'expr: ""');
+    expect(errors(badField)[0]?.line).toBe(lineOf(badField, 'expr: ""'));
   });
 
   it('warns when a join may fan out', () => {

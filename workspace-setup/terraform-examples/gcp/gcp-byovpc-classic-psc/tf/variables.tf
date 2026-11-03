@@ -56,7 +56,13 @@ variable "databricks_admin_user" {
 }
 
 variable "metastore_id" {
-  description = "Existing Unity Catalog metastore ID. If empty, no metastore assignment is made (Databricks auto-creates one for the first workspace in a region). If provided, the existing metastore is assigned to the workspace."
+  description = "Existing Unity Catalog metastore ID. If empty, a new metastore is created and assigned to the workspace."
+  type        = string
+  default     = ""
+}
+
+variable "metastore_name" {
+  description = "Name for the Unity Catalog metastore (used only when creating a new metastore). Defaults to <workspace>-metastore when empty."
   type        = string
   default     = ""
 }

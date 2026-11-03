@@ -28,4 +28,16 @@ variable "subnet_cidr" {
   type        = string
 }
 
+variable "metastore_id" {
+  description = "Existing Unity Catalog metastore ID. If empty, a new metastore is created and assigned to the workspace."
+  type        = string
+  default     = ""
+}
+
+variable "metastore_name" {
+  description = "Name for the Unity Catalog metastore (used only when creating a new metastore). Defaults to <workspace>-metastore when empty."
+  type        = string
+  default     = ""
+}
+
 

@@ -19,7 +19,7 @@ importers:
     dependencies:
       '@databricks/appkit':
         specifier: 0.84.0
-        version: 0.84.0(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(@opentelemetry/core@2.8.0(@opentelemetry/api@1.9.0))(@types/node@24.6.0)(@types/pg@8.15.6)(esbuild@0.25.12)(tsx@4.20.6)(vitest@4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.6.0)(rolldown-vite@7.1.14(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(@types/node@24.6.0)(esbuild@0.25.12)(jiti@2.6.1)(tsx@4.20.6)(yaml@2.8.2)))
+        version: 0.84.0(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(@opentelemetry/core@2.8.0(@opentelemetry/api@1.9.0))(@types/node@24.6.0)(@types/pg@8.23.1)(esbuild@0.25.12)(tsx@4.20.6)(vitest@4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.6.0)(rolldown-vite@7.1.14(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(@types/node@24.6.0)(esbuild@0.25.12)(jiti@2.6.1)(tsx@4.20.6)(yaml@2.8.2)))
       '@databricks/appkit-ui':
         specifier: 0.84.0
         version: 0.84.0(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -63,6 +63,9 @@ importers:
       '@types/node':
         specifier: 24.6.0
         version: 24.6.0
+      '@types/pg':
+        specifier: ^8.23.1
+        version: 8.23.1
       '@types/react':
         specifier: 19.2.2
         version: 19.2.2
@@ -93,6 +96,9 @@ importers:
       eslint-plugin-react-refresh:
         specifier: 0.4.24
         version: 0.4.24(eslint@9.39.1(jiti@2.6.1))
+      pg:
+        specifier: 8.18.0
+        version: 8.18.0
       prettier:
         specifier: 3.6.2
         version: 3.6.2
@@ -3087,6 +3093,9 @@ packages:
 
   '@types/pg@8.15.6':
     resolution: {integrity: sha512-NoaMtzhxOrubeL/7UZuNTrejB4MPAJ0RpxZqXQf2qXuVlTPuG6Y8p4u9dKRaue4yjmC7ZhzVO2/Yyyn25znrPQ==}
+
+  '@types/pg@8.23.1':
+    resolution: {integrity: sha512-fKVHpikPdg4GKks3JuLEhvwSyvwzF23hnabPy6DD8ljVbC7+6J5dQzdv4arV6jqq57djnMgs1HKBxX4P8aBI3A==}
 
   '@types/qs@6.15.1':
     resolution: {integrity: sha512-GZHUBZR9hckSUhrxmp1nG6NwdpM9fCunJwyThLW1X3AyHgd9IlHb6VANpQQqDr2o/qQp6McZ3y/IA2rVzKzSbw==}
@@ -6590,7 +6599,7 @@ snapshots:
       - '@types/react-dom'
       - supports-color
 
-  '@databricks/appkit@0.84.0(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(@opentelemetry/core@2.8.0(@opentelemetry/api@1.9.0))(@types/node@24.6.0)(@types/pg@8.15.6)(esbuild@0.25.12)(tsx@4.20.6)(vitest@4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.6.0)(rolldown-vite@7.1.14(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(@types/node@24.6.0)(esbuild@0.25.12)(jiti@2.6.1)(tsx@4.20.6)(yaml@2.8.2)))':
+  '@databricks/appkit@0.84.0(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(@opentelemetry/core@2.8.0(@opentelemetry/api@1.9.0))(@types/node@24.6.0)(@types/pg@8.23.1)(esbuild@0.25.12)(tsx@4.20.6)(vitest@4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.6.0)(rolldown-vite@7.1.14(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(@types/node@24.6.0)(esbuild@0.25.12)(jiti@2.6.1)(tsx@4.20.6)(yaml@2.8.2)))':
     dependencies:
       '@ast-grep/napi': 0.37.0
       '@clack/prompts': 1.0.1
@@ -6616,7 +6625,7 @@ snapshots:
       apache-arrow: 21.1.0
       commander: 12.1.0
       dotenv: 16.6.1
-      drizzle-orm: 0.45.2(@opentelemetry/api@1.9.0)(@types/pg@8.15.6)(pg@8.18.0)
+      drizzle-orm: 0.45.2(@opentelemetry/api@1.9.0)(@types/pg@8.23.1)(pg@8.18.0)
       express: 4.22.2
       get-port: 7.2.0
       jiti: 2.6.1
@@ -9549,6 +9558,12 @@ snapshots:
       pg-protocol: 1.16.0
       pg-types: 2.2.0
 
+  '@types/pg@8.23.1':
+    dependencies:
+      '@types/node': 24.6.0
+      pg-protocol: 1.16.0
+      pg-types: 2.2.0
+
   '@types/qs@6.15.1': {}
 
   '@types/range-parser@1.2.7': {}
@@ -10305,10 +10320,10 @@ snapshots:
       react-is: 17.0.2
       tslib: 2.8.1
 
-  drizzle-orm@0.45.2(@opentelemetry/api@1.9.0)(@types/pg@8.15.6)(pg@8.18.0):
+  drizzle-orm@0.45.2(@opentelemetry/api@1.9.0)(@types/pg@8.23.1)(pg@8.18.0):
     optionalDependencies:
       '@opentelemetry/api': 1.9.0
-      '@types/pg': 8.15.6
+      '@types/pg': 8.23.1
       pg: 8.18.0
 
   dts-resolver@2.1.3: {}

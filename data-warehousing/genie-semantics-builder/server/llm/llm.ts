@@ -1,4 +1,4 @@
-import { getExecutionContext } from '@databricks/appkit';
+import { getExecutionContext, isInUserContext } from '@databricks/appkit';
 import { z } from 'zod';
 
 export interface ToolPrompt<T> {
@@ -113,7 +113,6 @@ export async function callTool<T>(prompt: ToolPrompt<T>, userContent: string, de
           ],
           tool_choice: 'auto',
           max_tokens: prompt.maxTokens ?? 4096,
-          temperature: 0,
         });
         const parsed = responseSchema.parse(raw);
         inputTokens += parsed.usage?.prompt_tokens ?? 0;
@@ -170,19 +169,23 @@ export async function callTool<T>(prompt: ToolPrompt<T>, userContent: string, de
   });
 }
 
-/** Production wiring: calls the serving endpoint with the current execution context (OBO inside asUser). */
-export function servingDeps(): LlmDeps {
+/** Production wiring: calls the serving endpoint as the calling user (OBO). */
+export function servingDeps(runAsUser: <R>(fn: () => Promise<R>) => Promise<R>): LlmDeps {
   const endpoint = process.env.DATABRICKS_SERVING_ENDPOINT_NAME;
   return {
     endpoint,
-    async invoke(payload) {
-      if (!endpoint) throw new Error('DATABRICKS_SERVING_ENDPOINT_NAME is not set');
-      return getExecutionContext().client.apiClient.request({
-        path: `/serving-endpoints/${encodeURIComponent(endpoint)}/invocations`,
-        method: 'POST',
-        headers: new Headers({ Accept: 'application/json', 'Content-Type': 'application/json' }),
-        raw: false,
-        payload,
+    invoke(payload) {
+      if (!endpoint) return Promise.reject(new Error('DATABRICKS_SERVING_ENDPOINT_NAME is not set'));
+      return runAsUser(() => {
+        if (!isInUserContext())
+          return Promise.reject(new Error('Model calls must run as the calling user (OBO), never as the app'));
+        return getExecutionContext().client.apiClient.request({
+          path: `/serving-endpoints/${encodeURIComponent(endpoint)}/invocations`,
+          method: 'POST',
+          headers: new Headers({ Accept: 'application/json', 'Content-Type': 'application/json' }),
+          raw: false,
+          payload,
+        });
       });
     },
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),

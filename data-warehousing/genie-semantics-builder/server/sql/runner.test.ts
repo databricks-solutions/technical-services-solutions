@@ -7,7 +7,6 @@ function deps(overrides: Partial<RunDeps> = {}) {
   const audits: AuditEntry[] = [];
   const execute = vi.fn(() => Promise.resolve({ columns: ['x'], rows: [['1']] }));
   const d: RunDeps = {
-    inUserContext: () => true,
     execute,
     audit: (e) => {
       audits.push(e);
@@ -54,12 +53,6 @@ describe('runStatement', () => {
   it('does not run DDL when the audit write fails', async () => {
     const { d, execute } = deps({ audit: () => Promise.reject(new Error('db down')) });
     await expect(runStatement(DDL, { ...ctx, approved: true }, d)).rejects.toThrow('db down');
-    expect(execute).not.toHaveBeenCalled();
-  });
-
-  it('refuses to run outside a user (OBO) context', async () => {
-    const { d, execute } = deps({ inUserContext: () => false });
-    await expect(runStatement('SELECT 1', { ...ctx, approved: false }, d)).rejects.toThrow(/user context/);
     expect(execute).not.toHaveBeenCalled();
   });
 

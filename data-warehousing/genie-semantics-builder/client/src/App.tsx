@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { createBrowserRouter, Outlet, RouterProvider, useLocation, useNavigate } from 'react-router';
+import { createBrowserRouter, Outlet, RouterProvider, useLocation, useMatch, useNavigate } from 'react-router';
 import {
   CatalogIcon,
   FolderIcon,
@@ -14,6 +14,8 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { ThemeProvider, useThemePreference } from './theme';
 import type { ThemePreference } from './theme';
 import { DataState } from './components/DataState';
+import { IntakePage } from './pages/IntakePage';
+import { ProjectsPage } from './pages/ProjectsPage';
 
 interface Destination {
   path: string;
@@ -21,11 +23,10 @@ interface Destination {
   icon: ReactNode;
 }
 
-// Modules appear here as each phase ships.
-const destinations: Destination[] = [
-  { path: '/', label: 'Projects', icon: <FolderIcon /> },
-  { path: '/intake', label: 'Intent & Context', icon: <SparkleIcon /> },
-  { path: '/sources', label: 'Source Readiness', icon: <CatalogIcon /> },
+// Project modules appear here as each phase ships.
+const projectModules = [
+  { slug: 'intake', label: 'Intent & Context', icon: <SparkleIcon /> },
+  { slug: 'sources', label: 'Source Readiness', icon: <CatalogIcon /> },
 ];
 
 function ThemeSelect() {
@@ -48,6 +49,13 @@ function ThemeSelect() {
 function Shell() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
+  const projectId = useMatch('/projects/:projectId/*')?.params.projectId;
+  const destinations: Destination[] = [
+    { path: '/', label: 'Projects', icon: <FolderIcon /> },
+    ...(projectId
+      ? projectModules.map((m) => ({ path: `/projects/${projectId}/${m.slug}`, label: m.label, icon: m.icon }))
+      : []),
+  ];
 
   return (
     <div style={{ display: 'flex', height: '100%' }}>
@@ -123,20 +131,20 @@ const router = createBrowserRouter([
         path: '/',
         element: (
           <Page title="Projects">
-            <DataState status="empty" message="Create a project to start a semantic model." />
+            <ProjectsPage />
           </Page>
         ),
       },
       {
-        path: '/intake',
+        path: '/projects/:projectId/intake',
         element: (
           <Page title="Intent & Context">
-            <DataState status="empty" message="Select a project to describe what you want to measure." />
+            <IntakePage />
           </Page>
         ),
       },
       {
-        path: '/sources',
+        path: '/projects/:projectId/sources',
         element: (
           <Page title="Source Readiness">
             <DataState status="empty" message="Confirm a Semantic Brief to assess its candidate sources." />

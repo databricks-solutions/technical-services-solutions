@@ -16,7 +16,7 @@ export interface AuditEntry {
 }
 
 export interface RunDeps {
-  inUserContext(): boolean;
+  /** Must run the statement as the calling user (OBO). */
   execute(statement: string): Promise<StatementResult>;
   audit(entry: AuditEntry): Promise<void>;
 }
@@ -30,9 +30,11 @@ export interface RunContext {
 
 const AUDIT_STATEMENT_MAX = 10_000;
 
-/** The only path to the warehouse: allowlist, approval gate for DDL, audit before and after. */
+/**
+ * The only path to the warehouse: allowlist, approval gate for DDL, audit before and after.
+ * Call it in app scope: audit rows go to Lakebase, which is app-only. deps.execute opens the user scope.
+ */
 export async function runStatement(sql: string, ctx: RunContext, deps: RunDeps): Promise<StatementResult> {
-  if (!deps.inUserContext()) throw new Error('Statements must run in a user context (OBO), never as the app');
   const base = { actor: ctx.actor, action: 'execute_ddl', projectId: ctx.projectId };
 
   let checked;
@@ -67,31 +69,35 @@ interface QueryablePool {
   query(sql: string, params: unknown[]): Promise<unknown>;
 }
 
+export type RunAsUser = <R>(fn: () => Promise<R>) => Promise<R>;
+
 /** Production wiring: execute on the warehouse as the calling user, audit to Lakebase as the app. */
-export function warehouseDeps(pool: QueryablePool): RunDeps {
+export function warehouseDeps(pool: QueryablePool, runAsUser: RunAsUser): RunDeps {
   return {
-    inUserContext: isInUserContext,
-    async execute(statement) {
-      const res = await getExecutionContext().client.statementExecution.executeStatement({
-        warehouse_id: await getWarehouseId(),
-        statement,
-        wait_timeout: '50s',
-        on_wait_timeout: 'CANCEL',
-        row_limit: 1000,
-      });
-      if (res.status?.state !== 'SUCCEEDED') {
-        throw new Error(res.status?.error?.message ?? `Statement ended in state ${res.status?.state ?? 'unknown'}`);
-      }
-      return {
-        columns: res.manifest?.schema?.columns?.map((c) => c.name ?? '') ?? [],
-        rows: res.result?.data_array ?? [],
-      };
-    },
+    execute: (statement) => runAsUser(() => executeAsUser(statement)),
     async audit(e) {
       await pool.query(
-        'INSERT INTO gsb.audit_log (actor, action, project_id, target, statement, outcome, detail) VALUES ($1, $2, $3, NULL, $4, $5, $6)',
+        'INSERT INTO gsb.audit_log (actor, action, project_id, statement, outcome, detail) VALUES ($1, $2, $3, $4, $5, $6)',
         [e.actor, e.action, e.projectId ?? null, e.statement, e.outcome, e.detail ?? null]
       );
     },
+  };
+}
+
+async function executeAsUser(statement: string): Promise<StatementResult> {
+  if (!isInUserContext()) throw new Error('Statements must run as the calling user (OBO), never as the app');
+  const res = await getExecutionContext().client.statementExecution.executeStatement({
+    warehouse_id: await getWarehouseId(),
+    statement,
+    wait_timeout: '50s',
+    on_wait_timeout: 'CANCEL',
+    row_limit: 1000,
+  });
+  if (res.status?.state !== 'SUCCEEDED') {
+    throw new Error(res.status?.error?.message ?? `Statement ended in state ${res.status?.state ?? 'unknown'}`);
+  }
+  return {
+    columns: res.manifest?.schema?.columns?.map((c) => c.name ?? '') ?? [],
+    rows: res.result?.data_array ?? [],
   };
 }

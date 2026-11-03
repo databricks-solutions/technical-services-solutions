@@ -1,0 +1,60 @@
+import path from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import pg from 'pg';
+import { loadMigrations, migrate } from '../db/migrate';
+import { projectRepo } from './projects';
+import type { BriefOutput } from '../llm/prompts/brief';
+
+// Runs only against a throwaway Postgres: TEST_DATABASE_URL=postgres://... pnpm test
+const url = process.env.TEST_DATABASE_URL;
+
+const output: BriefOutput = {
+  summary: 'Revenue brief.',
+  brief: {
+    title: 'Sales',
+    businessGoal: 'Track revenue',
+    audience: [],
+    keyQuestions: ['Revenue by month?'],
+    measures: [{ name: 'Total Revenue', description: 'Sum of order totals', aggregation: 'sum' }],
+    dimensions: [],
+    timeGrains: ['month'],
+    candidateSources: ['samples.tpch.orders', 'samples.tpch.customer'],
+    glossary: [],
+    assumptions: [],
+    openQuestions: [],
+  },
+};
+
+describe.skipIf(!url)('projectRepo on Postgres', () => {
+  const pool = new pg.Pool({ connectionString: url });
+  const repo = projectRepo(pool as never);
+
+  beforeAll(async () => {
+    await pool.query('DROP SCHEMA IF EXISTS gsb CASCADE');
+    await migrate(pool, await loadMigrations(path.resolve('server/db/migrations')));
+  });
+  afterAll(() => pool.end());
+
+  it('keeps projects private to their creator', async () => {
+    const p = await repo.create('a@x.com', { name: 'TPC-H' });
+    expect((await repo.list('a@x.com')).map((x) => x.id)).toContain(p.id);
+    expect(await repo.list('b@x.com')).toEqual([]);
+    await expect(repo.get('b@x.com', p.id)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('versions drafts, confirms only the latest, and registers sources once', async () => {
+    const p = await repo.create('a@x.com', { name: 'Brief' });
+    expect((await repo.addDraft('a@x.com', p.id, output, {})).version).toBe(1);
+    expect((await repo.addDraft('a@x.com', p.id, output, {})).version).toBe(2);
+    await expect(repo.confirm('a@x.com', p.id, 1)).rejects.toMatchObject({ status: 409 });
+
+    const confirmed = await repo.confirm('a@x.com', p.id, 2);
+    expect(confirmed.status).toBe('confirmed');
+    await expect(repo.confirm('a@x.com', p.id, 2)).rejects.toMatchObject({ status: 409 });
+
+    const sources = await pool.query('SELECT full_name FROM gsb.source WHERE project_id = $1 ORDER BY 1', [p.id]);
+    expect(sources.rows.map((r: { full_name: string }) => r.full_name)).toEqual(['samples.tpch.customer', 'samples.tpch.orders']);
+    const audit = await pool.query('SELECT action FROM gsb.audit_log WHERE project_id = $1 ORDER BY id', [p.id]);
+    expect(audit.rows.map((r: { action: string }) => r.action)).toEqual(['create_project', 'confirm_brief']);
+  });
+});

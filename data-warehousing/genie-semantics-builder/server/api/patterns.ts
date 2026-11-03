@@ -21,6 +21,7 @@ interface RunRow {
   test_sql: string;
   created_by: string;
   created_at: Date;
+  removed_at: Date | null;
 }
 
 const toRun = (r: RunRow): PatternRun => ({
@@ -30,7 +31,7 @@ const toRun = (r: RunRow): PatternRun => ({
   rows: r.rows_compared,
   detail: r.detail,
   testSql: r.test_sql,
-  cleanup: r.status === 'running' ? [] : [dropStatement(r.sandbox_view)],
+  cleanup: r.status === 'running' || r.removed_at ? [] : [dropStatement(r.sandbox_view)],
   createdBy: r.created_by,
   createdAt: r.created_at.toISOString(),
 });
@@ -40,7 +41,8 @@ export function patternRunRepo(db: Db) {
     /** Latest run per pattern for a project. */
     async latest(projectId: string): Promise<PatternRun[]> {
       const { rows } = await db.query<RunRow>(
-        `SELECT DISTINCT ON (slug) slug, status, sandbox_view, rows_compared, detail, test_sql, created_by, created_at
+        `SELECT DISTINCT ON (slug) slug, status, sandbox_view, rows_compared, detail, test_sql, created_by, created_at,
+           removed_at
          FROM gsb.pattern_run WHERE project_id = $1 ORDER BY slug, created_at DESC`,
         [projectId]
       );
@@ -60,6 +62,13 @@ export function patternRunRepo(db: Db) {
         [projectId, slug, plan.sandboxView, plan.statements, testSql, actor]
       );
       return rows[0].id;
+    },
+
+    async markRemoved(projectId: string, sandboxView: string) {
+      await db.query(
+        'UPDATE gsb.pattern_run SET removed_at = now() WHERE project_id = $1 AND sandbox_view = $2 AND removed_at IS NULL',
+        [projectId, sandboxView]
+      );
     },
 
     async finish(id: string, status: 'passed' | 'failed', rows: number, detail: string) {
@@ -148,11 +157,12 @@ export function registerPatternRoutes(
     '/api/projects/:id/patterns/:slug/try/drop',
     handle(async (req) => {
       const { statements } = validateSchema.parse(req.body);
-      const { actor, project, pattern } = await target(req);
+      const { actor, project, pattern, plan } = await target(req);
       const cleanup = (await runs.latest(project.id)).find((r) => r.slug === pattern.slug)?.cleanup ?? [];
       if (!cleanup.length || !sameStatements(statements, cleanup))
         throw new HttpError(409, 'The SQL changed since you reviewed it. Review it again.');
       for (const s of cleanup) await runStatement(s, { actor, projectId: project.id, approved: true }, runFor(req));
+      await runs.markRemoved(project.id, plan.sandboxView);
       return { removed: true };
     })
   );

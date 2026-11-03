@@ -163,6 +163,8 @@ describe.skipIf(!url)('projectRepo on Postgres', () => {
     const ranking = (await patternRuns.latest(p.id)).find((r) => r.slug === 'ranking');
     expect(ranking).toMatchObject({ status: 'passed', rows: 12, testSql: 'SELECT 2' });
     expect(ranking?.cleanup).toEqual(['DROP VIEW IF EXISTS `a`.`b`.`pattern_ranking__gsb_12345678`']);
+    await patternRuns.markRemoved(p.id, plan.sandboxView);
+    expect((await patternRuns.latest(p.id)).find((r) => r.slug === 'ranking')?.cleanup).toEqual([]);
     const audit = await pool.query(
       "SELECT count(*)::int AS n FROM gsb.audit_log WHERE project_id = $1 AND action = 'try_pattern'",
       [p.id]

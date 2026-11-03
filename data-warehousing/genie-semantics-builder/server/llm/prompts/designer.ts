@@ -129,7 +129,7 @@ export type ApplyOutput = z.infer<typeof applyOutput>;
 
 export const applyPatternPrompt: ToolPrompt<ApplyOutput> = {
   id: 'designer.apply_pattern',
-  version: 1,
+  version: 2,
   system: `${SYSTEM.replace(
     '- Do not use window functions, subqueries or semicolons.',
     '- Use window measures (the window field) and OVER () only where the pattern does. Do not use subqueries or semicolons.'
@@ -137,7 +137,7 @@ export const applyPatternPrompt: ToolPrompt<ApplyOutput> = {
 You receive a metric view pattern written for sample data. Adapt the same technique to the project tables.
 - Map every pattern role to a project column. When no project column fits a role, set mappedTo to null and explain why. Do not invent tables.
 - The pattern can use SQL query sources for reference data. The project design must use project tables only.
-- Keep the pattern's measures and their meaning. Rename fields to the business terms of the brief.`,
+- Include an adapted measure for every measure of the pattern, with the same window settings and meaning. Rename fields to the business terms of the brief.`,
   tool: {
     name: 'submit_adapted_metric_view',
     description: 'Submit the adapted metric view design, the role mapping, explanations and test cases.',

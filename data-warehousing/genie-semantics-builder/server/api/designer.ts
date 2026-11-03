@@ -274,9 +274,11 @@ export function registerDesignerRoutes(
           `No project column fits ${missing.map((r) => `${r.role} (${r.reason})`).join('; ')}. Add a source that has it, then try again.`
         );
       const design = fromModel(out, ctx);
+      const current = (await repo.view(ctx.project.id)).draft;
       const roles = out.roles.map((r) => `${r.role}: ${r.mappedTo ?? ''}`).join('; ');
       await repo.add(ctx.actor, ctx.project.id, {
         ...design,
+        name: current?.name ?? design.name,
         explanations: {
           ...design.explanations,
           summary: `Adapted from the pattern "${pattern.title}". Roles: ${roles}. ${design.explanations.summary}`,
@@ -414,23 +416,36 @@ export function registerDesignerRoutes(
       const results = await Promise.all(
         draft.tests.map(async (test): Promise<TestResult> => {
           const measureSql = measureQuery(plan.sandboxView, test);
-          const expandedSql = expandedQuery(view, test);
+          // Window measures have no plain SQL form; compare the other columns and say so.
+          const plain = test.measures.filter((m) => expandedQuery(view, { ...test, measures: [m] }) !== null);
+          const skipped = test.measures.filter((m) => !plain.includes(m));
+          const expandedSql = plain.length ? expandedQuery(view, { ...test, measures: plain }) : null;
+          const note = skipped.length
+            ? ` ${skipped.join(', ')} ran but plain SQL cannot express them, so they were not compared.`
+            : '';
           try {
             const [actual, expected] = await Promise.all([
               runStatement(measureSql, { ...ctx, approved: false }, run),
               expandedSql ? runStatement(expandedSql, { ...ctx, approved: false }, run) : null,
             ]);
-            const columns = [...test.dimensions, ...test.measures];
             if (!expected)
               return {
                 name: test.name,
                 status: 'passed',
                 rows: actual.rows.length,
-                detail: 'The query ran. Plain SQL cannot express this measure, so values were not compared.',
+                detail: `The query ran.${note}`,
                 measureSql,
                 expandedSql,
               };
-            return { name: test.name, ...compareRows(columns, actual.rows, expected.rows), measureSql, expandedSql };
+            const columns = [...test.dimensions, ...plain];
+            const all = [...test.dimensions, ...test.measures];
+            const keep = columns.map((c) => all.indexOf(c));
+            const result = compareRows(
+              columns,
+              actual.rows.map((r) => keep.map((i) => r[i] ?? null)),
+              expected.rows
+            );
+            return { name: test.name, ...result, detail: `${result.detail}${note}`, measureSql, expandedSql };
           } catch (err) {
             return {
               name: test.name,

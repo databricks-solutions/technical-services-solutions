@@ -33,3 +33,22 @@ export interface Pattern extends PatternMeta {
   yaml: string;
   expected: Expected;
 }
+
+export interface PatternRun {
+  slug: string;
+  status: 'running' | 'passed' | 'failed';
+  sandboxView: string;
+  /** Rows compared. Result values are never stored. */
+  rows: number;
+  detail: string | null;
+  testSql: string;
+  /** Approved statement that removes the sandbox view. */
+  cleanup: string[];
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface PatternPlan {
+  sandboxView: string;
+  statements: string[];
+}

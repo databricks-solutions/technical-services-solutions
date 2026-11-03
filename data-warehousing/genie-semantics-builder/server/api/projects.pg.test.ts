@@ -6,6 +6,7 @@ import { projectRepo } from './projects';
 import { designerRepo } from './designer';
 import type { NewDraft } from './designer';
 import { readinessRepo } from './readiness';
+import { patternRunRepo } from './patterns';
 import type { BriefOutput } from '../llm/prompts/brief';
 
 // Runs only against a throwaway Postgres: TEST_DATABASE_URL=postgres://... pnpm test
@@ -33,6 +34,7 @@ describe.skipIf(!url)('projectRepo on Postgres', () => {
   const repo = projectRepo(pool as never);
   const readiness = readinessRepo(pool as never);
   const designer = designerRepo(pool as never);
+  const patternRuns = patternRunRepo(pool as never);
 
   beforeAll(async () => {
     await pool.query('DROP SCHEMA IF EXISTS gsb CASCADE');
@@ -143,5 +145,45 @@ describe.skipIf(!url)('projectRepo on Postgres', () => {
     });
     expect(done.draft?.status).toBe('validated');
     expect((await designer.view(p.id, 1)).validation).toBeNull();
+  });
+
+  it('keeps the latest pattern run per pattern, with metadata only', async () => {
+    const p = await repo.create('a@x.com', { name: 'Patterns' });
+    const plan = { sandboxView: 'a.b.pattern_ranking__gsb_12345678', statements: ['CREATE ...'] };
+    const first = await patternRuns.start('a@x.com', p.id, 'ranking', plan, 'SELECT 1');
+    await patternRuns.finish(first, 'failed', 0, 'boom');
+    const second = await patternRuns.start('a@x.com', p.id, 'ranking', plan, 'SELECT 2');
+    const other = await patternRuns.start('a@x.com', p.id, 'funnel', { ...plan, sandboxView: 'a.b.f' }, 'SELECT 3');
+    expect((await patternRuns.latest(p.id)).map((r) => [r.slug, r.status, r.cleanup])).toEqual([
+      ['funnel', 'running', []],
+      ['ranking', 'running', []],
+    ]);
+    await patternRuns.finish(second, 'passed', 12, '12 rows match the expected output.');
+    await patternRuns.finish(other, 'failed', 0, 'x');
+    const ranking = (await patternRuns.latest(p.id)).find((r) => r.slug === 'ranking');
+    expect(ranking).toMatchObject({ status: 'passed', rows: 12, testSql: 'SELECT 2' });
+    expect(ranking?.cleanup).toEqual(['DROP VIEW IF EXISTS `a`.`b`.`pattern_ranking__gsb_12345678`']);
+    const audit = await pool.query(
+      "SELECT count(*)::int AS n FROM gsb.audit_log WHERE project_id = $1 AND action = 'try_pattern'",
+      [p.id]
+    );
+    expect(audit.rows[0]).toEqual({ n: 3 });
+    await expect(patternRuns.start('a@x.com', p.id, 'Bad-Slug', plan, 'SELECT 1')).rejects.toMatchObject({
+      code: '23514',
+    });
+  });
+
+  it('accepts drafts that come from a pattern', async () => {
+    const p = await repo.create('a@x.com', { name: 'From pattern' });
+    const draft: NewDraft = {
+      name: 'v',
+      yaml: 'version: 1.1',
+      explanations: { summary: '', measures: {}, dimensions: {} },
+      tests: [],
+      issues: [],
+      origin: 'pattern',
+    };
+    await designer.add('a@x.com', p.id, draft);
+    expect((await designer.view(p.id)).draft?.origin).toBe('pattern');
   });
 });

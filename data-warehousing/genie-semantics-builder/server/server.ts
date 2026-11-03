@@ -5,6 +5,8 @@ import { loadMigrations, migrate } from './db/migrate';
 import { registerCatalogRoutes } from './api/catalog';
 import { registerProjectRoutes } from './api/projects';
 import { registerDesignerRoutes } from './api/designer';
+import { registerPatternRoutes } from './api/patterns';
+import { loadPatterns } from './patterns/library';
 import { registerReadinessRoutes } from './api/readiness';
 import { servingDeps } from './llm/llm';
 import { warehouseDeps } from './sql/runner';
@@ -15,6 +17,10 @@ createApp({
   async onPluginsReady(appkit) {
     const applied = await migrate(appkit.lakebase.pool, await loadMigrations(path.resolve('server/db/migrations')));
     console.log(applied.length ? `Applied migrations: ${applied.join(', ')}` : 'Database schema is up to date');
+
+    const { patterns, skipped } = await loadPatterns(path.resolve('patterns'));
+    console.log(`Loaded ${patterns.length} patterns`);
+    for (const s of skipped) console.warn(`Skipped pattern ${s}`);
 
     const pool = appkit.lakebase.pool;
     const asUser =
@@ -28,6 +34,7 @@ createApp({
       registerCatalogRoutes(app, runFor);
       registerReadinessRoutes(app, pool, llmFor, runFor);
       registerDesignerRoutes(app, pool, llmFor, runFor);
+      registerPatternRoutes(app, pool, patterns, runFor);
     });
   },
 }).catch((err: unknown) => {

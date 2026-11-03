@@ -103,7 +103,8 @@ const same = (a: string | null, b: string | null) => {
 export function compareRows(
   columns: string[],
   actual: (string | null)[][],
-  expected: (string | null)[][]
+  expected: (string | null)[][],
+  against = 'plain SQL'
 ): Pick<TestResult, 'status' | 'rows' | 'detail'> {
   const rows = Math.min(actual.length, MAX_TEST_ROWS);
   const capped = actual.length > MAX_TEST_ROWS ? ` First ${MAX_TEST_ROWS} rows compared.` : '';
@@ -111,13 +112,13 @@ export function compareRows(
     return {
       status: 'failed',
       rows,
-      detail: `The metric view returned ${actual.length} rows; plain SQL returned ${expected.length}.`,
+      detail: `The metric view returned ${actual.length} rows; ${against} has ${expected.length}.`,
     };
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < columns.length; c++) {
       if (!same(actual[r]?.[c] ?? null, expected[r]?.[c] ?? null))
-        return { status: 'failed', rows, detail: `Row ${r + 1}, column ${columns[c]} differs from plain SQL.` };
+        return { status: 'failed', rows, detail: `Row ${r + 1}, column ${columns[c]} differs from ${against}.` };
     }
   }
-  return { status: 'passed', rows, detail: `${rows} rows match plain SQL.${capped}` };
+  return { status: 'passed', rows, detail: `${rows} rows match ${against}.${capped}` };
 }

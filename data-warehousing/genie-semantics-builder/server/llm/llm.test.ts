@@ -37,7 +37,6 @@ function deps(replies: unknown[]) {
     },
     sleep: () => Promise.resolve(),
     log: (e) => events.push(e),
-    trace: (_name, _attrs, fn) => fn(),
   };
   return { d, payloads, events };
 }

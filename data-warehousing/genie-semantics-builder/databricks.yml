@@ -45,6 +45,15 @@ resources:
           serving_endpoint:
             name: ${var.serving_endpoint_name}
             permission: CAN_QUERY
+        # Metadata-only traces of model calls, written by the app service principal.
+        - name: experiment
+          experiment:
+            experiment_id: ${resources.experiments.traces.id}
+            permission: CAN_EDIT
+
+  experiments:
+    traces:
+      name: ${workspace.root_path}/genie-semantics-builder-traces
 
 # Workspace host comes from the CLI profile: databricks bundle deploy -t dev --profile <PROFILE>
 # Set per-target values with --var or BUNDLE_VAR_<name> environment variables.

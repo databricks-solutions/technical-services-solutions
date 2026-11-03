@@ -1,5 +1,6 @@
 import { getExecutionContext, isInUserContext } from '@databricks/appkit';
 import { z } from 'zod';
+import { logTrace } from './mlflow';
 
 export interface ToolPrompt<T> {
   /** Stable id and version, logged with every call so outputs trace back to a template. */
@@ -28,7 +29,6 @@ export interface LlmDeps {
   sleep(ms: number): Promise<void>;
   /** Metadata only. Prompt and response content are never logged. */
   log(event: LlmEvent): void;
-  trace<R>(name: string, attributes: Record<string, string | number>, fn: () => Promise<R>): Promise<R>;
 }
 
 interface Message {
@@ -125,48 +125,46 @@ export async function callTool<T>(prompt: ToolPrompt<T>, userContent: string, de
     }
   };
 
-  return deps.trace(`llm.${prompt.id}`, { 'prompt.version': prompt.version, endpoint }, async () => {
-    try {
-      for (let repair = 0; repair < 2; repair++) {
-        const reply = await send();
-        const call = reply.choices[0].message.tool_calls?.find((c) => c.function.name === prompt.tool.name);
-        let problem: string;
-        if (!call) {
-          problem = `You did not call the ${prompt.tool.name} tool.`;
-        } else {
-          let args: unknown;
-          try {
-            args = JSON.parse(call.function.arguments);
-          } catch {
-            args = undefined;
-          }
-          const result = prompt.tool.schema.safeParse(args);
-          if (result.success) {
-            finish('ok');
-            return result.data;
-          }
-          problem = `The ${prompt.tool.name} arguments were invalid: ${z.prettifyError(result.error)}`;
+  try {
+    for (let repair = 0; repair < 2; repair++) {
+      const reply = await send();
+      const call = reply.choices[0].message.tool_calls?.find((c) => c.function.name === prompt.tool.name);
+      let problem: string;
+      if (!call) {
+        problem = `You did not call the ${prompt.tool.name} tool.`;
+      } else {
+        let args: unknown;
+        try {
+          args = JSON.parse(call.function.arguments);
+        } catch {
+          args = undefined;
         }
-        messages.push(
-          {
-            role: 'assistant',
-            content: call ? `Called ${prompt.tool.name} with invalid arguments.` : 'Answered in text.',
-          },
-          {
-            role: 'user',
-            content: `${problem} Call the ${prompt.tool.name} tool again with arguments that match its schema.`,
-          }
-        );
+        const result = prompt.tool.schema.safeParse(args);
+        if (result.success) {
+          finish('ok');
+          return result.data;
+        }
+        problem = `The ${prompt.tool.name} arguments were invalid: ${z.prettifyError(result.error)}`;
       }
-      finish('invalid');
-      throw new Error(`The model did not return valid ${prompt.tool.name} output`);
-    } catch (err) {
-      if (!(err instanceof Error && err.message.startsWith('The model did not return valid'))) {
-        finish('error', (err as { statusCode?: number }).statusCode?.toString() ?? (err as Error).name);
-      }
-      throw err;
+      messages.push(
+        {
+          role: 'assistant',
+          content: call ? `Called ${prompt.tool.name} with invalid arguments.` : 'Answered in text.',
+        },
+        {
+          role: 'user',
+          content: `${problem} Call the ${prompt.tool.name} tool again with arguments that match its schema.`,
+        }
+      );
     }
-  });
+    finish('invalid');
+    throw new Error(`The model did not return valid ${prompt.tool.name} output`);
+  } catch (err) {
+    if (!(err instanceof Error && err.message.startsWith('The model did not return valid'))) {
+      finish('error', (err as { statusCode?: number }).statusCode?.toString() ?? (err as Error).name);
+    }
+    throw err;
+  }
 }
 
 /** Production wiring: calls the serving endpoint as the calling user (OBO). */
@@ -189,7 +187,9 @@ export function servingDeps(runAsUser: <R>(fn: () => Promise<R>) => Promise<R>):
       });
     },
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-    log: (event) => console.log(JSON.stringify({ llm: event })),
-    trace: (_name, _attrs, fn) => fn(),
+    log: (event) => {
+      console.log(JSON.stringify({ llm: event }));
+      logTrace(event);
+    },
   };
 }

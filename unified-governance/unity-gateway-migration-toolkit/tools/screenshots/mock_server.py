@@ -524,6 +524,11 @@ def _apply_items(scan_id, endpoints, execute, smoke=True):
                 items.append(dict(type="model_provider_service", name=ps, action="exists"))
             else:
                 items.append(dict(type="model_provider_service", name=ps, action="created" if execute else "would_create"))
+        if name == os.environ.get("MOCK_MANUAL_ENDPOINT"):
+            # MOCK_MANUAL_ENDPOINT=<name> makes one endpoint need a person, so its dry run ends NEEDS_ATTENTION.
+            items.append(dict(type="model_service", name=p["target_service"], action="manual",
+                              reason="mock: this endpoint needs a person"))
+            continue
         if p["target_status"] == "exists":
             items.append(dict(type="model_service", name=p["target_service"], action="exists"))
         else:
@@ -541,7 +546,8 @@ def _apply_record(mode, scan_id, endpoints, who, started_dt, operation, dry_run_
     return {
         "apply_id": apply_id or _new_id(), "job_run_id": _job_id(), "requested_by": who, "scan_run_id": scan_id,
         "mode": mode, "endpoints": ",".join(ep), "target_catalog": TARGET_CATALOG, "target_schema": TARGET_SCHEMA,
-        "rollback_of": None, "status": "SUCCEEDED", "summary": _summary(items), "error": None,
+        "rollback_of": None, "status": "NEEDS_ATTENTION" if any(i.get("action") == "manual" for i in items) else "SUCCEEDED",
+        "summary": _summary(items), "error": None,
         "started_at": sql_ts(started_dt), "finished_at": sql_ts(started_dt + timedelta(seconds=41)),
         "operation": operation, "services": None, "api_type": None, "_items": items, "_dry_run_id": dry_run_id,
         "_resumed": False,

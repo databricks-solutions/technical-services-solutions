@@ -313,7 +313,7 @@ Apply creates provider services, model services and grants for **external model*
 
 *The execute dialog: type EXECUTE, then click the button that names what will be created.*
 
-Execute needs a successful dry run of the **same** selection and options, from the last 24 hours. Click **Execute**, then type `EXECUTE`. **Check the new services after creating them** is on by default. It reads each service back but makes no inference call, so run a [test call](#step-4-test-call) to prove a request works.
+Execute needs a successful dry run of the **same** selection and options, from the last 24 hours. A dry run that ends **Needs attention** (some rows `manual`) doesn't unlock Execute: the page names the endpoints that need a person, and **Deselect** removes them from the selection. Dry run the rest again, and fix the others separately. Click **Execute**, then type `EXECUTE`. **Check the new services after creating them** is on by default. It reads each service back but makes no inference call, so run a [test call](#step-4-test-call) to prove a request works.
 
 The run ends `SUCCEEDED`, or `NEEDS_ATTENTION` if any item needs a look ([Result actions](#result-actions)). Fix the cause and run again. Existing objects are skipped.
 
@@ -705,6 +705,8 @@ The Overview charts each snapshot, and each chart has a **View data** table.
 | Scans (one scan) | **Readiness report**, **Code fixes**, **Summary** (Markdown); **Endpoint plan**, **Callers**, **All references**, **Provider services** (CSV) |
 | Apply (one run) | **Export results (CSV)** |
 | Verify and cut over | **Export CSV** (Unity Gateway traffic); **Export results (CSV)** (one run) |
+
+The run lists on Apply and Verify & cut over show the latest 5 runs by default (plus any that are running or open). **Executes and rollbacks** hides dry runs, and **All** shows every run with a filter.
 
 Exports read the results as you, stop at 200,000 rows, and set `X-Truncated: true` when cut off. While a file is prepared the button shows **Preparing export…**, then **Downloaded**; an error appears next to the button.
 

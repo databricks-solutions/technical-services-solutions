@@ -1,6 +1,6 @@
 import { ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import { ageDays, api, fmt, isUnknownId, jobRunning, JobState, kindLabel, plural, relativeAge, sentence, useApi, useJob, usePollWhileRunning } from "./api";
-import { Badge, Card, Confirm, CopyButton, Elapsed, Empty, ErrorBox, ErrorState, ExportLink, JobLine, Notice, NavButton, PageHeader, Reason, Skeleton, SkeletonCard, SkeletonTable, Table } from "./ui";
+import { Badge, Card, Confirm, CopyButton, Elapsed, Empty, ErrorBox, ErrorState, ExportLink, JobLine, Notice, NavButton, PageHeader, Reason, Skeleton, SkeletonCard, SkeletonTable, Table, useRunView } from "./ui";
 
 const NOT_READY = ["INCOMPLETE", "BLOCKED"];
 
@@ -15,6 +15,7 @@ export default function Apply({ scanRunId, setScanRunId, operator, active = true
   const selectedScan = succeeded.find((s) => s.run_id === scanRunId);
   const runningApply = (history.data || []).find((a) => a.status === "RUNNING");
   const [openApply, setOpenApply] = useState<string | null>(null);
+  const runView = useRunView<any>(history.data || [], (r) => r.apply_id === openApply);
   const [focusApply, setFocusApply] = useState(false);
   const [detailKey, setDetailKey] = useState(0);
   useEffect(() => {
@@ -60,7 +61,8 @@ export default function Apply({ scanRunId, setScanRunId, operator, active = true
       )}
       <Card title="History" actions={<button className="btn secondary sm" onClick={() => { if (!history.loading) history.reload(); }} aria-disabled={history.loading || undefined}>Reload</button>}>
         {history.loading && !history.data ? <SkeletonTable rows={3} label="Loading apply history" /> : history.error ? <ErrorState error={history.error} onRetry={history.reload} /> : (
-          <Table label="Apply history" rows={history.data || []} rowCurrent={(r) => r.apply_id === openApply}
+          <div className="stack-sm">{runView.controls}
+          <Table label="Apply history" rows={runView.shown} pageSize={runView.view === "all" ? 15 : 25} search={runView.view === "all"} rowCurrent={(r) => r.apply_id === openApply}
                  empty={<Empty title="No apply runs yet">Dry runs, executes and rollbacks appear here.</Empty>} columns={[
             { key: "started_at", label: "Started", render: (r) => <button className="btn link" onClick={() => openRun(r.apply_id)} aria-label={`Open ${r.mode.replace("_", " ")} run from ${String(r.started_at).slice(0, 16)}`}>{String(r.started_at).slice(0, 16)}</button> },
             { key: "mode", label: "Mode", render: (r) => <Badge value={r.mode} tone={r.mode === "execute" ? "bad" : r.mode === "rollback" ? "warn" : "info"} /> },
@@ -70,6 +72,7 @@ export default function Apply({ scanRunId, setScanRunId, operator, active = true
             { key: "summary", label: "Result", sortable: false, render: (r) => <Summary s={r.summary} /> },
             { key: "requested_by", label: "By" },
           ]} />
+          </div>
         )}
       </Card>
       {openApply && <ApplyDetail key={`${openApply}-${detailKey}`} operator={operator} applyId={openApply} focus={focusApply}
@@ -189,6 +192,8 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
   const [lastMode, setLastMode] = useState<"dry_run" | "execute">("dry_run");
   // The last dry run that succeeded, with the selection it was run for. Execute needs one that matches.
   const [dry, setDry] = useState<{ applyId: string; sig: string } | null>(null);
+  // A dry run that ended NEEDS_ATTENTION: the endpoints whose rows need a person (manual, skipped or error).
+  const [attention, setAttention] = useState<{ sig: string; endpoints: string[] } | null>(null);
   const pending = useRef<{ applyId: string; sig: string; mode: string } | null>(null);
   const candidates = useMemo(() => (data?.plan || []).filter((p: any) => p.action === "create_model_service"), [data]);
   const secrets: string[] = useMemo(() => {
@@ -236,7 +241,21 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
     pending.current = null;
     onDone();
     if (p?.mode === "dry_run" && s.result === "SUCCESS") {
-      api<any>(`/api/applies/${p.applyId}`).then((d) => { if (d.meta?.status === "SUCCEEDED") setDry({ applyId: p.applyId, sig: p.sig }); }).catch(() => { /* the dry run stays unconfirmed */ });
+      api<any>(`/api/applies/${p.applyId}`).then((d) => {
+        if (d.meta?.status === "SUCCEEDED") { setDry({ applyId: p.applyId, sig: p.sig }); setAttention(null); return; }
+        if (d.meta?.status !== "NEEDS_ATTENTION") return;
+        // Map each model service row that needs a person back to its legacy endpoint, through the names shown here.
+        const byService: Record<string, string> = {};
+        candidates.forEach((c: any) => { byService[String(retarget(c.target_service)).toLowerCase()] = c.legacy_endpoint; });
+        const blocked = new Set<string>();
+        (d.items || []).forEach((i: any) => {
+          if (i.type === "model_service" && ["manual", "skipped", "error"].includes(i.action)) {
+            const ep = byService[String(i.name || "").toLowerCase()];
+            if (ep) blocked.add(ep);
+          }
+        });
+        setAttention({ sig: p.sig, endpoints: Array.from(blocked).sort() });
+      }).catch(() => { /* the dry run stays unconfirmed */ });
     }
   });
   // Reload during a dry run or execute: resume its progress. Its result counts for the selection shown now (the server checks it again).
@@ -278,7 +297,11 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
   const execReasons = [
     ...baseReasons,
     needsAck && !ack && "Tick the guardrails acknowledgement first.",
-    !dryOk && "Run a dry run with this selection first.",
+    !dryOk && (attention && attention.sig === sig
+      ? (attention.endpoints.length
+        ? `The dry run needs a person for ${attention.endpoints.length === 1 ? "1 endpoint" : `${attention.endpoints.length} endpoints`} (${attention.endpoints.join(", ")}): see the rows marked manual below. Deselect ${attention.endpoints.length === 1 ? "it" : "them"} or fix ${attention.endpoints.length === 1 ? "it" : "them"}, then dry run again.`
+        : "The dry run needs attention: check the rows marked manual, error or kept below, fix them, then dry run again.")
+      : "Run a dry run with this selection first."),
   ].filter(Boolean) as string[];
   const dryDisabled = dryReasons.length > 0 || busy;
   const execDisabled = execReasons.length > 0 || busy;
@@ -440,6 +463,13 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
           </div>
           {dryReasons.length > 0 && <Reason id="apply-dry-reason">Dry run is unavailable. {dryReasons.join(" ")}</Reason>}
           {execReasons.length > 0 && <Reason id="apply-exec-reason">Execute is unavailable. {execReasons.join(" ")}</Reason>}
+          {!dryOk && attention && attention.sig === sig && attention.endpoints.length > 0 && operator && (
+            <button className="btn secondary sm" onClick={() => {
+              const next = new Set(chosen);
+              attention.endpoints.forEach((e) => next.delete(e));
+              setChosen(next);
+            }}>Deselect {attention.endpoints.length === 1 ? "it" : `these ${attention.endpoints.length}`}</button>
+          )}
           {dry && dry.sig === sig && <p className="small">Dry run checked. Execute does exactly what it showed.</p>}
           {jobId && <JobLine state={job} label={lastMode === "execute" ? "Execute" : "Dry run"} done="See the run below for every object." />}
           {err && <ErrorBox error={err} title={lastMode === "execute" ? "Couldn't start the execute" : "Couldn't start the dry run"} />}

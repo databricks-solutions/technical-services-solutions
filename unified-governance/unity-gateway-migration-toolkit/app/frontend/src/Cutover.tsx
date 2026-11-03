@@ -1,6 +1,6 @@
 import { ReactNode, useEffect, useId, useMemo, useState } from "react";
 import { api, ageDays, callerLabel, fmt, humanize, isUnknownId, kindLabel, plural, relativeAge, sentence, useApi, useJob, usePollWhileRunning } from "./api";
-import { Badge, Card, Confirm, CopyButton, Empty, ErrorBox, ErrorState, ExportLink, HowToEnforce, JobLine, NavButton, Notice, PageHeader, Reason, Skeleton, SkeletonTable, Table } from "./ui";
+import { Badge, Card, Confirm, CopyButton, Empty, ErrorBox, ErrorState, ExportLink, HowToEnforce, JobLine, NavButton, Notice, PageHeader, Reason, Skeleton, SkeletonTable, Table, useRunView } from "./ui";
 import type { Column } from "./ui";
 
 /* Verify and cut over: the runbook's verify and cut-over steps, in order (1 to 6), run from this page.
@@ -801,12 +801,14 @@ function EnforceStep({ scan, enforceTraffic, maxAge }: { scan: any; enforceTraff
 function RunHistory({ operator, runs }: { operator: boolean; runs: any }) {
   const [open, setOpen] = useState<string | null>(null);
   const rows: any[] = runs.data || [];
+  const runView = useRunView<any>(rows, (r) => r.apply_id === open);
   return (
     <Card title="Verify and cut-over runs" actions={<button className="btn secondary sm" onClick={() => { if (!runs.loading) runs.reload(); }} aria-disabled={runs.loading || undefined}>Reload</button>}>
       {runs.loading && !runs.data ? <SkeletonTable rows={3} label="Loading runs" />
         : runs.error ? <ErrorState error={runs.error} onRetry={runs.reload} />
         : (
-          <Table label="Verify and cut-over runs" rows={rows} rowCurrent={(r) => r.apply_id === open}
+          <div className="stack-sm">{runView.controls}
+          <Table label="Verify and cut-over runs" rows={runView.shown} pageSize={runView.view === "all" ? 15 : 25} search={runView.view === "all"} rowCurrent={(r) => r.apply_id === open}
                  empty={<Empty title="No runs yet">Test calls, pauses, tracking changes and resumes appear here.</Empty>} columns={[
             { key: "started_at", label: "Started", render: (r) => <button className="btn link" onClick={() => setOpen(r.apply_id)} aria-label={`Open ${OPERATION_LABEL[r.operation] || r.operation} run from ${stamp(r.started_at)}`}>{stamp(r.started_at)}</button> },
             { key: "operation", label: "Step", render: (r) => OPERATION_LABEL[r.operation] || humanize(r.operation) },
@@ -816,6 +818,7 @@ function RunHistory({ operator, runs }: { operator: boolean; runs: any }) {
             { key: "summary", label: "Result", sortable: false, render: (r) => <span className="small">{summaryLine(r.summary) || "-"}</span> },
             { key: "requested_by", label: "By", hideOnPhone: true },
           ]} />
+          </div>
         )}
       {open && <RunDetail applyId={open} onClose={() => setOpen(null)} />}
     </Card>

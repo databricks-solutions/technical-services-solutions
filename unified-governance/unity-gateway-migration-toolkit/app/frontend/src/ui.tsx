@@ -645,3 +645,24 @@ export function Confirm({ word, title, action, body, onConfirm, onCancel, busy }
     </div>
   );
 }
+
+/** Keeps a run list short: the latest runs by default (plus any that are running or open), executes and rollbacks
+ *  only, or everything. Older runs stay one click away. */
+export function useRunView<T extends Record<string, any>>(rows: T[], keep: (r: T) => boolean, recent = 5) {
+  const [view, setView] = useState<"recent" | "changes" | "all">("recent");
+  const changes = (r: T) => r.mode === "execute" || r.mode === "rollback";
+  const shown = view === "all" ? rows
+    : view === "changes" ? rows.filter((r) => changes(r) || keep(r))
+    : rows.filter((r, i) => i < recent || keep(r) || r.status === "RUNNING" || r.status === "STARTING");
+  const hidden = rows.length - shown.length;
+  const options: [typeof view, string][] = [["recent", "Recent"], ["changes", "Executes and rollbacks"], ["all", `All (${rows.length})`]];
+  const controls = rows.length > recent ? (
+    <div className="row small" role="group" aria-label="Which runs to show">
+      {options.map(([v, label]) => (
+        <button key={v} className={`btn sm ${view === v ? "" : "secondary"}`} aria-pressed={view === v} onClick={() => setView(v)}>{label}</button>
+      ))}
+      {hidden > 0 && <span className="muted">{hidden === 1 ? "1 older run hidden" : `${hidden} older runs hidden`}</span>}
+    </div>
+  ) : null;
+  return { shown, controls, view };
+}

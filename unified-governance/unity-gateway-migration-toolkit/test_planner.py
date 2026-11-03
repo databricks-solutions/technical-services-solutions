@@ -1334,6 +1334,10 @@ def test_calls_in_mlflow_model_code_point_at_the_custom_endpoint():
     by_line = {r.line: r for r in s.refs}
     assert "MLflow model code (class Churn)" in by_line[6].suggestion and "custom endpoint churn-model" in by_line[6].suggestion
     assert "MLflow model code" not in by_line[8].suggestion
+    # The note must not demote the call: it still breaks under Enforce (regression found on the sim, Nov 3).
+    r = m.readiness(rows, s.refs, True, 30, eps)
+    blocked = {b["item"] for b in r["blockers"] if b["type"] == "unresolved_endpoint_call"}
+    assert {"/setup:6", "/setup:8"} <= blocked
     assert m.model_classes("\n\nclass A(PythonModel):\n    x = 1\n\ny = 2") == {"A": (3, 5)}
 
 

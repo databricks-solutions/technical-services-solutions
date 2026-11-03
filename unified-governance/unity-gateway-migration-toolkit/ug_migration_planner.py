@@ -2665,7 +2665,7 @@ def readiness(rows: list[PlanRow], refs: list[ClientReference], traffic_ok: bool
                                   "ai_query calls a model with no Unity Gateway service yet",
                                   "keep this call, or switch it to a system.ai model (see CODE_FIXES.md)"))
         elif x.pattern == "serving_endpoints_url" and not x.legacy_endpoint \
-                and x.suggestion == DYNAMIC_URL_SUGGESTION and retiring:
+                and x.suggestion.startswith(DYNAMIC_URL_SUGGESTION) and retiring:  # notes (model code) may follow
             # The name is built at run time, so the scan can't tell whether this call reaches a legacy endpoint.
             # With legacy endpoints in the workspace that is an unknown caller, so it holds readiness back.
             blockers.append(_flag("unresolved_endpoint_call", loc,

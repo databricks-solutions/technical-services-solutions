@@ -14,7 +14,7 @@ variables:
 # The repo root .gitignore matches *conf*.json; bundle sync skips those unless included here.
 sync:
   include:
-    - tsconfig*.json
+    - /tsconfig*.json
 
 resources:
   apps:

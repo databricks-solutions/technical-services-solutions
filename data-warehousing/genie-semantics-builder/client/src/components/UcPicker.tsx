@@ -61,11 +61,14 @@ function NameSelect({
 /** Catalog and schema dropdowns, limited to what the signed-in user can access. */
 export function CatalogSchemaSelect({
   idPrefix,
+  purpose = 'browse',
   catalog,
   schema,
   onChange,
 }: {
   idPrefix: string;
+  /** publish: only regular catalogs and schemas where the user can create tables. */
+  purpose?: 'browse' | 'publish';
   catalog?: string;
   schema?: string;
   onChange: (catalog: string | undefined, schema: string | undefined) => void;
@@ -75,7 +78,7 @@ export function CatalogSchemaSelect({
       <NameSelect
         id={`${idPrefix}_catalog`}
         label="Catalog"
-        path="/api/uc/catalogs"
+        path={`/api/uc/catalogs?purpose=${purpose}`}
         value={catalog}
         onChange={(c) => onChange(c, undefined)}
       />
@@ -84,7 +87,7 @@ export function CatalogSchemaSelect({
           key={catalog}
           id={`${idPrefix}_schema`}
           label="Schema"
-          path={`/api/uc/schemas?catalog=${q(catalog)}`}
+          path={`/api/uc/schemas?catalog=${q(catalog)}&purpose=${purpose}`}
           value={schema}
           onChange={(s) => onChange(catalog, s)}
         />

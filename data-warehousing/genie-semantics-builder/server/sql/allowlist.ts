@@ -71,7 +71,10 @@ const DDL_PATTERNS = [
 const MAX_LENGTH = 200_000;
 
 const READ_HEAD = /^(?:EXPLAIN(?:\s+(?:EXTENDED|FORMATTED|COST))?\s+)?(?:SELECT|WITH)\b/i;
-const DESCRIBE = new RegExp(`^DESCRIBE\\s+(?:TABLE\\s+)?(?:EXTENDED\\s+)?${OBJ}$`, 'i');
+const DESCRIBE = new RegExp(
+  `^DESCRIBE\\s+(?:(?:TABLE\\s+)?(?:EXTENDED\\s+)?${OBJ}|CATALOG\\s+(?:EXTENDED\\s+)?${ID})$`,
+  'i'
+);
 const WRITE_KEYWORD =
   /\b(?:INSERT|UPDATE|DELETE|MERGE|CREATE|DROP|ALTER|TRUNCATE|GRANT|REVOKE|COPY|OPTIMIZE|VACUUM|REFRESH)\b/i;
 

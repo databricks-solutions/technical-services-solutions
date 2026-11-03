@@ -25,6 +25,7 @@ describe('checkStatement accepts the allowlist', () => {
     ['read', "SELECT 'DROP TABLE x; --' AS s"],
     ['read', 'DESCRIBE TABLE EXTENDED samples.tpch.orders'],
     ['read', 'describe `my-catalog`.tpch.orders'],
+    ['read', 'DESCRIBE CATALOG EXTENDED `my-catalog`'],
     ['ddl', "COMMENT ON TABLE `sandbox`.`gsb`.`orders` IS 'It\\'s a \\\\ test'"],
     ['ddl', "COMMENT ON TABLE samples.tpch.orders IS 'Customer orders'"],
     ['ddl', "COMMENT ON COLUMN sandbox.gsb.orders.o_orderkey IS 'it''s the key'"],
@@ -85,6 +86,7 @@ describe('checkStatement rejects everything else', () => {
     ['too many name parts', "COMMENT ON TABLE a.b.c.d IS 'y'"],
     ['optimize', 'OPTIMIZE a.b.c'],
     ['describe history', 'DESCRIBE HISTORY a.b.c'],
+    ['describe catalog with schema', 'DESCRIBE CATALOG a.b'],
     ['copy into', "COPY INTO a.b.c FROM 's3://x'"],
   ])('%s', (_label, sql) => {
     expect(() => checkStatement(sql)).toThrow(StatementRejected);

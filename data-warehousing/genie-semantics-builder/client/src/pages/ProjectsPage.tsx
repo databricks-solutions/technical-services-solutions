@@ -69,9 +69,12 @@ function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void
         </div>
         <div role="group" aria-labelledby="gsb-project-target-label">
           <FormUI.Label id="gsb-project-target-label">Target location</FormUI.Label>
-          <FormUI.Hint>Where metric views will be published.</FormUI.Hint>
+          <FormUI.Hint>
+            Where metric views will be published. Only schemas where you can create tables are listed.
+          </FormUI.Hint>
           <CatalogSchemaSelect
             idPrefix="target"
+            purpose="publish"
             catalog={form.targetCatalog}
             schema={form.targetSchema}
             onChange={(targetCatalog, targetSchema) => setForm((prev) => ({ ...prev, targetCatalog, targetSchema }))}

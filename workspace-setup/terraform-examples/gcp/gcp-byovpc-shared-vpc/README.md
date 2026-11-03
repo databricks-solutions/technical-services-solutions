@@ -9,10 +9,10 @@ Provisions a Databricks workspace on GCP using an **existing or shared VPC** —
 - Databricks MWS Network referencing the existing VPC/subnet
 - Databricks Workspace attached to that network
 - Admin user added to the workspace and assigned to the `admins` group
-- *(Optional)* Unity Catalog metastore assignment, if `metastore_id` is provided
+- Unity Catalog metastore (created when `metastore_id` is empty, or an existing metastore is assigned)
 - GCS buckets for workspace cloud storage (created automatically by Databricks)
 
-> **Not created:** VPC, subnet, or metastore — these are referenced as-is and remain untouched on `terraform destroy`.
+> **Not created:** VPC and subnet — these are referenced as-is and remain untouched on `terraform destroy`. An existing metastore (when `metastore_id` is set) is also left untouched.
 
 ---
 
@@ -38,7 +38,7 @@ Provisions a Databricks workspace on GCP using an **existing or shared VPC** —
 - A Google Service Account (GSA) with `roles/Owner` on the service project
 - A Databricks Account — [Subscribe from GCP Marketplace](https://docs.databricks.com/gcp/en/admin/account-settings-gcp/create-subscription)
 - An existing VPC and subnet (names + project ID where they reside)
-- *(Optional)* An existing Unity Catalog metastore ID
+- *(Optional)* An existing Unity Catalog metastore ID when attaching instead of creating
 
 ---
 
@@ -81,7 +81,8 @@ cp terraform.tfvars.example terraform.tfvars
 | `vpc_network_project_id` | string | Yes | Project ID where the VPC resides. Set equal to `google_project_name` if VPC is in the same project |
 | `vpc_name` | string | Yes | Name of the existing VPC network |
 | `subnet_name` | string | Yes | Name of the existing subnet |
-| `metastore_id` | string | No | Unity Catalog metastore ID. Leave empty (`""`) for auto-create/auto-assign behavior |
+| `metastore_id` | string | No | Existing Unity Catalog metastore ID. Leave empty to create a new metastore |
+| `metastore_name` | string | No | Name for a new metastore. Defaults to `<workspace>-metastore` |
 
 **Same project vs. Shared VPC:**
 
@@ -117,9 +118,8 @@ Also ensure:
 
 Metastores are **region-specific** — one per region per Databricks account.
 
-- **First workspace in a region:** Databricks auto-creates a metastore and assigns it. Leave `metastore_id` empty.
-- **Auto-assign enabled:** If *"Automatically assign new workspaces to this metastore"* is on in the Account Console, the metastore is assigned automatically. Leave `metastore_id` empty.
-- **Manual assignment needed:** If auto-assign is off, or you need a specific metastore, provide its ID in `metastore_id`.
+- **Create a new metastore:** Leave `metastore_id` empty. Terraform creates a metastore named `metastore_name` (or `<workspace>-metastore`) and assigns it to the workspace. This fails if a metastore already exists for the region.
+- **Attach an existing metastore:** Set `metastore_id` to that metastore's ID. Terraform only assigns it; destroy does not delete the metastore.
 
 ---
 
@@ -149,7 +149,8 @@ vpc_network_project_id = "<vpc-host-project>"
 vpc_name               = "<existing-vpc-name>"
 subnet_name            = "<existing-subnet-name>"
 
-metastore_id = ""  # Leave empty for auto-create/auto-assign
+metastore_id   = ""
+metastore_name = ""
 ```
 
 #### 3. With CLI flags
@@ -187,7 +188,7 @@ After `apply` completes, retrieve outputs:
 
 ```bash
 terraform output -raw workspace_url
-terraform output metastore_assignment
+terraform output -raw metastore_id
 ```
 
 ---
@@ -232,7 +233,7 @@ gcloud compute networks subnets describe <SUBNET_NAME> --region <REGION> --proje
 terraform destroy
 ```
 
-This removes the Databricks workspace, MWS network reference, metastore assignment (if created), and admin user. The existing VPC, subnet, and metastore are **not affected**.
+This removes the Databricks workspace, MWS network reference, metastore assignment, admin user, and any metastore created by this project. The existing VPC, subnet, and an attached existing metastore are **not affected**.
 
 ---
 

@@ -5,11 +5,12 @@ with an LLM advisor behind every step and a human approval in front of every cha
 
 ## Modules
 
-| Module                                                                      | Status    |
-| --------------------------------------------------------------------------- | --------- |
-| Intent & Context: Semantic Brief draft, refine, confirm                     | Available |
-| Source Readiness: checks, AI scoring, approval-gated metadata fixes         | Available |
-| Metric Designer, Optimizer, Migration & Drift, Playground, Publish & Govern | Planned   |
+| Module                                                                    | Status    |
+| ------------------------------------------------------------------------- | --------- |
+| Intent & Context: Semantic Brief draft, refine, confirm                   | Available |
+| Source Readiness: checks, AI scoring, approval-gated metadata fixes       | Available |
+| Metric Designer: AI design, YAML editor, join diagram, sandbox validation | Available |
+| Optimizer, Migration & Drift, Playground, Publish & Govern                | Planned   |
 
 ## Security model
 
@@ -26,6 +27,9 @@ with an LLM advisor behind every step and a human approval in front of every cha
   as the user, and is written to an append-only audit log before and after execution.
 - **No content in telemetry.** Logs and MLflow traces hold prompt id and version, latency, tokens and
   outcome. Prompts, responses and catalog details stay inside the app.
+- **Validation stays in a sandbox.** Draft metric views are created only in the schema set by the
+  `sandbox_schema` bundle variable, never in a name from the request. Tests are reads. Only pass or fail,
+  row counts and the SQL are stored, never result values.
 - **Untrusted input stays data.** User text and catalog metadata go to the model inside delimited
   `untrusted_data` blocks. Model output is validated against a schema and repaired once at most.
 
@@ -46,6 +50,23 @@ with an LLM advisor behind every step and a human approval in front of every cha
    ```
 
    Apply primary keys before the foreign keys that reference them.
+
+## Demo: TPC-H (phase b)
+
+Start from a project with a confirmed brief and assessed sources (phase a).
+
+1. **Metric Designer > Generate design.** The AI reads the brief and the live table metadata. It returns
+   a structure, and the app writes the YAML. Expect `lineitem` as the fact table and the snowflake
+   `orders > customer > nation > region`. Measures: Net Revenue, Order Count, and Average Order Value as a ratio
+   of the two.
+2. **Review.** The join tree flags joins whose target has no declared primary key, because those joins can
+   count rows twice. Each measure shows its type (additive, not additive, ratio) and a plain explanation.
+3. **Edit.** Change a column name in the YAML and select **Save version**. The server checks every
+   column against the tables and reports the line. Ask the AI for a change, for example "add Gross Revenue
+   without discount". Every change adds a version.
+4. **Validate in sandbox.** Review the exact `CREATE OR REPLACE VIEW ... WITH METRICS` statement and run it.
+   Each test case runs as a `MEASURE()` query and as plain SQL that the app derives from the YAML. Open a test
+   to see both queries. The version becomes **Validated** when every test matches.
 
 ## Prerequisites
 
@@ -168,6 +189,9 @@ pnpm run format:fix
 ```
 
 ## Deployment with Databricks Asset Bundles
+
+The app command and environment are set in `databricks.yml` (`resources.apps.app.config`), not in
+`app.yaml`. Set `sandbox_schema` per target to a `catalog.schema` where app users can create views.
 
 ### 1. Configure Bundle
 

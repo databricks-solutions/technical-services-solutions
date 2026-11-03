@@ -367,8 +367,8 @@ Pausing sets the endpoint's rate limit to 0 calls a minute and keeps its other s
 
 A test call shows that a model service answers a request. It is **billable**: one small request per service.
 
-- **Services.** Pick 1 to 10 model services as `catalog.schema.name`, or type a name the plan doesn't list.
-- **API type.** Chat completions (`mlflow/v1/chat/completions`, the default), Responses (`openai/v1/responses`) or Embeddings (`mlflow/v1/embeddings`). Use the type your callers use.
+- **Services.** Pick 1 to 10 model services as `catalog.schema.name`, or type a name the plan doesn't list. The list includes the services your apply runs created (in any target schema) and the `system.ai` services the plan uses. Planned services that weren't created yet are shown greyed out ("not created yet"); a typed name that doesn't exist comes back as **Not created yet**.
+- **API type.** **Auto** (the default) tests each service on its own type: chat completions, else Responses, else embeddings, so one run can mix chat and embedding services. Or pick Chat completions (`mlflow/v1/chat/completions`), Responses (`openai/v1/responses`) or Embeddings (`mlflow/v1/embeddings`) to match what your callers use.
 - **Prompt.** One line, up to 200 characters. The default is `Reply with: ok`.
 - **Dry run** sends no requests. It checks that each service exists and lists its API types. Results: `would_test`, `test_failed` or `refused`.
 - **Execute** by typing `TEST`. It sends one request per service, with a 120-second timeout and no retry. Results show the HTTP status, request ID, latency and a reply excerpt (at most 200 characters). Auth headers and tokens are never recorded.

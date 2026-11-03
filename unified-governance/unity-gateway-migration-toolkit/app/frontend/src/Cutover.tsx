@@ -9,7 +9,8 @@ import type { Column } from "./ui";
 
 export const WINDOWS = [["24h", "Last 24 hours"], ["7d", "Last 7 days"], ["30d", "Last 30 days"]] as const;
 const API_TYPES = [
-  ["mlflow/v1/chat/completions", "Chat completions (default)"],
+  ["auto", "Auto: each service's own type (default)"],
+  ["mlflow/v1/chat/completions", "Chat completions"],
   ["openai/v1/responses", "Responses"],
   ["mlflow/v1/embeddings", "Embeddings"],
 ] as const;
@@ -23,12 +24,12 @@ const OPERATION_LABEL: Record<string, string> = {
 };
 const ACTION_TONE: Record<string, string> = {
   test_ok: "good", paused: "good", resumed: "good", tracking_enabled: "good", would_test: "info", would_pause: "info",
-  would_resume: "info", would_enable_tracking: "info", test_failed: "bad", error: "bad", mismatch: "bad", refused: "warn",
+  would_resume: "info", would_enable_tracking: "info", test_failed: "bad", error: "bad", mismatch: "bad", refused: "warn", missing: "warn",
   kept: "warn", already_enabled: "neutral", already_paused: "neutral", already_resumed: "neutral", already_gone: "neutral",
   skipped: "neutral",
 };
 const ACTION_LABEL: Record<string, string> = {
-  test_ok: "Answered", test_failed: "Failed", refused: "Refused", paused: "Paused", resumed: "Resumed",
+  test_ok: "Answered", test_failed: "Failed", missing: "Not created yet", refused: "Refused", paused: "Paused", resumed: "Resumed",
   tracking_enabled: "Tracking on", already_enabled: "Tracking already on", would_enable_tracking: "Would turn on",
   would_test: "Would test", would_pause: "Would pause", would_resume: "Would resume", already_paused: "Already paused",
   already_resumed: "Already resumed", already_gone: "Endpoint gone", kept: "Kept", skipped: "Skipped", error: "Error",
@@ -618,10 +619,11 @@ function TestStep({ operator, services, scanId, jobsRunAs, onDone }: { operator:
               <fieldset className="panel">
                 <legend>Services from the scan plan</legend>
                 {listed.map((s: any) => (
-                  <label key={s.name} className="choice">
-                    <input type="checkbox" checked={chosen.has(s.name)} disabled={!operator}
+                  <label key={s.name} className={`choice${s.exists ? "" : " muted"}`}>
+                    <input type="checkbox" checked={chosen.has(s.name)} disabled={!operator || !s.exists}
+                           aria-describedby={s.exists ? undefined : `svc-missing-${s.name}`}
                            onChange={(e) => { const c = new Set(chosen); if (e.target.checked) c.add(s.name); else c.delete(s.name); setChosen(c); }} />
-                    <span><code>{s.name}</code> {s.exists && <Badge value="exists" tone="good" />} <span className="small muted">from {s.from}</span></span>
+                    <span><code>{s.name}</code> {s.exists ? <Badge value="exists" tone="good" /> : <span id={`svc-missing-${s.name}`} className="small">not created yet: apply it first</span>} {s.from && <span className="small muted">from {s.from}</span>}</span>
                   </label>
                 ))}
               </fieldset>

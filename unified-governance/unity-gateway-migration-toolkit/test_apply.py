@@ -1092,7 +1092,7 @@ def test_test_call_failures_and_refusals_are_reported_and_need_attention(tmp_pat
     w = CutoverW([], services={SVC: [API_CHAT]})
     log = str(tmp_path / "x.jsonl")
     missing = a.run_test_calls(w, ["c.s.missing"], API_CHAT, "p", True, log, APPLY, post=_post(FakeResp(body=CHAT_OK)))
-    assert missing[0]["action"] == "test_failed" and "not found" in missing[0]["reason"]
+    assert missing[0]["action"] == "missing" and "not created yet" in missing[0]["reason"]
     unsupported = a.run_test_calls(w, [SVC], "openai/v1/responses", "p", True, log, APPLY,
                                    post=_post(FakeResp(body=CHAT_OK)))
     assert unsupported[0]["action"] == "refused" and "does not support" in unsupported[0]["reason"]
@@ -1634,3 +1634,19 @@ def test_fingerprint_includes_the_create_secrets_flag():
 def test_an_endpoint_with_no_secret_reference_explains_the_plaintext_case():
     with pytest.raises(a.Manual, match="plaintext API key"):
         a.Secrets(None, {}, False).resolve(None)
+
+
+def test_test_call_auto_picks_each_services_own_api_type(tmp_path):
+    w = CutoverW([], services={"c.s.chat": [API_CHAT, "openai/v1/chat/completions"], "c.s.embed": ["mlflow/v1/embeddings"],
+                               "c.s.odd": ["openai/v1/completions"]})
+    post = _post([FakeResp(body=CHAT_OK), FakeResp(body={"data": [{"embedding": [0.1, 0.2]}]})])
+    log = str(tmp_path / "x.jsonl")
+    dry = a.run_test_calls(w, ["c.s.chat", "c.s.embed", "c.s.odd"], a.API_TYPE_AUTO, "p", False, log, APPLY, post=post)
+    assert [(r["name"], r["action"], r.get("api_type")) for r in dry] == [
+        ("c.s.chat", "would_test", API_CHAT), ("c.s.embed", "would_test", "mlflow/v1/embeddings"),
+        ("c.s.odd", "refused", a.API_TYPE_AUTO)]
+    res = a.run_test_calls(w, ["c.s.chat", "c.s.embed"], a.API_TYPE_AUTO, "p", True, log, APPLY, post=post)
+    assert [r["action"] for r in res] == ["test_ok", "test_ok"]
+    assert post.calls[0]["url"].endswith("/ai-gateway/mlflow/v1/chat/completions")
+    assert post.calls[1]["url"].endswith("/ai-gateway/mlflow/v1/embeddings") and post.calls[1]["json"]["input"] == "p"
+    assert a.resolve_api_type("auto") == "auto"

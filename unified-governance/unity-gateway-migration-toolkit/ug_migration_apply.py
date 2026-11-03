@@ -109,7 +109,8 @@ CREATED_ACTIONS = ("created", "creating", "created_secret")
 OWNED_ACTIONS = ("created", "creating", "exists", "updated", "created_secret")  # actions that put an object in a rollback log
 USE_ACTIONS = ("created", "creating", "exists", "updated", "created_secret")  # actions that keep an object in use (protection)
 # Item actions that make a run NEEDS_ATTENTION. Shared by the job (run status) and the store (rolled back).
-PROBLEM_ACTIONS = ("error", "manual", "mismatch", "kept", "needs_attention", "smoke_failed", "test_failed", "refused")
+PROBLEM_ACTIONS = ("error", "manual", "mismatch", "kept", "needs_attention", "smoke_failed", "test_failed", "refused",
+                   "missing")
 READY_STATES = ("ACTIVE", "READY", "ONLINE")
 STALE_RUN_HOURS = 12
 
@@ -1223,6 +1224,9 @@ OPERATIONS = ("apply", "test_call", "pause_legacy", "enable_tracking", "resume_l
 WRITE_LEGACY_OPERATIONS = ("pause_legacy", "enable_tracking", "resume_legacy")  # one at a time per workspace
 API_TYPES = ("mlflow/v1/chat/completions", "openai/v1/responses", "mlflow/v1/embeddings")
 DEFAULT_API_TYPE = API_TYPES[0]
+# "auto" picks each service's own API type (chat, then responses, then embeddings), so one run can test a mix.
+API_TYPE_AUTO = "auto"
+TEST_API_TYPES = (API_TYPE_AUTO, *API_TYPES)
 DEFAULT_PROMPT = "Reply with: ok"
 MAX_PROMPT_CHARS = 200
 MAX_TEST_SERVICES = 10  # toolkit cap per test run (each service gets one billable request)
@@ -1316,9 +1320,16 @@ def pause_traffic_refusal(name: str, recent_requests: dict | None, force: bool =
 
 def resolve_api_type(value) -> str:
     v = (value or "").strip() or DEFAULT_API_TYPE
-    if v not in API_TYPES:
-        raise ValueError(f"api_type must be one of {', '.join(API_TYPES)}, not {v!r}")
+    if v not in TEST_API_TYPES:
+        raise ValueError(f"api_type must be one of {', '.join(TEST_API_TYPES)}, not {v!r}")
     return v
+
+
+def pick_api_type(requested: str, supported: list[str]) -> str | None:
+    """The API type to test a service on: the requested one, or with "auto" the first of API_TYPES it supports."""
+    if requested != API_TYPE_AUTO:
+        return requested if requested in supported else None
+    return next((t for t in API_TYPES if t in supported), None)
 
 
 def resolve_prompt(value) -> str:
@@ -1403,22 +1414,26 @@ def run_test_calls(w: WorkspaceClient, services: list[str], api_type: str, promp
         import requests
         post = requests.post
     url_base = w.config.host.rstrip("/")
-    path_for = f"/ai-gateway/{api_type}"
+    requested = api_type
     for svc in services:
         try:
             ms = w.ai_gateway.get_model_service(name=f"model-services/{svc}")
         except NotFound:
-            a.log(type="model_service", name=svc, action="test_failed",
-                  reason="not found or not visible to this identity")
+            a.log(type="model_service", name=svc, action="missing",
+                  reason="not created yet, or not visible to this identity: apply it first, or check the name")
             continue
         except Exception as e:
             a.log(type="model_service", name=svc, action="test_failed", reason=f"could not read: {str(e)[:300]}")
             continue
         supported = list(ms.supported_api_types or [])
-        if api_type not in supported:
-            a.log(type="model_service", name=svc, action="refused", api_type=api_type,
-                  reason=f"does not support {api_type}", supported_api_types=supported)
+        api_type = pick_api_type(requested, supported)
+        if api_type is None:
+            a.log(type="model_service", name=svc, action="refused", api_type=requested,
+                  reason=(f"does not support {requested}" if requested != API_TYPE_AUTO
+                          else f"supports none of the API types the toolkit can test ({', '.join(API_TYPES)})"),
+                  supported_api_types=supported)
             continue
+        path_for = f"/ai-gateway/{api_type}"
         if not execute:
             a.log(type="model_service", name=svc, action="would_test", api_type=api_type, path=path_for)
             continue

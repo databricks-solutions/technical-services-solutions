@@ -92,8 +92,11 @@ function Summary({ s }: { s: string }) {
 
 /** A result row's details: its reason or issues, the grants it lists, and what the new service doesn't get. */
 function itemDetails(i: any): string {
-  const grants = Array.isArray(i.grants) ? i.grants.map((g: any) => `${g.principal}: ${(g.privileges || []).join("+")}`).join(", ") : "";
-  const parts = [i.reason || (i.issues || []).join("; "), grants && (i.action === "kept" ? `Kept: ${grants}` : grants)];
+  // Granted rows list what this run added (the prior grants stay as they were); kept rows list what stays.
+  const list = Array.isArray(i.added) && i.action !== "kept" ? i.added : i.grants;
+  const grants = Array.isArray(list) ? list.map((g: any) => `${g.principal}: ${(g.privileges || []).join("+")}`).join(", ") : "";
+  const label = i.action === "kept" ? "Kept" : i.action === "granted" ? "Granted" : i.action === "would_grant" ? "Would grant" : "";
+  const parts = [i.reason || (i.issues || []).join("; "), grants && (label ? `${label}: ${grants}` : grants)];
   if (Array.isArray(i.not_carried_over) && i.not_carried_over.length) parts.push(`Not carried over: ${i.not_carried_over.join(", ")}`);
   return parts.filter(Boolean).join("; ");
 }

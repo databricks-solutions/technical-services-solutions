@@ -1199,8 +1199,8 @@ def _cutover_params(body: CutoverRequest) -> dict[str, str]:
         if bad:
             raise HTTPException(400, f"Service names look like catalog.schema.name, not {bad[0]!r}")
         api_type = (body.api_type or "").strip() or DEFAULT_API_TYPE
-        if api_type not in API_TYPES:
-            raise HTTPException(400, f"API type must be one of {', '.join(API_TYPES)}")
+        if api_type not in apply_rules.TEST_API_TYPES:
+            raise HTTPException(400, f"API type must be one of {', '.join(apply_rules.TEST_API_TYPES)}")
         prompt = (body.prompt or "").strip() or DEFAULT_PROMPT
         if len(prompt) > MAX_PROMPT_CHARS:
             raise HTTPException(400, f"The prompt is {len(prompt)} characters; the limit is {MAX_PROMPT_CHARS}")
@@ -1488,14 +1488,44 @@ def cutover_services(request: Request, scan_run_id: str = "") -> dict:
     if not scan:
         return {"scan_run_id": None, "source": "scan plan", "services": []}
     plan, _ = _scan_items(request, scan)
+    created = _created_services(request)
     seen: dict[str, dict] = {}
     for p in plan:
         t = str(p.get("target_service") or "")
         if t and SERVICE_NAME_RE.fullmatch(t) and t not in seen:
             seen[t] = {"name": t, "from": p.get("legacy_endpoint"), "plan": p.get("action"),
-                       "exists": p.get("target_status") == "exists"}
-    return {"scan_run_id": scan["run_id"], "source": "scan plan",
-            "services": sorted(seen.values(), key=lambda s: s["name"])}
+                       # system.ai services are provided by Databricks, so they exist whether or not the scan could check.
+                       "exists": p.get("target_status") == "exists" or t.lower() in created
+                                 or t.lower().startswith("system.ai.") or p.get("action") == "use_system_ai"}
+    # Services an apply created under another target than the scan's (the target is chosen in Apply).
+    for name, src in created.items():
+        if not any(k.lower() == name for k in seen):
+            seen[name] = {"name": name, "from": src, "plan": "create_model_service", "exists": True}
+    return {"scan_run_id": scan["run_id"], "source": "scan plan and apply runs",
+            "services": sorted(seen.values(), key=lambda s: (not s["exists"], s["name"]))}
+
+
+def _created_services(request: Request) -> dict[str, str | None]:
+    """Model services that an apply execute created (or found existing) and no rollback deleted since, lower-cased
+    name -> legacy endpoint. Read from the results tables, as of the last run that touched each service."""
+    rows = query(request, f"""
+        SELECT a.mode, a.started_at, i.payload
+        FROM {table('ug_migration_apply_items')} i JOIN {table('ug_migration_applies')} a ON a.apply_id = i.apply_id
+        WHERE a.mode IN ('execute', 'rollback') AND (a.operation IS NULL OR a.operation = 'apply')
+          AND get_json_object(i.payload, '$.type') = 'model_service'
+          AND get_json_object(i.payload, '$.action') IN ('created', 'exists', 'deleted')
+        ORDER BY a.started_at, i.seq""")
+    state: dict[str, str | None] = {}
+    for r in rows:
+        item = _load(r.get("payload"))
+        name = str(item.get("name") or "").lower()
+        if not name:
+            continue
+        if item.get("action") == "deleted":
+            state.pop(name, None)
+        else:
+            state[name] = item.get("legacy_endpoint") or item.get("from")
+    return state
 
 
 def _usage_rows(request: Request, service: str, window: str) -> tuple[str, list[dict]]:

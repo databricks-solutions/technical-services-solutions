@@ -32,8 +32,6 @@ jobs:
         with:
           python-version: '3.12'
 
-      - run: pip install --require-hashes -r .github/workflows/requirements-release-assets.txt
-
       # Build, attest, then publish, so no zip goes public without an attestation.
       - name: Build zips for changed assets
         run: python .github/scripts/release_assets.py build

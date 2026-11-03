@@ -11,6 +11,11 @@ variables:
   serving_endpoint_name:
     description: Serving endpoint name
 
+# The repo root .gitignore matches *conf*.json; bundle sync skips those unless included here.
+sync:
+  include:
+    - tsconfig*.json
+
 resources:
   apps:
     app:
@@ -22,6 +27,7 @@ resources:
       lifecycle:
         started: true
       user_api_scopes:
+        - sql
         - serving.serving-endpoints
 
       # The resources which this app has access to.

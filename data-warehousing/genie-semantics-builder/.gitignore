@@ -12,3 +12,6 @@ playwright-report/
 # Auto-generated types (endpoint-specific, varies per developer)
 shared/appkit-types/serving.d.ts
 
+
+# Repo root ignores *conf*.json; TypeScript configs are required to build.
+!tsconfig*.json

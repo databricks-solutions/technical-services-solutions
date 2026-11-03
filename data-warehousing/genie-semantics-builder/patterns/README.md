@@ -2,11 +2,11 @@
 
 Each folder is one pattern. The app loads every folder at startup and skips (with a log line) a folder that is not valid.
 
-| File | Content |
-| --- | --- |
-| `pattern.yml` | `title`, `category`, `scenario`, `question`, `roles` (the columns a user maps in "Apply to my data"), `test.query` with a `{{view}}` placeholder, optional `minDbr` |
-| `metric_view.yml` | The metric view YAML. Must pass the app's validator with no errors. |
-| `expected.json` | The test query result on the sample data. Do not edit by hand. |
+| File              | Content                                                                                                                                                             |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pattern.yml`     | `title`, `category`, `scenario`, `question`, `roles` (the columns a user maps in "Apply to my data"), `test.query` with a `{{view}}` placeholder, optional `minDbr` |
+| `metric_view.yml` | The metric view YAML. Must pass the app's validator with no errors.                                                                                                 |
+| `expected.json`   | The test query result on the sample data. Do not edit by hand.                                                                                                      |
 
 The folder name is the pattern id: lowercase letters, digits and `_`.
 

@@ -729,6 +729,60 @@ MANUAL_SUPPORTED_PROVIDERS = {"amazon-bedrock", "google-cloud-vertex-ai", "custo
 NO_UG_PROVIDERS = {"cohere", "ai21labs", "palm", "databricks-model-serving", "mistral"}
 
 
+def guardrail_settings(g: dict) -> list[str]:
+    """The legacy guardrails that are on, as short labels: "input PII → BLOCK", "output safety", "input keywords"."""
+    out = []
+    for side in ("input", "output"):
+        cfg = g.get(side) if isinstance(g, dict) else None
+        cfg = cfg if isinstance(cfg, dict) else {}
+        pii = cfg.get("pii")
+        if pii:
+            behavior = (pii.get("behavior") or "").upper() if isinstance(pii, dict) else ""
+            if behavior != "NONE":
+                out.append(f"{side} PII → {behavior or 'on'}")
+        if cfg.get("safety"):
+            out.append(f"{side} safety")
+        if cfg.get("invalid_keywords"):
+            out.append(f"{side} keywords")
+        if cfg.get("valid_topics"):
+            out.append(f"{side} topics")
+    return out
+
+
+def guardrail_consequence(g: dict) -> str:
+    """What callers lose when they move from the legacy endpoint to the new service, in plain words."""
+    does, reach = [], set()
+    for side in ("input", "output"):
+        cfg = g.get(side) if isinstance(g, dict) else None
+        cfg = cfg if isinstance(cfg, dict) else {}
+        what = "requests" if side == "input" else "responses"
+        pii = cfg.get("pii")
+        behavior = (pii.get("behavior") or "").upper() if isinstance(pii, dict) else ("BLOCK" if pii else "")
+        if behavior == "MASK":
+            does.append(f"masks PII in {what}")
+            reach.add(side)
+        elif behavior and behavior != "NONE":
+            does.append(f"blocks {what} that contain PII")
+            reach.add(side)
+        if cfg.get("safety"):
+            does.append(f"blocks unsafe {what}")
+            reach.add(side)
+        if cfg.get("invalid_keywords"):
+            does.append(f"blocks {what} with listed keywords")
+            reach.add(side)
+        if cfg.get("valid_topics"):
+            does.append(f"allows only listed topics in {what}")
+            reach.add(side)
+    if not does:
+        return "This endpoint has AI Gateway guardrails that the new service won't have. Re-create the protection " \
+               "on the service or in your callers before moving them."
+    listed = does[0] if len(does) == 1 else ", ".join(does[:-1]) + " and " + does[-1]
+    lands = " and ".join(p for p in (("those requests will reach the model" if "input" in reach else ""),
+                                     ("those responses will reach your callers" if "output" in reach else "")) if p)
+    return (f"This endpoint {listed} today ({'; '.join(guardrail_settings(g))}). The new service won't: {lands}. "
+            "Re-create the protection on the service or in your callers before moving them.")
+
+
 def _guardrail_advice(g: dict) -> str:
     """Suggest Unity Gateway service policies for legacy guardrails (not 1:1).
 
@@ -981,10 +1035,12 @@ def plan(endpoints: list[LegacyEndpoint], sys_map: dict[str, str], usage: dict[s
                                  "which the Unity Gateway wrapper routes to")
         if ep.guardrails:
             advice = _guardrail_advice(ep.guardrails)
+            consequence = guardrail_consequence(ep.guardrails)
             if ack_guardrails:
-                needs.append("guardrails acknowledged, not carried over: " + advice)
+                needs.append(f"guardrails acknowledged, not carried over: {consequence} Suggested: {advice}")
             else:
-                needs.append(BLOCKING_PREFIX + "guardrails not carried over: " + advice + "; " + GUARDRAIL_ACK_HINT)
+                needs.append(f"{BLOCKING_PREFIX}guardrails not carried over: {consequence} Suggested: {advice}; "
+                             f"{GUARDRAIL_ACK_HINT}")
         # Apply sends 0%-traffic destinations to the fallback, in listing order, and nothing else.
         zero = [d.get("served_entity") for d in ep.destinations if route_pct.get(d.get("served_entity")) == 0]
         routing = {"destinations": destinations}

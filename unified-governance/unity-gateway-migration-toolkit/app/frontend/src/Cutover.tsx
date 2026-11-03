@@ -20,15 +20,18 @@ const PASSING = ["READY", "READY_WITH_WARNINGS"];
 
 const OPERATION_LABEL: Record<string, string> = {
   test_call: "Test call", pause_legacy: "Pause endpoint", enable_tracking: "Usage tracking", resume_legacy: "Resume",
-  apply: "Apply",
+  guardrail_check: "Guardrail check", apply: "Apply",
 };
 const ACTION_TONE: Record<string, string> = {
+  still_protected: "good", protection_lost: "bad", check_failed: "bad", would_check: "info", not_applicable: "neutral",
   test_ok: "good", paused: "good", resumed: "good", tracking_enabled: "good", would_test: "info", would_pause: "info",
   would_resume: "info", would_enable_tracking: "info", test_failed: "bad", error: "bad", mismatch: "bad", refused: "warn", missing: "warn",
   kept: "warn", already_enabled: "neutral", already_paused: "neutral", already_resumed: "neutral", already_gone: "neutral",
   skipped: "neutral",
 };
 const ACTION_LABEL: Record<string, string> = {
+  still_protected: "Still protected", protection_lost: "Protection lost", check_failed: "Check failed",
+  would_check: "Would check", not_applicable: "Not applicable",
   test_ok: "Answered", test_failed: "Failed", missing: "Not created yet", refused: "Refused", paused: "Paused", resumed: "Resumed",
   tracking_enabled: "Tracking on", already_enabled: "Tracking already on", would_enable_tracking: "Would turn on",
   would_test: "Would test", would_pause: "Would pause", would_resume: "Would resume", already_paused: "Already paused",
@@ -227,7 +230,10 @@ export default function Cutover({ operator, maxScanAgeDays, jobsRunAs, active = 
       {panel("traffic", <TrafficCheck traffic={traffic} win={win} setWin={setWin} scanReady={!!scan} />)}
       {panel("tracking", <TrackingStep operator={operator} endpoints={endpoints} scanId={scanId} onDone={reloadAll} />)}
       {panel("pause", <PauseStep operator={operator} endpoints={endpoints} traffic={traffic} win={win} scanId={scanId} runs={runs} onDone={reloadAll} />)}
-      {panel("test", <TestStep operator={operator} services={services} scanId={scanId} jobsRunAs={jobsRunAs} onDone={runs.reload} />)}
+      {panel("test", <div className="stack">
+        <TestStep operator={operator} services={services} scanId={scanId} jobsRunAs={jobsRunAs} onDone={runs.reload} />
+        <GuardrailCheck operator={operator} scanId={scanId} onDone={runs.reload} />
+      </div>)}
       {panel("usage", <UsageStep />)}
       {panel("enforce", <EnforceStep scan={scan} enforceTraffic={enforceTraffic} maxAge={maxScanAgeDays} />)}
       {panel("runs", <RunHistory operator={operator} runs={runs} />)}
@@ -577,6 +583,78 @@ function PauseStep({ operator, endpoints, traffic, win, scanId, runs, onDone }: 
 }
 
 /* ---------- 4. Test call ---------- */
+
+/* ---------- 4b. Guardrail check ---------- */
+
+/** One probe's outcome for one side, in plain words. */
+const probeSide = (status: any, blocked: any) => (status == null ? "no answer" : blocked ? `blocked (${status})` : `${status}`);
+
+function GuardrailCheck({ operator, scanId, onDone }: { operator: boolean; scanId: string; onDone: () => void }) {
+  const pairsApi = useApi<any>(withScan("/api/cutover/guardrail-pairs", scanId));
+  const pairs: any[] = pairsApi.data?.pairs || [];
+  const [chosen, setChosen] = useState<Set<string>>(new Set());
+  const runner = useCutoverRun();
+  const [dry, setDry] = useState<{ applyId: string; sig: string } | null>(null);
+  const keyOf = (p: any) => `${p.legacy_endpoint}=${p.service}`;
+  const picked = pairs.filter((p) => chosen.has(keyOf(p)) && p.service_exists).map(keyOf).sort();
+  const sig = JSON.stringify({ op: "guardrail_check", p: picked });
+  const body = (mode: "dry_run" | "execute", dryId = "") => ({
+    operation: "guardrail_check", mode, endpoints: picked, scan_run_id: scanId, dry_run_id: dryId,
+    confirm: mode === "execute" ? "CHECK" : "",
+  });
+  const disabled = !picked.length ? "Choose at least one endpoint to check." : picked.length > 10 ? "Check at most 10 at a time." : runner.busy ? "A run is starting." : null;
+  return (
+    <Card title="Guardrail check" note="For migrated endpoints that had guardrails: does the new service still block what the legacy endpoint blocks?">
+      <p className="small">
+        Sends the same harmless requests to the legacy endpoint and to its new service: a control with no personal data, and one with a fake
+        email address (<code>jane.doe@example.com</code>) when the endpoint has an input PII guardrail. That's 2 to 4 small billable requests per
+        endpoint. Replies are stored as short excerpts with email addresses masked. Safety, keyword and topic guardrails are listed, not probed.
+      </p>
+      {pairsApi.loading && !pairsApi.data ? <SkeletonTable rows={2} label="Loading endpoints with guardrails" />
+        : pairsApi.error ? <ErrorState error={pairsApi.error} onRetry={pairsApi.reload} title="Couldn't load endpoints with guardrails" />
+        : pairs.length === 0 ? <p className="small muted">No endpoint in this scan's plan has guardrails, so there's nothing to check.</p>
+        : (
+          <div className="stack">
+            <fieldset className="panel">
+              <legend>Endpoints with guardrails</legend>
+              {pairs.map((p) => (
+                <label key={keyOf(p)} className={`choice${p.service_exists ? "" : " muted"}`}>
+                  <input type="checkbox" checked={chosen.has(keyOf(p))} disabled={!operator || !p.service_exists}
+                         onChange={(e) => { const c = new Set(chosen); if (e.target.checked) c.add(keyOf(p)); else c.delete(keyOf(p)); setChosen(c); setDry(null); }} />
+                  <span><code>{p.legacy_endpoint}</code> → <code>{p.service}</code> {!p.service_exists && <span className="small">not migrated yet: apply it first</span>}
+                    <div className="small muted">{p.consequence}</div></span>
+                </label>
+              ))}
+            </fieldset>
+            <DryRunPair id="guardrail" operator={operator} disabledReason={disabled} dry={dry} sig={sig} word="CHECK" label="Guardrail check"
+              confirmTitle="Guardrail check" confirmAction={`Check ${plural(picked.length, "endpoint")}`} busy={runner.busy}
+              confirmBody={<>
+                <p>Send the probes to each legacy endpoint and its new service:</p>
+                <ul className="small">{picked.map((k) => <li key={k}><code>{k.replace("=", " → ")}</code></li>)}</ul>
+                <p className="small">Up to 4 small billable requests per endpoint. Nothing is changed.</p>
+              </>}
+              onDryRun={async () => { const ok = await runner.start(body("dry_run"), sig); if (!ok) setDry(null); }}
+              onExecute={() => { runner.start(body("execute", dry?.applyId || ""), sig); }} />
+            <RunResult key={runner.run?.applyId} started={runner.run?.operation === "guardrail_check" ? runner.run : null} label="Guardrail check"
+              onDone={(m, s) => {
+                if (s?.mode === "dry_run" && m.status === "SUCCEEDED") setDry({ applyId: s.applyId, sig: s.sig });
+                if (s?.mode === "execute") onDone();
+              }}
+              columns={[
+                { key: "legacy_endpoint", label: "Legacy endpoint", render: (i) => <code className="wrap">{i.legacy_endpoint}</code> },
+                { key: "name", label: "New service", render: (i) => <code className="wrap">{i.service || i.name}</code> },
+                { key: "action", label: "Verdict", render: (i) => <Badge value={ACTION_LABEL[i.action] || humanize(i.action)} tone={ACTION_TONE[i.action] || "neutral"} /> },
+                { key: "probes", label: "Probes", sortable: false, render: (i) => Array.isArray(i.probes) && i.probes.length && typeof i.probes[0] === "object" ? (
+                  <ul className="small">{i.probes.map((p: any) => <li key={p.probe}>{p.probe === "pii" ? "With a fake email" : "Control"}: legacy {probeSide(p.legacy_status, p.legacy_blocked)}, service {probeSide(p.service_status, p.service_blocked)}</li>)}</ul>
+                ) : <span className="small">{Array.isArray(i.probes) ? `would send: ${i.probes.join(", ")}` : "-"}</span> },
+                { key: "reason", label: "Details", sortable: false, render: (i) => <span className="small">{[i.reason, i.note].filter(Boolean).join(". ")}</span> },
+              ]} />
+            {runner.err && <ErrorBox error={runner.err} title="Couldn't start the guardrail check" />}
+          </div>
+        )}
+    </Card>
+  );
+}
 
 function TestStep({ operator, services, scanId, jobsRunAs, onDone }: { operator: boolean; services: any; scanId: string; jobsRunAs?: string | null; onDone: () => void }) {
   const listed: any[] = services.data?.services || [];

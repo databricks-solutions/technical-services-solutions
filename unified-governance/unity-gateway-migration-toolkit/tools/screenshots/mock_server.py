@@ -284,7 +284,11 @@ def empty_overview():
 PLAN = [
     dict(legacy_endpoint="chat-gpt4o-proxy", kind="external_model", action="create_model_service",
          target_service=svc("chat-gpt4o-proxy"), target_status="missing", requests_window=1930,
-         needs_human=["BLOCKS APPLY: guardrails: PII filter and topic block are not migrated; re-create them as service policies"]),
+         needs_human=["BLOCKS APPLY: guardrails not carried over: This endpoint blocks requests that contain PII and "
+                      "allows only listed topics in requests today (input PII → BLOCK; input topics). The new service "
+                      "won't: those requests will reach the model. Re-create the protection on the service or in your "
+                      "callers before moving them. Suggested: input PII BLOCK: system.ai.detect_sensitive_data, block; "
+                      "input keywords/topics: custom service policy function"]),
     dict(legacy_endpoint="claims-summary-pt", kind="pt", action="create_model_service",
          target_service=svc("claims-summary-pt"), target_status="missing", requests_window=1740,
          needs_human=["Provisioned Throughput: confirm the throughput units before creating the service"]),
@@ -546,7 +550,7 @@ def _apply_record(mode, scan_id, endpoints, who, started_dt, operation, dry_run_
     return {
         "apply_id": apply_id or _new_id(), "job_run_id": _job_id(), "requested_by": who, "scan_run_id": scan_id,
         "mode": mode, "endpoints": ",".join(ep), "target_catalog": TARGET_CATALOG, "target_schema": TARGET_SCHEMA,
-        "rollback_of": None, "status": "NEEDS_ATTENTION" if any(i.get("action") == "manual" for i in items) else "SUCCEEDED",
+        "rollback_of": None, "status": "NEEDS_ATTENTION" if any(i.get("action") in ("manual", "protection_lost", "check_failed", "missing") for i in items) else "SUCCEEDED",
         "summary": _summary(items), "error": None,
         "started_at": sql_ts(started_dt), "finished_at": sql_ts(started_dt + timedelta(seconds=41)),
         "operation": operation, "services": None, "api_type": None, "_items": items, "_dry_run_id": dry_run_id,
@@ -750,6 +754,8 @@ def _handle_api(method, path, qs, body):
             return 200, _cutover_endpoints(qs)
         if path == "/api/cutover/services":
             return 200, _cutover_services(qs)
+        if path == "/api/cutover/guardrail-pairs":
+            return 200, _guardrail_pairs()
         if path == "/api/usage/summary":
             window = qs.get("window", "7d")
             if window not in WINDOW_SPAN:
@@ -904,13 +910,13 @@ def _start_apply(body):
     return {"apply_id": apply_id, "job_run_id": job}
 
 
-CUTOVER_WORD = {"test_call": "TEST", "enable_tracking": "ENABLE"}
+CUTOVER_WORD = {"test_call": "TEST", "enable_tracking": "ENABLE", "guardrail_check": "CHECK"}
 
 
 def _start_cutover(body):
     op = body.get("operation", "")
-    if op not in ("test_call", "pause_legacy", "enable_tracking", "resume_legacy"):
-        raise ApiError(400, "operation must be test_call, pause_legacy, enable_tracking or resume_legacy")
+    if op not in ("test_call", "pause_legacy", "enable_tracking", "resume_legacy", "guardrail_check"):
+        raise ApiError(400, "operation must be test_call, guardrail_check, pause_legacy, enable_tracking or resume_legacy")
     if op == "resume_legacy":
         if body.get("mode") != "execute":
             raise ApiError(400, "Resume runs as execute. There is no dry run for a resume.")
@@ -942,6 +948,10 @@ def _start_cutover(body):
         prompt = (body.get("prompt") or "").strip() or "Reply with: ok"
         if len(prompt) > 200 or any(ord(c) < 32 for c in prompt):
             raise ApiError(400, "The prompt must be one line of up to 200 characters")
+    elif op == "guardrail_check":
+        endpoints = sorted({e for e in body.get("endpoints", []) if e})
+        if not endpoints or any("=" not in e for e in endpoints):
+            raise ApiError(400, "guardrail pairs look like legacy_endpoint=catalog.schema.service")
     else:
         endpoints = sorted({e for e in body.get("endpoints", []) if e})
         if op == "pause_legacy" and len(endpoints) != 1:
@@ -962,6 +972,19 @@ def _start_cutover(body):
             items = [dict(type="model_service", name=s, action="test_ok", http_status=200,
                           latency_ms=380 + (sum(map(ord, s)) % 300), reply_excerpt="ok",
                           request_id=_new_id()) for s in services]
+    elif op == "guardrail_check":
+        for pair in endpoints:
+            legacy, _, service = pair.partition("=")
+            base = dict(type="guardrail_check", name=service, legacy_endpoint=legacy, service=service,
+                        guardrails=["input PII → BLOCK", "input topics"], note="Not probed: input topics (check those by hand)")
+            if mode == "dry_run":
+                items.append(dict(action="would_check", probes=["control", "pii"], requests=4, **base))
+            else:
+                items.append(dict(action="protection_lost", reason=f"{legacy} blocks a request with PII; {service} lets it "
+                                                                    "through to the model", probes=[
+                    dict(probe="control", legacy_status=200, legacy_blocked=False, service_status=200, service_blocked=False),
+                    dict(probe="pii", legacy_status=400, legacy_blocked=True, service_status=200, service_blocked=False)],
+                    **base))
     elif op == "pause_legacy":
         kind = PLAN_BY_NAME.get(endpoints[0], {}).get("kind", "external_model")
         items = [dict(type="serving_endpoint", name=endpoints[0], kind=kind,
@@ -979,6 +1002,17 @@ def _start_cutover(body):
         rec["endpoints"] = ""
     STATE["applies"].insert(0, rec)
     return {"apply_id": rec["apply_id"], "job_run_id": rec["job_run_id"], "operation": op, "mode": mode}
+
+
+def _guardrail_pairs():
+    out = []
+    for p in PLAN:
+        g = next((n for n in p.get("needs_human") or [] if n.removeprefix("BLOCKS APPLY: ").startswith("guardrails")), None)
+        if g:
+            text = g.removeprefix("BLOCKS APPLY: ")
+            out.append({"legacy_endpoint": p["legacy_endpoint"], "service": p["target_service"], "service_exists": True,
+                        "consequence": text.split(":", 1)[1].split(" Suggested:")[0].strip()})
+    return {"scan_run_id": (_latest_succeeded_scan() or {}).get("run_id"), "pairs": out}
 
 
 def _traffic(qs):

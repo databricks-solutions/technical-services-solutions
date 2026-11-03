@@ -11,6 +11,8 @@
 # MAGIC - `apply`, `mode = rollback`: deletes the objects an earlier execute run created (`rollback_of`).
 # MAGIC - `test_call`, `mode = dry_run | execute`: one small request per Model Service in `services` (`api_type`,
 # MAGIC   `prompt`). Dry run only validates the services; execute sends one billable request to each.
+# MAGIC - `guardrail_check`, `mode = dry_run | execute`: for each `legacy=catalog.schema.service` pair in `endpoints`,
+# MAGIC   sends the same harmless probes (a no-PII control, a fake email) to both and says whether protection was lost.
 # MAGIC - `pause_legacy`, `mode = dry_run | execute`: sets the endpoint rate limit of the legacy endpoints in
 # MAGIC   `endpoints` to 0 calls a minute, re-sending their other AI Gateway settings unchanged.
 # MAGIC - `enable_tracking`, `mode = dry_run | execute`: turns on usage tracking for `endpoints` (blank = every
@@ -99,6 +101,9 @@ if operation == "apply":
         bad = [e for e in endpoints if not re.fullmatch(NAME, e)]
         if bad or not re.fullmatch(NAME, g("target_catalog")) or not re.fullmatch(NAME, g("target_schema")):
             raise ValueError(f"bad endpoint, target catalog or target schema name {bad}")
+elif operation == "guardrail_check":
+    pairs = apply_mod.parse_guardrail_pairs(g("endpoints"))
+    endpoints = [f"{l}={s}" for l, s in pairs]
 elif operation == "test_call":
     services = apply_mod.parse_services(g("services"))
     api_type = apply_mod.resolve_api_type(g("api_type"))
@@ -231,6 +236,8 @@ try:
                                           force=flag("force"))
     elif operation == "test_call":
         results = apply_mod.run_test_calls(w, services, api_type, prompt, execute, log_path, apply_id)
+    elif operation == "guardrail_check":
+        results = apply_mod.run_guardrail_checks(w, pairs, execute, log_path, apply_id)
     elif operation == "pause_legacy":
         if execute:
             _check_no_other_legacy_write(w)

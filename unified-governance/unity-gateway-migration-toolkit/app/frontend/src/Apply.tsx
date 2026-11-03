@@ -102,6 +102,15 @@ function itemDetails(i: any): string {
 }
 
 const sortedObject = (o: Record<string, string>) => Object.fromEntries(Object.entries(o).sort(([a], [b]) => a.localeCompare(b)));
+/** The plan's plain-words consequence of losing an endpoint's guardrails ("This endpoint blocks requests that
+ *  contain PII today ... The new service won't: ..."), without the suggested service policies. */
+const guardrailConsequence = (p: any): string | null => {
+  const n = (Array.isArray(p.needs_human) ? p.needs_human : []).map((x: string) => String(x).replace(/^BLOCKS APPLY: /, ""))
+    .find((x: string) => x.startsWith("guardrails"));
+  if (!n) return null;
+  const text = n.includes(":") ? n.slice(n.indexOf(":") + 1) : n;
+  return text.split(" Suggested:")[0].trim();
+};
 const hasGuardrails = (p: any) => (Array.isArray(p.needs_human) ? p.needs_human : []).some((n: string) => String(n).replace(/^BLOCKS APPLY: /, "").startsWith("guardrails"));
 
 /** Unity Catalog name check for one secret: catalog.schema.name, in an allowed schema when the installer set a list. */
@@ -454,8 +463,15 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
           </div>
           {needsAck && (
             <div className="panel">
-              <Notice tone="warning">Some chosen endpoints have guardrails. Unity Gateway doesn't copy them 1:1: read the notes above and re-create them as service policies.</Notice>
-              <label className="choice"><input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} /> <span>I understand guardrails are not migrated</span></label>
+              <Notice tone="warning" title="The new services won't have these endpoints' guardrails">
+                <ul className="small">
+                  {candidates.filter((p: any) => chosen.has(p.legacy_endpoint) && hasGuardrails(p)).map((p: any) => (
+                    <li key={p.legacy_endpoint}><code>{p.legacy_endpoint}</code>: {guardrailConsequence(p)}</li>
+                  ))}
+                </ul>
+                After apply, <b>Verify &amp; cut over &gt; Guardrail check</b> compares the legacy endpoint and the new service with a harmless probe.
+              </Notice>
+              <label className="choice"><input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} /> <span>I understand that requests these guardrails block today will reach the model through the new services, until I re-create the protection</span></label>
             </div>
           )}
           <div className="row">
@@ -493,6 +509,15 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
                        <p>Create these model services (and the provider services they need) in <code>{target}</code>:</p>
                        <ul className="small">{candidates.filter((p: any) => chosen.has(p.legacy_endpoint)).slice(0, 12).map((p: any) => <li key={p.legacy_endpoint}><code>{retarget(p.target_service)}</code> from <code>{p.legacy_endpoint}</code></li>)}{chosen.size > 12 && <li>and {chosen.size - 12} more</li>}</ul>
                        <p className="small">Grants: <b>{grants ? "copied from legacy permissions" : "none"}</b>. Keys: <b>{secretMode === "uc" ? "Unity Catalog secret references" : secretMode === "create" ? "new Unity Catalog secrets created from the workspace secrets" : "copied from workspace secrets"}</b>.</p>
+                       {needsAck && (
+                         <Notice tone="warning" title="Guardrails don't carry over">
+                           <ul className="small">
+                             {candidates.filter((p: any) => chosen.has(p.legacy_endpoint) && hasGuardrails(p)).map((p: any) => (
+                               <li key={p.legacy_endpoint}><code>{p.legacy_endpoint}</code>: {guardrailConsequence(p)}</li>
+                             ))}
+                           </ul>
+                         </Notice>
+                       )}
                        <label className="choice"><input type="checkbox" checked={smokeTest} onChange={(e) => setSmokeTest(e.target.checked)} /> <span>Check the new services after creating them</span></label>
                        <Notice tone="warning" title="Rolling back later">
                          You can roll back from the history: it deletes the objects this run created (objects another run still uses are kept).

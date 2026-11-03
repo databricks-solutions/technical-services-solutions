@@ -302,7 +302,7 @@ Apply creates provider services, model services and grants for **external model*
 1. Choose a scan. A scan older than 14 days needs ticking **Apply with this older scan anyway**.
 2. Check the target. If the schema is missing or you lack `CREATE SERVICE`, the page shows the SQL and disables dry run and execute.
 3. Choose endpoints (only external and PT endpoints are offered) and enter provider keys, one row per workspace secret (`scope/key`).
-4. Set options. An endpoint with guardrails needs **I understand guardrails are not migrated**.
+4. Set options. An endpoint with AI Gateway guardrails blocks apply until you tick the acknowledgement. The plan note, the checkbox and the Execute dialog say what callers lose, for example: *This endpoint blocks requests that contain PII today (input PII → BLOCK). The new service won't: those requests will reach the model. Re-create the protection on the service or in your callers before moving them.* Check it afterwards with the [guardrail check](#guardrail-check).
 5. Click **Dry run**. It runs as a job and creates nothing.
 
 `would_*` rows say what execute would do. `manual` rows need a person: fix the input, then dry run again.
@@ -374,6 +374,14 @@ A test call shows that a model service answers a request. It is **billable**: on
 - **Execute** by typing `TEST`. It sends one request per service, with a 120-second timeout and no retry. Results show the HTTP status, request ID, latency and a reply excerpt (at most 200 characters). Auth headers and tokens are never recorded.
 - **Identity.** The call runs as the apply job's identity (you, or the run-as service principal), not as the person who clicks. The Test step and the About page show which one. It needs `EXECUTE` on each service plus `USE CATALOG` and `USE SCHEMA`.
 - **Check usage** looks up a request ID in `system.ai_gateway.usage`. It takes 20 to 30 minutes, so an empty result right after the call is expected.
+
+#### Guardrail check
+
+For migrated endpoints that had guardrails. It sends the same harmless requests to the legacy endpoint and its new service: a control with no personal data, and one with a fake email address (`jane.doe@example.com`) when the endpoint has an input PII guardrail. That's 2 to 4 small billable requests per endpoint; nothing is changed.
+
+- **Results:** **Protection lost** (the legacy endpoint blocks it, the new service lets it through), **Still protected**, **Not applicable**, or **Check failed** (the control request didn't succeed on both).
+- Replies are stored as short excerpts with email addresses masked. Safety, keyword and topic guardrails are listed, not probed.
+- Dry run first, then type `CHECK`. A paused legacy endpoint can't be compared, so resume it first. At most 10 endpoints per run.
 
 ### Step 5: Check Unity Gateway traffic
 
@@ -660,6 +668,7 @@ Execute steps need the word exactly. Dry runs need no word.
 | Pause a legacy endpoint | `PAUSE` | One endpoint per run. The dialog names it |
 | Resume a paused endpoint | `RESUME` | From the pause run. No dry run |
 | Test call | `TEST` | Billable: one request per service. Needs a matching dry run from the last 24 hours |
+| Guardrail check | `CHECK` | Up to 4 billable requests per endpoint. Needs a matching dry run from the last 24 hours |
 
 ### Result actions
 
@@ -670,6 +679,8 @@ The `action` of each item in a run. The app's results export uses the same value
 | `would_*` (including `would_test`, `would_pause`, `would_resume`, `would_enable_tracking`) | Dry-run preview | Execute when the list is right |
 | `created`, `created_secret`, `granted`, `updated`, `deleted`, `revoked`, `paused`, `resumed`, `tracking_enabled` | Done, and read back where relevant | Nothing |
 | `would_create_secret` | Dry run: the workspace secret is readable and the Unity Catalog secret would be created | Execute |
+| `protection_lost`, `check_failed` | Guardrail check: the new service lets through what the legacy endpoint blocks, or the control request failed | Re-create the protection, or check both sides answer |
+| `still_protected`, `not_applicable`, `would_check` | Guardrail check results that need nothing | Nothing |
 | `exists`, `already_granted`, `already_gone`, `ok`, `already_paused`, `already_resumed`, `already_enabled`, `skipped` (cut over) | Already in place or the target state, or out of scope; nothing written | Nothing |
 | `mismatch` | Read-back differs from the plan | Read the issues, fix the cause, re-run |
 | `manual` | Needs a person: unsupported provider, Entra auth, unmapped secret, PT endpoint whose model was deleted, plaintext key, or a conflicting existing object | Do it by hand, or fix the input and re-run |

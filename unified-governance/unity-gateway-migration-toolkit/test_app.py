@@ -518,7 +518,7 @@ def test_app_uses_the_job_side_rules_not_copies():
     assert main.store is store and main.planner is planner and main.apply_rules is apply_mod
     assert main.FINGERPRINT_KEYS is store.FINGERPRINT_KEYS and main.PROBLEM_ACTIONS is apply_mod.PROBLEM_ACTIONS
     assert main.OPERATIONS is apply_mod.OPERATIONS and main.SERVICE_NAME_RE is apply_mod.SERVICE_NAME_RE
-    assert main.CUTOVER_OPERATIONS == ("test_call", "pause_legacy", "enable_tracking", "resume_legacy")
+    assert main.CUTOVER_OPERATIONS == ("test_call", "pause_legacy", "enable_tracking", "resume_legacy", "guardrail_check")
     assert main.DRY_RUN_TTL_HOURS == apply_mod.DRY_RUN_TTL_HOURS
     for name in ("selection_fingerprint", "legacy_fingerprint", "rollback_done", "rollback_blocks", "effective_status",
                  "legacy_traffic_since", "ug_usage_summary", "ug_request_lookup", "_canon", "_since"):
@@ -1037,3 +1037,11 @@ def test_a_dry_run_without_created_secrets_does_not_unlock_an_execute_that_creat
     env.store["applies"][0]["fingerprint"] = store.selection_fingerprint(job_params_dict(uc_secret_map=json.dumps(m)))
     r = env.client.post("/api/applies", json={**EXECUTE_BODY, "uc_secret_map": m, "create_uc_secrets": True}, headers=OP)
     assert r.status_code == 409
+
+
+def test_guardrail_check_needs_pairs_and_the_check_word():
+    body = main.CutoverRequest(operation="guardrail_check", endpoints=["gov=c.s.gov"])
+    p = main._cutover_params(body)
+    assert p["endpoints"] == "gov=c.s.gov" and main._confirm_word("guardrail_check", p["endpoints"]) == "CHECK"
+    with pytest.raises(main.HTTPException):
+        main._cutover_params(main.CutoverRequest(operation="guardrail_check", endpoints=["gov"]))

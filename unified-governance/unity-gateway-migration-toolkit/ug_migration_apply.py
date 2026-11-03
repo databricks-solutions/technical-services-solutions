@@ -110,7 +110,7 @@ OWNED_ACTIONS = ("created", "creating", "exists", "updated", "created_secret")  
 USE_ACTIONS = ("created", "creating", "exists", "updated", "created_secret")  # actions that keep an object in use (protection)
 # Item actions that make a run NEEDS_ATTENTION. Shared by the job (run status) and the store (rolled back).
 PROBLEM_ACTIONS = ("error", "manual", "mismatch", "kept", "needs_attention", "smoke_failed", "test_failed", "refused",
-                   "missing")
+                   "missing", "protection_lost", "check_failed")
 READY_STATES = ("ACTIVE", "READY", "ONLINE")
 STALE_RUN_HOURS = 12
 
@@ -458,7 +458,7 @@ def not_carried_over(ep: planner.LegacyEndpoint, row: planner.PlanRow, grants: b
     lists these (not_carried_over), so the result says plainly what a person still has to redo or decide."""
     out = []
     if ep.guardrails:
-        out.append("guardrails (Unity Gateway model services don't take the legacy guardrails)")
+        out.append("guardrails: " + planner.guardrail_consequence(ep.guardrails))
     if ep.rate_limits and not row.rate_limits:
         out.append("rate limits")
     if (ep.inference_table or ep.auto_capture) and not row.inference_table:
@@ -1220,7 +1220,7 @@ def cli_runs(log_path: str) -> list[dict]:
 # Verify and cut over (runbook cells 12-14 and 30-38; README steps 4-6)
 # ---------------------------------------------------------------------------
 
-OPERATIONS = ("apply", "test_call", "pause_legacy", "enable_tracking", "resume_legacy")
+OPERATIONS = ("apply", "test_call", "pause_legacy", "enable_tracking", "resume_legacy", "guardrail_check")
 WRITE_LEGACY_OPERATIONS = ("pause_legacy", "enable_tracking", "resume_legacy")  # one at a time per workspace
 API_TYPES = ("mlflow/v1/chat/completions", "openai/v1/responses", "mlflow/v1/embeddings")
 DEFAULT_API_TYPE = API_TYPES[0]
@@ -1235,7 +1235,7 @@ TEST_TIMEOUT_SECONDS = 120
 SERVICE_NAME_RE = re.compile(r"[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+")
 ENDPOINT_NAME_RE = re.compile(r"[A-Za-z0-9_\-]+")
 DRY_RUN_TTL_HOURS = 24  # an execute must follow a successful dry run of the same settings started this recently
-DRY_RUN_GATED = ("apply", "test_call", "pause_legacy", "enable_tracking")  # resume and apply rollback have no dry run
+DRY_RUN_GATED = ("apply", "test_call", "pause_legacy", "enable_tracking", "guardrail_check")  # resume and apply rollback have no dry run
 PAUSE_TRAFFIC_HOURS = 24  # pause refuses an endpoint with legacy requests this recent, unless force is set
 # AI Gateway settings that PUT /ai-gateway re-sends: the companion script's list plus usage tracking.
 # An endpoint with any other setting set is refused, because the PUT would drop it.
@@ -1461,6 +1461,147 @@ def run_test_calls(w: WorkspaceClient, services: list[str], api_type: str, promp
         extra = {} if request_id else {"note": "no request id header; look the call up by time instead"}
         a.log(action="test_ok", reply_excerpt=reply_excerpt(api_type, body) if body is not None else None,
               **base, **extra)
+    return a.results
+
+
+# -- Guardrail check: does the new service still block what the legacy endpoint's guardrails block? ----------
+
+MAX_GUARDRAIL_PAIRS = 10
+# Harmless probes. The PII one carries a fake address from the documentation range of example.com.
+FAKE_EMAIL = "jane.doe@example.com"
+GUARDRAIL_PROBES = {
+    "control": "Reply with the word ok.",
+    "pii": f"Reply with the word ok. My contact email is {FAKE_EMAIL}.",
+}
+_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+
+def parse_guardrail_pairs(value) -> list[tuple[str, str]]:
+    """"legacy=catalog.schema.service" entries (comma-separated), sorted and de-duplicated."""
+    pairs = set()
+    for part in str(value or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        legacy, _, service = part.partition("=")
+        if not re.fullmatch(r"[A-Za-z0-9_\-]+", legacy) or not re.fullmatch(r"[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+){2}", service):
+            raise ValueError(f"guardrail pairs look like legacy_endpoint=catalog.schema.service, not {part!r}")
+        pairs.add((legacy, service))
+    if not pairs:
+        raise ValueError("guardrail_check needs at least one legacy_endpoint=catalog.schema.service pair")
+    if len(pairs) > MAX_GUARDRAIL_PAIRS:
+        raise ValueError(f"at most {MAX_GUARDRAIL_PAIRS} pairs per guardrail check, got {len(pairs)}")
+    return sorted(pairs)
+
+
+def _masked_excerpt(text) -> str | None:
+    """A short excerpt with any email address (the probe's or another) masked."""
+    if text is None:
+        return None
+    return _EMAIL_RE.sub("[email]", str(text))[:EXCERPT_CHARS]
+
+
+def _guardrail_blocked(status: int, text: str) -> bool:
+    """A refusal by an AI Gateway guardrail: a 4xx whose body names a guardrail."""
+    return 400 <= status < 500 and "guardrail" in (text or "").lower()
+
+
+def _probe_call(post, url: str, headers: dict, body: dict) -> dict:
+    try:
+        resp = post(url, headers=headers, json=body, timeout=TEST_TIMEOUT_SECONDS)
+    except Exception as e:
+        return {"status": None, "blocked": False, "excerpt": _masked_excerpt(f"no response: {str(e)[:150]}")}
+    text = str(getattr(resp, "text", "") or "")
+    excerpt = text
+    if resp.status_code < 400:
+        try:
+            excerpt = resp.json()["choices"][0]["message"].get("content") or ""
+        except Exception:
+            pass
+    return {"status": resp.status_code, "blocked": _guardrail_blocked(resp.status_code, text),
+            "excerpt": _masked_excerpt(excerpt)}
+
+
+def run_guardrail_checks(w: WorkspaceClient, pairs: list[tuple[str, str]], execute: bool, log_path: str,
+                         apply_id: str | None = None, post=None) -> list[dict]:
+    """For each (legacy endpoint, new service) pair, send the same harmless probes to both and compare.
+
+    Dry run: reads both (GETs only) and says which probes it would send. Execute: per probe, one request to the
+    legacy endpoint and one to the service (billable, tiny), recording status, whether a guardrail blocked it, and a
+    masked excerpt (never the full reply). Verdict per pair: protection_lost (the legacy endpoint blocks the PII probe,
+    the service doesn't), still_protected (both block it), not_applicable (the legacy endpoint has no PII guardrail or
+    didn't block the probe). Other guardrail kinds (safety, keywords, topics) are listed, not probed."""
+    a = Applier(w, execute, log_path, apply_id)
+    if post is None:
+        import requests
+        post = requests.post
+    host = w.config.host.rstrip("/")
+    for legacy, service in pairs:
+        base = dict(type="guardrail_check", name=service, legacy_endpoint=legacy, service=service)
+        try:
+            ep = _read_endpoint(w, legacy)
+        except NotFound:
+            a.log(action="missing", reason=f"legacy endpoint {legacy} not found", **base)
+            continue
+        except Exception as e:
+            a.log(action="check_failed", reason=f"could not read {legacy}: {str(e)[:300]}", **base)
+            continue
+        gw = ep.get("ai_gateway") or {}
+        guardrails = gw.get("guardrails") or {}
+        settings = planner.guardrail_settings(guardrails)
+        if _zero_endpoint_limit(gw):
+            a.log(action="refused", reason=f"{legacy} is paused (rate limit 0), so it can't be compared: resume it "
+                                           "first", guardrails=settings, **base)
+            continue
+        try:
+            ms = w.ai_gateway.get_model_service(name=f"model-services/{service}")
+        except NotFound:
+            a.log(action="missing", reason="the service isn't created yet, or isn't visible to this identity",
+                  guardrails=settings, **base)
+            continue
+        except Exception as e:
+            a.log(action="check_failed", reason=f"could not read the service: {str(e)[:300]}", **base)
+            continue
+        if DEFAULT_API_TYPE not in list(ms.supported_api_types or []):
+            a.log(action="refused", reason=f"the service doesn't support {DEFAULT_API_TYPE}", guardrails=settings,
+                  **base)
+            continue
+        pii_guarded = any(s.startswith("input PII") for s in settings)
+        probes = ["control"] + (["pii"] if pii_guarded else [])
+        if not settings:
+            a.log(action="not_applicable", reason=f"{legacy} has no AI Gateway guardrails", guardrails=[], **base)
+            continue
+        unprobed = [s for s in settings if not s.startswith("input PII")]
+        note = (f"Not probed: {', '.join(unprobed)} (check those by hand)" if unprobed else None)
+        if not execute:
+            a.log(action="would_check", probes=probes, guardrails=settings, requests=2 * len(probes),
+                  **({"note": note} if note else {}), **base)
+            continue
+        headers = {**w.config.authenticate(), "Content-Type": "application/json"}
+        results = []
+        for probe in probes:
+            msg = {"messages": [{"role": "user", "content": GUARDRAIL_PROBES[probe]}], "max_tokens": 10}
+            leg = _probe_call(post, f"{host}/serving-endpoints/{legacy}/invocations", headers, msg)
+            svc = _probe_call(post, f"{host}/ai-gateway/{DEFAULT_API_TYPE}", headers, {**msg, "model": service})
+            results.append({"probe": probe, "legacy_status": leg["status"], "legacy_blocked": leg["blocked"],
+                            "legacy_excerpt": leg["excerpt"], "service_status": svc["status"],
+                            "service_blocked": svc["blocked"], "service_excerpt": svc["excerpt"]})
+        control = results[0]
+        pii = next((r for r in results if r["probe"] == "pii"), None)
+        if control["legacy_status"] != 200 or control["service_status"] != 200:
+            action, why = "check_failed", ("the control request (no PII) didn't succeed on both, so the comparison "
+                                           "isn't reliable")
+        elif pii is None:
+            action, why = "not_applicable", "no input PII guardrail to probe"
+        elif pii["legacy_blocked"] and not pii["service_blocked"]:
+            action, why = "protection_lost", (f"{legacy} blocks a request with PII; {service} lets it through to the "
+                                              "model")
+        elif pii["legacy_blocked"] and pii["service_blocked"]:
+            action, why = "still_protected", f"both block a request with PII"
+        else:
+            action, why = "not_applicable", f"{legacy} didn't block the PII probe either"
+        a.log(action=action, reason=why, probes=results, guardrails=settings, **({"note": note} if note else {}),
+              **base)
     return a.results
 
 

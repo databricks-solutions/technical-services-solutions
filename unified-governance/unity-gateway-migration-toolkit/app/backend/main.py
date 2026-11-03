@@ -1138,6 +1138,8 @@ def _confirm_word(operation: str, endpoints: str) -> str:
     """The typed confirmation an execute needs (the same words the page asks for)."""
     if operation == "test_call":
         return "TEST"
+    if operation == "guardrail_check":
+        return "CHECK"
     if operation == "enable_tracking":
         return "ENABLE"
     if operation == "pause_legacy":
@@ -1208,6 +1210,14 @@ def _cutover_params(body: CutoverRequest) -> dict[str, str]:
             raise HTTPException(400, "The prompt can't contain line breaks or tabs")
         return {"operation": op, "endpoints": "", "services": ",".join(services), "api_type": api_type,
                 "prompt": prompt, "rollback_of": "", "force": "false"}
+    if op == "guardrail_check":
+        # Pairs "legacy_endpoint=catalog.schema.service", checked the way the job checks them.
+        try:
+            pairs = apply_rules.parse_guardrail_pairs(",".join(_unique(body.endpoints)))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return {"operation": op, "endpoints": ",".join(f"{l}={s}" for l, s in pairs), "services": "",
+                "api_type": "", "prompt": "", "rollback_of": "", "force": "false"}
     endpoints = sorted(_unique(body.endpoints))
     bad = [e for e in endpoints if not NAME_RE.fullmatch(e)]
     if bad:
@@ -1284,7 +1294,8 @@ def start_cutover(body: CutoverRequest, request: Request) -> dict:
     require_operator(request)
     op = body.operation
     if op not in CUTOVER_OPERATIONS:
-        raise HTTPException(400, "operation must be test_call, pause_legacy, enable_tracking or resume_legacy")
+        raise HTTPException(400, "operation must be test_call, guardrail_check, pause_legacy, enable_tracking or "
+                                 "resume_legacy")
     if op == "resume_legacy":
         return _start_resume(body, request)
     if body.mode not in ("dry_run", "execute"):
@@ -1303,7 +1314,7 @@ def start_cutover(body: CutoverRequest, request: Request) -> dict:
         _pause_traffic_gate(request, body, params["endpoints"])
     out = _launch_cutover(request, body.mode, params, scan_run_id=body.scan_run_id,
                           dry_run_id=body.dry_run_id if body.mode == "execute" else "")
-    if op == "test_call":
+    if op in ("test_call", "guardrail_check"):
         out["runs_as"] = job_identity("apply")
     return out
 
@@ -1503,6 +1514,30 @@ def cutover_services(request: Request, scan_run_id: str = "") -> dict:
             seen[name] = {"name": name, "from": src, "plan": "create_model_service", "exists": True}
     return {"scan_run_id": scan["run_id"], "source": "scan plan and apply runs",
             "services": sorted(seen.values(), key=lambda s: (not s["exists"], s["name"]))}
+
+
+@app.get("/api/cutover/guardrail-pairs")
+def cutover_guardrail_pairs(request: Request, scan_run_id: str = "") -> dict:
+    """Legacy endpoints whose plan says their guardrails aren't carried over, each with the Unity Gateway service it
+    was migrated to (created by an apply run, in any target schema) when there is one."""
+    scan = _scan_meta(request, scan_run_id)
+    if not scan:
+        return {"scan_run_id": None, "pairs": []}
+    plan, _ = _scan_items(request, scan)
+    created = _created_services(request)
+    out = []
+    for p in plan:
+        notes = [str(n).removeprefix(planner.BLOCKING_PREFIX) for n in (p.get("needs_human") or [])]
+        g = next((n for n in notes if n.startswith("guardrails")), None)
+        if not g:
+            continue
+        consequence = g.split(":", 1)[1].split(" Suggested:")[0].strip() if ":" in g else g
+        target = str(p.get("target_service") or "")
+        leaf = target.rsplit(".", 1)[-1].lower()
+        made = sorted(n for n in created if n.rsplit(".", 1)[-1] == leaf)
+        out.append({"legacy_endpoint": p.get("legacy_endpoint"), "service": made[0] if made else target,
+                    "service_exists": bool(made), "consequence": consequence})
+    return {"scan_run_id": scan["run_id"], "pairs": sorted(out, key=lambda x: str(x["legacy_endpoint"]))}
 
 
 def _created_services(request: Request) -> dict[str, str | None]:

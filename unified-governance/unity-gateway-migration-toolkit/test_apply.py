@@ -1443,7 +1443,7 @@ class UsedDryRunSpark(DryRunSpark):
 
 def test_notebook_gate_wiring_every_gated_operation_and_single_use(monkeypatch):
     # Which operations need a dry run, and that the job looks it up and checks it hasn't been used.
-    assert set(a.DRY_RUN_GATED) == {"apply", "test_call", "pause_legacy", "enable_tracking"}
+    assert set(a.DRY_RUN_GATED) == {"apply", "test_call", "pause_legacy", "enable_tracking", "guardrail_check"}
     w = CutoverW([_endpoint("ext", GW_FULL)])
     base = {"results_schema": "c.s", "operation": "enable_tracking", "endpoints": "ext", "requested_by": "me@x.com"}
     dry = _notebook(monkeypatch, {**base, "apply_id": DRY, "mode": "dry_run", "job_run_id": "6"}, w)
@@ -1650,3 +1650,52 @@ def test_test_call_auto_picks_each_services_own_api_type(tmp_path):
     assert post.calls[0]["url"].endswith("/ai-gateway/mlflow/v1/chat/completions")
     assert post.calls[1]["url"].endswith("/ai-gateway/mlflow/v1/embeddings") and post.calls[1]["json"]["input"] == "p"
     assert a.resolve_api_type("auto") == "auto"
+
+
+def _gw_endpoint(name, guardrails, paused=False):
+    gw = {"guardrails": guardrails}
+    if paused:
+        gw["rate_limits"] = [{"key": "endpoint", "calls": 0, "renewal_period": "minute"}]
+    return _endpoint(name, gw)
+
+
+GUARD_BODY = '{"usage":{"prompt_tokens":0},"input_guardrail":[{"flagged":true,"categories":{"pii":true}}]}'
+
+
+def test_guardrail_check_finds_protection_lost_and_masks_the_probe(tmp_path):
+    w = CutoverW([_gw_endpoint("gov", {"input": {"pii": {"behavior": "BLOCK"}}})], services={SVC: [API_CHAT]})
+    log = str(tmp_path / "g.jsonl")
+    dry = a.run_guardrail_checks(w, [("gov", SVC)], False, log, APPLY, post=_post(FakeResp(body=CHAT_OK)))
+    assert dry[0]["action"] == "would_check" and dry[0]["probes"] == ["control", "pii"] and dry[0]["requests"] == 4
+    echo = {"choices": [{"message": {"content": f"ok, noted {a.FAKE_EMAIL}"}}]}
+    post = _post([FakeResp(body=CHAT_OK), FakeResp(body=CHAT_OK),  # control: legacy, service
+                  FakeResp(status_code=400, body={}, text=GUARD_BODY), FakeResp(body=echo)])  # pii: legacy, service
+    res = a.run_guardrail_checks(w, [("gov", SVC)], True, log, APPLY, post=post)
+    assert res[0]["action"] == "protection_lost" and a.run_outcome(res)[0] == "NEEDS_ATTENTION"
+    pii = res[0]["probes"][1]
+    assert pii["legacy_blocked"] is True and pii["service_blocked"] is False and pii["service_status"] == 200
+    assert a.FAKE_EMAIL not in json.dumps(res) and "[email]" in pii["service_excerpt"]
+    assert post.calls[0]["url"].endswith("/serving-endpoints/gov/invocations")
+    assert post.calls[1]["url"].endswith("/ai-gateway/mlflow/v1/chat/completions") and post.calls[1]["json"]["model"] == SVC
+
+
+def test_guardrail_check_still_protected_paused_missing_and_no_guardrails(tmp_path):
+    log = str(tmp_path / "g.jsonl")
+    w = CutoverW([_gw_endpoint("gov", {"input": {"pii": {"behavior": "BLOCK"}}}),
+                  _gw_endpoint("paused", {"input": {"pii": {"behavior": "BLOCK"}}}, paused=True),
+                  _endpoint("plain", {})], services={SVC: [API_CHAT]})
+    blocked = FakeResp(status_code=400, body={}, text=GUARD_BODY)
+    ok = a.run_guardrail_checks(w, [("gov", SVC)], True, log, APPLY,
+                                post=_post([FakeResp(body=CHAT_OK), FakeResp(body=CHAT_OK), blocked, blocked]))
+    assert ok[0]["action"] == "still_protected"
+    assert a.run_guardrail_checks(w, [("paused", SVC)], True, log, APPLY, post=_post(FakeResp(body=CHAT_OK)))[0]["action"] == "refused"
+    assert a.run_guardrail_checks(w, [("gov", "c.s.nope")], True, log, APPLY, post=_post(FakeResp(body=CHAT_OK)))[0]["action"] == "missing"
+    assert a.run_guardrail_checks(w, [("plain", SVC)], True, log, APPLY, post=_post(FakeResp(body=CHAT_OK)))[0]["action"] == "not_applicable"
+
+
+def test_guardrail_pairs_are_parsed_and_capped():
+    assert a.parse_guardrail_pairs("b=c.s.y, a=c.s.x,a=c.s.x") == [("a", "c.s.x"), ("b", "c.s.y")]
+    with pytest.raises(ValueError):
+        a.parse_guardrail_pairs("a=notaservice")
+    with pytest.raises(ValueError):
+        a.parse_guardrail_pairs(",".join(f"e{i}=c.s.x{i}" for i in range(11)))

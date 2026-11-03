@@ -202,6 +202,36 @@ def remote_workspace_client(target_id: str, allowlist: list[str], url: str, clie
     return client
 
 
+SECRET_REF_RE = re.compile(r"[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+")
+
+
+def central_target(spark, hub_client: WorkspaceClient, target_id: str, allowlist_raw: str, client_id: str,
+                   secret_ref: str, secret_get, factory=None) -> tuple[WorkspaceClient, str, bool]:
+    """The client a job acts through, the other workspace's ID ("" for the hub), and whether it's another workspace.
+
+    Blank or the hub's own ID: the hub client (the hub's ID is only looked up when a target is named). Another workspace (central mode): everything is checked before it
+    is contacted, in this order: allowlist, secret reference format, URL from system.access.workspaces_latest (never
+    from the caller), the secret (read here, never logged), then remote_workspace_client, which signs in and
+    checks the URL answers as that workspace. secret_get(scope, key) is dbutils.secrets.get in the notebooks."""
+    target_id = str(target_id or "").strip()
+    if not target_id or target_id == str(workspace_id_of(hub_client)):
+        return hub_client, "", False
+    allowlist = parse_workspace_ids(allowlist_raw)
+    if target_id not in allowlist:
+        raise PermissionError(f"workspace {target_id} isn't in this install's central-mode allowlist")
+    ref = str(secret_ref or "").strip()
+    if not SECRET_REF_RE.fullmatch(ref):
+        raise ValueError("central_secret must be scope/key")
+    rows = spark.sql("SELECT workspace_url FROM system.access.workspaces_latest WHERE workspace_id = :id",
+                     args={"id": target_id}).collect()
+    url = (rows[0]["workspace_url"] if rows else "") or ""
+    url = url if url.startswith("http") else (f"https://{url}" if url else "")
+    scope, key = ref.split("/", 1)
+    client = remote_workspace_client(target_id, allowlist, url, str(client_id or "").strip(), secret_get(scope, key),
+                                     factory=factory)
+    return client, target_id, True
+
+
 ALLOW_SPARK = True  # set False when scanning a workspace other than the one this process runs in
 REMOTE_SCAN = False  # central mode: the scanned workspace isn't the one this process (and its Spark) runs in
 SQL_POLL_SECONDS = 1800  # give up waiting on a system table query after this (the warehouse keeps running it)

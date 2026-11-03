@@ -180,7 +180,7 @@ def test_running_applies_for_the_same_target():
 
 
 def test_is_run_active_follows_the_job_run():
-    row = [{"mode": "execute", "operation": "apply", "status": "RUNNING", "job_run_id": "12"}]
+    row = [{"mode": "execute", "operation": "apply", "status": "RUNNING", "job_run_id": "12", "workspace_id": None}]
     sp = SparkByQuery([("ug_migration_applies", row)])
     assert store.is_run_active(sp, Workspace("RUNNING"), "c.s", "A") is True
     assert store.is_run_active(sp, Workspace("TERMINATED"), "c.s", "A") is False  # killed: not active
@@ -288,10 +288,14 @@ def test_apply_columns_carry_the_operation_services_and_api_type():
 
 def test_apply_run_reads_the_operation_and_defaults_to_apply():
     sp = SparkByQuery([("ug_migration_applies", [{"mode": "execute", "operation": None, "status": "SUCCEEDED",
-                                                  "job_run_id": "1"}])])
+                                                  "job_run_id": "1", "workspace_id": None}])])
     assert store.apply_run(sp, "c.s", "A")["operation"] == "apply"
     sp2 = SparkByQuery([("ug_migration_applies", [{"mode": "execute", "operation": "pause_legacy",
-                                                   "status": "SUCCEEDED", "job_run_id": "1"}])])
+                                                   "status": "SUCCEEDED", "job_run_id": "1", "workspace_id": "222"}])])
+    # The workspace the run acted on: a rollback or resume of it acts there (seen live: without it, every
+    # rollback of a remote run was refused as "doesn't match the workspace of the run being undone").
+    assert store.apply_run(sp2, "c.s", "A")["workspace_id"] == "222"
+    assert "workspace_id" in sp2.statements[-1]
     assert store.apply_run(sp2, "c.s", "A")["operation"] == "pause_legacy"
     assert store.apply_run(SparkByQuery([]), "c.s", "A") is None
 

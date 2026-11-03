@@ -68,28 +68,14 @@ if store.run_exists(spark, schema, "ug_migration_scans", "run_id", run_id):
 
 # COMMAND ----------
 
-w = WorkspaceClient()
-hub_id = planner.workspace_id_of(w)
-target_id = dbutils.widgets.get("target_workspace_id").strip()
-remote = bool(target_id) and target_id != hub_id
-if remote:
-    # Central mode: everything is checked before the remote workspace is contacted.
-    allowlist = planner.parse_workspace_ids(dbutils.widgets.get("central_workspaces"))
-    if target_id not in allowlist:
-        raise PermissionError(f"workspace {target_id} isn't in this install's central-mode allowlist")
-    ref = dbutils.widgets.get("central_secret").strip()
-    if not re.fullmatch(r"[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+", ref):
-        raise ValueError("central_secret must be scope/key")
-    row = spark.sql("SELECT workspace_url FROM system.access.workspaces_latest WHERE workspace_id = :id",
-                    args={"id": target_id}).collect()
-    url = (row[0]["workspace_url"] if row else "") or ""
-    url = url if url.startswith("http") else (f"https://{url}" if url else "")
-    scope, key = ref.split("/", 1)
-    w = planner.remote_workspace_client(target_id, allowlist, url, dbutils.widgets.get("central_client_id").strip(),
-                                        dbutils.secrets.get(scope, key))
+# Central mode: another workspace is checked (allowlist, secret, URL, identity) before it is contacted.
+w, target_id, remote = planner.central_target(
+    spark, WorkspaceClient(), dbutils.widgets.get("target_workspace_id"), dbutils.widgets.get("central_workspaces"),
+    dbutils.widgets.get("central_client_id"), dbutils.widgets.get("central_secret"),
+    lambda scope, key: dbutils.secrets.get(scope, key))
 # The row records the scanned workspace from the start (a failed or still-running scan shows which one it was for).
 meta["workspace_url"] = w.config.host
-meta["workspace_id"] = target_id if remote else hub_id
+meta["workspace_id"] = target_id or planner.workspace_id_of(w)
 out_dir = tempfile.mkdtemp(prefix="ug_scan_")
 try:
     store.upsert(spark, schema, "ug_migration_scans", store.SCAN_COLUMNS, "run_id", meta)

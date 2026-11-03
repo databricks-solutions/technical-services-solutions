@@ -66,8 +66,8 @@ try:
 except ValueError:
     CENTRAL_WORKSPACES = []
 _HUB_ID: dict[str, str] = {"id": os.environ.get("UGMIG_HUB_WORKSPACE_ID", "").strip()}
-REMOTE_CHANGES_REFUSED = ("Central mode phase 1: changes run only in the hub workspace. This scan is of workspace "
-                          "{ws}: open the app installed in that workspace, or use the command line, to apply or cut over.")
+NOT_ALLOWLISTED = ("Workspace {ws} isn't in this app's central-mode allowlist. Re-run the installer with it in "
+                   "Advanced: Central mode: workspaces to manage.")
 MAX_SCAN_AGE_DAYS = int(os.environ.get("UGMIG_MAX_SCAN_AGE_DAYS") or 14)
 EXPORT_ROW_LIMIT = 200_000
 IDENTITY_TTL_S = 300
@@ -404,15 +404,42 @@ def hub_workspace_id() -> str:
     return _HUB_ID["id"]
 
 
-def require_hub_scan(request: Request, scan_run_id: str) -> None:
-    """In central mode, changes run only against the hub: refuse a scan of another workspace."""
-    if not CENTRAL_WORKSPACES or not scan_run_id:
-        return
-    rows = query(request, f"SELECT workspace_id FROM {table('ug_migration_scans')} WHERE run_id = :r", {"r": scan_run_id})
-    ws = str((rows[0].get("workspace_id") if rows else "") or "")
+def norm_workspace(ws: Any) -> str:
+    """A run's target workspace as the jobs fingerprint it: blank for the hub (or unknown), else its ID."""
+    ws = str(ws or "").strip()
+    if not CENTRAL_WORKSPACES:
+        return ""  # without central mode every run is the hub's, as before
     hub = hub_workspace_id()
-    if ws and hub and ws != hub:
-        raise HTTPException(409, REMOTE_CHANGES_REFUSED.format(ws=ws))
+    if not hub:  # fail closed: without the hub's ID a remote workspace could pass for the hub
+        raise HTTPException(503, "Couldn't tell which workspace this app runs in, so central-mode changes are off. "
+                                 "Try again in a minute; if it persists, run the installer again.")
+    return "" if (not ws or ws == hub) else ws
+
+
+def allowed_workspace(ws: Any) -> str:
+    """norm_workspace, refusing a workspace other than the hub that isn't on the central-mode allowlist (409)."""
+    target = norm_workspace(ws)
+    if target and target not in CENTRAL_WORKSPACES:
+        raise HTTPException(409, NOT_ALLOWLISTED.format(ws=target))
+    return target
+
+
+def scan_workspace(request: Request, scan_run_id: str) -> str:
+    """The workspace a scan covered, as a change target: blank for the hub. Changes act on the scan's workspace."""
+    if not scan_run_id:
+        return ""
+    rows = query(request, f"SELECT workspace_id FROM {table('ug_migration_scans')} WHERE run_id = :r", {"r": scan_run_id})
+    ws = str((rows[0].get("workspace_id") if rows else "") or "").strip()
+    if CENTRAL_WORKSPACES and not ws:  # fail closed: an unknown workspace is never taken to be the hub
+        raise HTTPException(409, "That scan doesn't record which workspace it covered, so it can't drive a change in "
+                                 "central mode. Scan the workspace again.")
+    return allowed_workspace(ws)
+
+
+def run_workspace(request: Request, apply_id: str) -> str:
+    """The workspace an earlier apply or cut-over run acted on (rollback and resume act there, never elsewhere)."""
+    rows = query(request, f"SELECT workspace_id FROM {table('ug_migration_applies')} WHERE apply_id = :a", {"a": apply_id})
+    return allowed_workspace((rows[0].get("workspace_id") if rows else "") or "")
 
 
 @app.get("/api/workspaces")
@@ -1032,17 +1059,30 @@ def _rollback_rows(request: Request, rollback_of: str | None = None) -> list[dic
 
 
 @app.get("/api/applies")
-def list_applies(request: Request) -> list[dict]:
-    """Recent apply runs. rolled_back is true for an execute run whose rollback is done (see _rollback_done)."""
+def list_applies(request: Request, workspace_id: str = "") -> list[dict]:
+    """Recent apply runs. rolled_back is true for an execute run whose rollback is done (see _rollback_done).
+    workspace_id (central mode): only runs that acted on that workspace (rows without one are the hub's)."""
     rows = reconcile(query(request, f"""
         SELECT apply_id, job_run_id, requested_by, scan_run_id, mode, endpoints, target_catalog, target_schema,
+               workspace_id,
                rollback_of, status, summary, error, CAST(started_at AS STRING) AS started_at,
                CAST(finished_at AS STRING) AS finished_at
         FROM {table('ug_migration_applies')} WHERE {APPLY_RUNS} ORDER BY started_at DESC LIMIT 50"""))
     done = {r["rollback_of"] for r in _rollback_rows(request) if store.rollback_done(r.get("status"), r.get("summary"))}
     for r in rows:
         r["rolled_back"] = r.get("mode") == "execute" and r.get("apply_id") in done
-    return rows
+    return _for_workspace(rows, workspace_id)
+
+
+def _for_workspace(rows: list[dict], workspace_id: str) -> list[dict]:
+    """Run rows of one workspace (blank: every row). Each row gets workspace_id filled in (the hub's when blank)."""
+    hub = hub_workspace_id()
+    for r in rows:
+        r["workspace_id"] = str(r.get("workspace_id") or "") or hub or None
+    if not str(workspace_id or "").strip():
+        return rows
+    want = norm_workspace(workspace_id)
+    return [r for r in rows if norm_workspace(r.get("workspace_id")) == want]
 
 
 @app.get("/api/applies/{apply_id}")
@@ -1053,7 +1093,7 @@ def apply_detail(apply_id: str, request: Request):
     meta = query(request, f"""
         SELECT apply_id, job_run_id, requested_by, scan_run_id, mode, endpoints, target_catalog, target_schema,
                rollback_of, status, summary, error, CAST(started_at AS STRING) AS started_at,
-               CAST(finished_at AS STRING) AS finished_at
+               CAST(finished_at AS STRING) AS finished_at, workspace_id, workspace_url
         FROM {table('ug_migration_applies')} WHERE apply_id = :a AND {APPLY_RUNS}""", {"a": apply_id})
     if not meta:
         job_run_id = starting_job(apply_id)
@@ -1095,11 +1135,12 @@ def start_apply(body: ApplyRequest, request: Request) -> dict:
             raise HTTPException(409, "That execute run has already been rolled back, or a rollback of it is running")
         body.endpoints, body.target_catalog, body.target_schema, body.uc_secret_map = [], "", "", {}
         body.allow_secret_read = body.create_uc_secrets = False
+        target_ws = run_workspace(request, body.rollback_of)
     else:
         if not body.scan_run_id:
             raise HTTPException(400, "choose a scan: apply uses its plan")
         check_id(body.scan_run_id, "scan id")
-        require_hub_scan(request, body.scan_run_id)
+        target_ws = scan_workspace(request, body.scan_run_id)  # changes act on the workspace the scan covered
         if not body.endpoints:
             raise HTTPException(400, "choose at least one endpoint")
         for v in body.endpoints:
@@ -1149,6 +1190,7 @@ def start_apply(body: ApplyRequest, request: Request) -> dict:
         "ack_guardrails": str(body.ack_guardrails).lower(), "rollback_of": body.rollback_of,
         "create_uc_secrets": str(body.create_uc_secrets).lower(),
         "smoke_test": str(body.mode == "execute" and bool(smoke)).lower(),
+        "target_workspace_id": target_ws,
     }
     if body.mode == "execute":
         _verify_dry_run(request, body.dry_run_id, body.scan_run_id, params)
@@ -1185,6 +1227,8 @@ NOT_LEGACY_KINDS = ("custom_model", "agent")
 # step 5, the main Enforce case) but not tracked: Databricks sets their usage tracking.
 NOT_OPERABLE_KINDS = ("custom_model", "agent", "v2_workspace_endpoint", "unknown", "out_of_scope", "deleted_or_unknown")
 NOT_TRACKABLE_KINDS = ("system_ppt",)
+# Kinds the pause step doesn't offer or accept (the job refuses them too): a PT endpoint's model service routes through it.
+NOT_PAUSABLE_KINDS = ("provisioned_throughput",)
 USAGE_COLUMNS = ["service_name", "workspace_id", "requester", "api_type", "destination_model", "requests",
                  "invocations", "total_tokens", "average_latency_ms", "p95_latency_ms", "error_invocations",
                  "last_request"]
@@ -1343,7 +1387,8 @@ def _start_resume(body: CutoverRequest, request: Request) -> dict:
     if store.rollback_blocks(_rollback_rows(request, body.rollback_of), sp()):
         raise HTTPException(409, "That pause run has already been resumed, or a resume of it is running")
     params = {"operation": "resume_legacy", "endpoints": "", "services": "", "api_type": "", "prompt": "",
-              "rollback_of": body.rollback_of, "force": "false"}
+              "rollback_of": body.rollback_of, "force": "false",
+              "target_workspace_id": run_workspace(request, body.rollback_of)}
     return _launch_cutover(request, "execute", params, scan_run_id="")
 
 
@@ -1372,7 +1417,6 @@ def start_cutover(body: CutoverRequest, request: Request) -> dict:
                                  "resume_legacy")
     if body.scan_run_id:
         check_id(body.scan_run_id, "scan id")
-        require_hub_scan(request, body.scan_run_id)
     if op == "resume_legacy":
         return _start_resume(body, request)
     if body.mode not in ("dry_run", "execute"):
@@ -1380,6 +1424,12 @@ def start_cutover(body: CutoverRequest, request: Request) -> dict:
     if body.scan_run_id:
         check_id(body.scan_run_id, "scan id")
     params = _cutover_params(body)
+    params["target_workspace_id"] = scan_workspace(request, body.scan_run_id)  # the scan's workspace
+    if op == "test_call":  # the job checks this too
+        listed = [x["name"] for x in cutover_services(request, body.scan_run_id).get("services", [])]
+        bad = apply_rules.untestable_services(params["services"].split(","), listed, [])
+        if bad:
+            raise HTTPException(400, apply_rules.UNTESTABLE.format(names=", ".join(bad)) + ".")
     if body.mode == "execute":
         word = _confirm_word(op, params["endpoints"])
         accepted = {word} | ({f"PAUSE {params['endpoints']}"} if op == "pause_legacy" else set())
@@ -1405,6 +1455,9 @@ def _pause_traffic_gate(request: Request, body: CutoverRequest, endpoint: str) -
     scan = _scan_meta(request, body.scan_run_id)
     if not scan:
         raise HTTPException(409, "Pause checks the endpoint's traffic against a finished scan. Run a scan first.")
+    plan, _ = _scan_items(request, scan)
+    if any(p.get("legacy_endpoint") == endpoint and p.get("kind") in NOT_PAUSABLE_KINDS for p in plan):
+        raise HTTPException(409, f"{endpoint} can't be paused: " + apply_rules.PT_PAUSE_REFUSAL + ".")
     try:
         traffic = _endpoint_traffic(request, scan, body.traffic_window, only=[endpoint])
     except HTTPException as e:
@@ -1444,16 +1497,18 @@ def job_identity(kind: str) -> str:
 
 
 @app.get("/api/cutover/runs")
-def list_cutover(request: Request) -> list[dict]:
-    """Recent verify and cut-over runs (every operation except apply). resumed: a pause run that a resume has undone."""
+def list_cutover(request: Request, workspace_id: str = "") -> list[dict]:
+    """Recent verify and cut-over runs (every operation except apply). resumed: a pause run that a resume has undone.
+    workspace_id (central mode): only runs that acted on that workspace."""
     rows = reconcile(query(request, f"""
         SELECT apply_id, job_run_id, requested_by, operation, mode, endpoints, services, api_type, rollback_of, status,
+               workspace_id,
                summary, error, CAST(started_at AS STRING) AS started_at, CAST(finished_at AS STRING) AS finished_at
         FROM {table('ug_migration_applies')} WHERE {CUTOVER_RUNS} ORDER BY started_at DESC LIMIT 50"""))
     done = {r["rollback_of"] for r in _rollback_rows(request) if store.rollback_done(r.get("status"), r.get("summary"))}
     for r in rows:
         r["resumed"] = r.get("operation") == "pause_legacy" and r.get("apply_id") in done
-    return rows
+    return _for_workspace(rows, workspace_id)
 
 
 def _tracking_status(request: Request) -> dict:
@@ -1563,6 +1618,7 @@ def cutover_endpoints(request: Request, scan_run_id: str = "") -> dict:
             continue
         seen[name] = {"endpoint": name, "kind": p.get("kind"), "plan": p.get("action"),
                       "trackable": p.get("kind") not in NOT_TRACKABLE_KINDS,
+                      "pausable": p.get("kind") not in NOT_PAUSABLE_KINDS,
                       "tracking": tracking["states"].get(name, "not checked")}
     return {"scan_run_id": scan["run_id"], "endpoints": sorted(seen.values(), key=lambda e: e["endpoint"]),
             "tracking_checked": tracking["checked_at"]}
@@ -1576,7 +1632,7 @@ def cutover_services(request: Request, scan_run_id: str = "") -> dict:
     if not scan:
         return {"scan_run_id": None, "source": "scan plan", "services": []}
     plan, _ = _scan_items(request, scan)
-    created = _created_services(request)
+    created = _created_services(request, norm_workspace(scan.get("workspace_id")))
     seen: dict[str, dict] = {}
     for p in plan:
         t = str(p.get("target_service") or "")
@@ -1601,7 +1657,7 @@ def cutover_guardrail_pairs(request: Request, scan_run_id: str = "") -> dict:
     if not scan:
         return {"scan_run_id": None, "pairs": []}
     plan, _ = _scan_items(request, scan)
-    created = _created_services(request)
+    created = _created_services(request, norm_workspace(scan.get("workspace_id")))
     out = []
     for p in plan:
         notes = [str(n).removeprefix(planner.BLOCKING_PREFIX) for n in (p.get("needs_human") or [])]
@@ -1617,11 +1673,12 @@ def cutover_guardrail_pairs(request: Request, scan_run_id: str = "") -> dict:
     return {"scan_run_id": scan["run_id"], "pairs": sorted(out, key=lambda x: str(x["legacy_endpoint"]))}
 
 
-def _created_services(request: Request) -> dict[str, str | None]:
+def _created_services(request: Request, workspace: str | None = None) -> dict[str, str | None]:
     """Model services that an apply execute created (or found existing) and no rollback deleted since, lower-cased
-    name -> legacy endpoint. Read from the results tables, as of the last run that touched each service."""
+    name -> legacy endpoint. Read from the results tables, as of the last run that touched each service.
+    workspace (central mode, as norm_workspace gives it): only runs that acted on that workspace."""
     rows = query(request, f"""
-        SELECT a.mode, a.started_at, i.payload
+        SELECT a.mode, a.started_at, a.workspace_id, i.payload
         FROM {table('ug_migration_apply_items')} i JOIN {table('ug_migration_applies')} a ON a.apply_id = i.apply_id
         WHERE a.mode IN ('execute', 'rollback') AND (a.operation IS NULL OR a.operation = 'apply')
           AND get_json_object(i.payload, '$.type') = 'model_service'
@@ -1629,6 +1686,8 @@ def _created_services(request: Request) -> dict[str, str | None]:
         ORDER BY a.started_at, i.seq""")
     state: dict[str, str | None] = {}
     for r in rows:
+        if workspace is not None and norm_workspace(r.get("workspace_id")) != workspace:
+            continue
         item = _load(r.get("payload"))
         name = str(item.get("name") or "").lower()
         if not name:
@@ -1681,7 +1740,8 @@ def cutover_detail(run_id: str, request: Request):
     check_id(run_id, "run id")
     meta = query(request, f"""
         SELECT apply_id, job_run_id, requested_by, operation, mode, endpoints, services, api_type, rollback_of, status,
-               summary, error, CAST(started_at AS STRING) AS started_at, CAST(finished_at AS STRING) AS finished_at
+               summary, error, CAST(started_at AS STRING) AS started_at, CAST(finished_at AS STRING) AS finished_at,
+               workspace_id, workspace_url
         FROM {table('ug_migration_applies')} WHERE apply_id = :a AND {CUTOVER_RUNS}""", {"a": run_id})
     if not meta:
         job_run_id = starting_job(run_id)

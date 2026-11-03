@@ -108,6 +108,8 @@ class FakeAI:
     def delete_model_service(self, name, etag=None):
         key = name.split("/", 1)[1]
         self.calls.append(("delete_model_service", key, etag))
+        if key in getattr(self, "fail_delete", ()):
+            raise RuntimeError("temporarily unavailable")
         self.services.pop(key)
 
     def delete_model_provider_service(self, name, etag=None):
@@ -638,6 +640,18 @@ def test_rollback_audit_is_written_as_it_happens_and_marked_complete(tmp_path):
     assert lines[-1] == {"type": "run", "action": "rollback_complete", "rollback_of": APPLY, "time": lines[-1]["time"]}
 
 
+def test_a_partial_rollback_writes_no_complete_marker_so_it_can_be_retried(tmp_path):
+    w = FakeW()
+    w.ai_gateway.services["c.s.mine"] = {"comment": f"ug-migration-toolkit apply={APPLY}", "etag": "e1"}
+    w.ai_gateway.fail_delete = {"c.s.mine"}
+    log = _log(tmp_path, [_created("c.s.mine", etag="e1")])
+    out = a.rollback(w, str(log), True, apply_id=APPLY, audit_path=str(log))
+    assert [r["action"] for r in out] == ["error"]
+    lines = [json.loads(l) for l in log.read_text().splitlines()]
+    assert not any(l.get("action") == "rollback_complete" for l in lines)
+    assert {r["apply_id"]: r["rolled_back"] for r in a.cli_runs(str(log))} == {APPLY: False}
+
+
 def test_protection_from_runs():
     runs = [
         {"apply_id": "A", "rolled_back": False, "entries": [
@@ -840,6 +854,10 @@ def _pause(w, names, tmp_path, execute=True, apply_id=APPLY, recent=None, force=
     (_endpoint("custom", GW_FULL, served=CUSTOM), "custom_model"),
     (_endpoint("emb", GW_FULL, task="llm/v1/embeddings"), "embedding"),
     (_endpoint("search", GW_FULL, tags=[{"key": "vector_search", "value": "true"}]), "AI Search"),
+    # A PT endpoint's migrated model service routes through it: a pause would cut off callers who already moved.
+    (_endpoint("pt", GW_FULL, served=[{"name": "pt", "entity_name": "system.ai.some_model", "entity_version": "1",
+                                        "min_provisioned_throughput": 0, "max_provisioned_throughput": 100}]),
+     "provisioned throughput"),
 ])
 def test_pause_refuses_custom_embedding_and_search_endpoints(tmp_path, ep, reason):
     w = CutoverW([ep])
@@ -1176,8 +1194,14 @@ def _dry_row(calls, apply_id, **override):
     return row
 
 
-def _notebook(monkeypatch, params, fake_w, apply_rows=None, legacy_entries=None, dry_rows=None, traffic=None):
+def _notebook(monkeypatch, params, fake_w, apply_rows=None, legacy_entries=None, dry_rows=None, traffic=None,
+              candidates=None):
     import ug_migration_store as st
+
+    # Test calls go only to planned or created services: by default the services asked for are the scan's targets.
+    if candidates is None:
+        candidates = ({x.strip().lower() for x in str(params.get("services") or "").split(",") if x.strip()}, {})
+    monkeypatch.setattr(st, "test_call_candidates", lambda spark, schema, scan_run_id: candidates)
 
     calls = {"upserts": [], "items": {}, "exits": []}
     widgets = dict(params)
@@ -1225,6 +1249,20 @@ def test_notebook_test_call_dry_run_validates_and_writes_no_request(monkeypatch)
     assert calls["upserts"][0]["fingerprint"] == store.legacy_fingerprint(
         {"operation": "test_call", "services": SVC, "api_type": "", "prompt": "Reply with: ok", "rollback_of": "",
          "force": "false"})
+
+
+def test_notebook_test_call_only_goes_to_planned_created_or_system_ai_services(monkeypatch):
+    import ug_migration_planner as pl
+    monkeypatch.setattr(pl, "workspace_id_of", lambda c: "111")  # the hub
+    w = CutoverW([], services={SVC: [API_CHAT], "c.s.made": [API_CHAT], "system.ai.some-model": [API_CHAT]})
+    base = {"apply_id": APPLY, "results_schema": "c.s", "operation": "test_call", "mode": "dry_run", "job_run_id": "5"}
+    with pytest.raises(ValueError, match="only go to system.ai"):  # not planned, not created
+        _notebook(monkeypatch, {**base, "services": SVC}, w, candidates=(set(), {}))
+    with pytest.raises(ValueError, match="only go to system.ai"):  # created, but in another workspace
+        _notebook(monkeypatch, {**base, "services": "c.s.made"}, w, candidates=(set(), {"c.s.made": "999"}))
+    ok = _notebook(monkeypatch, {**base, "services": f"c.s.made,system.ai.some-model"}, w,
+                   candidates=(set(), {"c.s.made": ""}))
+    assert [i["action"] for i in ok["items"][APPLY]] == ["would_test", "would_test"]
 
 
 def test_notebook_refuses_a_test_call_without_services_before_writing_anything(monkeypatch):

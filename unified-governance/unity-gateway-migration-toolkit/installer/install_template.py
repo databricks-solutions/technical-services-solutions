@@ -91,6 +91,7 @@ import dataclasses
 import io
 import json
 import re
+import sys
 import time
 import zipfile
 from datetime import datetime, timedelta
@@ -319,8 +320,10 @@ def job_specs(app_name: str, folder: str, results: str, warehouse_id: str, secre
               central_workspaces: list[str] | None = None, central_secret: str = "") -> dict[str, jobs.JobSettings]:
     """The three toolkit jobs. Parameter names match the notebooks in notebook/ and the bundle's databricks.yml.
     run_as: a service principal's application ID to run them as; blank runs them as the installing user.
-    central_workspaces / central_secret: central mode (the scan job may scan these other workspaces)."""
+    central_workspaces / central_secret: central mode (the scan and apply jobs may act on these other workspaces)."""
     P = jobs.JobParameterDefinition
+    central = [P("target_workspace_id", ""), P("central_workspaces", ",".join(central_workspaces or [])),
+               P("central_client_id", run_as if central_workspaces else ""), P("central_secret", central_secret)]
     files = f"{folder}/files"
     return {
         "snapshot": job_settings(app_name, "snapshot", "snapshot", f"{files}/notebook/run_account", [
@@ -334,9 +337,7 @@ def job_specs(app_name: str, folder: str, results: str, warehouse_id: str, secre
             P("scan_roots", ""), P("target_catalog", TARGET_CATALOG), P("target_schema", TARGET_SCHEMA),
             P("requested_by", ""), P("deadline", deadline),
             # Central mode: the allowlist, identity and secret are fixed here; the app only names the target.
-            P("target_workspace_id", ""), P("central_workspaces", ",".join(central_workspaces or [])),
-            P("central_client_id", run_as if central_workspaces else ""), P("central_secret", central_secret)],
-            run_as=run_as),
+            *central], run_as=run_as),
         "apply": job_settings(app_name, "apply", "apply", f"{files}/notebook/run_apply", [
             P("apply_id", ""), P("job_run_id", "{{job.run_id}}"), P("results_schema", results), P("mode", "dry_run"),
             P("endpoints", ""), P("target_catalog", ""), P("target_schema", ""), P("uc_secret_map", ""), P("create_uc_secrets", "false"),
@@ -346,7 +347,7 @@ def job_specs(app_name: str, folder: str, results: str, warehouse_id: str, secre
             P("allow_secret_read_enabled", "true" if allow_secret_read else "false"),
             # Verify and cut over (operation other than apply); defaults match databricks.yml.
             P("operation", "apply"), P("api_type", ""), P("prompt", "Reply with: ok"), P("services", ""),
-            P("dry_run_id", "")], run_as=run_as),
+            P("dry_run_id", ""), *central], run_as=run_as),
     }
 
 
@@ -515,8 +516,11 @@ RUN_AS = g("run_as").strip()
 run_as_problem = valid_run_as(RUN_AS)
 CENTRAL_WORKSPACES, central_problem_list = central_problems(g("central_workspaces"), g("central_secret"), RUN_AS)
 CENTRAL_SECRET = g("central_secret").strip() if CENTRAL_WORKSPACES else ""
-try:
-    HUB_WORKSPACE_ID = str(w.get_workspace_id())
+try:  # the same source the jobs and scans use (x-databricks-org-id): get_workspace_id() can differ on some workspaces
+    import requests as _requests
+    _org = _requests.get(f"{w.config.host.rstrip('/')}/api/2.0/clusters/spark-versions",
+                         headers=w.config.authenticate(), timeout=30).headers.get("x-databricks-org-id")
+    HUB_WORKSPACE_ID = str(_org or w.get_workspace_id())
 except Exception:
     HUB_WORKSPACE_ID = ""
 JOB_IDENTITY = f"service principal {RUN_AS}" if RUN_AS else me
@@ -559,7 +563,7 @@ if problems:
 
 # COMMAND ----------
 
-from databricks.sdk.errors import DatabricksError, NotFound, ResourceDoesNotExist
+from databricks.sdk.errors import DatabricksError, NotFound, OperationFailed, PermissionDenied, ResourceDoesNotExist
 from databricks.sdk.errors import NotImplemented as ApiNotImplemented  # HTTP 501; the builtin NotImplemented isn't an exception
 
 DASH_NAME = "Unity Gateway migration progress"  # created by versions before 0.8.0; the app replaces it
@@ -575,6 +579,18 @@ def get_app():
 
 def app_deleting(app) -> bool:
     return bool(app and app.compute_status and app.compute_status.state and app.compute_status.state.value == "DELETING")
+
+
+def app_create_failed(app) -> bool:
+    """An app whose create failed: compute in ERROR, no service principal and no deployment. It can't be updated
+    ("has a fatal error ... delete the app and re-create it") and holds nothing to keep."""
+    state = app.compute_status.state.value if app.compute_status and app.compute_status.state else ""
+    return (state == "ERROR" and not getattr(app, "service_principal_client_id", None)
+            and not getattr(app, "active_deployment", None))
+
+
+def app_error(app) -> str:
+    return (app.compute_status.message if app.compute_status and app.compute_status.message else "") or "unknown error"
 
 
 def wait_app_gone(timeout_s: int = 900) -> None:
@@ -737,6 +753,33 @@ def can_use(securable: str, name: str, wanted: set[str]) -> bool:
     return False
 
 
+RUN_AS_ROLE_FIX = ("in this workspace, open Settings > Identity and access > Service principals > {sp} > Permissions and "
+                   "give yourself (or a group you're in) the Service principal: User role, then run the installer again")
+
+
+def run_as_user_problem(application_id: str) -> str | None:
+    """Jobs can only run as a service principal if the person creating them holds its Service principal: User role
+    (Manager isn't enough, and neither is workspace admin). Best effort: None when it holds, or when it can't be read."""
+    if not application_id:
+        return None
+    try:
+        rows = spark.sql("SELECT account_id FROM system.access.workspaces_latest WHERE workspace_id = "
+                         f"{int(w.get_workspace_id())} LIMIT 1").collect()
+        if not rows:
+            return None
+        name = f"accounts/{rows[0][0]}/servicePrincipals/{application_id}/ruleSets/default"
+        rules = w.api_client.do("GET", "/api/2.0/preview/accounts/access-control/rule-sets",
+                                query={"name": name, "etag": ""}).get("grant_rules") or []
+    except Exception:  # can't tell: the job step reports it if it's missing
+        return None
+    mine = {f"users/{me}", f"servicePrincipals/{me}"} | {f"groups/{gr.display}" for gr in (me_user.groups or [])
+                                                         if gr.display}
+    if any(r.get("role") == "roles/servicePrincipal.user" and mine & set(r.get("principals") or []) for r in rules):
+        return None
+    return (f"the jobs run as service principal {application_id}, and creating them needs its Service principal: User "
+            "role, which you don't have (Manager isn't enough): " + RUN_AS_ROLE_FIX.format(sp=application_id))
+
+
 def installed_version(existing) -> str:
     """The version of the install in the folder (marker), else the version the existing app was deployed with."""
     marker = parse_marker(read_marker() or "")
@@ -843,6 +886,9 @@ def preflight() -> tuple[list[str], list[str], str]:
             for schema_name, tables in missing.items():
                 found.append("the SQL warehouse can't read " + "; ".join(tables) + " (SELECT on system tables is needed for "
                              "the snapshot and the scans): " + system_table_fix([schema_name], me))
+        role_problem = run_as_user_problem(RUN_AS)
+        if role_problem:
+            found.append(role_problem)
         prev = installed_version(EXISTING_APP)
         note = f"version: {prev or 'unknown (no earlier version recorded)'} -> {TOOLKIT_VERSION}"
         problem = downgrade_problem(prev, TOOLKIT_VERSION, ALLOW_DOWNGRADE)
@@ -1117,6 +1163,16 @@ if RUN_AS:  # the jobs read the toolkit files and write apply logs in the instal
 # Created with its comment if it's new. An existing schema keeps its comment (it may be yours).
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS `{CATALOG}`.`{SCHEMA}` COMMENT 'Unity Gateway migration app results (app: {APP_NAME})'")
 print("schema ready:", RESULTS)
+# Bring the results tables up to date now (new columns, such as a run's workspace), with the same code the jobs use:
+# the updated app reads them before any job of this version has run.
+try:
+    if "/Workspace" + FILES not in sys.path:
+        sys.path.insert(0, "/Workspace" + FILES)
+    import ug_migration_store as _store
+    _store.ensure_tables(spark, RESULTS)
+    print("results tables ready")
+except Exception as e:  # the jobs add the columns on their first run anyway
+    print(f"note: couldn't update the results tables now ({str(e)[:200]}); the jobs do it on their first run")
 
 # COMMAND ----------
 
@@ -1128,6 +1184,19 @@ SPECS = job_specs(APP_NAME, FOLDER, RESULTS, WAREHOUSE_ID, SECRET_SCHEMAS, ALLOW
                   CENTRAL_WORKSPACES, CENTRAL_SECRET)
 print(f"The jobs run as {JOB_IDENTITY}" + ("" if RUN_AS else " (set Advanced: Run jobs as service principal to change it)"))
 JOB_IDS = {}
+
+
+def job_write(fn, *args, **kwargs):
+    """jobs.create/reset, with the fix spelled out when the run-as service principal can't be bound to the job."""
+    try:
+        return fn(*args, **kwargs)
+    except PermissionDenied as e:
+        if RUN_AS and "servicePrincipal.user" in str(e):
+            raise PermissionDenied(f"the jobs run as service principal {RUN_AS}, and you don't have its Service "
+                                   "principal: User role: " + RUN_AS_ROLE_FIX.format(sp=RUN_AS)) from e
+        raise
+
+
 for role, settings in SPECS.items():
     current_jobs = sorted(i["job_id"] for i in MINE if i["role"] == role)
     if current_jobs:
@@ -1136,14 +1205,14 @@ for role, settings in SPECS.items():
             current = w.jobs.get(keep_id).settings.schedule
             if current and current.pause_status:
                 settings.schedule.pause_status = current.pause_status
-        w.jobs.reset(keep_id, settings)
+        job_write(w.jobs.reset, keep_id, settings)
         JOB_IDS[role] = keep_id
         print("updated job", role, keep_id)
         for job_id in extra:  # left over from an interrupted earlier run
             w.jobs.delete(job_id)
             print("removed duplicate job", role, job_id)
     else:
-        JOB_IDS[role] = w.jobs.create(**settings.as_shallow_dict()).job_id
+        JOB_IDS[role] = job_write(w.jobs.create, **settings.as_shallow_dict()).job_id
         print("created job", role, JOB_IDS[role])
 
 # COMMAND ----------
@@ -1156,6 +1225,12 @@ resources = app_resources(WAREHOUSE_ID, JOB_IDS)
 existing_app = get_app()
 if existing_app is not None and app_deleting(existing_app):  # left from an uninstall that just ran
     print(f"app {APP_NAME} is still being deleted: waiting for it to go...")
+    wait_app_gone()
+    existing_app = None
+if existing_app is not None and app_create_failed(existing_app):  # it can't be updated, and holds nothing to keep
+    print(f"app {APP_NAME} is left from a create that failed ({app_error(existing_app)[:200]}): removing it to create it "
+          "again...")
+    w.apps.delete(APP_NAME)
     wait_app_gone()
     existing_app = None
 if existing_app:
@@ -1172,8 +1247,15 @@ if existing_app:
     print("updated app", APP_NAME)
 else:
     print("creating app (a few minutes)...")
-    w.apps.create_and_wait(apps.App(name=APP_NAME, resources=resources, user_api_scopes=["sql"],
-                                    description=APP_DESCRIPTION))
+    try:
+        w.apps.create_and_wait(apps.App(name=APP_NAME, resources=resources, user_api_scopes=["sql"],
+                                        description=APP_DESCRIPTION))
+    except OperationFailed as e:
+        failed = get_app()
+        reason = app_error(failed) if failed is not None else str(e)
+        raise OperationFailed(f"Databricks couldn't create app {APP_NAME}: {reason[:400]}. The jobs and files are in "
+                              "place. Fix the cause (or wait, if it's a temporary limit), then run the installer again: "
+                              "it removes the failed app and creates it again.") from e
 app = get_app()
 if app.compute_status and app.compute_status.state and app.compute_status.state.value not in ("ACTIVE", "STARTING"):
     w.apps.start_and_wait(APP_NAME)

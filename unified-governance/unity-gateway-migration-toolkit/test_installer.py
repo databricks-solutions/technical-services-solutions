@@ -339,6 +339,7 @@ class FakeWS:
         self.log = []
         self.next_run = 500
         self.clock = 0
+        self.sp_rules = None  # grant rules on the run-as SP's rule set; None = the API isn't reachable
 
     # ---- seeding helpers
     def add_table(self, key, rows=()):
@@ -349,6 +350,8 @@ class FakeWS:
         s = " ".join(stmt.split())
         self.log.append(("sql", s[:100]))
         rows = []
+        if "FROM system.access.workspaces_latest" in s:
+            rows = [("acct-1",)]
         m = re.match(r"DROP TABLE IF EXISTS `(\w+)`\.`(\w+)`\.ug_migration_(\w+)", s)
         if m:
             self.tables.pop(f"{m[1]}.{m[2]}.ug_migration_{m[3]}", None)
@@ -586,6 +589,10 @@ class FakeWS:
 
             def create_and_wait(self_inner, app, **kw):
                 ws.log.append(("create_app", app.name))
+                if getattr(ws, "create_fail", None):  # like the live failure: the app is left in ERROR, with no SP
+                    app.compute_status = apps.ComputeStatus(state=apps.ComputeState.ERROR, message=ws.create_fail)
+                    ws.apps[app.name] = app
+                    raise sdk_errors.OperationFailed(f"failed to reach ACTIVE, got ComputeState.ERROR: {ws.create_fail}")
                 app.compute_status = apps.ComputeStatus(state=apps.ComputeState.ACTIVE)
                 app.url = f"https://{app.name}.example.app"
                 ws.apps[app.name] = app
@@ -633,9 +640,16 @@ class FakeWS:
                 else:
                     ws.apps.pop(name, None)
 
+        def rule_set(method, path, query=None):
+            if ws.sp_rules is None:
+                raise sdk_errors.PermissionDenied("no access")
+            assert path == "/api/2.0/preview/accounts/access-control/rule-sets" and "acct-1" in query["name"]
+            return {"grant_rules": ws.sp_rules}
+
         return _ns(current_user=Current(), catalogs=Catalogs(), schemas=Schemas(), warehouses=Warehouses(),
                    grants=Grants(), statement_execution=Statements(), workspace=Workspace(), lakeview=Lakeview(),
-                   jobs=Jobs(), apps=Apps(), config=_ns(host="https://ws.example.com"))
+                   jobs=Jobs(), apps=Apps(), config=_ns(host="https://ws.example.com"),
+                   get_workspace_id=lambda: 123, api_client=_ns(do=rule_set))
 
 
 def app_obj(name, desc=DESC, env=None):
@@ -1201,6 +1215,33 @@ def test_install_with_run_as_sets_the_jobs_and_shares_the_folder(monkeypatch):
     assert f"Jobs run as service principal {SP_ID}" in res.text
     bad = run_notebook(monkeypatch, FakeWS(), install_widgets(run_as="not-a-uuid"))
     assert bad.raised and "application ID" in bad.status
+
+
+def test_install_with_run_as_stops_early_without_the_service_principal_user_role(monkeypatch):
+    ws = FakeWS()
+    ws.sp_rules = [{"principals": [f"users/{ME}"], "role": "roles/servicePrincipal.manager"}]
+    res = run_notebook(monkeypatch, ws, install_widgets(run_as=SP_ID))
+    assert res.raised and "Service principal: User" in res.status and "Manager isn't enough" in res.status
+    assert not ws.jobs and not ws.apps and not ws.files  # nothing was changed
+    ok = FakeWS()
+    ok.sp_rules = [{"principals": [f"users/{ME}"], "role": "roles/servicePrincipal.user"}]
+    res2 = run_notebook(monkeypatch, ok, install_widgets(run_as=SP_ID))
+    assert not res2.raised, res2.status
+
+
+def test_a_failed_app_create_is_explained_and_the_next_install_recreates_it(monkeypatch):
+    ws = FakeWS()
+    ws.create_fail = "Failed to create app service principal due to error: RESOURCE_EXHAUSTED: too many principals"
+    res = run_notebook(monkeypatch, ws, install_widgets())
+    assert res.raised and "couldn't create app" in res.status and "RESOURCE_EXHAUSTED" in res.status
+    assert "run the installer again" in res.status and ws.apps[APP].compute_status.state == apps.ComputeState.ERROR
+    ws.create_fail = None
+    ws.log.clear()
+    res2 = run_notebook(monkeypatch, ws, install_widgets())
+    assert not res2.raised, res2.status
+    names = [e[0] for e in ws.log if e[0] in ("delete_app", "create_app", "update_app")]
+    assert names == ["delete_app", "create_app"]
+    assert ws.apps[APP].compute_status.state == apps.ComputeState.ACTIVE and "removing it to create it again" in res2.text
 
 
 def test_install_says_the_first_snapshot_is_account_wide_before_it_starts(monkeypatch):

@@ -22,7 +22,7 @@ import os
 import re
 from datetime import datetime, timezone
 
-from ug_migration_apply import (DEFAULT_API_TYPE, DEFAULT_PROMPT, OWNED_ACTIONS, PROBLEM_ACTIONS,
+from ug_migration_apply import (rollback_summary_done, DEFAULT_API_TYPE, DEFAULT_PROMPT, OWNED_ACTIONS, PROBLEM_ACTIONS,
                                ROLLBACK_TYPES, WRITE_LEGACY_OPERATIONS)
 
 SCAN_COLUMNS = {
@@ -39,10 +39,12 @@ APPLY_COLUMNS = {
     "rollback_of": "STRING", "status": "STRING", "summary": "STRING", "error": "STRING",
     "toolkit_version": "STRING", "fingerprint": "STRING", "started_at": "TIMESTAMP", "finished_at": "TIMESTAMP",
     "dry_run_id": "STRING",  # execute: the dry run it followed (each dry run is good for one execute)
+    # Central mode: the workspace the run acted on (blank on rows from before central mode = the hub).
+    "workspace_id": "STRING", "workspace_url": "STRING",
 }
 # The options that decide what an apply run does. An execute must match the dry run it follows on all of them.
 FINGERPRINT_KEYS = ("scan_run_id", "endpoints", "target_catalog", "target_schema", "uc_secret_map",
-                    "allow_secret_read", "grants", "ack_guardrails", "create_uc_secrets")
+                    "allow_secret_read", "grants", "ack_guardrails", "create_uc_secrets", "target_workspace_id")
 FLAG_KEYS = ("allow_secret_read", "grants", "ack_guardrails", "create_uc_secrets")
 
 
@@ -181,12 +183,13 @@ def write_apply_items(spark, schema: str, apply_id: str, results: list[dict]) ->
 
 
 def apply_run(spark, schema: str, apply_id: str) -> dict | None:
-    rows = spark.sql(f"SELECT mode, operation, status, job_run_id FROM {q(schema)}.ug_migration_applies "
+    # workspace_id: the workspace the run acted on (central mode), so a rollback or resume acts there too.
+    rows = spark.sql(f"SELECT mode, operation, status, job_run_id, workspace_id FROM {q(schema)}.ug_migration_applies "
                      f"WHERE apply_id = {_lit(apply_id, 'STRING')}").collect()
     if not rows:
         return None
     return {"mode": rows[0]["mode"], "operation": rows[0]["operation"] or "apply", "status": rows[0]["status"],
-            "job_run_id": rows[0]["job_run_id"]}
+            "job_run_id": rows[0]["job_run_id"], "workspace_id": rows[0]["workspace_id"]}
 
 
 def effective_status(w, status: str | None, job_run_id: str | None) -> str | None:
@@ -213,6 +216,8 @@ def selection_fingerprint(params: dict) -> str:
     fields = {k: _canon(k, params.get(k)) for k in FINGERPRINT_KEYS}
     if fields.get("create_uc_secrets") != "true":
         fields.pop("create_uc_secrets")  # off reads like the runs from before the option, so their hashes still match
+    if not fields.get("target_workspace_id"):
+        fields.pop("target_workspace_id")  # the hub (blank) reads like runs from before central mode
     return _sha256(json.dumps(fields, sort_keys=True))
 
 
@@ -258,9 +263,7 @@ def rollback_done(status: str | None, summary) -> bool:
     if "kept_other_run" not in s:  # written before this rule: NEEDS_ATTENTION counted as done
         return True
     # Kept objects that another run uses, or that existed before the apply run, don't keep a rollback from being done.
-    if s.get("kept", 0) != s.get("kept_other_run", 0) + s.get("kept_preexisting", 0):
-        return False
-    return not any(s.get(a) for a in PROBLEM_ACTIONS if a != "kept")
+    return rollback_summary_done(s)
 
 
 def rollback_blocks(rows: list[dict], w=None, exclude: str | None = None) -> bool:
@@ -398,6 +401,8 @@ def legacy_fingerprint(params: dict) -> str:
         "prompt": str(params.get("prompt") or "").strip() or DEFAULT_PROMPT,
         "rollback_of": str(params.get("rollback_of") or "").strip(),
         "force": str(params.get("force") or "").strip().lower() in ("true", "1"),
+        **({"workspace": str(params.get("target_workspace_id")).strip()}
+           if str(params.get("target_workspace_id") or "").strip() else {}),
     }, sort_keys=True)
     return _sha256(body)
 
@@ -598,3 +603,34 @@ def _split_names(value) -> list[str]:
 
 
 now = _now
+
+
+def test_call_candidates(spark, schema: str, scan_run_id: str) -> tuple[set[str], dict[str, str]]:
+    """What a test call may target (the job's check; the app applies the same rule): the target services of the
+    scan's plan, and model services that apply executes created or found, minus those a rollback deleted since,
+    lower-cased name -> the workspace the run acted on (blank = the hub)."""
+    targets: set[str] = set()
+    if scan_run_id:
+        if not re.fullmatch(r"[0-9a-f-]{36}", scan_run_id):
+            raise ValueError(f"bad scan id {scan_run_id!r}")
+        for r in spark.sql(f"SELECT get_json_object(payload, '$.target_service') AS t FROM {q(schema)}.ug_migration_scan_items "
+                           f"WHERE run_id = '{scan_run_id}' AND item_type = 'plan'").collect():
+            if r["t"]:
+                targets.add(str(r["t"]).lower())
+    created: dict[str, str] = {}
+    rows = spark.sql(f"""
+        SELECT a.workspace_id, get_json_object(i.payload, '$.name') AS name, get_json_object(i.payload, '$.action') AS action
+        FROM {q(schema)}.ug_migration_apply_items i JOIN {q(schema)}.ug_migration_applies a ON a.apply_id = i.apply_id
+        WHERE a.mode IN ('execute', 'rollback') AND (a.operation IS NULL OR a.operation = 'apply')
+          AND get_json_object(i.payload, '$.type') = 'model_service'
+          AND get_json_object(i.payload, '$.action') IN ('created', 'exists', 'deleted')
+        ORDER BY a.started_at, i.seq""").collect()
+    for r in rows:
+        name = str(r["name"] or "").lower()
+        if not name:
+            continue
+        if r["action"] == "deleted":
+            created.pop(name, None)
+        else:
+            created[name] = str(r["workspace_id"] or "")
+    return targets, created

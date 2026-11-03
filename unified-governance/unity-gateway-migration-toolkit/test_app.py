@@ -1045,3 +1045,34 @@ def test_guardrail_check_needs_pairs_and_the_check_word():
     assert p["endpoints"] == "gov=c.s.gov" and main._confirm_word("guardrail_check", p["endpoints"]) == "CHECK"
     with pytest.raises(main.HTTPException):
         main._cutover_params(main.CutoverRequest(operation="guardrail_check", endpoints=["gov"]))
+
+
+def test_pt_endpoints_are_not_offered_or_accepted_for_pause(env):
+    env.store["items"] = [
+        {"item_type": "plan", "seq": 1, "payload": json.dumps({"legacy_endpoint": "pt-a", "kind": "provisioned_throughput",
+                                                                "action": "create_model_service"})},
+        {"item_type": "plan", "seq": 2, "payload": json.dumps({"legacy_endpoint": "ext-a", "kind": "external_model",
+                                                                "action": "create_model_service"})},
+    ]
+    eps = {e["endpoint"]: e for e in env.client.get("/api/cutover/endpoints").json()["endpoints"]}
+    assert eps["pt-a"]["pausable"] is False and eps["ext-a"]["pausable"] is True
+    r = env.client.post("/api/cutover", json={"operation": "pause_legacy", "mode": "dry_run", "scan_run_id": SCAN,
+                                              "endpoints": ["pt-a"]}, headers=OP)
+    assert r.status_code == 409 and "provisioned throughput" in r.json()["detail"]
+    env.sdk.jobs.run_now.assert_not_called()
+
+
+def test_test_call_refuses_a_service_the_toolkit_neither_planned_nor_created(env):
+    env.store["items"] = [
+        {"item_type": "plan", "seq": 1, "payload": json.dumps({"legacy_endpoint": "ext-a", "kind": "external_model",
+                                                                "action": "create_model_service",
+                                                                "target_service": "ai_gateway.migrated.ext-a"})},
+    ]
+    r = env.client.post("/api/cutover", json={"operation": "test_call", "mode": "dry_run", "scan_run_id": SCAN,
+                                              "services": ["someone.else.expensive"]}, headers=OP)
+    assert r.status_code == 400 and "only go to system.ai" in r.json()["detail"]
+    env.sdk.jobs.run_now.assert_not_called()
+    for ok in ("ai_gateway.migrated.ext-a", "system.ai.some-model"):
+        r = env.client.post("/api/cutover", json={"operation": "test_call", "mode": "dry_run", "scan_run_id": SCAN,
+                                                  "services": [ok]}, headers=OP)
+        assert r.status_code == 200, r.text

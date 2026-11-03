@@ -753,12 +753,12 @@ def _handle_api(method, path, qs, body):
                 raise ApiError(404, "not found")
             return 200, _scan_detail(scan)
         if path == "/api/applies":
-            return 200, _list_applies(cutover=False)
+            return 200, _for_ws(_list_applies(cutover=False), qs)
         m = re.fullmatch(r"/api/applies/([^/]+)", path)
         if m:
             return 200, _apply_detail(m.group(1), cutover=False)
         if path == "/api/cutover/runs":
-            return 200, _list_applies(cutover=True)
+            return 200, _for_ws(_list_applies(cutover=True), qs)
         if path == "/api/cutover/traffic":
             return 200, _traffic(qs)
         if path == "/api/cutover/endpoints":
@@ -865,6 +865,22 @@ def _start_scan(body):
     return {"run_id": run_id, "job_run_id": job}
 
 
+def _run_ws(body):
+    """The workspace a new run acts on: the run it undoes, else its scan's, else the hub (as the app decides)."""
+    src = next((a for a in STATE["applies"] if a["apply_id"] == body.get("rollback_of")), None)
+    if src:
+        return src.get("workspace_id") or WS_ID
+    scan = _scan_by_id(body.get("scan_run_id", "")) if body.get("scan_run_id") else None
+    return (scan or {}).get("workspace_id") or WS_ID
+
+
+def _for_ws(rows, qs):
+    ws = qs.get("workspace_id")
+    for r in rows:
+        r["workspace_id"] = r.get("workspace_id") or WS_ID
+    return [r for r in rows if not ws or r["workspace_id"] == ws]
+
+
 def _start_apply(body):
     mode = body.get("mode", "dry_run")
     if mode not in ("dry_run", "execute", "rollback"):
@@ -882,6 +898,7 @@ def _start_apply(body):
         rec = _apply_record("rollback", src["scan_run_id"], [], ME, T0, None, items=items)
         rec["rollback_of"] = src["apply_id"]
         rec["endpoints"] = src["endpoints"]
+        rec.setdefault("workspace_id", _run_ws(body))
         STATE["applies"].insert(0, rec)
         return {"apply_id": rec["apply_id"], "job_run_id": rec["job_run_id"]}
     scan_id = body.get("scan_run_id", "")
@@ -922,6 +939,7 @@ def _start_apply(body):
     rec = _apply_record(mode, scan_id, endpoints, ME, T0, None, items=items, apply_id=apply_id)
     rec["job_run_id"] = job
     rec["target_catalog"], rec["target_schema"] = body.get("target_catalog", TARGET_CATALOG), body.get("target_schema", TARGET_SCHEMA)
+    rec.setdefault("workspace_id", _run_ws(body))
     STATE["applies"].insert(0, rec)
     return {"apply_id": apply_id, "job_run_id": job}
 
@@ -947,6 +965,7 @@ def _start_cutover(body):
         items = [dict(type="serving_endpoint", name=n, action="resumed") for n in src["endpoints"].split(",") if n]
         rec = _cutover_record("resume_legacy", "execute", src["endpoints"].split(","), ME, T0, "",
                               items=items, rollback_of=src["apply_id"])
+        rec.setdefault("workspace_id", _run_ws(body))
         STATE["applies"].insert(0, rec)
         return {"apply_id": rec["apply_id"], "job_run_id": rec["job_run_id"], "operation": op, "mode": "execute"}
     mode = body.get("mode", "dry_run")
@@ -1016,6 +1035,7 @@ def _start_cutover(body):
     rec = _cutover_record(op, mode, endpoints, ME, T0, scan_id, services=services, api_type=api_type, items=items)
     if op == "test_call":
         rec["endpoints"] = ""
+    rec.setdefault("workspace_id", _run_ws(body))
     STATE["applies"].insert(0, rec)
     return {"apply_id": rec["apply_id"], "job_run_id": rec["job_run_id"], "operation": op, "mode": mode}
 

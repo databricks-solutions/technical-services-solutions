@@ -970,6 +970,15 @@ def run_outcome(results: list[dict]) -> tuple[str, dict]:
     return status, summary
 
 
+def rollback_summary_done(summary: dict) -> bool:
+    """A rollback summary that counts as fully rolled back: every kept object was kept only because another apply run
+    still uses it or it existed before the apply run, and nothing else needs attention. The store's rollback_done
+    applies this rule to NEEDS_ATTENTION rows."""
+    if summary.get("kept", 0) != summary.get("kept_other_run", 0) + summary.get("kept_preexisting", 0):
+        return False
+    return not any(summary.get(a) for a in PROBLEM_ACTIONS if a != "kept")
+
+
 # ---------------------------------------------------------------------------
 # Rollback
 # ---------------------------------------------------------------------------
@@ -1014,7 +1023,8 @@ def rollback(w: WorkspaceClient, log_path: str, execute: bool, protect=None, app
     this run's apply mark (or is a reused object whose owning run was rolled back). Newest first.
 
     Each result is appended to audit_path as it happens (when executing), so a cancelled rollback still
-    leaves a record. When audit_path is the source log, a rollback_complete marker is written at the end."""
+    leaves a record. When audit_path is the source log, a rollback_complete marker is written at the end, only if
+    the rollback was full (rollback_summary_done)."""
     entries, bad = read_log(log_path)
     if apply_id is None:
         ids = Counter(e.get("apply_id") for e in entries if e.get("execute") and e.get("apply_id"))
@@ -1153,7 +1163,9 @@ def rollback(w: WorkspaceClient, log_path: str, execute: bool, protect=None, app
               "reason": "the service is kept, so the privileges this run added stay; revoke them by hand if they are "
                         "no longer needed"})
 
-    if execute and audit_path:
+    # The marker means "rolled back": other runs' protection (cli_runs) and a second rollback rely on it, so it's
+    # written only after a full rollback. A partial one (errors, objects kept for another reason) can be retried.
+    if execute and audit_path and rollback_summary_done(run_outcome(out)[1]):
         with open(audit_path, "a") as f:
             f.write(json.dumps({"type": "run", "action": "rollback_complete", "rollback_of": apply_id,
                                 "time": _now_iso()}) + "\n")
@@ -1368,6 +1380,18 @@ def parse_services(value) -> list[str]:
     if len(names) > MAX_TEST_SERVICES:
         raise ValueError(f"at most {MAX_TEST_SERVICES} services per test run, got {len(names)}")
     return names
+
+
+def untestable_services(services, plan_targets, created) -> list[str]:
+    """Services a test call must refuse: test calls go only to system.ai services, the scan plan's target services,
+    and model services that toolkit apply runs created (and no rollback deleted). Any other service would make the
+    job identity call, and bill, a service the toolkit never planned, with the requester's own prompt."""
+    known = {str(n).lower() for n in list(plan_targets or ()) + list(created or ())}
+    return [s for s in services if not s.lower().startswith("system.ai.") and s.lower() not in known]
+
+
+UNTESTABLE = ("{names}: test calls only go to system.ai services, the scan plan's target services and services that "
+              "toolkit apply runs created")
 
 
 def _api_refusal(e: Exception) -> bool:
@@ -1645,10 +1669,18 @@ def _zero_endpoint_limit(gw: dict | None) -> bool:
                for l in (gw or {}).get("rate_limits") or [])
 
 
+# A Unity Gateway model service migrated from a PT endpoint routes through that endpoint, so pausing it would also cut
+# off the callers who already moved. The planner never lists PT endpoints as stop candidates for the same reason.
+PT_PAUSE_REFUSAL = ("provisioned throughput endpoint: its Unity Gateway model service routes through it, so a pause "
+                    "would also cut off callers who already moved. PT endpoints retire with the legacy deadline")
+
+
 def pause_refusal(ep: dict, kind: str) -> str | None:
-    """Why an endpoint must not be rate-limited to 0 (custom models, AI Search and embedding endpoints)."""
+    """Why an endpoint must not be rate-limited to 0 (custom models, PT, AI Search and embedding endpoints)."""
     if is_custom_kind(kind):
         return f"{kind} endpoint: custom models and agents are out of scope for the Unity Gateway migration"
+    if kind == "provisioned_throughput":
+        return PT_PAUSE_REFUSAL
     text = [ep.get("name") or "", ep.get("task") or ""]
     for t in ep.get("tags") or []:
         text.append(f"{t.get('key') or ''} {t.get('value') or ''}")

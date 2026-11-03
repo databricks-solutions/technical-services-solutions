@@ -4,8 +4,8 @@ import { Badge, Card, Confirm, CopyButton, Empty, ErrorBox, ErrorState, ExportLi
 import type { Column } from "./ui";
 import type { WorkspaceSel } from "./App";
 
-/** Central mode, phase 1: why changes are off on this page (the picked workspace isn't the hub), or null. */
-const ChangesBlocked = createContext<string | null>(null);
+/** Central mode: the picked workspace's name, shown in every confirm dialog ("in workspace ..."), or null. */
+const TargetWorkspace = createContext<string | null>(null);
 
 /* Verify and cut over: the runbook's verify and cut-over steps, in order (1 to 6), run from this page.
  * Every step that changes something is an operator action: a dry run first, then execute with a typed word.
@@ -179,10 +179,9 @@ function cutoverStatus(d: { traffic: any; endpoints: any; runs: any; usage: any;
 }
 
 export default function Cutover({ operator: isOperator, maxScanAgeDays, jobsRunAs, active = true, workspace = null }: { operator: boolean; maxScanAgeDays: number; jobsRunAs?: string | null; active?: boolean; workspace?: WorkspaceSel }) {
-  // Central mode: the scans (and so traffic and readiness) follow the picked workspace; changes stay in the hub.
+  // Central mode: the scans, traffic, readiness, runs and every change follow the picked workspace.
   const remote = !!workspace && !workspace.hub;
-  const blocked = remote ? `Central mode phase 1: changes run only in the hub workspace. You picked ${workspace!.label}: open the app installed in that workspace, or use the command line, to pause, resume, turn on tracking or test there. Traffic and readiness below are for that workspace.` : null;
-  const operator = isOperator && !remote;
+  const operator = isOperator;
   const scans = useApi<any[]>(workspace ? `/api/scans?workspace_id=${encodeURIComponent(workspace.id)}` : "/api/scans");
   // Tabs stay mounted: reload the scan list when the tab is opened, so a scan that just finished can be picked.
   useEffect(() => { if (active) scans.reload(); }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -190,7 +189,7 @@ export default function Cutover({ operator: isOperator, maxScanAgeDays, jobsRunA
   const [picked, setPicked] = useState<string | null>(null);
   const scan = succeeded.find((s) => s.run_id === picked) || succeeded[0] || null;
   const scanId: string = scan?.run_id || "";
-  const runs = useApi<any[]>("/api/cutover/runs");
+  const runs = useApi<any[]>(`/api/cutover/runs${workspace ? `?workspace_id=${encodeURIComponent(workspace.id)}` : ""}`);
   const endpoints = useApi<any>(withScan("/api/cutover/endpoints", scanId));
   const services = useApi<any>(withScan("/api/cutover/services", scanId));
   const [win, setWin] = useState("24h");
@@ -209,11 +208,11 @@ export default function Cutover({ operator: isOperator, maxScanAgeDays, jobsRunA
   const panel = (k: StepKey, node: ReactNode) => <div id={`cut-step-${k}`} hidden={step !== k}>{node}</div>;
 
   return (
-    <ChangesBlocked.Provider value={blocked}>
+    <TargetWorkspace.Provider value={workspace ? workspace.label : null}>
     <div className="stack">
       <PageHeader title="Verify & cut over"
                   description="Check that legacy traffic has stopped, pause legacy endpoints one at a time, test Unity Gateway, then decide to enforce. Operators run the steps that change something. Everyone can read the traffic and the run list; a run's details are for the person who started it, operators and workspace admins." />
-      {blocked && <Notice tone="warning" title="Changes run only in the hub workspace">{blocked}</Notice>}
+      {remote && <Notice tone="info" title={`Working in ${workspace!.label}`}>Central mode: these steps run in <b>{workspace!.label}</b>, signed in as the app's service principal. Traffic, readiness and the runs below are that workspace's.</Notice>}
       <Card title="Scan used for these steps" note="The endpoints, callers and services come from this scan's plan. Scan again if they've changed.">
         {scans.loading && !scans.data ? <Skeleton lines={1} label="Loading scans" /> : scans.error ? <ErrorState error={scans.error} onRetry={scans.reload} /> : !scan ? (
           <Empty title="No finished scan" action={<NavButton tab="scans" label="Go to Scans" />}>Run a workspace scan first. This page reads its plan.</Empty>
@@ -248,7 +247,7 @@ export default function Cutover({ operator: isOperator, maxScanAgeDays, jobsRunA
       {panel("enforce", <EnforceStep scan={scan} enforceTraffic={enforceTraffic} maxAge={maxScanAgeDays} />)}
       {panel("runs", <RunHistory operator={operator} runs={runs} />)}
     </div>
-    </ChangesBlocked.Provider>
+    </TargetWorkspace.Provider>
   );
 }
 
@@ -336,8 +335,7 @@ function DryRunPair({ operator, disabledReason, dry, sig, word, label, confirmTi
   const reasons = [!operator && "Only operators can start this.", disabledReason].filter(Boolean) as string[];
   const execReasons = [...reasons, !dryOk && `Run a dry run of these settings first.`].filter(Boolean) as string[];
   // View-only users get the reason, not action buttons (the brief: view-only sees no action buttons).
-  const blocked = useContext(ChangesBlocked);
-  if (blocked) return <Reason id={`${id}-dry`}>{blocked}</Reason>;
+  const target = useContext(TargetWorkspace);
   if (!operator) return <Reason id={`${id}-dry`}>Only operators can run this step. You can read the results below.</Reason>;
   return (
     <div className="stack-sm">
@@ -357,7 +355,8 @@ function DryRunPair({ operator, disabledReason, dry, sig, word, label, confirmTi
       {reasons.length === 0 && execReasons.length > 0 && <Reason id={`${id}-exec`}>Execute is unavailable. {execReasons.join(" ")}</Reason>}
       {dryOk && reasons.length === 0 && <p className="small">Dry run checked. Execute does exactly what it showed.</p>}
       {confirming && (
-        <Confirm word={word} title={confirmTitle} action={confirmAction} busy={busy} body={confirmBody}
+        <Confirm word={word} title={confirmTitle} action={confirmAction} busy={busy}
+                 body={<>{target && <p>In workspace <b>{target}</b>.</p>}{confirmBody}</>}
                  onCancel={() => setConfirming(false)} onConfirm={() => { setConfirming(false); onExecute(); }} />
       )}
     </div>
@@ -491,7 +490,7 @@ function TrackingStep({ operator, endpoints, scanId, onDone }: { operator: boole
 function PauseStep({ operator, endpoints, traffic, win, scanId, runs, onDone }: {
   operator: boolean; endpoints: any; traffic: any; win: string; scanId: string; runs: any; onDone: () => void;
 }) {
-  const list: any[] = (endpoints.data?.endpoints || []).filter((e: any) => e.kind !== "v2_workspace_endpoint");
+  const list: any[] = (endpoints.data?.endpoints || []).filter((e: any) => e.kind !== "v2_workspace_endpoint" && e.pausable !== false);
   const [name, setName] = useState("");
   const [ack, setAck] = useState(false);
   const selectId = useId();
@@ -580,12 +579,12 @@ function PauseStep({ operator, endpoints, traffic, win, scanId, runs, onDone }: 
           ]} />
           {resuming && (
             <Confirm word="RESUME" title={`Resume ${resuming.endpoints}`} action="Resume endpoint" busy={resume.busy}
+                     body={<>{resuming.workspace_id && <p>In workspace <b>{resuming.workspace_id}</b> (where it was paused).</p>}<p>Restore <code>{resuming.endpoints}</code>'s settings from before the pause. Callers can send requests to it again.</p></>}
                      onCancel={() => setResuming(null)}
                      onConfirm={async () => {
                        const ok = await resume.start({ operation: "resume_legacy", mode: "execute", rollback_of: resuming.apply_id, confirm: "RESUME" }, "");
                        if (ok) { setResuming(null); onDone(); }
-                     }}
-                     body={<p>Restore <code>{resuming.endpoints}</code>'s settings from before the pause. Callers can send requests to it again.</p>} />
+                     }} />
           )}
           <RunResult key={resume.run?.applyId} started={resume.run?.operation === "resume_legacy" ? resume.run : null} label="Resume" onDone={() => onDone()} />
           {resume.err && <ErrorBox error={resume.err} title="Couldn't start the resume" />}
@@ -892,6 +891,7 @@ function EnforceStep({ scan, enforceTraffic, maxAge }: { scan: any; enforceTraff
 /* ---------- Runs: every verify and cut-over run, newest first ---------- */
 
 function RunHistory({ operator, runs }: { operator: boolean; runs: any }) {
+  const central = useContext(TargetWorkspace) !== null;  // central mode: say which workspace each run acted on
   const [open, setOpen] = useState<string | null>(null);
   const rows: any[] = runs.data || [];
   const runView = useRunView<any>(rows, (r) => r.apply_id === open);
@@ -909,6 +909,7 @@ function RunHistory({ operator, runs }: { operator: boolean; runs: any }) {
             { key: "status", label: "Status", render: (r) => <><Badge value={r.status} />{r.resumed && <div className="small muted">Resumed</div>}</> },
             { key: "targets", label: "Targets", clamp: true, render: (r) => <span className="small">{r.operation === "test_call" ? r.services : r.endpoints}</span> },
             { key: "summary", label: "Result", sortable: false, clamp: true, render: (r) => <span className="small">{summaryLine(r.summary) || "-"}</span> },
+            ...(central ? [{ key: "workspace_id", label: "Workspace", hideOnPhone: true, render: (r: any) => <span className="small">{r.workspace_id || "-"}</span> }] : []),
             { key: "requested_by", label: "By", hideOnPhone: true },
           ]} />
           </div>

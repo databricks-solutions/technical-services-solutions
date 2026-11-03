@@ -155,6 +155,11 @@ resources:
         - {name: services, default: ""}
         # Execute (except resume and rollback): the apply_id of a successful dry run of the same settings, < 24 hours old.
         - {name: dry_run_id, default: ""}
+        # Central mode (optional): same as the scan job; the app only names the target workspace.
+        - {name: target_workspace_id, default: ""}
+        - {name: central_workspaces, default: "${var.central_workspaces}"}
+        - {name: central_client_id, default: "${var.central_client_id}"}
+        - {name: central_secret, default: "${var.central_secret}"}
       tasks:
         - task_key: apply
           notebook_task:

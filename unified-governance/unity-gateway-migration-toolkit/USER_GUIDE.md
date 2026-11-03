@@ -113,25 +113,27 @@ It creates the toolkit files (default `/Workspace/Users/<you>/ug-migration-toolk
 
 **At the end** it prints the app link (**Compute > Apps > ug-migration-toolkit**), the job links and whether the first snapshot started. It also reports the target schema, that the weekly snapshot is paused, and that secret mapping is off.
 
-**Who the jobs run as.** You, unless you set **Advanced: Run jobs as service principal** to a service principal's application ID. Then all three jobs run as that service principal. You need the Service Principal User role on it, and it needs the system table, results schema and target schema access in [Before you start](#before-you-start). The installer gives it CAN MANAGE on the install folder. Only people in **Install: Operators** can start jobs from the app.
+**Who the jobs run as.** You, unless you set **Advanced: Run jobs as service principal** to a service principal's application ID. Then all three jobs run as that service principal. You need its **Service principal: User** role (Settings > Identity and access > Service principals > the service principal > Permissions; creating the service principal only gives you Manager, and workspace admin isn't enough: the installer checks this before it changes anything). It needs the system table, results schema and target schema access in [Before you start](#before-you-start). The installer gives it CAN MANAGE on the install folder. Only people in **Install: Operators** can start jobs from the app.
 
 **The first snapshot is account-wide.** It reads account-wide system tables, so it covers every workspace in the account, not only this one. The installer says so before it starts the snapshot.
 
 ### Central mode (optional): one install for many workspaces
 
-By default each workspace has its own install. In central mode, one install (the hub) can also **scan** other workspaces in the account: inventory, code, readiness and legacy traffic. Changes (apply, rollback, pause, resume, usage tracking, test calls, guardrail checks) still run only in the hub workspace in this version; for other workspaces, use their own install or the command line.
+By default each workspace has its own install. In central mode, one install (the hub) also works on other workspaces in the account: it scans them (inventory, code, readiness, legacy traffic) and makes changes there (apply, rollback, pause, resume, usage tracking, test calls, guardrail checks). Pick the workspace in the header; Apply uses that workspace's scans and creates the services there, and every change runs there, signed in as the service principal. Every confirm dialog names the workspace, and the run lists show it. A rollback or a resume always acts on the workspace of the run it undoes. One run at a time across all workspaces.
 
 To turn it on, run the installer with:
 
-1. **Advanced: Run jobs as service principal** set to a service principal's application ID.
+1. **Advanced: Run jobs as service principal** set to a service principal's application ID (you need its Service principal: User role, see [Who the jobs run as](#1-install)).
 2. **Advanced: Central mode: workspaces to manage** set to the workspace IDs to scan (comma-separated).
 3. **Advanced: Central mode: service principal OAuth secret** set to the `scope/key` of a secret that holds that service principal's OAuth client secret, in a scope the service principal can read.
 
-Then add the service principal to each listed workspace as a workspace admin (an account admin can do it from the account console, or each workspace's admin by application ID).
+Then add the service principal to each listed workspace as a workspace admin (an account admin can do it from the account console, or each workspace's admin by application ID). In each workspace it needs what the jobs need there: workspace admin (scan, pause, resume, tracking), `USE CATALOG`, `USE SCHEMA` and `CREATE SERVICE` on the target schema, `EXECUTE` on the services it tests, and READ on the secret scopes when it creates Unity Catalog secrets from workspace secrets (it reads that workspace's scopes).
+
+Workspaces on the same metastore share Unity Catalog names: give each workspace its own target schema (for example `ai_gateway.migrated_<workspace>`) to avoid collisions.
 
 - The scan job signs in to each workspace as that service principal. The app never sees the secret.
 - The workspace URL comes from `system.access.workspaces_latest`, never from the app, and the job checks it answers as the expected workspace.
-- A **Workspace** picker appears in the app header. Scans, readiness and **Verify & cut over > Legacy traffic** follow it. With another workspace picked, the change steps explain they run in the hub only, and their buttons are off.
+- A **Workspace** picker appears in the app header. Scans, Apply and Verify & cut over follow it.
 - Scans of another workspace don't include Unity Catalog function and view definitions (they're per metastore), so their status can't go above `READY_WITH_WARNINGS`. Traffic comes from the account-wide system tables; a workspace in another region than the hub may show none.
 - **Security:** this service principal can read every listed workspace. Keep the list short, give it only the access the scan needs, and rotate its secret like any credential.
 
@@ -374,7 +376,7 @@ Tracking records each call in the system tables, so step 1 can see the traffic. 
 
 *After a pause (tile 3 done), step 4: a test call that returned HTTP 200.*
 
-Pausing sets the endpoint's rate limit to 0 calls a minute and keeps its other settings. Callers still on it get errors until it's resumed. User-level limits stay. Pause one endpoint per run. The list offers the scan's external, PT and `databricks-*` endpoints, but not v2 workspace endpoints.
+Pausing sets the endpoint's rate limit to 0 calls a minute and keeps its other settings. Callers still on it get errors until it's resumed. User-level limits stay. Pause one endpoint per run. The list offers the scan's external model and `databricks-*` endpoints. It doesn't offer v2 workspace endpoints, or PT endpoints: a model service migrated from a PT endpoint routes through it, so pausing it would also cut off callers who already moved (the job refuses them too). PT endpoints retire with the legacy deadline.
 
 - **Dry run** shows the endpoint's requests in the window. If there were requests, tick **I understand callers still on this endpoint will get errors until it's resumed** first. The app and the job both check traffic: with requests in the window (the job also checks the last 24 hours) the pause needs that tick, and if traffic can't be read, the pause is refused. System tables lag, so no traffic isn't proof that no one calls it. The tick is part of the dry run, so changing it needs a new dry run. Recent legacy requests that can't be matched to an endpoint (no `system.serving.served_entities` row) count as possible traffic on it, so they need the tick too.
 - **Execute** by typing `PAUSE`. The dialog names the endpoint it will pause. The toolkit saves the previous settings before it writes, then reads the endpoint back and records `paused`. If it can't read the endpoint first, it refuses. If the write or the read-back fails, the saved settings still let you resume.

@@ -6,10 +6,10 @@ import type { WorkspaceSel } from "./App";
 const NOT_READY = ["INCOMPLETE", "BLOCKED"];
 
 export default function Apply({ scanRunId, setScanRunId, operator, active = true, workspace = null }: { scanRunId: string | null; setScanRunId: (id: string) => void; operator: boolean; active?: boolean; workspace?: WorkspaceSel }) {
-  // Central mode, phase 1: apply runs only in the hub, so it lists the hub's scans whatever workspace is picked.
-  const remote = !!workspace && !workspace.hub;
-  const scans = useApi<any[]>(workspace ? `/api/scans?workspace_id=${encodeURIComponent(workspace.hubId)}` : "/api/scans");
-  const history = useApi<any[]>("/api/applies");
+  // Central mode: the scans, the history and every change follow the picked workspace (the job acts on the scan's).
+  const wsQuery = workspace ? `?workspace_id=${encodeURIComponent(workspace.id)}` : "";
+  const scans = useApi<any[]>(`/api/scans${wsQuery}`);
+  const history = useApi<any[]>(`/api/applies${wsQuery}`);
   const config = useApi<any>("/api/config");
   // Tabs stay mounted, so a scan that finished on the Scans tab only shows up here after a reload on opening the tab.
   useEffect(() => { if (active) { scans.reload(); history.reload(); config.reload(); } }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -58,13 +58,13 @@ export default function Apply({ scanRunId, setScanRunId, operator, active = true
           </div>
         )}
       </Card>
-      {remote && (
-        <Notice tone="warning" title={`Apply runs only in the hub workspace`}>
-          Central mode phase 1: changes run only in the hub workspace. You picked <b>{workspace!.label}</b>: open the app installed in that workspace, or use the command line, to apply there. The scans below are the hub's.
+      {workspace && !workspace.hub && (
+        <Notice tone="info" title={`Applying in ${workspace.label}`}>
+          Central mode: the apply job signs in to <b>{workspace.label}</b> as the app's service principal and creates the services there. The scans and the history below are that workspace's.
         </Notice>
       )}
       {scanRunId && (
-        <Planner key={scanRunId} operator={operator} scanRunId={scanRunId} config={config.data} maxAge={maxAge} history={history.data || []}
+        <Planner key={scanRunId} wsLabel={workspace?.label || null} operator={operator} scanRunId={scanRunId} config={config.data} maxAge={maxAge} history={history.data || []}
                  runningApply={runningApply} onStarted={(id) => openRun(id, true)} onDone={refresh} />
       )}
       <Card title="History" actions={<button className="btn secondary sm" onClick={() => { if (!history.loading) history.reload(); }} aria-disabled={history.loading || undefined}>Reload</button>}>
@@ -78,6 +78,7 @@ export default function Apply({ scanRunId, setScanRunId, operator, active = true
               <Badge value={r.status} />{r.rolled_back && <div className="small muted">Rolled back</div>}</> },
             { key: "endpoints", label: "Endpoints", clamp: true, render: (r) => <span className="small">{r.mode === "rollback" ? `rollback of ${String(r.rollback_of).slice(0, 8)}` : String(r.endpoints || "").split(",").join(", ")}</span> },
             { key: "summary", label: "Result", sortable: false, clamp: true, render: (r) => <Summary s={r.summary} /> },
+            ...(workspace ? [{ key: "workspace_id", label: "Workspace", hideOnPhone: true, render: (r: any) => <span className="small">{r.workspace_id || "-"}</span> }] : []),
             { key: "requested_by", label: "By" },
           ]} />
           </div>
@@ -176,9 +177,9 @@ function SecretRow({ secret, value, error, disabled, onChange, label, hint }: {
   );
 }
 
-function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, history, runningApply }: {
+function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, history, runningApply, wsLabel = null }: {
   scanRunId: string; onStarted: (id: string) => void; onDone: () => void; operator: boolean; config: any; maxAge: number;
-  history: any[]; runningApply: any;
+  history: any[]; runningApply: any; wsLabel?: string | null;
 }) {
   const { data, error, loading, reload } = useApi<any>(`/api/scans/${scanRunId}`);
   const meta: any = data?.meta;
@@ -514,6 +515,7 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
             <Confirm word="EXECUTE" title="Execute" action={`Create ${plural(chosen.size, "service")}`} busy={busy}
                      onCancel={() => setConfirming(false)} onConfirm={() => start("execute")}
                      body={<>
+                       {wsLabel && <p>In workspace <b>{wsLabel}</b>.</p>}
                        <p>Create these model services (and the provider services they need) in <code>{target}</code>:</p>
                        <ul className="small">{candidates.filter((p: any) => chosen.has(p.legacy_endpoint)).slice(0, 12).map((p: any) => <li key={p.legacy_endpoint}><code>{retarget(p.target_service)}</code> from <code>{p.legacy_endpoint}</code></li>)}{chosen.size > 12 && <li>and {chosen.size - 12} more</li>}</ul>
                        <p className="small">Grants: <b>{grants ? "copied from legacy permissions" : "none"}</b>. Keys: <b>{secretMode === "uc" ? "Unity Catalog secret references" : secretMode === "create" ? "new Unity Catalog secrets created from the workspace secrets" : "copied from workspace secrets"}</b>.</p>
@@ -630,6 +632,7 @@ function ApplyDetail({ applyId, onRolledBack, onOpen, onFinished, onClose, opera
         <Confirm word="ROLLBACK" title="Roll back" action={`Delete ${plural(created, "object")}`} busy={busy}
                  onCancel={() => setConfirming(false)} onConfirm={rollback}
                  body={<>
+                   {data.meta?.workspace_id && <p>In workspace <b>{data.meta.workspace_id}</b> (where this run created them).</p>}
                    <p>Delete the {plural(created, "object")} this run created:</p>
                    <ul className="small">{data.items.filter((i: any) => i.action === "created").slice(0, 12).map((i: any) => <li key={i.type + i.name}><code>{i.name}</code> ({String(i.type).replace(/_/g, " ")})</li>)}</ul>
                    <p className="small">Objects another run still uses are kept. Inference tables stay. Grants are never revoked: a deleted service takes its grants with it, and a kept service keeps them (the results list them).</p>

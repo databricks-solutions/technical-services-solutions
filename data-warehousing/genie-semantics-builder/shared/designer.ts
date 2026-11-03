@@ -28,8 +28,36 @@ export interface DesignDraft {
   createdAt: string;
 }
 
+export interface TestResult {
+  name: string;
+  status: 'passed' | 'failed' | 'error';
+  /** Rows compared. Result values are never stored. */
+  rows: number;
+  detail: string;
+  measureSql: string;
+  expandedSql: string | null;
+}
+
+export interface ValidationRun {
+  id: string;
+  version: number;
+  status: 'running' | 'passed' | 'failed';
+  sandboxView: string;
+  results: TestResult[];
+  error: string | null;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface ValidationPlan {
+  sandboxView: string;
+  statements: string[];
+}
+
 export interface DesignerView {
   draft: DesignDraft | null;
+  /** Latest validation run of the shown draft. */
+  validation: ValidationRun | null;
   history: Pick<DesignDraft, 'version' | 'origin' | 'status' | 'createdBy' | 'createdAt'>[];
 }
 
@@ -37,3 +65,5 @@ export const saveDraftSchema = z.object({
   baseVersion: z.number().int().positive(),
   yaml: z.string().min(1).max(200_000),
 });
+
+export const validateSchema = z.object({ statements: z.array(z.string().min(1).max(200_000)).min(1).max(10) });

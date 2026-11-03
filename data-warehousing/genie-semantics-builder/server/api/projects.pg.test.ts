@@ -105,7 +105,7 @@ describe.skipIf(!url)('projectRepo on Postgres', () => {
       issues: [],
       origin: 'generated',
     };
-    expect(await designer.view(p.id)).toEqual({ draft: null, history: [] });
+    expect(await designer.view(p.id)).toEqual({ draft: null, validation: null, history: [] });
     await designer.add('dana@example.com', p.id, draft);
     await designer.add('dana@example.com', p.id, { ...draft, yaml: 'source: a.b.d', origin: 'edited' }, 1);
     await expect(designer.add('dana@example.com', p.id, { ...draft, origin: 'edited' }, 1)).rejects.toThrow(
@@ -124,5 +124,15 @@ describe.skipIf(!url)('projectRepo on Postgres', () => {
       { version: 1, origin: 'generated' },
       { version: 2, origin: 'edited' },
     ]);
+
+    await expect(designer.startRun('dana@example.com', p.id, 1, 'a.b.v', ['CREATE x'])).rejects.toThrow(/latest/);
+    const run = await designer.startRun('dana@example.com', p.id, 2, 'a.b.v', ['CREATE x']);
+    expect((await designer.view(p.id)).validation).toMatchObject({ id: run, status: 'running', version: 2 });
+    const result = { name: 't', status: 'passed' as const, rows: 3, detail: 'ok', measureSql: 'q', expandedSql: null };
+    await designer.finishRun(run, 'passed', [result], null);
+    const done = await designer.view(p.id);
+    expect(done.validation).toMatchObject({ status: 'passed', results: [result] });
+    expect(done.draft?.status).toBe('validated');
+    expect((await designer.view(p.id, 1)).validation).toBeNull();
   });
 });

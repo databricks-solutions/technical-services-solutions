@@ -6,6 +6,7 @@ import {
   Empty,
   FormUI,
   Input,
+  Modal,
   Table,
   TableCell,
   TableHeader,
@@ -13,7 +14,14 @@ import {
   Tag,
   Typography,
 } from '@databricks/design-system';
-import type { Additivity, DesignDraft, DesignerView } from '../../../shared/designer';
+import type {
+  Additivity,
+  DesignDraft,
+  DesignerView,
+  TestResult,
+  ValidationPlan,
+  ValidationRun,
+} from '../../../shared/designer';
 import { validateMetricView } from '../../../shared/metricView';
 import type { MetricViewIssue } from '../../../shared/metricView';
 import { api, useResource } from '../api';
@@ -189,6 +197,70 @@ function Fields({
   );
 }
 
+const RESULT_TAG: Record<TestResult['status'], { color: 'teal' | 'coral'; label: string }> = {
+  passed: { color: 'teal', label: 'Passed' },
+  failed: { color: 'coral', label: 'Failed' },
+  error: { color: 'coral', label: 'Error' },
+};
+
+function SqlBlock({ label, sql }: { label: string; sql: string }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <Typography.Text bold>{label}</Typography.Text>
+      <pre
+        style={{
+          ...MONO,
+          margin: 0,
+          padding: 12,
+          maxHeight: 320,
+          overflow: 'auto',
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+          border: '1px solid var(--db-border-base)',
+          borderRadius: 4,
+        }}
+      >
+        {sql}
+      </pre>
+    </div>
+  );
+}
+
+function ValidationResults({ run }: { run: ValidationRun }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <Typography.Text bold>Last validation</Typography.Text>
+        <Tag
+          componentId="gsb.designer.run_status"
+          color={run.status === 'passed' ? 'teal' : run.status === 'failed' ? 'coral' : 'lemon'}
+        >
+          {run.status === 'passed' ? 'All tests passed' : run.status === 'failed' ? 'Failed' : 'Running'}
+        </Tag>
+        <Typography.Text color="secondary">
+          {run.sandboxView}, by {run.createdBy}, {new Date(run.createdAt).toLocaleString()}
+        </Typography.Text>
+      </div>
+      {run.error && <Alert componentId="gsb.designer.run_error" type="error" closable={false} message={run.error} />}
+      {run.results.map((r) => (
+        <details key={r.name} style={{ border: '1px solid var(--db-border-base)', borderRadius: 4, padding: 8 }}>
+          <summary style={{ cursor: 'pointer', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <Tag componentId="gsb.designer.test_status" color={RESULT_TAG[r.status].color}>
+              {RESULT_TAG[r.status].label}
+            </Tag>
+            <Typography.Text bold>{r.name}</Typography.Text>
+            <Typography.Text>{r.detail}</Typography.Text>
+          </summary>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
+            <SqlBlock label="Query on the metric view" sql={r.measureSql} />
+            {r.expandedSql && <SqlBlock label="The SQL the engine would produce" sql={r.expandedSql} />}
+          </div>
+        </details>
+      ))}
+    </div>
+  );
+}
+
 function Designer({
   data,
   onChange,
@@ -200,7 +272,8 @@ function Designer({
   const { draft } = data;
   const [yaml, setYaml] = useState(draft.yaml);
   const [instruction, setInstruction] = useState('');
-  const [busy, setBusy] = useState<'save' | 'refine' | 'generate'>();
+  const [busy, setBusy] = useState<'save' | 'refine' | 'generate' | 'plan' | 'validate'>();
+  const [plan, setPlan] = useState<ValidationPlan>();
   const [error, setError] = useState<string>();
   const dirty = yaml !== draft.yaml;
 
@@ -209,13 +282,14 @@ function Designer({
   const issues = dirty ? live.issues : draft.issues;
   const view = live.view ?? saved;
 
-  const run = (kind: 'save' | 'refine' | 'generate', path: string, body: unknown) => {
+  const run = (kind: 'save' | 'refine' | 'generate' | 'validate', path: string, body: unknown) => {
     setBusy(kind);
     setError(undefined);
     api<DesignerView>(path, body).then(
       (v) => {
         setBusy(undefined);
         setInstruction('');
+        setPlan(undefined);
         if (v.draft) setYaml(v.draft.yaml);
         onChange(v);
       },
@@ -298,7 +372,8 @@ function Designer({
           Test cases
         </Typography.Title>
         <Typography.Text color="secondary">
-          Validation runs these queries in the sandbox in the next step.
+          Validation creates the metric view in the sandbox schema, runs each test as you, and compares the result with
+          plain SQL derived from the YAML.
         </Typography.Text>
         {draft.tests.length ? (
           <ul style={{ margin: 0, paddingLeft: 20 }}>
@@ -312,7 +387,67 @@ function Designer({
         ) : (
           <Typography.Text>No test cases match the current fields.</Typography.Text>
         )}
+        <div>
+          <Button
+            componentId="gsb.designer.validate"
+            type="primary"
+            loading={busy === 'plan' || busy === 'validate'}
+            disabled={dirty || !!busy || !draft.tests.length || draft.issues.some((i) => i.severity === 'error')}
+            onClick={() => {
+              setBusy('plan');
+              setError(undefined);
+              api<ValidationPlan>(`/api/projects/${projectId}/designs/${draft.version}/validation`).then(
+                (p) => {
+                  setBusy(undefined);
+                  setPlan(p);
+                },
+                (err: unknown) => {
+                  setBusy(undefined);
+                  setError((err as Error).message);
+                }
+              );
+            }}
+          >
+            Validate in sandbox
+          </Button>
+        </div>
+        {busy === 'validate' && (
+          <div role="status">
+            <Typography.Text color="secondary">Creating the sandbox view and running the tests.</Typography.Text>
+          </div>
+        )}
+        {data.validation && <ValidationResults run={data.validation} />}
       </section>
+
+      <Modal
+        componentId="gsb.designer.validate_modal"
+        title="Validate in sandbox"
+        visible={!!plan}
+        okText="Run SQL"
+        cancelText="Cancel"
+        okButtonProps={{ loading: busy === 'validate' }}
+        onCancel={() => setPlan(undefined)}
+        onOk={() => {
+          if (plan)
+            run('validate', `/api/projects/${projectId}/designs/${draft.version}/validation`, {
+              statements: plan.statements,
+            });
+        }}
+      >
+        {plan && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <Alert
+              componentId="gsb.designer.validate_warning"
+              type="warning"
+              closable={false}
+              message={`This SQL runs as you and creates or replaces the metric view ${plan.sandboxView}. Then ${draft.tests.length} read-only test queries run. Result values are not stored.`}
+            />
+            {plan.statements.map((s) => (
+              <SqlBlock key={s} label="SQL to run" sql={s} />
+            ))}
+          </div>
+        )}
+      </Modal>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 720 }}>
         <FormUI.Label htmlFor="gsb-designer-refine">Ask for a change</FormUI.Label>

@@ -10,6 +10,8 @@ variables:
     description: Full Lakebase Postgres database resource name. Obtain by running `databricks postgres list-databases {branch-name}`, select the desired item from the output array and use its .name value. Requires the branch resource name.
   serving_endpoint_name:
     description: Serving endpoint name
+  sandbox_schema:
+    description: catalog.schema where validation creates temporary metric views. The app users need CREATE TABLE there.
 
 # The repo root .gitignore matches *conf*.json; bundle sync skips those unless included here.
 sync:
@@ -22,6 +24,20 @@ resources:
       name: "genie-semantics-builder"
       description: "Design, validate, optimize and govern UC metric views with an LLM advisor"
       source_code_path: ./
+      # The app config lives here, not in app.yaml: a bundle config replaces app.yaml entirely.
+      config:
+        command: ['pnpm', 'run', 'start']
+        env:
+          - name: DATABRICKS_WAREHOUSE_ID
+            value_from: sql-warehouse
+          - name: LAKEBASE_ENDPOINT
+            value_from: postgres
+          - name: DATABRICKS_SERVING_ENDPOINT_NAME
+            value_from: serving-endpoint
+          - name: MLFLOW_EXPERIMENT_ID
+            value_from: experiment
+          - name: GSB_SANDBOX_SCHEMA
+            value: ${var.sandbox_schema}
 
       # Start the app automatically on deploy.
       lifecycle:
@@ -66,6 +82,7 @@ targets:
       postgres_branch: projects/genie-semantics-builder/branches/production
       postgres_database: projects/genie-semantics-builder/branches/production/databases/databricks-postgres
       serving_endpoint_name: databricks-claude-sonnet-5-5
+      sandbox_schema: sandbox.genie_semantics_builder
 
   prod:
     mode: production
@@ -76,3 +93,4 @@ targets:
       postgres_branch: projects/<your-lakebase-project>/branches/production
       postgres_database: projects/<your-lakebase-project>/branches/production/databases/databricks-postgres
       serving_endpoint_name: databricks-claude-sonnet-5-5
+      sandbox_schema: <catalog>.<schema-for-validation-views>

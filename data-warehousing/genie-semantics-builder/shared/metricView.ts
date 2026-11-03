@@ -109,7 +109,9 @@ const CHAIN = new RegExp(`(?<![\\w.\`])${ID}(?:\\s*\\.\\s*${ID})+(?![\\w\`(])`, 
 const MEASURE_REF = new RegExp(`\\bMEASURE\\s*\\(\\s*(${ID})\\s*\\)`, 'gi');
 const unquote = (id: string) => (id.startsWith('`') ? id.slice(1, -1).replace(/``/g, '`') : id).toLowerCase();
 const splitChain = (chain: string) => (chain.match(new RegExp(ID, 'g')) ?? []).map(unquote);
-const stripLiterals = (expr: string) => expr.replace(/'(?:[^'\\]|\\.|'')*'|"(?:[^"\\]|\\.)*"/g, "''");
+// Blanks string literal contents, keeping offsets, so names inside strings are not treated as references.
+const stripLiterals = (expr: string) =>
+  expr.replace(/'(?:[^'\\]|\\.|'')*'|"(?:[^"\\]|\\.)*"/g, (m) => `${m[0]}${' '.repeat(m.length - 2)}${m[0]}`);
 
 interface JoinNode {
   join: Join;
@@ -339,4 +341,22 @@ export function validateMetricView(
 /** Renders a view as YAML 1.1, so keys and values such as on are quoted. */
 export function renderMetricView(view: MetricView): string {
   return stringify(view, { version: '1.1', lineWidth: 0 });
+}
+
+/** Rewrites full join paths (a.b.column) to the joined table's own name (b.column), for plain SQL. */
+export function toDirectAliases(view: MetricView, expr: string): string {
+  const chains = new Set(flattenJoins(view.joins, [], []).map((n) => n.chain.join('.')));
+  const stripped = stripLiterals(expr);
+  let out = '';
+  let last = 0;
+  for (const m of stripped.matchAll(CHAIN)) {
+    const ids = m[0].match(new RegExp(ID, 'g')) ?? [];
+    const parts = ids.map(unquote);
+    let depth = 0;
+    while (depth < parts.length - 1 && chains.has(parts.slice(0, depth + 1).join('.'))) depth++;
+    if (depth < 2) continue;
+    out += expr.slice(last, m.index) + [ids[depth - 1], ...ids.slice(depth)].join('.');
+    last = m.index + m[0].length;
+  }
+  return out + expr.slice(last);
 }

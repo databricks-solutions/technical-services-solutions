@@ -215,8 +215,7 @@ databricks apps deploy -t prod
 * shared/          # Shared types
 * config/          # Configuration
   * queries/       # SQL query files
-* databricks.yml   # Bundle configuration
-* app.yaml         # App configuration
+* databricks.yml   # Bundle and app configuration (command, env, resources)
 * .env.example     # Environment variables example
 ```
 

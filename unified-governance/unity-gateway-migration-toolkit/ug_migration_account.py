@@ -686,7 +686,8 @@ def summary_md(result: dict) -> str:
               "0 or 501; counted per distinct request). Those callers already get errors, so move them first.",
               "- Tokens: input and output tokens from system.serving.endpoint_usage (v1) and total_tokens from "
               "system.ai_gateway.usage (v2). Shown for sizing only.",
-              "- Enforce status (the workspace setting) is not in the account tables and isn't read here."]
+              "- Enforce status (the workspace setting) is not in the account tables and isn't read here; the "
+              "workspace scan reports it in READINESS.md."]
     if result.get("errors"):
         lines += ["", "## Query errors", "", *[f"- {_md(e)}" for e in result["errors"]],
                   "", "Waves are unknown for every workspace; no snapshot was written."]

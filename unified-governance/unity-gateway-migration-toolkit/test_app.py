@@ -1011,6 +1011,17 @@ def test_cutover_lists_pay_per_token_endpoints_for_pause_but_not_for_tracking(en
     assert "v2_workspace_endpoint" in main.NOT_OPERABLE_KINDS
 
 
+def test_cutover_lists_custom_endpoints_for_tracking_only(env):
+    env.store["items"] = [
+        {"item_type": "plan", "seq": 1, "payload": json.dumps({"legacy_endpoint": "my-agent", "kind": "custom_model",
+                                                                "action": "out_of_scope"})},
+        {"item_type": "plan", "seq": 2, "payload": json.dumps({"legacy_endpoint": "ka-1", "kind": "agent"})},
+    ]
+    r = env.client.get("/api/cutover/endpoints", headers=OP).json()
+    by = {e["endpoint"]: e for e in r["endpoints"]}
+    assert set(by) == {"my-agent"} and by["my-agent"]["trackable"] and not by["my-agent"]["pausable"]
+
+
 def test_create_uc_secrets_is_passed_on_with_the_chosen_names(env):
     body = {**DRY_BODY, "create_uc_secrets": True, "uc_secret_map": {"scope/key": "secrets/cat.sec.scope_key"}}
     r = env.client.post("/api/applies", json=body, headers=OP)

@@ -1028,10 +1028,16 @@ def test_enable_tracking_default_set_skips_custom_system_and_enabled(tmp_path):
     assert body["rate_limits"] == GW_RATE and body["guardrails"] == GW_FULL["guardrails"]
 
 
-def test_enable_tracking_refuses_an_explicit_custom_endpoint_and_dry_run_writes_nothing(tmp_path):
-    w = CutoverW([_endpoint("custom", GW_FULL, served=CUSTOM), _endpoint("ext", GW_FULL)])
+def test_enable_tracking_on_a_named_custom_endpoint_refuses_agents_and_dry_run_writes_nothing(tmp_path):
+    # A custom agent's callers are missing from usage without tracking, so a named custom endpoint gets it.
+    w = CutoverW([_endpoint("custom", GW_FULL, served=CUSTOM), _endpoint("ext", GW_FULL),
+                  _endpoint("ka-1-endpoint", {}, served=[], task="agent/v1/responses")])
     res = a.enable_tracking(w, ["custom"], True, str(tmp_path / "t.jsonl"), APPLY)
-    assert res[0]["action"] == "refused" and w.api_client.puts == []
+    assert res[0]["action"] == "tracking_enabled" and [n for n, _ in w.api_client.puts] == ["custom"]
+    assert w.api_client.puts[0][1]["rate_limits"] == GW_FULL["rate_limits"]  # existing settings re-sent unchanged
+    res = a.enable_tracking(w, ["ka-1-endpoint"], True, str(tmp_path / "t3.jsonl"), APPLY)
+    assert res[0]["action"] == "refused" and "don't support usage tracking" in res[0]["reason"]
+    w.api_client.puts.clear()
     dry = a.enable_tracking(w, ["ext"], False, str(tmp_path / "t2.jsonl"), APPLY)
     assert dry[0]["action"] == "would_enable_tracking" and w.api_client.puts == []
     assert not (tmp_path / "t2.jsonl").exists()

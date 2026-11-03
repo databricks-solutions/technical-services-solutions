@@ -1871,8 +1871,10 @@ def enable_tracking(w: WorkspaceClient, names: list[str], execute: bool, log_pat
     """Turn on usage tracking for legacy endpoints (companion script; runbook step 1).
 
     An empty names list means every non-custom endpoint in the workspace (databricks-* system endpoints are
-    skipped, since Databricks sets their tracking). Endpoints that already track usage are skipped. Existing
-    settings are re-sent unchanged; the previous config goes in the log."""
+    skipped, since Databricks sets their tracking). A custom model endpoint is turned on only when named: a custom
+    agent's callers are missing from usage without it (verified on a custom agent endpoint, Nov 3, 2026). Agent
+    endpoints (agent/v1 tasks, such as Agent Bricks) don't support usage tracking and are refused. Endpoints that
+    already track usage are skipped. Existing settings are re-sent unchanged; the previous config goes in the log."""
     a = Applier(w, execute, log_path, apply_id)
     typ = "serving_endpoint"
     explicit = bool(names)
@@ -1888,9 +1890,13 @@ def enable_tracking(w: WorkspaceClient, names: list[str], execute: bool, log_pat
             a.log(type=typ, name=name, action="error", reason=f"could not read the endpoint: {str(e)[:300]}")
             continue
         kind = endpoint_kind(ep)
-        if is_custom_kind(kind):
+        if kind == "custom_model" and not explicit:
+            a.log(type=typ, name=name, action="skipped", kind=kind,
+                  reason="custom model endpoint: name it to turn its usage tracking on")
+            continue
+        if is_custom_kind(kind) and kind != "custom_model":
             a.log(type=typ, name=name, action="refused" if explicit else "skipped", kind=kind,
-                  reason=f"{kind} endpoint: custom models and agents are out of scope")
+                  reason=f"{kind} endpoint: agent endpoints don't support usage tracking")
             continue
         if not explicit and kind == "system_ppt":
             a.log(type=typ, name=name, action="skipped", kind=kind,

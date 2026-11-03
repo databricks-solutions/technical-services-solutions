@@ -1236,3 +1236,133 @@ def test_retarget_plan_moves_services_but_not_system_ai():
     as_dicts = m.retarget_plan([{"target_service": "c.s.x", "provider_service": "c.s.p", "other": 1}], "a", "b")
     assert as_dicts == [{"target_service": "a.b.x", "provider_service": "a.b.p", "other": 1}]
     assert m.retarget_name("system.ai.x", "a", "b") == "system.ai.x" and m.retarget_name(None, "a", "b") is None
+
+
+# -- Gaps found by the plant_genai sim (Nov 3, 2026) ------------------------------------------------------------
+
+PPT_BACKED = {"name": "support-assistant", "id": "e9",
+              "config": {"served_entities": [{"name": "support-assistant", "external_model": {
+                  "name": "databricks-claude-haiku-4-5", "provider": "databricks-model-serving", "task": "llm/v1/chat",
+                  "databricks_model_serving_config": {"databricks_workspace_url": "https://ws.example.com",
+                                                      "databricks_api_token": "{{secrets/s/t}}"}}}]}}
+SIM_SYS = {"databricks-claude-haiku-4-5": "system.ai.claude-haiku-4-5"}
+
+
+def _sim_scanner():
+    eps = [_ep(SYSTEM_PPT), _ep(CUSTOM), _ep({"name": "databricks-claude-haiku-4-5", "id": "e8"})]
+    rows, _ = m.plan(eps, SIM_SYS, {}, "c", "s")
+    return m.Scanner([e.name for e in eps], SIM_SYS, rows), rows, eps
+
+
+def test_variable_named_client_calls_are_flagged():
+    s, rows, eps = _sim_scanner()
+    s.scan_text("notebook", "/n", "\n".join([
+        'dbutils.widgets.text("llm_endpoint", "databricks-claude-haiku-4-5")',  # 1
+        'llm = dbutils.widgets.get("llm_endpoint")',                            # 2
+        "sdk_client = w.serving_endpoints.get_open_ai_client()",                # 3
+        "w.serving_endpoints.query(name=llm, messages=msgs)",                   # 4
+        'deploy_client = mlflow.deployments.get_deploy_client("databricks")',  # 5
+        "deploy_client.predict(endpoint=llm, inputs={})",                       # 6
+        "ChatDatabricks(endpoint=llm, max_tokens=5)",                           # 7
+        'judge = f"endpoints:/{llm}"',                                          # 8
+    ]))
+    by_line = {r.line: r.pattern for r in s.refs if not r.legacy_endpoint}
+    assert by_line == {3: "sdk_openai_client", 4: "sdk_serving_query", 6: "mlflow_deployments_predict",
+                       7: "ChatDatabricks", 8: "mlflow_endpoint_uri"}
+    unresolved = [x for x in s.refs if not x.legacy_endpoint]
+    assert all(x.fixed_line is None and "changing only the name gives a 404" in x.suggestion for x in unresolved)
+    assert "databricks-claude-haiku-4-5" in unresolved[0].suggestion  # the file's legacy name is offered as a hint
+    r = m.readiness(rows, s.refs, True, 30, eps)
+    assert sum(b["type"] == "unresolved_endpoint_call" for b in r["blockers"]) == 5
+
+
+def test_literal_and_migrated_calls_are_not_unresolved():
+    s, _, _ = _sim_scanner()
+    s.scan_text("notebook", "/n", "\n".join([
+        'w.serving_endpoints.query(name="databricks-claude-haiku-4-5", messages=msgs)',
+        'ChatDatabricks(model="system.ai.claude-haiku-4-5", use_ai_gateway=True)',
+        'ChatDatabricks(model=svc, use_ai_gateway=True)',
+        'model.predict(df)',  # a model's predict, not the deployments client
+        'judge = "databricks:/system.ai.claude-haiku-4-5"',
+    ]))
+    assert not [r for r in s.refs if not r.legacy_endpoint]
+    assert [r.pattern for r in s.refs] == ["sdk_serving_query"]
+
+
+def test_custom_endpoint_callers_need_no_change():
+    s, rows, eps = _sim_scanner()
+    s.scan_text("notebook", "/n", "\n".join([
+        'w.serving_endpoints.query(name="churn-model", dataframe_records=[{}])',
+        "SELECT ai_query('churn-model', named_struct('x', x)) FROM t",
+        'requests.post(f"{host}/serving-endpoints/churn-model/invocations", json=body)',
+        'ENDPOINT = "churn-model"',
+    ]))
+    assert {r.pattern for r in s.refs} == {"custom_endpoint_call"}
+    assert all(r.fixed_line is None and r.suggestion.startswith("no change") for r in s.refs)
+    r = m.readiness(rows, s.refs, True, 30, eps)
+    assert not [f for f in r["blockers"] + r["warnings"] if "churn-model" in json.dumps(f)]
+
+
+def test_external_model_on_pay_per_token_blocks_enforce():
+    ep = _ep(PPT_BACKED)
+    assert m.ppt_backed_models(ep) == ["databricks-claude-haiku-4-5"]
+    rows, _ = m.plan([ep], SIM_SYS, {"support-assistant": {"requests": 4, "requesters": 1, "last_request": "x"}},
+                     "c", "s")
+    assert any("stops working when Enforce is on" in n and "system.ai.claude-haiku-4-5" in n
+               for n in rows[0].needs_human)
+    r = m.readiness(rows, [], True, 30, [ep])
+    assert [b["type"] for b in r["blockers"]] == ["external_model_on_ppt"]
+    assert not any(w["type"] == "legacy_traffic_kept_after_enforce" for w in r["warnings"])
+    # An external model on another provider still outlives Enforce.
+    assert m.ppt_backed_models(_ep(EXTERNAL)) == []
+
+
+def test_calls_in_mlflow_model_code_point_at_the_custom_endpoint():
+    eps = [_ep(SYSTEM_PPT), _ep(CUSTOM)]  # churn-model serves main.ml.churn
+    rows, _ = m.plan(eps, SIM_SYS, {}, "c", "s")
+    s = m.Scanner([e.name for e in eps], SIM_SYS, rows, custom_models={"churn-model": "main.ml.churn"})
+    s.scan_text("notebook", "/setup", "\n".join([
+        "import mlflow", "",                                                           # 1-2: blank lines before
+        "class Churn(mlflow.pyfunc.PythonModel):",                                     # 3   the class (Nov 3 bug)
+        "    def predict(self, context, model_input, params=None):",                   # 4
+        "",                                                                            # 5
+        '        return w.api_client.do("POST", f"/serving-endpoints/{self.llm}/invocations")',  # 6
+        "",                                                                            # 7
+        'url = f"/serving-endpoints/{other}/invocations"',                            # 8 (not model code)
+        'mlflow.pyfunc.log_model(name="model", python_model=Churn(llm), registered_model_name=f"{fq}.churn")',
+    ]))
+    by_line = {r.line: r for r in s.refs}
+    assert "MLflow model code (class Churn)" in by_line[6].suggestion and "custom endpoint churn-model" in by_line[6].suggestion
+    assert "MLflow model code" not in by_line[8].suggestion
+    assert m.model_classes("\n\nclass A(PythonModel):\n    x = 1\n\ny = 2") == {"A": (3, 5)}
+
+
+def test_system_service_principal_callers_hint_at_a_custom_agent():
+    eps = [_ep(SYSTEM_PPT), _ep(CUSTOM)]
+    rows, _ = m.plan(eps, SYS_GPT, {"databricks-gpt-5-5": {"requests": 2, "requesters": 1, "last_request": "x"}},
+                     "c", "s")
+    callers = [{"endpoint_name": "databricks-gpt-5-5", "requester": "bf54", "requester_name": "System Service Principal",
+                "requests": 2, "caller_class": "service_principal"}]
+    r = m.readiness(rows, [], True, 30, eps, callers=callers)
+    hint = next(w for w in r["warnings"] if w["type"] == "custom_endpoint_inner_call")
+    assert hint["item"] == "databricks-gpt-5-5" and "churn-model" in hint["detail"]
+
+
+def test_quiet_pay_per_token_endpoints_fold_into_one_warning():
+    eps = [_ep({**SYSTEM_PPT, "name": f"databricks-m{i}", "id": f"p{i}"}) for i in range(12)]
+    rows, _ = m.plan(eps, {}, {}, "c", "s")
+    r = m.readiness(rows, [], True, 30, eps, {"local_files": "ok"})
+    quiet = [w for w in r["warnings"] if w["type"] == "confirm_infrequent_callers"]
+    assert len(quiet) == 1 and quiet[0]["item"] == "12 endpoints" and len(quiet[0]["endpoints"]) == 12
+    assert "databricks-m0" in quiet[0]["detail"] and quiet[0]["detail"].endswith("...")
+
+
+@pytest.mark.parametrize("payload, want", [({"effective_boolean_val": {"value": False}}, "off"),
+                                           ({"effective_boolean_val": {"value": True}}, "on"),
+                                           ({}, "unknown: the setting has no value")])
+def test_enforce_status_reads_the_workspace_setting(payload, want):
+    w = SimpleNamespace(api_client=SimpleNamespace(do=mock.Mock(return_value=payload)))
+    assert m.enforce_status(w) == want
+    w.api_client.do.assert_called_once_with("GET", "/api/2.1/settings/enforce_ai_gateway_v3_only", query={})
+    lines = m._enforce_lines("on", "BLOCKED")
+    assert "**on**" in lines[0] and "fail now" in lines[1]

@@ -1,6 +1,6 @@
 # Unity Gateway Migration Toolkit: User Guide
 
-Version 0.10.0 (prototype)
+Version 0.10.1 (prototype)
 
 > Prototype from Databricks Shared Technical Services, provided as is. Planning and scans only read. Writes happen only when you start them. Review every result before you act on it.
 
@@ -11,6 +11,7 @@ Version 0.10.0 (prototype)
   - [Before you start](#before-you-start)
   - [Install the toolkit](#install-the-toolkit)
   - [Update and upgrade](#update-and-upgrade)
+  - [Upgrade notes: 0.10.0 to 0.10.1](#upgrade-notes-0100-to-0101)
   - [Upgrade notes: 0.9.0 to 0.10.0](#upgrade-notes-090-to-0100)
   - [Other install methods](#other-install-methods)
 - [2. First run](#2-first-run)
@@ -145,6 +146,17 @@ Import the newer installer and run it with the same widgets. Results history is 
 - **From 0.7.0** (app `ug-migration`): the same two choices apply.
 - **Bundle:** the app is now `ug-migration-bundle`. Run `databricks bundle plan` first. It creates a new app, so delete the old one by hand.
 - **Since 0.7.0:** grants are off by default, Execute needs a matching dry run, and scans older than 14 days and endpoints with legacy guardrails need confirmation or an acknowledgement. Account wave 0 is now `0: no legacy traffic`.
+
+#### Upgrade notes: 0.10.0 to 0.10.1
+
+Scan again: 0.10.1 finds more calls and fewer false ones. Tables and jobs don't change.
+
+- **Calls with a variable endpoint name.** `get_open_ai_client()`, `serving_endpoints.query(name=<variable>)`, the MLflow deployments client, `ChatDatabricks(endpoint=<variable>)` and `endpoints:/{...}` URIs are now `unresolved_endpoint_call` blockers. These clients are bound to `/serving-endpoints`, so changing only the name gives a 404.
+- **Calls to custom model endpoints** are now `custom_endpoint_call` (no change) instead of a move, and are no longer warnings.
+- **External models that forward to a `databricks-*` endpoint** (provider `databricks-model-serving`) are now an `external_model_on_ppt` blocker: Enforce stops the endpoint they forward to.
+- **Custom agents.** Calls inside MLflow model code (a `PythonModel` class) name the custom endpoint that serves the model and say how to re-log it. `System Service Principal` callers of a pay-per-token endpoint get a `custom_endpoint_inner_call` warning. Usage tracking can now be turned on for custom model endpoints (never paused).
+- **Enforce status.** READINESS.md and `readiness.json` (`enforce`) show whether Enforce Unity Gateway is on.
+- **Fewer warnings.** Pay-per-token endpoints with no traffic and no known callers are one `confirm_infrequent_callers` warning instead of one each.
 
 #### Upgrade notes: 0.9.0 to 0.10.0
 
@@ -367,7 +379,8 @@ The **Cut-over status** strip at the top has one tile per step (legacy traffic, 
 
 Tracking records each call in the system tables, so step 1 can see the traffic. It changes only that setting. Choose endpoints, dry run, then type `ENABLE`.
 
-- Not offered: `databricks-*` endpoints (Databricks sets their tracking), v2 workspace endpoints, and custom model and agent endpoints.
+- Not offered: `databricks-*` endpoints (Databricks sets their tracking), v2 workspace endpoints, and agent endpoints (`agent/v1` tasks such as Agent Bricks, which don't support it).
+- Custom model endpoints are offered for tracking only, never for pause. Turn it on for a custom agent that calls an LLM: without it, the agent's callers are missing from usage.
 - An endpoint that already has tracking on is left alone. The app has no undo: tracking stays on.
 
 ### Step 3: Pause one legacy endpoint
@@ -647,6 +660,7 @@ The `type` is the stable name in `readiness.json`. The label and action are what
 | `v2_workspace_call` | Blocker | Code calls a v2 workspace endpoint | Set the model to `<target>`, keep the `/ai-gateway/` route, then re-scan |
 | `vector_search` | Blocker | AI Search index embeds with a legacy endpoint | Keep the endpoint, and don't enforce Unity Gateway until the index can re-embed with a supported `system.ai` embedding service. Support is rolling out model by model: check the AI Search docs |
 | `unresolved_endpoint_call` | Blocker | Code calls a serving endpoint the scan can't name | Find which endpoint the call reaches at run time. A legacy one: move the call to `/ai-gateway/`. A custom model or feature serving one: name it in the code so the scan can see it |
+| `external_model_on_ppt` | Blocker | External model endpoint forwards to a pay-per-token endpoint | Move its callers to the `system.ai` model (or a model service with that destination) before enforcing |
 | `agent_bricks_vector_search` | Blocker | Agent Bricks agent uses AI Search | Check its index and embedding model before enforcing |
 | `app_resource` | Blocker | App declares a legacy serving endpoint resource | Replace it with the Unity Gateway service, grant `EXECUTE`, call `/ai-gateway/` |
 | `ai_query_custom` | Blocker | ai_query calls a model with no Unity Gateway service yet | Keep the call, or switch it to a `system.ai` model |
@@ -656,7 +670,8 @@ The `type` is the stable name in `readiness.json`. The label and action are what
 | `local_folders_not_scanned` | Warning | Local folders were not scanned | Re-run with `--local-path`, or confirm no local code calls a legacy endpoint. Caps the status at `READY_WITH_WARNINGS` |
 | `skipped_paths_not_scanned` | Warning | Some folders or file types were not scanned | Check the listed folders and file types for calls to legacy endpoints, or confirm they hold none (vendored packages and build output usually don't). Caps the status at `READY_WITH_WARNINGS` |
 | `unattributed_legacy_traffic` | Warning | Legacy requests couldn't be matched to an endpoint | Some v1 requests have no `system.serving.served_entities` row, so the scan can't tell which endpoint they used. Check `SELECT` on `system.serving.served_entities` and confirm with the owners. Caps the status at `READY_WITH_WARNINGS` |
-| `confirm_infrequent_callers` | Warning | Pay-per-token or v2 endpoint has no traffic and no known callers | Confirm monthly or quarterly jobs with owners. v2 endpoints seen in the last year count, even with no traffic in the window |
+| `confirm_infrequent_callers` | Warning | Pay-per-token or v2 endpoint has no traffic and no known callers | Confirm monthly or quarterly jobs with owners. Pay-per-token endpoints come as one warning that lists them (built-in endpoints nobody calls need no action). v2 endpoints seen in the last year count, even with no traffic in the window |
+| `custom_endpoint_inner_call` | Warning | A serving endpoint may call this endpoint from its model code | A `System Service Principal` caller is usually a custom agent's automatic authentication. Re-log that agent with explicit credentials to call the model service, and turn on its usage tracking |
 | `no_traffic_in_window` | Warning | No requests in the window and usage tracking is off | Confirm with owners that no infrequent job calls it |
 | `dormant_agent_endpoint` | Warning | Agent endpoint has no traffic in the window | Confirm it is unused. If it is still used, redeploy it before enforcing |
 

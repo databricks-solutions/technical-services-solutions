@@ -51,7 +51,7 @@ variables:
     default: ""
   toolkit_version:
     description: Toolkit version the app reports (UGMIG_VERSION). Must equal __version__ in ug_migration_planner.py (check_release.py checks it).
-    default: "0.10.0"
+    default: "0.10.1"
 
 sync:
   include:

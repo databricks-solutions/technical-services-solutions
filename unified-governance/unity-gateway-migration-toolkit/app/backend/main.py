@@ -1225,10 +1225,13 @@ TRAFFIC_WINDOWS = {"24h": timedelta(hours=24), "7d": timedelta(days=7), "30d": t
 NOT_LEGACY_KINDS = ("custom_model", "agent")
 # Kinds the cut-over steps never act on. databricks-* pay-per-token endpoints (system_ppt) can be paused (README
 # step 5, the main Enforce case) but not tracked: Databricks sets their usage tracking.
-NOT_OPERABLE_KINDS = ("custom_model", "agent", "v2_workspace_endpoint", "unknown", "out_of_scope", "deleted_or_unknown")
+# Custom model endpoints are listed only so usage tracking can be turned on (a custom agent's callers are missing from
+# usage without it); they are never paused, since they don't retire.
+NOT_OPERABLE_KINDS = ("agent", "v2_workspace_endpoint", "unknown", "out_of_scope", "deleted_or_unknown")
 NOT_TRACKABLE_KINDS = ("system_ppt",)
 # Kinds the pause step doesn't offer or accept (the job refuses them too): a PT endpoint's model service routes through it.
-NOT_PAUSABLE_KINDS = ("provisioned_throughput",)
+NOT_PAUSABLE_KINDS = ("provisioned_throughput", "custom_model")
+CUSTOM_PAUSE_REFUSAL = "custom model endpoints aren't retired by Unity Gateway, so the toolkit doesn't pause them"
 USAGE_COLUMNS = ["service_name", "workspace_id", "requester", "api_type", "destination_model", "requests",
                  "invocations", "total_tokens", "average_latency_ms", "p95_latency_ms", "error_invocations",
                  "last_request"]
@@ -1456,8 +1459,11 @@ def _pause_traffic_gate(request: Request, body: CutoverRequest, endpoint: str) -
     if not scan:
         raise HTTPException(409, "Pause checks the endpoint's traffic against a finished scan. Run a scan first.")
     plan, _ = _scan_items(request, scan)
-    if any(p.get("legacy_endpoint") == endpoint and p.get("kind") in NOT_PAUSABLE_KINDS for p in plan):
-        raise HTTPException(409, f"{endpoint} can't be paused: " + apply_rules.PT_PAUSE_REFUSAL + ".")
+    kind = next((p.get("kind") for p in plan if p.get("legacy_endpoint") == endpoint
+                 and p.get("kind") in NOT_PAUSABLE_KINDS), None)
+    if kind:
+        why = CUSTOM_PAUSE_REFUSAL if kind == "custom_model" else apply_rules.PT_PAUSE_REFUSAL
+        raise HTTPException(409, f"{endpoint} can't be paused: {why}.")
     try:
         traffic = _endpoint_traffic(request, scan, body.traffic_window, only=[endpoint])
     except HTTPException as e:

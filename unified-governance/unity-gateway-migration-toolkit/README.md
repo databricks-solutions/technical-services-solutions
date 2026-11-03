@@ -1,4 +1,4 @@
-# Unity Gateway Migration Toolkit (prototype, v0.10.0)
+# Unity Gateway Migration Toolkit (prototype, v0.10.1)
 
 Moves legacy model serving endpoints (v1, and v2 workspace-bound endpoints) to Unity Gateway. Planning and scans only read. Writes happen only when you start them: apply, rollback, usage tracking, pause and resume, test calls, and snapshots.
 

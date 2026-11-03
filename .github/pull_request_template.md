@@ -1,5 +1,21 @@
 # Pull Request
 
+## GitHub Release — new solutions
+
+If this PR adds a **new downloadable solution**, add a row to [`.github/releases.yml`](.github/releases.yml) in the **same PR**. The release workflow only publishes slugs listed in that file. Updates to an already-listed folder do not need a new row.
+
+```yaml
+- slug: my-solution-name
+  name: "My Solution Name"
+  kind: "Agent skill"
+  path: "category/path/to/my-solution-name"
+```
+
+`slug` becomes the tag `my-solution-name-latest` and the zip `my-solution-name.zip`. `path` is the folder that goes in the zip. `kind` is a short label (for example Agent skill, Terraform, Databricks notebook).
+
+- [ ] New downloadable solution — I added a `releases.yml` row like the example above
+- [ ] Not a new solution (docs, fix, or update to an existing listed path)
+
 ## Description
 Brief description of what this PR does and why.
 

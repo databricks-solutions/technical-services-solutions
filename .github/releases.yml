@@ -137,6 +137,10 @@
   kind: "Agent skill"
   path: "aibi-migration/aibi-migration-map"
 
+- slug: mlops-readiness-scorecard
+  name: "MLOps Readiness Scorecard"
+  kind: "Databricks notebook"
+  path: "production-readiness/mlops-readiness-scorecard"
 - slug: unity-gateway-migration-toolkit
   name: "Unity Gateway Migration Toolkit"
   kind: "Installer notebook + Databricks App + Declarative Automation Bundle"

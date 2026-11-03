@@ -13,9 +13,9 @@ import {
 import { ErrorBoundary } from './ErrorBoundary';
 import { ThemeProvider, useThemePreference } from './theme';
 import type { ThemePreference } from './theme';
-import { DataState } from './components/DataState';
 import { IntakePage } from './pages/IntakePage';
 import { ProjectsPage } from './pages/ProjectsPage';
+import { SourcesPage } from './pages/SourcesPage';
 
 interface Destination {
   path: string;
@@ -147,7 +147,7 @@ const router = createBrowserRouter([
         path: '/projects/:projectId/sources',
         element: (
           <Page title="Source Readiness">
-            <DataState status="empty" message="Confirm a Semantic Brief to assess its candidate sources." />
+            <SourcesPage />
           </Page>
         ),
       },

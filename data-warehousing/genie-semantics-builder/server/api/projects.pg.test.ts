@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import pg from 'pg';
 import { loadMigrations, migrate } from '../db/migrate';
 import { projectRepo } from './projects';
+import { readinessRepo } from './readiness';
 import type { BriefOutput } from '../llm/prompts/brief';
 
 // Runs only against a throwaway Postgres: TEST_DATABASE_URL=postgres://... pnpm test
@@ -28,6 +29,7 @@ const output: BriefOutput = {
 describe.skipIf(!url)('projectRepo on Postgres', () => {
   const pool = new pg.Pool({ connectionString: url });
   const repo = projectRepo(pool as never);
+  const readiness = readinessRepo(pool as never);
 
   beforeAll(async () => {
     await pool.query('DROP SCHEMA IF EXISTS gsb CASCADE');
@@ -53,8 +55,40 @@ describe.skipIf(!url)('projectRepo on Postgres', () => {
     await expect(repo.confirm('a@x.com', p.id, 2)).rejects.toMatchObject({ status: 409 });
 
     const sources = await pool.query('SELECT full_name FROM gsb.source WHERE project_id = $1 ORDER BY 1', [p.id]);
-    expect(sources.rows.map((r: { full_name: string }) => r.full_name)).toEqual(['samples.tpch.customer', 'samples.tpch.orders']);
+    expect(sources.rows.map((r: { full_name: string }) => r.full_name)).toEqual([
+      'samples.tpch.customer',
+      'samples.tpch.orders',
+    ]);
     const audit = await pool.query('SELECT action FROM gsb.audit_log WHERE project_id = $1 ORDER BY id', [p.id]);
     expect(audit.rows.map((r: { action: string }) => r.action)).toEqual(['create_project', 'confirm_brief']);
+  });
+
+  it('claims a fix only with the statements the user saw, once', async () => {
+    const p = await repo.create('a@x.com', { name: 'Readiness' });
+    await repo.addDraft('a@x.com', p.id, output, {});
+    await repo.confirm('a@x.com', p.id, 1);
+    const [source] = (await readiness.view(p.id)).sources;
+    const fix = {
+      kind: 'table_comment' as const,
+      title: 'Describe',
+      rationale: 'Why',
+      statements: ["COMMENT ON TABLE a.b.c IS 'x'"],
+    };
+    const result = { sourceId: source.sourceId, role: 'fact' as const, checks: [], model: 'm', recommendations: [fix] };
+    await readiness.saveAssessment('a@x.com', p.id, [
+      { ...result, assessment: { role: 'fact', score: 40, summary: 's', findings: [] } },
+    ]);
+
+    let view = await readiness.view(p.id);
+    expect(view.sources.find((s) => s.sourceId === source.sourceId)?.report?.score).toBe(40);
+    const rec = view.recommendations[0];
+    await expect(readiness.claim('a@x.com', p.id, rec.id, ['DROP TABLE a.b.c'])).rejects.toMatchObject({ status: 409 });
+    await readiness.claim('a@x.com', p.id, rec.id, rec.statements);
+    await expect(readiness.claim('a@x.com', p.id, rec.id, rec.statements)).rejects.toMatchObject({ status: 409 });
+    await readiness.finish(rec.id, 'applied', null);
+
+    await readiness.saveAssessment('a@x.com', p.id, [{ ...result, assessment: null }]);
+    view = await readiness.view(p.id);
+    expect(view.recommendations.map((r) => r.status).sort()).toEqual(['applied', 'proposed']);
   });
 });

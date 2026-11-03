@@ -1,8 +1,11 @@
 import path from 'node:path';
+import type { Request } from 'express';
 import { createApp, analytics, lakebase, server } from '@databricks/appkit';
 import { loadMigrations, migrate } from './db/migrate';
 import { registerProjectRoutes } from './api/projects';
+import { registerReadinessRoutes } from './api/readiness';
 import { servingDeps } from './llm/llm';
+import { warehouseDeps } from './sql/runner';
 
 createApp({
   plugins: [analytics(), lakebase(), server()],
@@ -11,10 +14,15 @@ createApp({
     const applied = await migrate(appkit.lakebase.pool, await loadMigrations(path.resolve('server/db/migrations')));
     console.log(applied.length ? `Applied migrations: ${applied.join(', ')}` : 'Database schema is up to date');
 
+    const pool = appkit.lakebase.pool;
+    const asUser =
+      (req: Request) =>
+      <R>(fn: () => Promise<R>) =>
+        appkit.asUser(req).run(() => fn());
+    const llmFor = (req: Request) => servingDeps(asUser(req));
     appkit.server.extend((app) => {
-      registerProjectRoutes(app, appkit.lakebase.pool, (req) =>
-        servingDeps((fn) => appkit.asUser(req).run(() => fn()))
-      );
+      registerProjectRoutes(app, pool, llmFor);
+      registerReadinessRoutes(app, pool, llmFor, (req) => warehouseDeps(pool, asUser(req)));
     });
   },
 }).catch((err: unknown) => {

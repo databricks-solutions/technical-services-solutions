@@ -45,6 +45,8 @@ export interface ValidationRun {
   sandboxView: string;
   results: TestResult[];
   error: string | null;
+  /** Approved statement that removes the sandbox view. */
+  cleanup: string[];
   createdBy: string;
   createdAt: string;
 }

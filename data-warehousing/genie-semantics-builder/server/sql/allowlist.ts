@@ -68,6 +68,10 @@ const DDL_PATTERNS = [
   `GRANT\\s+${PRIVILEGE}(?:\\s*,\\s*${PRIVILEGE})*\\s+ON\\s+${SECURABLE}\\s+${OBJ}\\s+TO\\s+\`x+\``,
 ].map((p) => new RegExp(`^${p}$`, 'i'));
 
+// Drops are limited to the app's own sandbox views, named <view>__gsb_<8 hex>.
+const DROP_VIEW = new RegExp(`^DROP\\s+VIEW\\s+(?:IF\\s+EXISTS\\s+)?(${OBJ})$`, 'i');
+const SANDBOX_VIEW = /__gsb_[0-9a-f]{8}`?$/;
+
 const MAX_LENGTH = 200_000;
 
 const READ_HEAD = /^(?:EXPLAIN(?:\s+(?:EXTENDED|FORMATTED|COST))?\s+)?(?:SELECT|WITH)\b/i;
@@ -96,5 +100,12 @@ export function checkStatement(sql: string): CheckedStatement {
   }
   if (DESCRIBE.test(core)) return { kind: 'read', statement };
   if (DDL_PATTERNS.some((p) => p.test(core))) return { kind: 'ddl', statement };
+  const drop = DROP_VIEW.exec(core);
+  if (drop) {
+    // Masking keeps offsets, so the same span of the original holds the real name.
+    const target = statement.slice(core.length - drop[1].length);
+    if (SANDBOX_VIEW.test(target)) return { kind: 'ddl', statement };
+    throw new StatementRejected('only sandbox views can be dropped');
+  }
   throw new StatementRejected('statement type is not on the allowlist');
 }

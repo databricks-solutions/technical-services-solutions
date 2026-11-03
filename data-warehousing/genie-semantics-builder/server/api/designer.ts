@@ -21,6 +21,7 @@ import { designPrompt, designRequest, refineDesignPrompt, refineDesignRequest } 
 import {
   compareRows,
   createStatement,
+  dropStatement,
   expandedQuery,
   measureQuery,
   sandboxSchema,
@@ -103,6 +104,7 @@ export function designerRepo(db: Db) {
                 sandboxView: run.sandbox_view,
                 results: run.results,
                 error: run.error,
+                cleanup: run.status === 'running' ? [] : [dropStatement(run.sandbox_view)],
                 createdBy: run.created_by,
                 createdAt: run.created_at.toISOString(),
               }
@@ -323,6 +325,21 @@ export function registerDesignerRoutes(
     if (!draft.tests.length) throw new HttpError(409, 'Add test cases before you validate.');
     return { actor, project, draft, plan: planFor(project, draft) };
   }
+
+  app.post(
+    '/api/projects/:id/designs/:version/validation/drop',
+    handle(async (req) => {
+      const actor = actorOf(req);
+      const { id, version } = versionParam.parse(req.params);
+      const { statements } = validateSchema.parse(req.body);
+      const project = await projects.get(actor, id);
+      const cleanup = (await repo.view(project.id, version)).validation?.cleanup ?? [];
+      if (!cleanup.length || statements.length !== cleanup.length || statements.some((s, i) => s !== cleanup[i]))
+        throw new HttpError(409, 'The SQL changed since you reviewed it. Review it again.');
+      for (const s of cleanup) await runStatement(s, { actor, projectId: project.id, approved: true }, runFor(req));
+      return { removed: true };
+    })
+  );
 
   app.get(
     '/api/projects/:id/designs/:version/validation',

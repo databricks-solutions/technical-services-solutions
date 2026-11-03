@@ -47,6 +47,8 @@ describe('checkStatement accepts the allowlist', () => {
     ['ddl', 'GRANT SELECT ON TABLE sandbox.gsb.orders_mv TO `analysts`'],
     ['ddl', 'GRANT USE CATALOG ON CATALOG sandbox TO `user@example.com`'],
     ['ddl', 'GRANT USE SCHEMA, SELECT ON SCHEMA sandbox.gsb TO `analysts`'],
+    ['ddl', 'DROP VIEW IF EXISTS `sandbox`.`gsb`.`sales__gsb_47d9362a`'],
+    ['ddl', 'DROP VIEW sandbox.gsb.sales__gsb_47d9362a'],
   ])('%s: %s', (kind, sql) => {
     expect(checkStatement(sql).kind).toBe(kind);
   });
@@ -68,6 +70,10 @@ describe('checkStatement rejects everything else', () => {
     ['unterminated string', "COMMENT ON TABLE a.b.c IS 'oops"],
     ['unterminated dollar block', 'CREATE VIEW a.b.c WITH METRICS LANGUAGE YAML AS $$ version: 1.1'],
     ['drop', 'DROP TABLE sandbox.gsb.orders'],
+    ['drop non-sandbox view', 'DROP VIEW sandbox.gsb.orders_mv'],
+    ['drop sandbox-like table', 'DROP TABLE sandbox.gsb.sales__gsb_47d9362a'],
+    ['drop view with suffix inside', 'DROP VIEW `a`.`b`.`x__gsb_47d9362a_real`'],
+    ['drop view with short suffix', 'DROP VIEW a.b.x__gsb_47d9'],
     ['insert', 'INSERT INTO sandbox.gsb.orders VALUES (1)'],
     ['cte write', 'WITH t AS (SELECT 1) INSERT INTO x SELECT * FROM t'],
     ['delete in select', 'SELECT * FROM (DELETE FROM x)'],

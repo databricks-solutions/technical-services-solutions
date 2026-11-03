@@ -24,6 +24,8 @@ export function createStatement(fullName: string, yaml: string): string {
   return `CREATE OR REPLACE VIEW ${quoteName(fullName)} WITH METRICS LANGUAGE YAML AS $$\n${yaml.trimEnd()}\n$$`;
 }
 
+export const dropStatement = (fullName: string) => `DROP VIEW IF EXISTS ${quoteName(fullName)}`;
+
 const isTable = (source: string) => /^[^\s()]+$/.test(source.trim());
 
 /** The query a test runs on the metric view. */

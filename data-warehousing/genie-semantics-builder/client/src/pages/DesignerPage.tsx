@@ -227,6 +227,24 @@ function SqlBlock({ label, sql }: { label: string; sql: string }) {
 }
 
 function ValidationResults({ run }: { run: ValidationRun }) {
+  const { projectId = '' } = useParams();
+  const [confirm, setConfirm] = useState(false);
+  const [state, setState] = useState<'idle' | 'busy' | 'removed'>('idle');
+  const [error, setError] = useState<string>();
+  const remove = () => {
+    setState('busy');
+    setError(undefined);
+    api(`/api/projects/${projectId}/designs/${run.version}/validation/drop`, { statements: run.cleanup }).then(
+      () => {
+        setState('removed');
+        setConfirm(false);
+      },
+      (err: unknown) => {
+        setState('idle');
+        setError((err as Error).message);
+      }
+    );
+  };
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -242,6 +260,46 @@ function ValidationResults({ run }: { run: ValidationRun }) {
         </Typography.Text>
       </div>
       {run.error && <Alert componentId="gsb.designer.run_error" type="error" closable={false} message={run.error} />}
+      {run.cleanup.length > 0 && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <Button
+            componentId="gsb.designer.drop_sandbox"
+            size="small"
+            disabled={state !== 'idle'}
+            onClick={() => setConfirm(true)}
+          >
+            Remove sandbox view
+          </Button>
+          {state === 'removed' && (
+            <div role="status">
+              <Typography.Text color="secondary">Sandbox view removed. Validate again to recreate it.</Typography.Text>
+            </div>
+          )}
+        </div>
+      )}
+      {error && <Alert componentId="gsb.designer.drop_error" type="error" closable={false} message={error} />}
+      <Modal
+        componentId="gsb.designer.drop_modal"
+        title="Remove sandbox view"
+        visible={confirm}
+        okText="Run SQL"
+        cancelText="Cancel"
+        okButtonProps={{ loading: state === 'busy' }}
+        onCancel={() => setConfirm(false)}
+        onOk={remove}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <Alert
+            componentId="gsb.designer.drop_warning"
+            type="warning"
+            closable={false}
+            message="This SQL runs as you and drops the sandbox metric view. Source tables and drafts do not change."
+          />
+          {run.cleanup.map((s) => (
+            <SqlBlock key={s} label="SQL to run" sql={s} />
+          ))}
+        </div>
+      </Modal>
       {run.results.map((r) => (
         <details key={r.name} style={{ border: '1px solid var(--db-border-base)', borderRadius: 4, padding: 8 }}>
           <summary style={{ cursor: 'pointer', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>

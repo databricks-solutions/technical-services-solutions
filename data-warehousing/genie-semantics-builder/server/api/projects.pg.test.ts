@@ -127,11 +127,20 @@ describe.skipIf(!url)('projectRepo on Postgres', () => {
 
     await expect(designer.startRun('dana@example.com', p.id, 1, 'a.b.v', ['CREATE x'])).rejects.toThrow(/latest/);
     const run = await designer.startRun('dana@example.com', p.id, 2, 'a.b.v', ['CREATE x']);
-    expect((await designer.view(p.id)).validation).toMatchObject({ id: run, status: 'running', version: 2 });
+    expect((await designer.view(p.id)).validation).toMatchObject({
+      id: run,
+      status: 'running',
+      version: 2,
+      cleanup: [],
+    });
     const result = { name: 't', status: 'passed' as const, rows: 3, detail: 'ok', measureSql: 'q', expandedSql: null };
     await designer.finishRun(run, 'passed', [result], null);
     const done = await designer.view(p.id);
-    expect(done.validation).toMatchObject({ status: 'passed', results: [result] });
+    expect(done.validation).toMatchObject({
+      status: 'passed',
+      results: [result],
+      cleanup: ['DROP VIEW IF EXISTS `a`.`b`.`v`'],
+    });
     expect(done.draft?.status).toBe('validated');
     expect((await designer.view(p.id, 1)).validation).toBeNull();
   });

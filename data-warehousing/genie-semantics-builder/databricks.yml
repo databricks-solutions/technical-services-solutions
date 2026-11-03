@@ -1,0 +1,63 @@
+bundle:
+  name: genie-semantics-builder
+
+variables:
+  sql_warehouse_id:
+    description: SQL Warehouse ID
+  postgres_branch:
+    description: Full Lakebase Postgres branch resource name. Obtain by running `databricks postgres list-branches {project-name}`, select the desired item from the output array and use its .name value. Requires the project resource name.
+  postgres_database:
+    description: Full Lakebase Postgres database resource name. Obtain by running `databricks postgres list-databases {branch-name}`, select the desired item from the output array and use its .name value. Requires the branch resource name.
+  serving_endpoint_name:
+    description: Serving endpoint name
+
+resources:
+  apps:
+    app:
+      name: "genie-semantics-builder"
+      description: "Design, validate, optimize and govern UC metric views with an LLM advisor"
+      source_code_path: ./
+
+      # Start the app automatically on deploy.
+      lifecycle:
+        started: true
+      user_api_scopes:
+        - serving.serving-endpoints
+
+      # The resources which this app has access to.
+      resources:
+        - name: sql-warehouse
+          sql_warehouse:
+            id: ${var.sql_warehouse_id}
+            permission: CAN_USE
+        - name: postgres
+          postgres:
+            branch: ${var.postgres_branch}
+            database: ${var.postgres_database}
+            permission: CAN_CONNECT_AND_CREATE
+        - name: serving-endpoint
+          serving_endpoint:
+            name: ${var.serving_endpoint_name}
+            permission: CAN_QUERY
+
+# Workspace host comes from the CLI profile: databricks bundle deploy -t dev --profile <PROFILE>
+# Set per-target values with --var or BUNDLE_VAR_<name> environment variables.
+targets:
+  dev:
+    mode: development
+    default: true
+    variables:
+      sql_warehouse_id: <your-serverless-sql-warehouse-id>
+      postgres_branch: projects/genie-semantics-builder/branches/production
+      postgres_database: projects/genie-semantics-builder/branches/production/databases/databricks-postgres
+      serving_endpoint_name: databricks-claude-sonnet-5-5
+
+  prod:
+    mode: production
+    workspace:
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      sql_warehouse_id: <your-serverless-sql-warehouse-id>
+      postgres_branch: projects/<your-lakebase-project>/branches/production
+      postgres_database: projects/<your-lakebase-project>/branches/production/databases/databricks-postgres
+      serving_endpoint_name: databricks-claude-sonnet-5-5

@@ -15,6 +15,7 @@ import {
 import type { NewProject, Project } from '../../../shared/brief';
 import { api, useResource } from '../api';
 import { DataState } from '../components/DataState';
+import { CatalogSchemaSelect } from '../components/UcPicker';
 
 function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const navigate = useNavigate();
@@ -66,17 +67,15 @@ function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void
             maxLength={4000}
           />
         </div>
-        <div style={{ display: 'flex', gap: 12 }}>
-          <div style={{ flex: 1 }}>
-            <FormUI.Label htmlFor="gsb-project-catalog">Target catalog</FormUI.Label>
-            <FormUI.Hint>Where metric views will be published.</FormUI.Hint>
-            <Input componentId="gsb.projects.catalog" id="gsb-project-catalog" {...field('targetCatalog')} />
-          </div>
-          <div style={{ flex: 1 }}>
-            <FormUI.Label htmlFor="gsb-project-schema">Target schema</FormUI.Label>
-            <FormUI.Hint>&nbsp;</FormUI.Hint>
-            <Input componentId="gsb.projects.schema" id="gsb-project-schema" {...field('targetSchema')} />
-          </div>
+        <div role="group" aria-labelledby="gsb-project-target-label">
+          <FormUI.Label id="gsb-project-target-label">Target location</FormUI.Label>
+          <FormUI.Hint>Where metric views will be published.</FormUI.Hint>
+          <CatalogSchemaSelect
+            idPrefix="target"
+            catalog={form.targetCatalog}
+            schema={form.targetSchema}
+            onChange={(targetCatalog, targetSchema) => setForm((prev) => ({ ...prev, targetCatalog, targetSchema }))}
+          />
         </div>
         {error && <FormUI.Message type="error" message={error} />}
       </div>

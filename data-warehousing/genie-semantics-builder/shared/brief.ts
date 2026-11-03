@@ -71,3 +71,8 @@ export interface ProjectDetail {
   project: Project;
   brief: BriefVersion | null;
 }
+
+export interface UcTable {
+  name: string;
+  type: string;
+}

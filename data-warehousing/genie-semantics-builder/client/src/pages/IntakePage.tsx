@@ -17,13 +17,14 @@ import { intakeSchema, UC_TABLE_NAME } from '../../../shared/brief';
 import type { BriefVersion, IntakeInput, ProjectDetail } from '../../../shared/brief';
 import { api, useResource } from '../api';
 import { DataState } from '../components/DataState';
+import { TablePicker } from '../components/UcPicker';
 
 interface IntakeFields {
   goal: string;
   audience: string;
   questions: string;
   terms: string;
-  sources: string;
+  sources: string[];
 }
 
 function toInput(f: IntakeFields): IntakeInput {
@@ -32,10 +33,7 @@ function toInput(f: IntakeFields): IntakeInput {
     audience: f.audience || undefined,
     questions: f.questions || undefined,
     terms: f.terms || undefined,
-    sources: f.sources
-      .split(/[\s,]+/)
-      .map((s) => s.trim())
-      .filter(Boolean),
+    sources: f.sources,
   };
 }
 
@@ -69,11 +67,11 @@ function TextField(props: {
 }
 
 function IntakeForm({ projectId, onDrafted }: { projectId: string; onDrafted: (b: BriefVersion) => void }) {
-  const [f, setF] = useState<IntakeFields>({ goal: '', audience: '', questions: '', terms: '', sources: '' });
+  const [f, setF] = useState<IntakeFields>({ goal: '', audience: '', questions: '', terms: '', sources: [] });
   const [errors, setErrors] = useState<Partial<Record<keyof IntakeFields, string>>>({});
   const [submitError, setSubmitError] = useState<string>();
   const [busy, setBusy] = useState(false);
-  const set = (key: keyof IntakeFields) => (v: string) => setF((prev) => ({ ...prev, [key]: v }));
+  const set = (key: Exclude<keyof IntakeFields, 'sources'>) => (v: string) => setF((prev) => ({ ...prev, [key]: v }));
 
   const submit = () => {
     const input = toInput(f);
@@ -126,15 +124,12 @@ function IntakeForm({ projectId, onDrafted }: { projectId: string; onDrafted: (b
         onChange={set('questions')}
       />
       <TextField id="terms" label="Business terms and definitions" multiline value={f.terms} onChange={set('terms')} />
-      <TextField
-        id="sources"
-        label="Candidate source tables"
-        hint="catalog.schema.table, separated by spaces, commas or new lines."
-        multiline
-        value={f.sources}
-        error={errors.sources}
-        onChange={set('sources')}
-      />
+      <div role="group" aria-labelledby="gsb-intake-sources-label">
+        <FormUI.Label id="gsb-intake-sources-label">Candidate source tables</FormUI.Label>
+        <FormUI.Hint>Pick tables from the catalogs and schemas you can access.</FormUI.Hint>
+        <TablePicker value={f.sources} onChange={(sources) => setF((prev) => ({ ...prev, sources }))} />
+        {errors.sources && <FormUI.Message type="error" message={errors.sources} />}
+      </div>
       {submitError && <Alert componentId="gsb.intake.error" type="error" closable={false} message={submitError} />}
       <div>
         <Button componentId="gsb.intake.generate" type="primary" htmlType="submit" loading={busy}>

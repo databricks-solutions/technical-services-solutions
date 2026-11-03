@@ -2,6 +2,7 @@ import path from 'node:path';
 import type { Request } from 'express';
 import { createApp, analytics, lakebase, server } from '@databricks/appkit';
 import { loadMigrations, migrate } from './db/migrate';
+import { registerCatalogRoutes } from './api/catalog';
 import { registerProjectRoutes } from './api/projects';
 import { registerReadinessRoutes } from './api/readiness';
 import { servingDeps } from './llm/llm';
@@ -22,7 +23,9 @@ createApp({
     const llmFor = (req: Request) => servingDeps(asUser(req));
     appkit.server.extend((app) => {
       registerProjectRoutes(app, pool, llmFor);
-      registerReadinessRoutes(app, pool, llmFor, (req) => warehouseDeps(pool, asUser(req)));
+      const runFor = (req: Request) => warehouseDeps(pool, asUser(req));
+      registerCatalogRoutes(app, runFor);
+      registerReadinessRoutes(app, pool, llmFor, runFor);
     });
   },
 }).catch((err: unknown) => {

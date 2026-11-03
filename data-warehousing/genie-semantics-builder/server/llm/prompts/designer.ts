@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { SemanticBrief } from '../../../shared/brief';
 import type { Explanations, TestCase } from '../../../shared/designer';
+import type { Pattern } from '../../../shared/patterns';
 import { formatSchema } from '../../../shared/metricView';
 import type { TableProfile } from '../../readiness/profile';
 import { untrusted } from '../llm';
@@ -53,6 +54,21 @@ const designOutput = z.object({
         additivity: z
           .enum(['additive', 'semi_additive', 'non_additive', 'ratio'])
           .describe('additive sums across all dimensions; ratio divides other measures.'),
+        window: z
+          .array(
+            z.object({
+              order: text(255).min(1).describe('Name of a dimension of this view, usually a date.'),
+              range: text(60)
+                .min(1)
+                .describe('current, cumulative, all, or trailing|leading <n> [unit] [inclusive|exclusive].'),
+              semiadditive: z.enum(['first', 'last']).nullable(),
+              offset: text(30).nullable().describe('Shift of the window, for example -1 month. null for none.'),
+            })
+          )
+          .max(3)
+          .nullable()
+          .optional()
+          .describe('Window measure spec. null for a regular measure.'),
       })
     )
     .min(1)
@@ -91,6 +107,41 @@ export const designPrompt: ToolPrompt<DesignOutput> = {
     name: 'submit_metric_view_design',
     description: 'Submit the metric view design, explanations and test cases.',
     schema: designOutput,
+  },
+  maxTokens: 16000,
+};
+
+const applyOutput = designOutput.extend({
+  roles: z
+    .array(
+      z.object({
+        role: text(60).min(1),
+        mappedTo: text(600)
+          .nullable()
+          .describe('The project column or expression that plays this role. null when no column fits.'),
+        reason: text(500),
+      })
+    )
+    .min(1)
+    .describe('One entry per pattern role.'),
+});
+export type ApplyOutput = z.infer<typeof applyOutput>;
+
+export const applyPatternPrompt: ToolPrompt<ApplyOutput> = {
+  id: 'designer.apply_pattern',
+  version: 1,
+  system: `${SYSTEM.replace(
+    '- Do not use window functions, subqueries or semicolons.',
+    '- Use window measures (the window field) and OVER () only where the pattern does. Do not use subqueries or semicolons.'
+  )}
+You receive a metric view pattern written for sample data. Adapt the same technique to the project tables.
+- Map every pattern role to a project column. When no project column fits a role, set mappedTo to null and explain why. Do not invent tables.
+- The pattern can use SQL query sources for reference data. The project design must use project tables only.
+- Keep the pattern's measures and their meaning. Rename fields to the business terms of the brief.`,
+  tool: {
+    name: 'submit_adapted_metric_view',
+    description: 'Submit the adapted metric view design, the role mapping, explanations and test cases.',
+    schema: applyOutput,
   },
   maxTokens: 16000,
 };
@@ -143,6 +194,20 @@ export function refineDesignRequest(
     untrusted('change_request', instruction),
     untrusted('current_metric_view_yaml', current.yaml),
     untrusted('current_tests', JSON.stringify(current.tests)),
+    untrusted('semantic_brief', briefScope(brief)),
+    untrusted('project_tables', tables(profiles)),
+  ].join('\n\n');
+}
+
+export function applyPatternRequest(
+  brief: SemanticBrief,
+  profiles: TableProfile[],
+  pattern: Pick<Pattern, 'title' | 'scenario' | 'roles' | 'yaml'>
+): string {
+  return [
+    'Adapt this pattern to the project tables.',
+    untrusted('pattern', JSON.stringify({ title: pattern.title, scenario: pattern.scenario, roles: pattern.roles })),
+    untrusted('pattern_metric_view_yaml', pattern.yaml),
     untrusted('semantic_brief', briefScope(brief)),
     untrusted('project_tables', tables(profiles)),
   ].join('\n\n');

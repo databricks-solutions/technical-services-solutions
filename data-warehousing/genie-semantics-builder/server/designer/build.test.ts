@@ -98,4 +98,44 @@ describe('buildDesign', () => {
       )
     ).toThrow(/before its parent/);
   });
+
+  it('renders window measures that the validator accepts', () => {
+    const windowed: DesignOutput = {
+      ...output,
+      measures: [
+        ...output.measures,
+        {
+          ...field('Net Revenue PM', 'MEASURE(`Net Revenue`)'),
+          additivity: 'additive',
+          window: [{ order: 'Order Month', range: 'current', semiadditive: null, offset: '-1 month' }],
+        },
+        {
+          ...field('Net Revenue YTD', 'MEASURE(`Net Revenue`)'),
+          additivity: 'additive',
+          window: [{ order: 'Order Month', range: 'cumulative', semiadditive: null, offset: null }],
+        },
+      ],
+    };
+    const { view } = buildDesign(
+      windowed,
+      profiles.map((p) => p.fullName)
+    );
+    const yaml = renderMetricView(view);
+    expect(yaml).toContain('offset: -1 month');
+    expect(yaml).not.toMatch(/semiadditive|offset: null/);
+    expect(validateMetricView(yaml, toSourceProfiles(profiles)).issues.filter((i) => i.severity === 'error')).toEqual(
+      []
+    );
+    const bad = {
+      ...windowed.measures[2],
+      window: [{ order: 'Nope', range: 'current', semiadditive: null, offset: null }],
+    };
+    const badYaml = renderMetricView(
+      buildDesign(
+        { ...windowed, measures: [...output.measures, bad] },
+        profiles.map((p) => p.fullName)
+      ).view
+    );
+    expect(validateMetricView(badYaml).issues[0]?.message).toMatch(/Window order "Nope" is not a dimension/);
+  });
 });

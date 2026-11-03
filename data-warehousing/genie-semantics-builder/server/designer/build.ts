@@ -58,7 +58,19 @@ export function buildDesign(out: DesignOutput, sourceNames: string[]) {
     ...(out.filter ? { filter: out.filter } : {}),
     ...(roots.length ? { joins: roots } : {}),
     dimensions: out.dimensions.map(toField),
-    measures: out.measures.map(toField),
+    measures: out.measures.map((m) => ({
+      ...toField(m),
+      ...(m.window?.length
+        ? {
+            window: m.window.map((w) => ({
+              order: w.order,
+              range: w.range,
+              ...(w.semiadditive ? { semiadditive: w.semiadditive } : {}),
+              ...(w.offset ? { offset: w.offset } : {}),
+            })),
+          }
+        : {}),
+    })),
   };
 
   const explanations: Explanations = {

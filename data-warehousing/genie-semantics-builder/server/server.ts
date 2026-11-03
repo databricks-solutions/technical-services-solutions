@@ -33,7 +33,7 @@ createApp({
       const runFor = (req: Request) => warehouseDeps(pool, asUser(req));
       registerCatalogRoutes(app, runFor);
       registerReadinessRoutes(app, pool, llmFor, runFor);
-      registerDesignerRoutes(app, pool, llmFor, runFor);
+      registerDesignerRoutes(app, pool, llmFor, runFor, patterns);
       registerPatternRoutes(app, pool, patterns, runFor);
     });
   },

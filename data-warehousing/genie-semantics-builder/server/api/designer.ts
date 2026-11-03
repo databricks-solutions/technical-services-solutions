@@ -17,7 +17,15 @@ import type { MetricViewIssue } from '../../shared/metricView';
 import { buildDesign, keepValidTests, toSourceProfiles } from '../designer/build';
 import { callTool } from '../llm/llm';
 import type { LlmDeps } from '../llm/llm';
-import { designPrompt, designRequest, refineDesignPrompt, refineDesignRequest } from '../llm/prompts/designer';
+import {
+  applyPatternPrompt,
+  applyPatternRequest,
+  designPrompt,
+  designRequest,
+  refineDesignPrompt,
+  refineDesignRequest,
+} from '../llm/prompts/designer';
+import type { Pattern } from '../../shared/patterns';
 import {
   compareRows,
   createStatement,
@@ -190,10 +198,12 @@ export function registerDesignerRoutes(
   app: Application,
   db: Db,
   llmFor: (req: Request) => LlmDeps,
-  runFor: (req: Request) => RunDeps
+  runFor: (req: Request) => RunDeps,
+  patterns: Pattern[] = []
 ) {
   const projects = projectRepo(db);
   const repo = designerRepo(db);
+  const bySlug = new Map(patterns.map((p) => [p.slug, p]));
 
   /** Confirmed brief plus live profiles of the project sources, read as the user. */
   async function context(req: Request) {
@@ -242,6 +252,37 @@ export function registerDesignerRoutes(
       const ctx = await context(req);
       const out = await callTool(designPrompt, designRequest(ctx.brief, ctx.profiles), llmFor(req));
       await repo.add(ctx.actor, ctx.project.id, { ...fromModel(out, ctx), origin: 'generated' });
+      return repo.view(ctx.project.id);
+    })
+  );
+
+  app.post(
+    '/api/projects/:id/patterns/:slug/apply',
+    handle(async (req) => {
+      const pattern = bySlug.get(z.object({ slug: z.string() }).parse(req.params).slug);
+      if (!pattern) throw new HttpError(404, 'Pattern not found.');
+      const ctx = await context(req);
+      const out = await callTool(
+        applyPatternPrompt,
+        applyPatternRequest(ctx.brief, ctx.profiles, pattern),
+        llmFor(req)
+      );
+      const missing = out.roles.filter((r) => r.mappedTo === null);
+      if (missing.length)
+        throw new HttpError(
+          409,
+          `No project column fits ${missing.map((r) => `${r.role} (${r.reason})`).join('; ')}. Add a source that has it, then try again.`
+        );
+      const design = fromModel(out, ctx);
+      const roles = out.roles.map((r) => `${r.role}: ${r.mappedTo ?? ''}`).join('; ');
+      await repo.add(ctx.actor, ctx.project.id, {
+        ...design,
+        explanations: {
+          ...design.explanations,
+          summary: `Adapted from the pattern "${pattern.title}". Roles: ${roles}. ${design.explanations.summary}`,
+        },
+        origin: 'pattern',
+      });
       return repo.view(ctx.project.id);
     })
   );

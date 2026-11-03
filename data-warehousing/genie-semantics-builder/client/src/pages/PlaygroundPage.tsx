@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useParams, useSearchParams } from 'react-router';
+import { useNavigate, useParams, useSearchParams } from 'react-router';
 import {
   Alert,
   Button,
@@ -117,6 +117,20 @@ function PatternDetail({
   const [busy, setBusy] = useState(false);
   const [removed, setRemoved] = useState(false);
   const [error, setError] = useState<string>();
+  const [applying, setApplying] = useState(false);
+  const navigate = useNavigate();
+
+  const apply = () => {
+    setError(undefined);
+    setApplying(true);
+    api(`/api/projects/${projectId}/patterns/${pattern.slug}/apply`, {}).then(
+      () => void navigate(`/projects/${projectId}/designer`),
+      (err: unknown) => {
+        setApplying(false);
+        setError((err as Error).message);
+      }
+    );
+  };
 
   const fail = (err: unknown) => {
     setBusy(false);
@@ -169,6 +183,9 @@ function PatternDetail({
         <Button componentId="gsb.playground.try" type="primary" loading={busy && !approve} onClick={review}>
           Try in sandbox
         </Button>
+        <Button componentId="gsb.playground.apply" loading={applying} disabled={busy} onClick={apply}>
+          Apply to my data
+        </Button>
         {run && run.cleanup.length > 0 && !removed && (
           <Button
             componentId="gsb.playground.drop"
@@ -179,6 +196,14 @@ function PatternDetail({
           </Button>
         )}
       </div>
+      {applying && (
+        <div role="status">
+          <Typography.Text color="secondary">
+            Reading your tables and adapting the pattern. This can take a minute. The result opens in the Metric
+            Designer as a new version.
+          </Typography.Text>
+        </div>
+      )}
       {error && <Alert componentId="gsb.playground.error" type="error" closable={false} message={error} />}
       {run && (
         <div role="status" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -239,7 +264,8 @@ export function PlaygroundPage() {
     [p.title, p.category, p.scenario, p.question].some((t) => t.toLowerCase().includes(needle))
   );
   const categories = [...new Set(shown.map((p) => p.category))].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
-  const selected = list.find((p) => p.slug === params.get('pattern')) ?? shown.find((p) => p.category === categories[0]);
+  const selected =
+    list.find((p) => p.slug === params.get('pattern')) ?? shown.find((p) => p.category === categories[0]);
 
   return (
     <DataState

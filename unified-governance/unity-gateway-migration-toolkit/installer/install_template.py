@@ -66,6 +66,8 @@ dbutils.widgets.text("secret_schemas", "", "Advanced: Allowed secret schemas (ca
 dbutils.widgets.dropdown("allow_secret_read", "no", ["no", "yes"], "Advanced: Allow reading secret values (risk: apply copies legacy secret values, in plain text, into the new services; keep no unless needed)")
 dbutils.widgets.text("deadline", "2027-03-30", "Advanced: Legacy deadline (YYYY-MM-DD)")
 dbutils.widgets.text("run_as", "", "Advanced: Run jobs as service principal (application ID; blank = jobs run as you)")
+dbutils.widgets.text("central_workspaces", "", "Advanced: Central mode: workspaces to manage (workspace IDs, comma-separated; blank = off)")
+dbutils.widgets.text("central_secret", "", "Advanced: Central mode: service principal OAuth secret (secret scope/key holding the client secret; client ID comes from Run jobs as service principal)")
 dbutils.widgets.dropdown("drop_data", "no", ["no", "yes"], "Uninstall: remove results tables (and the schema, if the toolkit made it and it's empty)")
 dbutils.widgets.dropdown("remove_logs", "no", ["no", "yes"], "Uninstall: remove apply logs (no = keep them, so kept services can be rolled back later)")
 dbutils.widgets.dropdown("rollback_services", "no", ["no", "yes"], "Uninstall: roll back services created by apply (yes = remove them too)")
@@ -273,6 +275,33 @@ def valid_run_as(application_id: str) -> str | None:
     return None
 
 
+def central_problems(workspaces: str, secret_ref: str, run_as: str) -> tuple[list[str], list[str]]:
+    """Central mode (optional): the allowlist and the problems with the two widgets. Blank workspaces = off.
+
+    It scans other workspaces as the jobs' run-as service principal, so it needs that identity and a secret
+    scope/key holding the service principal's OAuth secret (the value is only read by the scan job)."""
+    ids, problems = [], []
+    for part in (workspaces or "").split(","):
+        p = part.strip()
+        if not p:
+            continue
+        if not re.fullmatch(r"[0-9]{1,20}", p):
+            problems.append(f"Advanced: Central mode: workspaces to manage takes workspace IDs (numbers), not {p!r}")
+        elif p not in ids:
+            ids.append(p)
+    ref = (secret_ref or "").strip()
+    if ids or ref:
+        if not ids:
+            problems.append("Advanced: Central mode: service principal OAuth secret is set, but no workspaces to manage")
+        if not run_as:
+            problems.append("central mode scans other workspaces as a service principal: set Advanced: Run jobs as "
+                            "service principal to its application ID")
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", ref):
+            problems.append("Advanced: Central mode: service principal OAuth secret must be scope/key (the secret "
+                            "holding that service principal's OAuth client secret)")
+    return ids, problems
+
+
 def job_settings(app_name: str, role: str, title: str, notebook_path: str, params: list, run_as: str = "",
                  **extra) -> jobs.JobSettings:
     if run_as:
@@ -286,9 +315,11 @@ def job_settings(app_name: str, role: str, title: str, notebook_path: str, param
 
 
 def job_specs(app_name: str, folder: str, results: str, warehouse_id: str, secret_schemas: list[str],
-              allow_secret_read: bool, deadline: str = DEFAULT_DEADLINE, run_as: str = "") -> dict[str, jobs.JobSettings]:
+              allow_secret_read: bool, deadline: str = DEFAULT_DEADLINE, run_as: str = "",
+              central_workspaces: list[str] | None = None, central_secret: str = "") -> dict[str, jobs.JobSettings]:
     """The three toolkit jobs. Parameter names match the notebooks in notebook/ and the bundle's databricks.yml.
-    run_as: a service principal's application ID to run them as; blank runs them as the installing user."""
+    run_as: a service principal's application ID to run them as; blank runs them as the installing user.
+    central_workspaces / central_secret: central mode (the scan job may scan these other workspaces)."""
     P = jobs.JobParameterDefinition
     files = f"{folder}/files"
     return {
@@ -301,7 +332,11 @@ def job_specs(app_name: str, folder: str, results: str, warehouse_id: str, secre
         "scan": job_settings(app_name, "scan", "workspace scan", f"{files}/notebook/run_scan", [
             P("run_id", ""), P("job_run_id", "{{job.run_id}}"), P("results_schema", results), P("days", "30"),
             P("scan_roots", ""), P("target_catalog", TARGET_CATALOG), P("target_schema", TARGET_SCHEMA),
-            P("requested_by", ""), P("deadline", deadline)], run_as=run_as),
+            P("requested_by", ""), P("deadline", deadline),
+            # Central mode: the allowlist, identity and secret are fixed here; the app only names the target.
+            P("target_workspace_id", ""), P("central_workspaces", ",".join(central_workspaces or [])),
+            P("central_client_id", run_as if central_workspaces else ""), P("central_secret", central_secret)],
+            run_as=run_as),
         "apply": job_settings(app_name, "apply", "apply", f"{files}/notebook/run_apply", [
             P("apply_id", ""), P("job_run_id", "{{job.run_id}}"), P("results_schema", results), P("mode", "dry_run"),
             P("endpoints", ""), P("target_catalog", ""), P("target_schema", ""), P("uc_secret_map", ""), P("create_uc_secrets", "false"),
@@ -327,9 +362,12 @@ def app_resources(warehouse_id: str, job_ids: dict[str, int]) -> list[apps.AppRe
 
 
 def app_env(results: str, operators: list[str], version: str, secret_schemas: list[str],
-            allow_secret_read: bool, deadline: str = DEFAULT_DEADLINE) -> list[apps.EnvVar]:
+            allow_secret_read: bool, deadline: str = DEFAULT_DEADLINE, central_workspaces: list[str] | None = None,
+            hub_workspace_id: str = "") -> list[apps.EnvVar]:
     E = apps.EnvVar
     return [
+        E(name="UGMIG_CENTRAL_WORKSPACES", value=",".join(central_workspaces or [])),
+        E(name="UGMIG_HUB_WORKSPACE_ID", value=hub_workspace_id),
         E(name="DATABRICKS_WAREHOUSE_ID", value_from="sql-warehouse"),
         E(name="SNAPSHOT_JOB_ID", value_from="snapshot-job"), E(name="SCAN_JOB_ID", value_from="scan-job"),
         E(name="APPLY_JOB_ID", value_from="apply-job"), E(name="RESULTS_SCHEMA", value=results),
@@ -475,6 +513,12 @@ DEADLINE = g("deadline").strip() or DEFAULT_DEADLINE
 deadline_problem = valid_deadline(DEADLINE)
 RUN_AS = g("run_as").strip()
 run_as_problem = valid_run_as(RUN_AS)
+CENTRAL_WORKSPACES, central_problem_list = central_problems(g("central_workspaces"), g("central_secret"), RUN_AS)
+CENTRAL_SECRET = g("central_secret").strip() if CENTRAL_WORKSPACES else ""
+try:
+    HUB_WORKSPACE_ID = str(w.get_workspace_id())
+except Exception:
+    HUB_WORKSPACE_ID = ""
 JOB_IDENTITY = f"service principal {RUN_AS}" if RUN_AS else me
 TOOLKIT_VERSION = "__VERSION__"
 APP_DESCRIPTION = f"{APP_MARKER}: account overview, workspace scans, readiness, code fixes and apply"
@@ -499,6 +543,7 @@ if deadline_problem:
     problems.append(deadline_problem)
 if run_as_problem:
     problems.append(run_as_problem)
+problems += central_problem_list
 if not UNINSTALL:
     if not CATALOG_GIVEN:
         problems.append("choose Install: Results catalog (the results schema is created there; you need USE CATALOG and "
@@ -1079,7 +1124,8 @@ print("schema ready:", RESULTS)
 
 # COMMAND ----------
 
-SPECS = job_specs(APP_NAME, FOLDER, RESULTS, WAREHOUSE_ID, SECRET_SCHEMAS, ALLOW_SECRET_READ, DEADLINE, RUN_AS)
+SPECS = job_specs(APP_NAME, FOLDER, RESULTS, WAREHOUSE_ID, SECRET_SCHEMAS, ALLOW_SECRET_READ, DEADLINE, RUN_AS,
+                  CENTRAL_WORKSPACES, CENTRAL_SECRET)
 print(f"The jobs run as {JOB_IDENTITY}" + ("" if RUN_AS else " (set Advanced: Run jobs as service principal to change it)"))
 JOB_IDS = {}
 for role, settings in SPECS.items():
@@ -1135,7 +1181,8 @@ if app.compute_status and app.compute_status.state and app.compute_status.state.
 deployment = apps.AppDeployment(
     source_code_path=f"{FILES}/app",
     command=["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"],
-    env_vars=app_env(RESULTS, OPERATOR_LIST, TOOLKIT_VERSION, SECRET_SCHEMAS, ALLOW_SECRET_READ, DEADLINE))
+    env_vars=app_env(RESULTS, OPERATOR_LIST, TOOLKIT_VERSION, SECRET_SCHEMAS, ALLOW_SECRET_READ, DEADLINE,
+                     CENTRAL_WORKSPACES, HUB_WORKSPACE_ID))
 print("deploying app...")
 d = w.apps.deploy_and_wait(APP_NAME, deployment)
 print("deployment:", d.status.state.value if d.status and d.status.state else d.status)

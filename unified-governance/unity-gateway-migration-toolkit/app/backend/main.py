@@ -60,6 +60,14 @@ LOCAL_DEV = os.environ.get("UGMIG_LOCAL_DEV") == "1" and not IN_APP
 # Unity Catalog schemas (catalog.schema) that apply may reference for secrets; set by the installer, not by requests.
 SECRET_SCHEMAS = {s.strip().lower() for s in os.environ.get("UGMIG_SECRET_SCHEMAS", "").split(",") if s.strip()}
 ALLOW_SECRET_READ = os.environ.get("UGMIG_ALLOW_SECRET_READ", "").strip().lower() in ("1", "true", "yes")
+# Central mode (optional): other workspaces the scan job may scan. Changes (apply, cut over) stay in this hub.
+try:
+    CENTRAL_WORKSPACES: list[str] = planner.parse_workspace_ids(os.environ.get("UGMIG_CENTRAL_WORKSPACES", ""))
+except ValueError:
+    CENTRAL_WORKSPACES = []
+_HUB_ID: dict[str, str] = {"id": os.environ.get("UGMIG_HUB_WORKSPACE_ID", "").strip()}
+REMOTE_CHANGES_REFUSED = ("Central mode phase 1: changes run only in the hub workspace. This scan is of workspace "
+                          "{ws}: open the app installed in that workspace, or use the command line, to apply or cut over.")
 MAX_SCAN_AGE_DAYS = int(os.environ.get("UGMIG_MAX_SCAN_AGE_DAYS") or 14)
 EXPORT_ROW_LIMIT = 200_000
 IDENTITY_TTL_S = 300
@@ -386,6 +394,48 @@ def whoami(request: Request) -> dict:
             "operator": bool(LOCAL_DEV or (user is not None and user in OPERATORS)), "workspace": sp().config.host}
 
 
+def hub_workspace_id() -> str:
+    """The workspace this app (and its jobs) runs in: from the installer, else asked once."""
+    if not _HUB_ID["id"]:
+        try:
+            _HUB_ID["id"] = str(planner.workspace_id_of(sp()))
+        except Exception:
+            return ""
+    return _HUB_ID["id"]
+
+
+def require_hub_scan(request: Request, scan_run_id: str) -> None:
+    """In central mode, changes run only against the hub: refuse a scan of another workspace."""
+    if not CENTRAL_WORKSPACES or not scan_run_id:
+        return
+    rows = query(request, f"SELECT workspace_id FROM {table('ug_migration_scans')} WHERE run_id = :r", {"r": scan_run_id})
+    ws = str((rows[0].get("workspace_id") if rows else "") or "")
+    hub = hub_workspace_id()
+    if ws and hub and ws != hub:
+        raise HTTPException(409, REMOTE_CHANGES_REFUSED.format(ws=ws))
+
+
+@app.get("/api/workspaces")
+def workspaces(request: Request) -> dict:
+    """Central mode: the hub and the allowlisted workspaces, with names and URLs from system.access.workspaces_latest
+    (read as the signed-in user; without access, only the IDs). Off: just the hub."""
+    hub = hub_workspace_id()
+    ids = [hub] + [i for i in CENTRAL_WORKSPACES if i != hub] if hub else list(CENTRAL_WORKSPACES)
+    names: dict[str, dict] = {}
+    if CENTRAL_WORKSPACES and ids:
+        try:
+            marks = ", ".join(f":w{i}" for i in range(len(ids)))
+            for r in query(request, "SELECT CAST(workspace_id AS STRING) AS workspace_id, workspace_name, workspace_url "
+                                    f"FROM system.access.workspaces_latest WHERE CAST(workspace_id AS STRING) IN ({marks})",
+                           {f"w{i}": v for i, v in enumerate(ids)}, missing_ok=False):
+                names[str(r["workspace_id"])] = r
+        except Exception:
+            names = {}
+    return {"central": bool(CENTRAL_WORKSPACES), "hub_workspace_id": hub,
+            "workspaces": [{"workspace_id": i, "hub": i == hub, "name": (names.get(i) or {}).get("workspace_name"),
+                            "url": (names.get(i) or {}).get("workspace_url")} for i in ids]}
+
+
 @app.get("/api/config")
 def config() -> dict:
     try:
@@ -401,9 +451,13 @@ def config() -> dict:
             "app_name": APP_NAME, "default_app_name": DEFAULT_APP_NAME,
             # Scans, apply and the test call run as the jobs' identity, not as the signed-in user.
             "jobs_run_as": job_identity("apply") or None,
-            # Scans read the workspace the app's jobs run in, and only that one.
-            "workspace_url": host, "scan_scope": f"This app scans only {host}." if host else
-            "This app scans only the workspace it runs in."}
+            # Scans read the workspace the app's jobs run in, and only that one (unless central mode is on).
+            "workspace_url": host, "scan_scope": (
+                f"This app scans {host} and {len(CENTRAL_WORKSPACES)} more allowlisted workspaces (central mode)."
+                if CENTRAL_WORKSPACES else f"This app scans only {host}." if host else
+                "This app scans only the workspace it runs in."),
+            "central": {"enabled": bool(CENTRAL_WORKSPACES), "workspaces": CENTRAL_WORKSPACES,
+                        "hub_workspace_id": hub_workspace_id() if CENTRAL_WORKSPACES else None}}
 
 
 @app.get("/api/target-schema")
@@ -699,15 +753,24 @@ class ScanRequest(BaseModel):
     scan_roots: str = Field("", max_length=2000)
     target_catalog: str = "ai_gateway"
     target_schema: str = "migrated"
+    target_workspace_id: str = Field("", max_length=20)  # central mode: an allowlisted workspace; blank = this one
 
 
 @app.get("/api/scans")
-def list_scans(request: Request) -> list[dict]:
+def list_scans(request: Request, workspace_id: str = "") -> list[dict]:
+    """Recent scans. workspace_id (central mode) keeps one workspace's scans; the hub's include older rows
+    that didn't record a workspace."""
+    where, params = "", {}
+    if workspace_id:
+        if not planner.WORKSPACE_ID_RE.fullmatch(workspace_id):
+            raise HTTPException(400, "workspace_id is a number")
+        where = "WHERE workspace_id = :ws" + (" OR workspace_id IS NULL" if workspace_id == hub_workspace_id() else "")
+        params = {"ws": workspace_id}
     return reconcile(query(request, f"""
-        SELECT run_id, job_run_id, requested_by, workspace_url, status, readiness, endpoints, client_references,
-               traffic_status, days, target_catalog, target_schema, toolkit_version, error,
+        SELECT run_id, job_run_id, requested_by, workspace_url, workspace_id, status, readiness, endpoints,
+               client_references, traffic_status, days, target_catalog, target_schema, toolkit_version, error,
                CAST(started_at AS STRING) AS started_at, CAST(finished_at AS STRING) AS finished_at
-        FROM {table('ug_migration_scans')} ORDER BY started_at DESC LIMIT 50"""))
+        FROM {table('ug_migration_scans')} {where} ORDER BY started_at DESC LIMIT 50""", params))
 
 
 @app.post("/api/scans")
@@ -723,10 +786,20 @@ def start_scan(body: ScanRequest, request: Request) -> dict:
     for r in roots:
         if r == "/" or not re.fullmatch(r"/[^\s,'\"]*", r) or ".." in r:
             raise HTTPException(400, f"Folders must be workspace paths such as /Users or /Repos/team, not {r!r}")
+    target = (body.target_workspace_id or "").strip()
+    if target and target != hub_workspace_id():
+        # Central mode: only an allowlisted workspace; the job checks the allowlist again and resolves the URL itself.
+        if target not in CENTRAL_WORKSPACES:
+            raise HTTPException(400, f"Workspace {target} isn't one this app may scan. The installer's Central mode "
+                                     "setting lists the workspaces it manages.")
+    else:
+        target = ""
     run_id = str(uuid.uuid4())
-    job_run_id = run_job("scan", {"run_id": run_id, "results_schema": RESULTS_SCHEMA, "days": body.days,
-                                  "scan_roots": ",".join(roots), "target_catalog": body.target_catalog,
-                                  "target_schema": body.target_schema, "requested_by": who(request)}, item_id=run_id)
+    params = {"run_id": run_id, "results_schema": RESULTS_SCHEMA, "days": body.days, "scan_roots": ",".join(roots),
+              "target_catalog": body.target_catalog, "target_schema": body.target_schema, "requested_by": who(request)}
+    if target:
+        params["target_workspace_id"] = target
+    job_run_id = run_job("scan", params, item_id=run_id)
     return {"run_id": run_id, "job_run_id": job_run_id}
 
 
@@ -1026,6 +1099,7 @@ def start_apply(body: ApplyRequest, request: Request) -> dict:
         if not body.scan_run_id:
             raise HTTPException(400, "choose a scan: apply uses its plan")
         check_id(body.scan_run_id, "scan id")
+        require_hub_scan(request, body.scan_run_id)
         if not body.endpoints:
             raise HTTPException(400, "choose at least one endpoint")
         for v in body.endpoints:
@@ -1296,6 +1370,9 @@ def start_cutover(body: CutoverRequest, request: Request) -> dict:
     if op not in CUTOVER_OPERATIONS:
         raise HTTPException(400, "operation must be test_call, guardrail_check, pause_legacy, enable_tracking or "
                                  "resume_legacy")
+    if body.scan_run_id:
+        check_id(body.scan_run_id, "scan id")
+        require_hub_scan(request, body.scan_run_id)
     if op == "resume_legacy":
         return _start_resume(body, request)
     if body.mode not in ("dry_run", "execute"):

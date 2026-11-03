@@ -3,6 +3,11 @@
 # MAGIC # Unity Gateway migration: workspace scan (app job)
 # MAGIC Runs the read-only planner on this workspace and stores the results for the app in
 # MAGIC `<results_schema>.ug_migration_scans` and `ug_migration_scan_items`.
+# MAGIC
+# MAGIC Central mode (optional): `target_workspace_id` names another workspace of the account. It must be in
+# MAGIC `central_workspaces` (the installer's allowlist); its URL comes from `system.access.workspaces_latest`, and the
+# MAGIC job signs in to it as the service principal `central_client_id` with the OAuth secret in `central_secret`
+# MAGIC (`scope/key`). The scan only reads that workspace.
 # MAGIC Prototype from Databricks Shared Technical Services, provided as is.
 
 # COMMAND ----------
@@ -21,6 +26,10 @@ dbutils.widgets.text("target_catalog", "ai_gateway")
 dbutils.widgets.text("target_schema", "migrated")
 dbutils.widgets.text("requested_by", "")
 dbutils.widgets.text("deadline", "")  # legacy retirement date override, ISO; blank = 2027-03-30
+dbutils.widgets.text("target_workspace_id", "")  # central mode: another workspace to scan; blank = this one
+dbutils.widgets.text("central_workspaces", "")   # central mode allowlist (workspace IDs), set by the installer
+dbutils.widgets.text("central_client_id", "")    # the service principal's application ID (the jobs' run-as identity)
+dbutils.widgets.text("central_secret", "")       # scope/key of that service principal's OAuth secret
 
 # COMMAND ----------
 
@@ -60,15 +69,34 @@ if store.run_exists(spark, schema, "ug_migration_scans", "run_id", run_id):
 # COMMAND ----------
 
 w = WorkspaceClient()
-# The scan reads the workspace this job runs in, so the row records that workspace from the start (a failed or
-# still-running scan shows which workspace it was for).
+hub_id = planner.workspace_id_of(w)
+target_id = dbutils.widgets.get("target_workspace_id").strip()
+remote = bool(target_id) and target_id != hub_id
+if remote:
+    # Central mode: everything is checked before the remote workspace is contacted.
+    allowlist = planner.parse_workspace_ids(dbutils.widgets.get("central_workspaces"))
+    if target_id not in allowlist:
+        raise PermissionError(f"workspace {target_id} isn't in this install's central-mode allowlist")
+    ref = dbutils.widgets.get("central_secret").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+", ref):
+        raise ValueError("central_secret must be scope/key")
+    row = spark.sql("SELECT workspace_url FROM system.access.workspaces_latest WHERE workspace_id = :id",
+                    args={"id": target_id}).collect()
+    url = (row[0]["workspace_url"] if row else "") or ""
+    url = url if url.startswith("http") else (f"https://{url}" if url else "")
+    scope, key = ref.split("/", 1)
+    w = planner.remote_workspace_client(target_id, allowlist, url, dbutils.widgets.get("central_client_id").strip(),
+                                        dbutils.secrets.get(scope, key))
+# The row records the scanned workspace from the start (a failed or still-running scan shows which one it was for).
 meta["workspace_url"] = w.config.host
+meta["workspace_id"] = target_id if remote else hub_id
 out_dir = tempfile.mkdtemp(prefix="ug_scan_")
 try:
     store.upsert(spark, schema, "ug_migration_scans", store.SCAN_COLUMNS, "run_id", meta)
     res = planner.run(w, out_dir, warehouse_id=None, days=int(meta["days"]), target_catalog=meta["target_catalog"],
                       target_schema=meta["target_schema"], scan_roots=roots,
-                      deadline=dbutils.widgets.get("deadline") or None)
+                      deadline=dbutils.widgets.get("deadline") or None,
+                      workspace_id=target_id if remote else None, remote=remote)
     ready = store.write_scan_items(spark, schema, run_id, out_dir)
     store.upsert(spark, schema, "ug_migration_scans", store.SCAN_COLUMNS, "run_id", {
         "run_id": run_id, "status": "SUCCEEDED", "readiness": res["readiness"], "endpoints": res["endpoints"],

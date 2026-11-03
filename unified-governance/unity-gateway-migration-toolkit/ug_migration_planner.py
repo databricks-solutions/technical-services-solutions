@@ -159,7 +159,51 @@ def workspace_id_of(w: WorkspaceClient) -> str:
     return m.group(1) if m else str(w.get_workspace_id())
 
 
+# -- Central mode (optional): scan another workspace of the account from the hub's scan job --------------------
+
+WORKSPACE_ID_RE = re.compile(r"[0-9]{1,20}")
+WORKSPACE_URL_RE = re.compile(r"https://[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]/?")
+
+
+def parse_workspace_ids(value) -> list[str]:
+    """Workspace IDs from a comma-separated list (the central-mode allowlist). Raises ValueError on anything else."""
+    ids = []
+    for part in str(value or "").split(","):
+        p = part.strip()
+        if not p:
+            continue
+        if not WORKSPACE_ID_RE.fullmatch(p):
+            raise ValueError(f"workspace IDs are numbers, not {p!r}")
+        if p not in ids:
+            ids.append(p)
+    return ids
+
+
+def remote_workspace_client(target_id: str, allowlist: list[str], url: str, client_id: str, client_secret: str,
+                            factory=None) -> WorkspaceClient:
+    """A client for another workspace, signed in as the central-mode service principal (OAuth M2M).
+
+    The target must be on the allowlist and the URL must come from the account's workspace table (never from
+    the caller). The secret is passed straight to the client and never logged. The client must answer as the
+    target workspace, so a wrong URL can't scan another workspace by mistake."""
+    target_id = str(target_id or "").strip()
+    if target_id not in allowlist:
+        raise PermissionError(f"workspace {target_id} isn't in the central-mode allowlist")
+    if not WORKSPACE_URL_RE.fullmatch(url or ""):
+        raise ValueError(f"workspace {target_id} has no usable URL in system.access.workspaces_latest")
+    if not client_id or not client_secret:
+        raise ValueError("central mode needs the service principal's client ID (Run jobs as service principal) "
+                         "and its OAuth secret (Central mode: service principal OAuth secret)")
+    client = (factory or WorkspaceClient)(host=url.rstrip("/"), client_id=client_id, client_secret=client_secret,
+                                          auth_type="oauth-m2m")
+    got = workspace_id_of(client)
+    if str(got) != target_id:
+        raise ValueError(f"{url} answers as workspace {got}, not {target_id}")
+    return client
+
+
 ALLOW_SPARK = True  # set False when scanning a workspace other than the one this process runs in
+REMOTE_SCAN = False  # central mode: the scanned workspace isn't the one this process (and its Spark) runs in
 SQL_POLL_SECONDS = 1800  # give up waiting on a system table query after this (the warehouse keeps running it)
 
 
@@ -1823,6 +1867,13 @@ def scan_custom_endpoints(w: WorkspaceClient, scanner: Scanner, endpoints: list[
 
 def scan_uc_sql(w: WorkspaceClient, scanner: Scanner, warehouse_id: str | None) -> None:
     """Unity Catalog SQL functions and views whose definitions call legacy endpoints."""
+    if REMOTE_SCAN:
+        # information_schema is per metastore: from the hub it would list the hub's functions and views.
+        for kind in ("uc_functions_skipped", "uc_views_skipped"):
+            scanner.note(kind, f"{NOT_SCANNED}: central mode reads Unity Catalog definitions only from the hub's "
+                               "metastore; scan this workspace from its own install or the CLI to include them")
+        _log("  Unity Catalog functions and views not scanned (central mode)")
+        return
     queries = {
         "uc_function": "SELECT routine_catalog || '.' || routine_schema || '.' || routine_name AS name, "
                        "routine_definition AS body FROM system.information_schema.routines "
@@ -2738,10 +2789,16 @@ def run(w: WorkspaceClient, out_dir: str, warehouse_id: str | None = None, days:
         target_catalog: str = "ai_gateway", target_schema: str = "migrated",
         scan_roots: list[str] | None = None, max_objects: int = 20000, skip_scan: bool = False,
         workspace_id: str | None = None, threads: int = 16, local_paths: list[str] | None = None,
-        allow_spark: bool = True, ack_guardrails: bool = False, deadline: str | None = None) -> dict:
-    """Plan and scan one workspace. deadline (ISO date) overrides the legacy retirement date for this run only."""
-    global ALLOW_SPARK, LEGACY_DEADLINE
+        allow_spark: bool = True, ack_guardrails: bool = False, deadline: str | None = None,
+        remote: bool = False) -> dict:
+    """Plan and scan one workspace. deadline (ISO date) overrides the legacy retirement date for this run only.
+
+    remote: w is another workspace of the account (central mode) while Spark runs in the hub. System tables are
+    account-wide, so traffic still comes from Spark; Unity Catalog definitions are per metastore, so they're
+    left out (and noted) rather than read from the hub's metastore."""
+    global ALLOW_SPARK, LEGACY_DEADLINE, REMOTE_SCAN
     previous, ALLOW_SPARK = ALLOW_SPARK, allow_spark
+    previous_remote, REMOTE_SCAN = REMOTE_SCAN, remote
     previous_deadline = LEGACY_DEADLINE
     if deadline:
         LEGACY_DEADLINE = validate_deadline(deadline)
@@ -2750,6 +2807,7 @@ def run(w: WorkspaceClient, out_dir: str, warehouse_id: str | None = None, days:
                     skip_scan, workspace_id, threads, local_paths, ack_guardrails)
     finally:
         ALLOW_SPARK = previous
+        REMOTE_SCAN = previous_remote
         LEGACY_DEADLINE = previous_deadline
 
 

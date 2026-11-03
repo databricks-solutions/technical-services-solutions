@@ -311,3 +311,7 @@ pre.del { background: var(--danger-soft); color: #6e1526; } pre.add { background
 th.expand-col, td.expand-col { width: 2rem; padding-right: 0; }
 .expand-col .btn.link { text-decoration: none; font-size: 1rem; line-height: 1; padding: 0.15rem 0.35rem; border-radius: 4px; }
 .expand-col .btn.link:hover { background: var(--surface-2, rgba(0, 0, 0, 0.06)); }
+
+/* Central mode: the workspace picker in the header. */
+.ws-picker { display: flex; align-items: center; gap: 0.4rem; }
+.ws-picker select { max-width: 18rem; }

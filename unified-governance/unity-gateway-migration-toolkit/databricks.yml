@@ -40,6 +40,15 @@ variables:
   deadline:
     description: Legacy serving deadline for v1 and v2 (YYYY-MM-DD). The app shows it and the snapshot and scan read it (confirmed as of 2026-11-01).
     default: "2027-03-30"
+  central_workspaces:
+    description: "Central mode (optional): other workspace IDs the scan job may scan, comma-separated; blank = off"
+    default: ""
+  central_client_id:
+    description: "Central mode: the jobs' run-as service principal application ID (set run_as on the jobs to it)"
+    default: ""
+  central_secret:
+    description: "Central mode: secret scope/key holding that service principal's OAuth client secret"
+    default: ""
   toolkit_version:
     description: Toolkit version the app reports (UGMIG_VERSION). Must equal __version__ in ug_migration_planner.py (check_release.py checks it).
     default: "0.10.0"
@@ -100,6 +109,11 @@ resources:
         - {name: target_schema, default: "migrated"}
         - {name: requested_by, default: ""}
         - {name: deadline, default: "${var.deadline}"}
+        # Central mode (optional): the allowlist, identity and secret are fixed here; the app only names the target.
+        - {name: target_workspace_id, default: ""}
+        - {name: central_workspaces, default: "${var.central_workspaces}"}
+        - {name: central_client_id, default: "${var.central_client_id}"}
+        - {name: central_secret, default: "${var.central_secret}"}
       tasks:
         - task_key: scan
           notebook_task:
@@ -175,6 +189,7 @@ resources:
           - {name: UGMIG_ALLOW_SECRET_READ, value: "${var.allow_secret_read_enabled}"}
           - {name: UGMIG_MAX_SCAN_AGE_DAYS, value: "14"}
           - {name: UGMIG_DEADLINE, value: "${var.deadline}"}
+          - {name: UGMIG_CENTRAL_WORKSPACES, value: "${var.central_workspaces}"}
       resources:
         - name: sql-warehouse
           sql_warehouse: {id: "${var.warehouse_id}", permission: CAN_USE}

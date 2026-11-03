@@ -1,11 +1,14 @@
 import { ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import { ageDays, api, fmt, isUnknownId, jobRunning, JobState, kindLabel, plural, relativeAge, sentence, useApi, useJob, usePollWhileRunning } from "./api";
 import { Badge, Card, Confirm, CopyButton, Elapsed, Empty, ErrorBox, ErrorState, ExportLink, JobLine, Notice, NavButton, PageHeader, Reason, Skeleton, SkeletonCard, SkeletonTable, Table, useRunView } from "./ui";
+import type { WorkspaceSel } from "./App";
 
 const NOT_READY = ["INCOMPLETE", "BLOCKED"];
 
-export default function Apply({ scanRunId, setScanRunId, operator, active = true }: { scanRunId: string | null; setScanRunId: (id: string) => void; operator: boolean; active?: boolean }) {
-  const scans = useApi<any[]>("/api/scans");
+export default function Apply({ scanRunId, setScanRunId, operator, active = true, workspace = null }: { scanRunId: string | null; setScanRunId: (id: string) => void; operator: boolean; active?: boolean; workspace?: WorkspaceSel }) {
+  // Central mode, phase 1: apply runs only in the hub, so it lists the hub's scans whatever workspace is picked.
+  const remote = !!workspace && !workspace.hub;
+  const scans = useApi<any[]>(workspace ? `/api/scans?workspace_id=${encodeURIComponent(workspace.hubId)}` : "/api/scans");
   const history = useApi<any[]>("/api/applies");
   const config = useApi<any>("/api/config");
   // Tabs stay mounted, so a scan that finished on the Scans tab only shows up here after a reload on opening the tab.
@@ -55,6 +58,11 @@ export default function Apply({ scanRunId, setScanRunId, operator, active = true
           </div>
         )}
       </Card>
+      {remote && (
+        <Notice tone="warning" title={`Apply runs only in the hub workspace`}>
+          Central mode phase 1: changes run only in the hub workspace. You picked <b>{workspace!.label}</b>: open the app installed in that workspace, or use the command line, to apply there. The scans below are the hub's.
+        </Notice>
+      )}
       {scanRunId && (
         <Planner key={scanRunId} operator={operator} scanRunId={scanRunId} config={config.data} maxAge={maxAge} history={history.data || []}
                  runningApply={runningApply} onStarted={(id) => openRun(id, true)} onDone={refresh} />

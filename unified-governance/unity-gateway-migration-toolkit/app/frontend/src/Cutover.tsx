@@ -1,7 +1,11 @@
-import { ReactNode, useEffect, useId, useMemo, useState } from "react";
+import { createContext, ReactNode, useContext, useEffect, useId, useMemo, useState } from "react";
 import { api, ageDays, callerLabel, fmt, humanize, isUnknownId, kindLabel, plural, relativeAge, sentence, useApi, useJob, usePollWhileRunning } from "./api";
 import { Badge, Card, Confirm, CopyButton, Empty, ErrorBox, ErrorState, ExportLink, HowToEnforce, JobLine, NavButton, Notice, PageHeader, Reason, Skeleton, SkeletonTable, Table, useRunView } from "./ui";
 import type { Column } from "./ui";
+import type { WorkspaceSel } from "./App";
+
+/** Central mode, phase 1: why changes are off on this page (the picked workspace isn't the hub), or null. */
+const ChangesBlocked = createContext<string | null>(null);
 
 /* Verify and cut over: the runbook's verify and cut-over steps, in order (1 to 6), run from this page.
  * Every step that changes something is an operator action: a dry run first, then execute with a typed word.
@@ -174,8 +178,12 @@ function cutoverStatus(d: { traffic: any; endpoints: any; runs: any; usage: any;
   return { tiles, next };
 }
 
-export default function Cutover({ operator, maxScanAgeDays, jobsRunAs, active = true }: { operator: boolean; maxScanAgeDays: number; jobsRunAs?: string | null; active?: boolean }) {
-  const scans = useApi<any[]>("/api/scans");
+export default function Cutover({ operator: isOperator, maxScanAgeDays, jobsRunAs, active = true, workspace = null }: { operator: boolean; maxScanAgeDays: number; jobsRunAs?: string | null; active?: boolean; workspace?: WorkspaceSel }) {
+  // Central mode: the scans (and so traffic and readiness) follow the picked workspace; changes stay in the hub.
+  const remote = !!workspace && !workspace.hub;
+  const blocked = remote ? `Central mode phase 1: changes run only in the hub workspace. You picked ${workspace!.label}: open the app installed in that workspace, or use the command line, to pause, resume, turn on tracking or test there. Traffic and readiness below are for that workspace.` : null;
+  const operator = isOperator && !remote;
+  const scans = useApi<any[]>(workspace ? `/api/scans?workspace_id=${encodeURIComponent(workspace.id)}` : "/api/scans");
   // Tabs stay mounted: reload the scan list when the tab is opened, so a scan that just finished can be picked.
   useEffect(() => { if (active) scans.reload(); }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
   const succeeded = useMemo(() => (scans.data || []).filter((s) => s.status === "SUCCEEDED"), [scans.data]);
@@ -201,9 +209,11 @@ export default function Cutover({ operator, maxScanAgeDays, jobsRunAs, active = 
   const panel = (k: StepKey, node: ReactNode) => <div id={`cut-step-${k}`} hidden={step !== k}>{node}</div>;
 
   return (
+    <ChangesBlocked.Provider value={blocked}>
     <div className="stack">
       <PageHeader title="Verify & cut over"
                   description="Check that legacy traffic has stopped, pause legacy endpoints one at a time, test Unity Gateway, then decide to enforce. Operators run the steps that change something. Everyone can read the traffic and the run list; a run's details are for the person who started it, operators and workspace admins." />
+      {blocked && <Notice tone="warning" title="Changes run only in the hub workspace">{blocked}</Notice>}
       <Card title="Scan used for these steps" note="The endpoints, callers and services come from this scan's plan. Scan again if they've changed.">
         {scans.loading && !scans.data ? <Skeleton lines={1} label="Loading scans" /> : scans.error ? <ErrorState error={scans.error} onRetry={scans.reload} /> : !scan ? (
           <Empty title="No finished scan" action={<NavButton tab="scans" label="Go to Scans" />}>Run a workspace scan first. This page reads its plan.</Empty>
@@ -238,6 +248,7 @@ export default function Cutover({ operator, maxScanAgeDays, jobsRunAs, active = 
       {panel("enforce", <EnforceStep scan={scan} enforceTraffic={enforceTraffic} maxAge={maxScanAgeDays} />)}
       {panel("runs", <RunHistory operator={operator} runs={runs} />)}
     </div>
+    </ChangesBlocked.Provider>
   );
 }
 
@@ -325,6 +336,8 @@ function DryRunPair({ operator, disabledReason, dry, sig, word, label, confirmTi
   const reasons = [!operator && "Only operators can start this.", disabledReason].filter(Boolean) as string[];
   const execReasons = [...reasons, !dryOk && `Run a dry run of these settings first.`].filter(Boolean) as string[];
   // View-only users get the reason, not action buttons (the brief: view-only sees no action buttons).
+  const blocked = useContext(ChangesBlocked);
+  if (blocked) return <Reason id={`${id}-dry`}>{blocked}</Reason>;
   if (!operator) return <Reason id={`${id}-dry`}>Only operators can run this step. You can read the results below.</Reason>;
   return (
     <div className="stack-sm">

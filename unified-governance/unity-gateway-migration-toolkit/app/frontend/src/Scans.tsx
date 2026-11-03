@@ -1,6 +1,7 @@
 import { ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import { actionLabel, ageDays, api, callerLabel, fmt, humanize, isUnknownId, jobRunning, kindLabel, plural, relativeAge, sentence, useApi, useJob, usePollWhileRunning } from "./api";
 import { Badge, Card, CopyButton, Elapsed, Empty, ErrorBox, ErrorState, ExportMenu, HowToEnforce, JobLine, Kpi, Notice, PageHeader, Pager, Reason, Skeleton, SkeletonTable, Table, Tabs, tabPanel } from "./ui";
+import type { WorkspaceSel } from "./App";
 
 const STATUS_TEXT: Record<string, string> = {
   READY: "Nothing blocks turning on the Enforce Unity Gateway setting in this workspace.",
@@ -11,8 +12,10 @@ const STATUS_TEXT: Record<string, string> = {
 
 const NAME_OK = /^[A-Za-z0-9_-]+$/;
 
-export default function Scans({ onApply, operator }: { onApply: (runId: string) => void; operator: boolean }) {
-  const list = useApi<any[]>("/api/scans");
+
+export default function Scans({ onApply, operator, workspace = null }: { onApply: (runId: string) => void; operator: boolean; workspace?: WorkspaceSel }) {
+  // Central mode: the list and new scans follow the workspace picked in the header.
+  const list = useApi<any[]>(workspace ? `/api/scans?workspace_id=${encodeURIComponent(workspace.id)}` : "/api/scans");
   const config = useApi<any>("/api/config");
   const maxAge: number = config.data?.max_scan_age_days ?? 14;
   const host = String(config.data?.workspace_url || "").replace(/^https?:\/\//, "").replace(/\/$/, "");
@@ -60,7 +63,7 @@ export default function Scans({ onApply, operator }: { onApply: (runId: string) 
     setConflictJob(null);
     setStarting(true);
     try {
-      const r = await api("/api/scans", { method: "POST", body: JSON.stringify(form) });
+      const r = await api("/api/scans", { method: "POST", body: JSON.stringify({ ...form, target_workspace_id: workspace && !workspace.hub ? workspace.id : "" }) });
       setJobId(r.job_run_id);
       setSelected(r.run_id);
       setFocusNew(true);
@@ -87,7 +90,9 @@ export default function Scans({ onApply, operator }: { onApply: (runId: string) 
   return (
     <div className="stack">
       <PageHeader title="Workspace scans"
-                  description={<>Scans cover this workspace only{host ? <> (<code>{host}</code>)</> : null}. A scan reads its endpoints, callers and code, and saves the results. It takes a few minutes.</>} />
+                  description={workspace
+                    ? <>Central mode: scans cover the workspace picked in the header, now <b>{workspace.label}</b>{workspace.hub ? " (this hub)" : ", read as the central service principal"}. A scan reads its endpoints, callers and code, and saves the results. It takes a few minutes.</>
+                    : <>Scans cover this workspace only{host ? <> (<code>{host}</code>)</> : null}. A scan reads its endpoints, callers and code, and saves the results. It takes a few minutes.</>} />
       <Card title="Start a scan">
         <form className="form" noValidate onSubmit={(e) => { e.preventDefault(); start(); }}>
           <div className="field-group">

@@ -117,6 +117,24 @@ It creates the toolkit files (default `/Workspace/Users/<you>/ug-migration-toolk
 
 **The first snapshot is account-wide.** It reads account-wide system tables, so it covers every workspace in the account, not only this one. The installer says so before it starts the snapshot.
 
+### Central mode (optional): one install for many workspaces
+
+By default each workspace has its own install. In central mode, one install (the hub) can also **scan** other workspaces in the account: inventory, code, readiness and legacy traffic. Changes (apply, rollback, pause, resume, usage tracking, test calls, guardrail checks) still run only in the hub workspace in this version; for other workspaces, use their own install or the command line.
+
+To turn it on, run the installer with:
+
+1. **Advanced: Run jobs as service principal** set to a service principal's application ID.
+2. **Advanced: Central mode: workspaces to manage** set to the workspace IDs to scan (comma-separated).
+3. **Advanced: Central mode: service principal OAuth secret** set to the `scope/key` of a secret that holds that service principal's OAuth client secret, in a scope the service principal can read.
+
+Then add the service principal to each listed workspace as a workspace admin (an account admin can do it from the account console, or each workspace's admin by application ID).
+
+- The scan job signs in to each workspace as that service principal. The app never sees the secret.
+- The workspace URL comes from `system.access.workspaces_latest`, never from the app, and the job checks it answers as the expected workspace.
+- A **Workspace** picker appears in the app header. Scans, readiness and **Verify & cut over > Legacy traffic** follow it. With another workspace picked, the change steps explain they run in the hub only, and their buttons are off.
+- Scans of another workspace don't include Unity Catalog function and view definitions (they're per metastore), so their status can't go above `READY_WITH_WARNINGS`. Traffic comes from the account-wide system tables; a workspace in another region than the hub may show none.
+- **Security:** this service principal can read every listed workspace. Keep the list short, give it only the access the scan needs, and rotate its secret like any credential.
+
 ### Update and upgrade
 
 Import the newer installer and run it with the same widgets. Results history is kept, and blank locations reuse the existing ones. The app keeps its settings, and the weekly snapshot keeps its paused or unpaused state. A downgrade is refused unless **Advanced: Allow downgrade** is `yes`.
@@ -608,9 +626,11 @@ Exact labels and defaults, in order. Run the installer again with the same widge
 | 12 | Advanced: Allow reading secret values (risk: apply copies legacy secret values, in plain text, into the new services; keep no unless needed) | `no` | |
 | 13 | Advanced: Legacy deadline (YYYY-MM-DD) | `2027-03-30` | Sets the job and app deadline. A bad date stops the install before anything is created |
 | 14 | Advanced: Run jobs as service principal (application ID; blank = jobs run as you) | blank | Must be an application ID (UUID). See [Who the jobs run as](#1-install) |
-| 15 | Uninstall: remove results tables (and the schema, if the toolkit made it and it's empty) | `no` | See [Uninstall](#6-uninstall-and-cleanup) |
-| 16 | Uninstall: remove apply logs (no = keep them, so kept services can be rolled back later) | `no` | |
-| 17 | Uninstall: roll back services created by apply (yes = remove them too) | `no` | |
+| 15 | Advanced: Central mode: workspaces to manage (workspace IDs, comma-separated; blank = off) | blank | See [Central mode](#central-mode-optional-one-install-for-many-workspaces). Needs the run-as service principal |
+| 16 | Advanced: Central mode: service principal OAuth secret (secret scope/key holding the client secret; client ID comes from Run jobs as service principal) | blank | `scope/key` the service principal can read |
+| 17 | Uninstall: remove results tables (and the schema, if the toolkit made it and it's empty) | `no` | See [Uninstall](#6-uninstall-and-cleanup) |
+| 18 | Uninstall: remove apply logs (no = keep them, so kept services can be rolled back later) | `no` | |
+| 19 | Uninstall: roll back services created by apply (yes = remove them too) | `no` | |
 
 ### Blockers and warnings
 

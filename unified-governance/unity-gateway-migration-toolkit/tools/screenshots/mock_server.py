@@ -34,6 +34,10 @@ STATIC = (HERE / ".." / ".." / "app" / "frontend" / "static").resolve()
 
 HOST = "https://adb-1234567890123456.7.azuredatabricks.net"
 WS_ID = "1234567890123456"
+# MOCK_CENTRAL=1: central mode with one more (fictional) workspace the hub may scan.
+CENTRAL = os.environ.get("MOCK_CENTRAL") == "1"
+REMOTE_WS = {"workspace_id": "2345678901234567", "name": "retail-analytics-prod",
+             "url": "https://adb-2345678901234567.8.azuredatabricks.net"}
 ME = "maria.lopez@example.com"  # signed-in operator
 ANALYST = "analyst@example.com"
 SP_ID = "0f6d1c2a-1111-2222-3333-444455556666"
@@ -723,7 +727,13 @@ def _handle_api(method, path, qs, body):
                 "deadline": DEADLINE, "deadline_as_of": DEADLINE_AS_OF, "workspace_url": HOST,
                 "scan_scope": f"This app scans only {HOST}.",
                 "app_name": "ug-migration-toolkit", "default_app_name": "ug-migration-toolkit",
+                "central": {"enabled": CENTRAL, "workspaces": [REMOTE_WS["workspace_id"]] if CENTRAL else [],
+                            "hub_workspace_id": WS_ID if CENTRAL else None},
             }
+        if path == "/api/workspaces":
+            hub = {"workspace_id": WS_ID, "hub": True, "name": "lakeside-core-prod", "url": HOST}
+            return 200, {"central": CENTRAL, "hub_workspace_id": WS_ID,
+                         "workspaces": [hub, {**REMOTE_WS, "hub": False}] if CENTRAL else [hub]}
         if path == "/api/target-schema":
             return 200, {"exists": True, "can_create_service": None, "error": None}
         if path.startswith("/api/jobs/"):
@@ -731,7 +741,8 @@ def _handle_api(method, path, qs, body):
         if path == "/api/overview":
             return 200, empty_overview() if STATE["empty"] else snapshot_overview()
         if path == "/api/scans":
-            return 200, [_list_scan(s) for s in STATE["scans"]]
+            ws = qs.get("workspace_id")
+            return 200, [_list_scan(s) for s in STATE["scans"] if not ws or (s.get("workspace_id") or WS_ID) == ws]
         m = re.fullmatch(r"/api/scans/([^/]+)/refs", path)
         if m:
             return 200, _refs_page(m.group(1), qs)
@@ -834,11 +845,16 @@ def _start_scan(body):
     for v in (body.get("target_catalog", "ai_gateway"), body.get("target_schema", "migrated")):
         if not re.fullmatch(r"[A-Za-z0-9_\-]+", v or ""):
             raise ApiError(400, "catalog and schema names may only contain letters, digits, _ and -")
+    target = (body.get("target_workspace_id") or "").strip()
+    if target and target != WS_ID and not (CENTRAL and target == REMOTE_WS["workspace_id"]):
+        raise ApiError(400, f"Workspace {target} isn't one this app may scan.")
+    remote = bool(target) and target != WS_ID
     run_id = _new_id()
     job = _new_job("scan", run_id)
     now = T0 + timedelta(minutes=0)
     scan = {
-        "run_id": run_id, "job_run_id": job, "requested_by": ME, "workspace_url": HOST, "workspace_id": WS_ID,
+        "run_id": run_id, "job_run_id": job, "requested_by": ME,
+        "workspace_url": REMOTE_WS["url"] if remote else HOST, "workspace_id": target if remote else WS_ID,
         "status": "SUCCEEDED", "readiness": "BLOCKED", "endpoints": len(PLAN), "client_references": len(REFS),
         "traffic_status": "ok", "days": days, "target_catalog": body.get("target_catalog", "ai_gateway"),
         "target_schema": body.get("target_schema", "migrated"), "scan_roots": body.get("scan_roots", ""),

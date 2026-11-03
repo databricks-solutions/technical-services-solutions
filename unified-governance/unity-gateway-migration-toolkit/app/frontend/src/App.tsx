@@ -20,6 +20,11 @@ const TABS = [["overview", "Overview"], ["scans", "Scans"], ["apply", "Apply"], 
 
 type Route = { tab: string; anchor: string | null; seq: number };
 
+/** Central mode: the workspace the Scans, Apply and Verify & cut over pages show. null when central mode is off. */
+export type WorkspaceSel = { id: string; hub: boolean; hubId: string; label: string } | null;
+
+const wsLabel = (w: any) => (w?.name ? `${w.name} (${w.workspace_id})` : String(w?.workspace_id || ""));
+
 export default function App() {
   // The URL hash opens a section (#cutover, or #cutover/pause for one cut-over step).
   const [route, setRoute] = useState<Route>(() => {
@@ -31,6 +36,16 @@ export default function App() {
   const config = useApi<any>("/api/config");
   const operator = !!me.data?.operator;
   const tab = route.tab;
+  // Central mode: one app scans several workspaces; the picker in the header chooses which one the pages show.
+  const central = !!config.data?.central?.enabled;
+  const wsList = useApi<any>(central ? "/api/workspaces" : null);
+  const [wsId, setWsId] = useState<string>(() => { try { return localStorage.getItem("ugmig.workspace") || ""; } catch { return ""; } });
+  const workspaces: any[] = wsList.data?.workspaces || [];
+  const hubId: string = wsList.data?.hub_workspace_id || config.data?.central?.hub_workspace_id || "";
+  const current = workspaces.find((w) => w.workspace_id === wsId) || workspaces.find((w) => w.hub) || null;
+  const workspace: WorkspaceSel = central && current
+    ? { id: current.workspace_id, hub: current.workspace_id === hubId, hubId, label: wsLabel(current) } : null;
+  const pickWorkspace = (id: string) => { setWsId(id); try { localStorage.setItem("ugmig.workspace", id); } catch { /* private mode */ } };
   // Switch section, and optionally land on an element inside it (see HowToEnforce).
   const goto: Goto = useCallback((t, anchor) => setRoute((r) => ({ tab: t, anchor: anchor ?? null, seq: r.seq + 1 })), []);
   useEffect(() => { document.title = `${TABS.find(([k]) => k === tab)?.[1]} · ${PRODUCT}`; }, [tab]);
@@ -60,6 +75,14 @@ export default function App() {
             </span>
           )}
           <Tabs className="tabs" label="Sections" tabs={TABS} value={tab} onChange={(k) => goto(k)} panelId="sections" />
+          {central && workspaces.length > 0 && (
+            <div className="ws-picker">
+              <label htmlFor="ws-picker" className="small">Workspace</label>
+              <select id="ws-picker" value={workspace?.id || ""} onChange={(e) => pickWorkspace(e.target.value)}>
+                {workspaces.map((w) => <option key={w.workspace_id} value={w.workspace_id}>{wsLabel(w)}{w.workspace_id === hubId ? " · hub" : ""}</option>)}
+              </select>
+            </div>
+          )}
           <div className="me">
             {me.data && (me.data.email
               ? <><span>{me.data.email}</span><Badge value={me.data.operator ? "Operator" : "View only"} tone={me.data.operator ? "info" : "neutral"} /></>
@@ -77,9 +100,9 @@ export default function App() {
           {/* Sections stay mounted so a running job keeps its status when you switch tabs. */}
           <div {...tabPanel("sections", tab)} className="section-panel">
             <div hidden={tab !== "overview"}><ErrorBoundary><Overview operator={operator} /></ErrorBoundary></div>
-            <div hidden={tab !== "scans"}><ErrorBoundary><Scans operator={operator} onApply={(id) => { setScanForApply(id); goto("apply"); }} /></ErrorBoundary></div>
-            <div hidden={tab !== "apply"}><ErrorBoundary><Apply operator={operator} scanRunId={scanForApply} setScanRunId={setScanForApply} active={tab === "apply"} /></ErrorBoundary></div>
-            <div hidden={tab !== "cutover"}><ErrorBoundary><Cutover operator={operator} maxScanAgeDays={config.data?.max_scan_age_days ?? 14} jobsRunAs={config.data?.jobs_run_as} active={tab === "cutover"} /></ErrorBoundary></div>
+            <div hidden={tab !== "scans"}><ErrorBoundary><Scans operator={operator} workspace={workspace} onApply={(id) => { setScanForApply(id); goto("apply"); }} /></ErrorBoundary></div>
+            <div hidden={tab !== "apply"}><ErrorBoundary><Apply operator={operator} workspace={workspace} scanRunId={scanForApply} setScanRunId={setScanForApply} active={tab === "apply"} /></ErrorBoundary></div>
+            <div hidden={tab !== "cutover"}><ErrorBoundary><Cutover operator={operator} workspace={workspace} maxScanAgeDays={config.data?.max_scan_age_days ?? 14} jobsRunAs={config.data?.jobs_run_as} active={tab === "cutover"} /></ErrorBoundary></div>
             <div hidden={tab !== "about"}><About user={me.data} config={config.data} /></div>
           </div>
         </main>

@@ -284,7 +284,12 @@ Apply creates provider services, model services and grants for **external model*
 #### Before you apply
 
 1. **Target schema.** Choose it in the **Target schema for the new services** panel: it's prefilled from the scan (default `ai_gateway.migrated`), and you can change it without a new scan. The proposed service names follow what you type. Create the schema first: the apply identity needs `USE CATALOG`, `USE SCHEMA` and `CREATE SERVICE` on it. A dry run for one target doesn't unlock an execute for another.
-2. **Secrets.** Each provider key is a Unity Catalog secret, for example `"llm/openai": "secrets/ai_gateway.migrated.openai_key"`, which the apply identity must be able to read. Copying a value (not just a name) needs **Advanced: Allow reading secret values**. Keep it off unless you need it.
+2. **Secrets.** Each new provider service needs its API key. Under **Provider API keys** choose one of:
+   - **Reference Unity Catalog secrets (recommended):** name an existing Unity Catalog secret that holds each key, for example `"llm/openai": "secrets/ai_gateway.migrated.openai_key"`. It must be in an allowed secret schema (not necessarily the target schema), and the apply identity must be able to read it.
+   - **Create Unity Catalog secrets from the workspace secrets:** for endpoints that keep their key in a workspace secret (`{{secrets/scope/key}}`) and have no Unity Catalog secret yet. Pick a schema from the allowed secret schemas; the app proposes a name per secret (`<schema>.<scope>_<key>`), which you can change. The apply job reads each workspace secret with its own identity and stores the value in a new Unity Catalog secret, which the provider service then references. Values are never shown or logged. The dry run checks each workspace secret can be read (`would_create_secret`); execute creates them (`created_secret`). A secret that already exists under the chosen name is reused as is (`exists`; its value can't be compared, so check it holds the right key). Rollback deletes the secrets that run created, after the services that used them. Needs **Advanced: Allowed secret schemas**, and READ on each secret scope for the job identity.
+   - **Copy the workspace secret values into the provider service:** puts the key value itself into the provider service. Needs **Advanced: Allow reading secret values**. Keep it off unless you need it.
+
+   An endpoint with a plaintext key (not a secret) is `manual`: the API hides the value, so store it as a Unity Catalog secret first.
 3. **Allowed secret schemas.** The schema of each secret must be in **Advanced: Allowed secret schemas**, or apply stops before any change.
 4. **Grants** are off unless you tick **Copy legacy endpoint permissions as EXECUTE / MANAGE grants**. Workspace-local `admins` and `users` are skipped and flagged.
 
@@ -491,6 +496,7 @@ The command line doesn't check for an earlier dry run: `--execute` is an explici
 | `--endpoints a,b` or `--all` | One wave, or all external and PT endpoints |
 | `--target-catalog`, `--target-schema` | Required. The schema must exist |
 | `--uc-secret-map` | JSON from `"scope/key"` to `"secrets/catalog.schema.name"`. Needs `--allowed-secret-schemas` |
+| `--create-uc-secrets` | Create the Unity Catalog secrets named in `--uc-secret-map` from the workspace secrets (the values are read, never printed) |
 | `--allow-secret-read` and `--allow-secret-read-enabled` | Copy secret values into the provider service at execute. Never printed or logged |
 | `--ack-guardrails`, `--no-grants` | Accept that guardrails aren't carried over; skip grants (the CLI copies them by default) |
 | `--smoke` | After `--execute`, read each created service back (no inference) |
@@ -662,7 +668,8 @@ The `action` of each item in a run. The app's results export uses the same value
 | Action | Meaning | What to do |
 |---|---|---|
 | `would_*` (including `would_test`, `would_pause`, `would_resume`, `would_enable_tracking`) | Dry-run preview | Execute when the list is right |
-| `created`, `granted`, `updated`, `deleted`, `revoked`, `paused`, `resumed`, `tracking_enabled` | Done, and read back where relevant | Nothing |
+| `created`, `created_secret`, `granted`, `updated`, `deleted`, `revoked`, `paused`, `resumed`, `tracking_enabled` | Done, and read back where relevant | Nothing |
+| `would_create_secret` | Dry run: the workspace secret is readable and the Unity Catalog secret would be created | Execute |
 | `exists`, `already_granted`, `already_gone`, `ok`, `already_paused`, `already_resumed`, `already_enabled`, `skipped` (cut over) | Already in place or the target state, or out of scope; nothing written | Nothing |
 | `mismatch` | Read-back differs from the plan | Read the issues, fix the cause, re-run |
 | `manual` | Needs a person: unsupported provider, Entra auth, unmapped secret, PT endpoint whose model was deleted, plaintext key, or a conflicting existing object | Do it by hand, or fix the input and re-run |
@@ -699,7 +706,7 @@ The Overview charts each snapshot, and each chart has a **View data** table.
 | Apply (one run) | **Export results (CSV)** |
 | Verify and cut over | **Export CSV** (Unity Gateway traffic); **Export results (CSV)** (one run) |
 
-Exports read the results as you, stop at 200,000 rows, and set `X-Truncated: true` when cut off.
+Exports read the results as you, stop at 200,000 rows, and set `X-Truncated: true` when cut off. While a file is prepared the button shows **Preparing export…**, then **Downloaded**; an error appears next to the button.
 
 ### Runbook mapping
 
@@ -789,6 +796,7 @@ Grouped by where the problem shows up.
 |---|---|---|
 | Pause: `refused` for AI Search, Vector Search, embedding, custom model or agent | The name, tag, task or kind matches a rule | Expected. Leave the endpoint running |
 | Pause a `databricks-*` endpoint: `refused` or `error` | The API refuses the change | Nothing changed. Leave it running, and move its callers before Enforce |
+| Apply: `manual`, "the job identity can't read workspace secret ..." | Create Unity Catalog secrets is on, and the job identity has no READ on that secret scope | Grant READ on the scope to the job identity, then dry run again |
 | Test call: `test_failed`, HTTP 404 "... does not exist" right after apply | The service is new, or was re-created under a name deleted recently, and Unity Gateway hasn't picked it up yet | Wait a few minutes and test again. A dry run that finds the service confirms it exists |
 | Test call: `test_failed` | Wrong name, or the job identity has no access | Check the name. Grant `EXECUTE`, `USE CATALOG` and `USE SCHEMA` to the job identity |
 | Test call: `refused`, "does not support ..." | The API type isn't in the service's `supported_api_types` | Pick a supported type. Never move a Responses client to Chat Completions |

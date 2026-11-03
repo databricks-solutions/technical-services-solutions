@@ -5,8 +5,8 @@ Serves app/frontend/static and answers the /api/* routes the React app calls, wi
 app/backend/main.py. All data is fictional (example.com people, a made-up workspace host). Standard library only.
 
 Runs and results live in memory and complete immediately. POST /__mock/reset restores the seeded state:
-{"state": "full"} (default) or {"state": "empty"} for the first-run page. Auth, Databricks calls and exports are not
-modelled (export routes answer 501).
+{"state": "full"} (default) or {"state": "empty"} for the first-run page. Auth and Databricks calls are not
+modelled. Export routes answer a small CSV after MOCK_EXPORT_DELAY seconds (default 2), or 500 with MOCK_EXPORT_FAIL=1.
 
 Usage:
     python3 mock_server.py [--host 127.0.0.1] [--port 8765]
@@ -450,7 +450,8 @@ def _summary(items):
     for it in items:
         if it.get("action") in ("would_create", "created", "exists", "smoke_ok", "would_delete", "deleted",
                                 "would_pause", "paused", "would_enable_tracking", "tracking_enabled",
-                                "already_enabled", "would_test", "test_ok", "test_failed", "resumed", "would_resume"):
+                                "already_enabled", "would_test", "test_ok", "test_failed", "resumed", "would_resume",
+                                "would_create_secret", "created_secret"):
             counts[it["action"]] = counts.get(it["action"], 0) + 1
     return json.dumps(counts, sort_keys=True)
 
@@ -848,7 +849,7 @@ def _start_apply(body):
             raise ApiError(400, "rollback_of must be an execute run")
         if any(a["rollback_of"] == src["apply_id"] and a["status"] == "SUCCEEDED" for a in STATE["applies"]):
             raise ApiError(409, "That execute run has already been rolled back, or a rollback of it is running")
-        created = [i for i in src["_items"] if i.get("action") == "created"]
+        created = [i for i in src["_items"] if i.get("action") in ("created", "created_secret")][::-1]
         items = [dict(type=i["type"], name=i["name"], action="deleted") for i in created]
         rec = _apply_record("rollback", src["scan_run_id"], [], ME, T0, None, items=items)
         rec["rollback_of"] = src["apply_id"]
@@ -884,6 +885,12 @@ def _start_apply(body):
     job = _new_job("apply", apply_id)
     smoke = bool(body.get("smoke_test", mode == "execute"))
     items = _apply_items(scan_id, endpoints, execute=(mode == "execute"), smoke=smoke)
+    if body.get("create_uc_secrets"):
+        # The job creates each mapped Unity Catalog secret from its workspace secret before the providers.
+        secret_rows = [dict(type="uc_secret", name=str(ref).removeprefix("secrets/"), workspace_secret=key,
+                            action="created_secret" if mode == "execute" else "would_create_secret")
+                       for key, ref in sorted((body.get("uc_secret_map") or {}).items())]
+        items = secret_rows + items
     rec = _apply_record(mode, scan_id, endpoints, ME, T0, None, items=items, apply_id=apply_id)
     rec["job_run_id"] = job
     rec["target_catalog"], rec["target_schema"] = body.get("target_catalog", TARGET_CATALOG), body.get("target_schema", TARGET_SCHEMA)
@@ -1088,6 +1095,22 @@ class Handler(BaseHTTPRequestHandler):
             body = self._read_body()
             seed(empty=body.get("state") == "empty")
             return self._json(200, {"state": "empty" if body.get("state") == "empty" else "full"})
+        if method == "GET" and "/export" in path and path.startswith("/api/"):
+            # A small CSV after a delay, so the export buttons show "Preparing export…" (MOCK_EXPORT_DELAY seconds).
+            # MOCK_EXPORT_FAIL=1 answers 500 instead, to check the inline error.
+            import time as _time
+            _time.sleep(float(os.environ.get("MOCK_EXPORT_DELAY", "2")))
+            if os.environ.get("MOCK_EXPORT_FAIL"):
+                return self._json(500, {"detail": "mock: the export query failed"})
+            name = "_".join(p for p in path.split("/")[2:] if p) + ".csv"
+            body = "name,value\nexample,1\n".encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/csv; charset=utf-8")
+            self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return None
         if path.startswith("/api/") or path == "/api":
             try:
                 body = self._read_body() if method == "POST" else {}

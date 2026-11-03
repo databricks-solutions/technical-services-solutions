@@ -49,6 +49,7 @@ ul, ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; g
 .small { font-size: var(--text-xs); }
 .muted { color: var(--text-muted); }
 .text-bad { color: var(--danger); }
+.text-good { color: var(--success); }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
 /* Focus: one visible ring for every interactive element (keyboard only). */
@@ -254,6 +255,14 @@ pre.del { background: var(--danger-soft); color: #6e1526; } pre.add { background
 .menu-list a { color: var(--text); text-decoration: none; padding: var(--space-2) var(--space-3); border-radius: 6px; font-size: var(--text-sm); }
 .menu-list a:hover { background: var(--surface-2); }
 .menu-list a .muted { margin-left: var(--space-1); }
+.menu-list .menu-item { color: var(--text); background: none; border: 0; text-align: left; font: inherit; cursor: pointer; padding: var(--space-2) var(--space-3); border-radius: 6px; font-size: var(--text-sm); }
+.menu-list .menu-item:hover, .menu-list .menu-item:focus-visible { background: var(--surface-2); }
+.menu-list .menu-item[disabled] { cursor: progress; opacity: 0.6; }
+.menu-list .menu-item .muted { margin-left: var(--space-1); }
+.export-control { display: inline-flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.download-note { display: inline-flex; align-items: center; gap: var(--space-1); }
+.spinner.sm { width: 12px; height: 12px; display: inline-block; vertical-align: -2px; }
+.btn[aria-busy="true"] { cursor: progress; }
 
 /* Narrow screens (phones, 390px and up): wrap the header, scroll tabs sideways, keep tables and charts scrollable */
 @media (max-width: 640px) {

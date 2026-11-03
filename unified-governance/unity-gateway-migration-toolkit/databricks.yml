@@ -123,6 +123,7 @@ resources:
         - {name: target_catalog, default: ""}
         - {name: target_schema, default: ""}
         - {name: uc_secret_map, default: ""}
+        - {name: create_uc_secrets, default: "false"}
         - {name: allow_secret_read, default: "false"}
         - {name: grants, default: "false"}
         - {name: rollback_of, default: ""}

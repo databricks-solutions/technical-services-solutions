@@ -103,9 +103,11 @@ def _now_iso() -> str:
 
 TOOL_MARK = "ug-migration-toolkit"
 _OWNER_RE = re.compile(re.escape(TOOL_MARK) + r" apply=([A-Za-z0-9_\-]+)")
-ROLLBACK_TYPES = ("model_service", "model_provider_service")
-OWNED_ACTIONS = ("created", "creating", "exists", "updated")  # actions that put an object in a rollback log
-USE_ACTIONS = ("created", "creating", "exists", "updated")  # actions that keep an object in use (protection)
+ROLLBACK_TYPES = ("model_service", "model_provider_service", "uc_secret")
+# created_secret is the uc_secret form of created (the job made a Unity Catalog secret from a workspace secret).
+CREATED_ACTIONS = ("created", "creating", "created_secret")
+OWNED_ACTIONS = ("created", "creating", "exists", "updated", "created_secret")  # actions that put an object in a rollback log
+USE_ACTIONS = ("created", "creating", "exists", "updated", "created_secret")  # actions that keep an object in use (protection)
 # Item actions that make a run NEEDS_ATTENTION. Shared by the job (run status) and the store (rolled back).
 PROBLEM_ACTIONS = ("error", "manual", "mismatch", "kept", "needs_attention", "smoke_failed", "test_failed", "refused")
 READY_STATES = ("ACTIVE", "READY", "ONLINE")
@@ -161,11 +163,14 @@ def check_secret_policy(uc_map: dict | None, allowed_schemas, allow_read_request
 
 class Secrets:
     def __init__(self, w: WorkspaceClient | None, uc_map: dict[str, str] | None, allow_read: bool,
-                 dry_run: bool = False, allowed_schemas=(), read_enabled: bool = False):
+                 dry_run: bool = False, allowed_schemas=(), read_enabled: bool = False, create_uc: bool = False):
         self.w, self.uc_map, self.allow_read, self.dry_run = w, uc_map or {}, allow_read, dry_run
         self.allowed_schemas = list(allowed_schemas or [])
         self.read_enabled = read_enabled
+        # create_uc: the job creates each mapped Unity Catalog secret from its workspace secret (ensure_uc_secrets).
+        self.create_uc = create_uc
         self._checked: set[str] = set()
+        self._failed: dict[str, str] = {}  # scope/key -> why its Unity Catalog secret isn't available
 
     def validate_policy(self) -> None:
         check_secret_policy(self.uc_map, self.allowed_schemas, self.allow_read, self.read_enabled)
@@ -190,9 +195,15 @@ class Secrets:
             raise Manual("the endpoint uses a plaintext API key: store it as a Unity Catalog secret, then "
                          "create the provider service with a secret reference (or use the Terraform output)")
         m = SECRET_RE.match(value or "")
+        if not m and not value:
+            # The serving API doesn't return plaintext keys, so an endpoint configured with one reads as no key.
+            raise Manual("the endpoint has no {{secrets/scope/key}} reference (most likely a plaintext API key, which "
+                         "the API doesn't return): store the key as a Unity Catalog secret, then reference it")
         if not m:
             raise Manual("credential is not a {{secrets/scope/key}} reference")
         key = f"{m.group(1)}/{m.group(2)}"
+        if key in self._failed:
+            raise Manual(self._failed[key])
         if key in self.uc_map:
             ref = self.uc_map[key]
             self._check_exists(ref)
@@ -206,8 +217,122 @@ class Secrets:
                      "or pass --allow-secret-read")
 
 
+def workspace_secret_keys(dest: dict) -> list[str]:
+    """The scope/key of every {{secrets/scope/key}} reference in a destination's provider config."""
+    found: list[str] = []
+
+    def walk(o):
+        if isinstance(o, dict):
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+        elif isinstance(o, str):
+            m = SECRET_RE.match(o)
+            if m and f"{m.group(1)}/{m.group(2)}" not in found:
+                found.append(f"{m.group(1)}/{m.group(2)}")
+    walk(dest.get("provider_config") or {})
+    return found
+
+
+UC_NAME_MAX = 255
+
+
+def uc_secret_name(scope_key: str) -> str:
+    """Default Unity Catalog secret name for a workspace secret: scope_key, lower case, [a-z0-9_] only."""
+    leaf = re.sub(r"[^a-z0-9_]+", "_", scope_key.lower().replace("/", "_")).strip("_") or "secret"
+    return leaf[:UC_NAME_MAX]
+
+
+def _scrub(text: str, value: str | None) -> str:
+    """An error message with a secret value removed (an API error must never carry it into a row or a log)."""
+    text = str(text)
+    if value:
+        text = text.replace(value, "***")
+    return text[:500]
+
+
+def ensure_uc_secrets(a: "Applier", secrets: Secrets, groups: dict[str, list[dict]], provider_fqn: dict[str, str]) -> None:
+    """Create the Unity Catalog secret each mapped workspace secret needs (Secrets.create_uc).
+
+    The job identity reads the workspace secret and writes its value to the Unity Catalog secret named in the map;
+    the value is never printed, logged or kept. A secret that already exists is reused (its value can't be compared).
+    A dry run only checks that the workspace secret can be read. Failures make the providers that need the key
+    manual (Secrets._failed)."""
+    used_by: dict[str, list[str]] = {}
+    for key, dests in groups.items():
+        for d in dests:
+            for sk in workspace_secret_keys(d):
+                used_by.setdefault(sk, [])
+                if provider_fqn[key] not in used_by[sk]:
+                    used_by[sk].append(provider_fqn[key])
+    for sk in sorted(used_by):
+        ref = secrets.uc_map.get(sk)
+        m = UC_SECRET_RE.match(ref or "")
+        if not m:
+            why = f"no Unity Catalog secret name was chosen for workspace secret {sk}"
+            secrets._failed[sk] = why
+            a.log(type="uc_secret", name=sk, action="manual", reason=why, workspace_secret=sk)
+            continue
+        full = f"{m.group(1)}.{m.group(2)}.{m.group(3)}"
+        info = dict(workspace_secret=sk, used_by=sorted(used_by[sk]))
+        try:
+            existing = a.w.secrets_uc.get_secret(full)
+        except NotFound:
+            existing = None
+        except Exception as e:
+            secrets._failed[sk] = f"couldn't check Unity Catalog secret {full}: {_scrub(e, None)}"
+            a.log(type="uc_secret", name=full, action="error", reason=secrets._failed[sk], **info)
+            continue
+        if existing is not None:
+            secrets._checked.add(ref)
+            owner = owner_tag(getattr(existing, "comment", None))
+            a.log(type="uc_secret", name=full, action="exists", owner=owner, **info, **_stamp(existing),
+                  note="already exists, so it's reused; its value can't be compared with the workspace secret, so "
+                       f"check that it holds the key from {sk}")
+            continue
+        scope, key = sk.split("/", 1)
+        value = None
+        try:
+            raw = a.w.secrets.get_secret(scope, key).value
+            value = base64.b64decode(raw).decode() if raw else ""
+        except Exception:
+            why = f"the job identity can't read workspace secret {sk}: grant READ on the scope"
+            secrets._failed[sk] = why
+            a.log(type="uc_secret", name=full, action="manual", reason=why, **info)
+            continue
+        try:
+            if not value:
+                why = f"workspace secret {sk} is empty"
+                secrets._failed[sk] = why
+                a.log(type="uc_secret", name=full, action="manual", reason=why, **info)
+                continue
+            if not a.execute:
+                secrets._checked.add(ref)  # the dry run proceeds as if it existed
+                a.log(type="uc_secret", name=full, action="would_create_secret", **info)
+                continue
+            a.log(type="uc_secret", name=full, action="creating", **info)
+            try:
+                created = a.w.secrets_uc.create_secret(catalog.Secret(
+                    name=m.group(3), catalog_name=m.group(1), schema_name=m.group(2), value=value,
+                    comment=owner_comment(a.apply_id, f"From workspace secret {sk}")))
+            except AlreadyExists:  # created between the GET and the create
+                secrets._checked.add(ref)
+                a.log(type="uc_secret", name=full, action="exists", **info,
+                      note="created by someone else at the same time; reused, value not compared")
+                continue
+            secrets._checked.add(ref)
+            a.log(type="uc_secret", name=full, action="created_secret", **info, **_stamp(created))
+        except Exception as e:
+            secrets._failed[sk] = f"couldn't create Unity Catalog secret {full}: {_scrub(e, value)}"
+            a.log(type="uc_secret", name=full, action="error", reason=secrets._failed[sk], **info)
+        finally:
+            value = None
+
+
 SENSITIVE_KEY_RE = re.compile(r"(^|_)(secret|token|password|passwd|api_?key)(_|$)", re.I)
-NOT_SENSITIVE_KEYS = {"secret_reference", "secret_schemas", "allowed_secret_schemas"}
+NOT_SENSITIVE_KEYS = {"secret_reference", "secret_schemas", "allowed_secret_schemas", "workspace_secret"}
 
 
 def _mask(obj):
@@ -754,6 +879,8 @@ def apply(w: WorkspaceClient, endpoint_names: list[str] | None, target_catalog: 
                 if d["type"] == "external_model":
                     groups.setdefault(planner._provider_key(d), []).append(d)
         provider_fqn = {p["provider_key"]: p["provider_service"] for p in all_providers}
+        if secrets.create_uc:
+            ensure_uc_secrets(a, secrets, groups, provider_fqn)
         failed_providers, bodies = set(), {}
         for key, dests in groups.items():  # reads only; a PolicyError here stops the run before any write
             fqn = provider_fqn[key]
@@ -904,15 +1031,17 @@ def rollback(w: WorkspaceClient, log_path: str, execute: bool, protect=None, app
 
     if bad:
         emit({"type": "log", "name": log_path, "action": "skipped_lines", "count": bad})
-    created_here, done, targets, seen, stamp = set(), set(), [], set(), {}
+    created_here, done, targets, seen, stamp, used_by = set(), set(), [], set(), {}, {}
     for e in entries:
         if e.get("rollback_of") or e.get("type") not in ROLLBACK_TYPES:  # audit lines of earlier rollbacks skip
             continue
         key, act = (e["type"], e["name"]), e.get("action")
-        if act in ("created", "creating"):
+        if act in CREATED_ACTIONS:
             created_here.add(key)
-        if act == "created":
+        if act in ("created", "created_secret"):
             done.add(key)
+        if typ_used := e.get("used_by"):
+            used_by[key] = list(typ_used)
         if act in OWNED_ACTIONS:
             if key not in seen:
                 seen.add(key)
@@ -927,9 +1056,13 @@ def rollback(w: WorkspaceClient, log_path: str, execute: bool, protect=None, app
         try:
             if typ == "model_service":
                 obj = w.ai_gateway.get_model_service(name=f"model-services/{name}")
+            elif typ == "uc_secret":
+                obj = w.secrets_uc.get_secret(name)
             else:
                 obj = w.ai_gateway.get_model_provider_service(name=f"model-provider-services/{name}")
             d = obj.as_dict() or {}
+            d.pop("value", None)
+            d.pop("effective_value", None)
             comment = d.get("comment") or ""
             if key in protect:
                 emit({"type": typ, "name": name, "action": "kept", "reason": protect[key], "other_run": True})
@@ -964,6 +1097,14 @@ def rollback(w: WorkspaceClient, log_path: str, execute: bool, protect=None, app
                           "reason": (f"still used by model service(s) of another apply run: {', '.join(refs)}" if shared
                                      else f"still referenced by model service(s): {', '.join(refs)}")})
                     continue
+            if typ == "uc_secret":
+                # Providers come before their secrets in reverse log order: keep the secret while a provider that
+                # used it is still there (this rollback kept it, or it isn't this run's).
+                still = [p for p in used_by.get(key, []) if ("model_provider_service", p) not in deleted]
+                if still:
+                    emit({"type": typ, "name": name, "action": "kept",
+                          "reason": f"still used by provider service(s): {', '.join(still)}"})
+                    continue
             st = stamp.get(key)
             if st is None:
                 emit({"type": typ, "name": name, "action": "note",
@@ -986,6 +1127,8 @@ def rollback(w: WorkspaceClient, log_path: str, execute: bool, protect=None, app
             kw = {} if force else {"etag": d.get("etag")}  # conditional delete when not forcing
             if typ == "model_service":
                 w.ai_gateway.delete_model_service(name=f"model-services/{name}", **kw)
+            elif typ == "uc_secret":
+                w.secrets_uc.delete_secret(name)
             else:
                 w.ai_gateway.delete_model_provider_service(name=f"model-provider-services/{name}", **kw)
             deleted.add(key)
@@ -1801,6 +1944,9 @@ def main(argv=None) -> int:
     ap.add_argument("--allowed-secret-schemas", help="Comma-separated catalog.schema names that UC secrets may live in "
                                                      "(required with --uc-secret-map)")
     ap.add_argument("--allow-secret-read", action="store_true", help='Read workspace secret values at --execute and copy them into provider services (prefer --uc-secret-map)')
+    ap.add_argument("--create-uc-secrets", action="store_true",
+                    help="Create each Unity Catalog secret named in --uc-secret-map from its workspace secret (read with "
+                         "your identity; the value is never printed). Rollback deletes the ones it created")
     ap.add_argument("--allow-secret-read-enabled", action="store_true",
                     help="Enables --allow-secret-read for this run (the CLI equivalent of the installer's setting)")
     ap.add_argument("--no-grants", action="store_true", help="Don't copy legacy endpoint permissions as EXECUTE/MANAGE grants")
@@ -1853,7 +1999,7 @@ def main(argv=None) -> int:
             res = apply(w, None if a.all else _split(a.endpoints), a.target_catalog, a.target_schema, a.execute,
                         Secrets(w, uc_map, a.allow_secret_read, dry_run=not a.execute,
                                 allowed_schemas=_split(a.allowed_secret_schemas),
-                                read_enabled=a.allow_secret_read_enabled),
+                                read_enabled=a.allow_secret_read_enabled, create_uc=a.create_uc_secrets),
                         a.log, grants=not a.no_grants, ack_guardrails=a.ack_guardrails, smoke=a.smoke)
     except PolicyError as e:
         print(f"Refused: {e}", file=sys.stderr)

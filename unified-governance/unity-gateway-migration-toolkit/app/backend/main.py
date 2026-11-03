@@ -843,6 +843,7 @@ class ApplyRequest(BaseModel):
     target_schema: str = ""
     uc_secret_map: dict[str, str] = Field({}, max_length=500)
     allow_secret_read: bool = False
+    create_uc_secrets: bool = False  # the job creates the Unity Catalog secrets in uc_secret_map from the workspace secrets
     grants: bool = False
     ack_guardrails: bool = False  # execute: acknowledges that legacy guardrails are not migrated
     dry_run_id: str = ""  # execute: the successful dry run of this same selection and options
@@ -1020,7 +1021,7 @@ def start_apply(body: ApplyRequest, request: Request) -> dict:
         if store.rollback_blocks(_rollback_rows(request, body.rollback_of), sp()):
             raise HTTPException(409, "That execute run has already been rolled back, or a rollback of it is running")
         body.endpoints, body.target_catalog, body.target_schema, body.uc_secret_map = [], "", "", {}
-        body.allow_secret_read = False
+        body.allow_secret_read = body.create_uc_secrets = False
     else:
         if not body.scan_run_id:
             raise HTTPException(400, "choose a scan: apply uses its plan")
@@ -1036,6 +1037,13 @@ def start_apply(body: ApplyRequest, request: Request) -> dict:
         if body.allow_secret_read and not ALLOW_SECRET_READ:
             raise HTTPException(400, "Copying secret values into provider services isn't enabled for this app. "
                                      "Use Unity Catalog secrets instead.")
+        if body.create_uc_secrets:
+            if body.allow_secret_read:
+                raise HTTPException(400, "Choose one way to handle API keys: create Unity Catalog secrets, or copy the "
+                                         "values into the provider services.")
+            if not SECRET_SCHEMAS:
+                raise HTTPException(400, "Creating Unity Catalog secrets needs an allowed secret schema. Re-run the "
+                                         "installer with Advanced: Allowed secret schemas set.")
         for k, v in body.uc_secret_map.items():
             m = SECRET_REF_RE.fullmatch(str(v))
             if not SECRET_KEY_RE.fullmatch(k) or not m:
@@ -1065,6 +1073,7 @@ def start_apply(body: ApplyRequest, request: Request) -> dict:
         "uc_secret_map": json.dumps(body.uc_secret_map, sort_keys=True) if body.uc_secret_map else "",
         "allow_secret_read": str(body.allow_secret_read).lower(), "grants": str(body.grants).lower(),
         "ack_guardrails": str(body.ack_guardrails).lower(), "rollback_of": body.rollback_of,
+        "create_uc_secrets": str(body.create_uc_secrets).lower(),
         "smoke_test": str(body.mode == "execute" and bool(smoke)).lower(),
     }
     if body.mode == "execute":

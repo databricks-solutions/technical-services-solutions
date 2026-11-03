@@ -304,7 +304,7 @@ def job_specs(app_name: str, folder: str, results: str, warehouse_id: str, secre
             P("requested_by", ""), P("deadline", deadline)], run_as=run_as),
         "apply": job_settings(app_name, "apply", "apply", f"{files}/notebook/run_apply", [
             P("apply_id", ""), P("job_run_id", "{{job.run_id}}"), P("results_schema", results), P("mode", "dry_run"),
-            P("endpoints", ""), P("target_catalog", ""), P("target_schema", ""), P("uc_secret_map", ""),
+            P("endpoints", ""), P("target_catalog", ""), P("target_schema", ""), P("uc_secret_map", ""), P("create_uc_secrets", "false"),
             P("allow_secret_read", "false"), P("grants", "false"), P("rollback_of", ""), P("scan_run_id", ""),
             P("requested_by", ""), P("smoke_test", "false"), P("force", "false"), P("ack_guardrails", "false"),
             P("secret_schemas", ",".join(secret_schemas)),

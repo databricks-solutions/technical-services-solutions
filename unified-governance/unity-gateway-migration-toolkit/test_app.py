@@ -1009,3 +1009,31 @@ def test_cutover_lists_pay_per_token_endpoints_for_pause_but_not_for_tracking(en
     ]
     assert "system_ppt" not in main.NOT_OPERABLE_KINDS and "system_ppt" in main.NOT_TRACKABLE_KINDS
     assert "v2_workspace_endpoint" in main.NOT_OPERABLE_KINDS
+
+
+def test_create_uc_secrets_is_passed_on_with_the_chosen_names(env):
+    body = {**DRY_BODY, "create_uc_secrets": True, "uc_secret_map": {"scope/key": "secrets/cat.sec.scope_key"}}
+    r = env.client.post("/api/applies", json=body, headers=OP)
+    assert r.status_code == 200
+    params = env.sdk.jobs.run_now.call_args.kwargs["job_parameters"]
+    assert params["create_uc_secrets"] == "true"
+    assert json.loads(params["uc_secret_map"]) == {"scope/key": "secrets/cat.sec.scope_key"}
+    env.client.post("/api/applies", json=DRY_BODY, headers=OP)
+    assert env.sdk.jobs.run_now.call_args.kwargs["job_parameters"]["create_uc_secrets"] == "false"
+
+
+def test_create_uc_secrets_needs_an_allowed_schema_and_excludes_copying(env, monkeypatch):
+    body = {**DRY_BODY, "create_uc_secrets": True, "uc_secret_map": {"scope/key": "secrets/cat.sec.scope_key"}}
+    monkeypatch.setattr(main, "ALLOW_SECRET_READ", True)
+    r = env.client.post("/api/applies", json={**body, "allow_secret_read": True}, headers=OP)
+    assert r.status_code == 400 and "one way" in r.json()["detail"]
+    monkeypatch.setattr(main, "SECRET_SCHEMAS", set())
+    r = env.client.post("/api/applies", json=body, headers=OP)
+    assert r.status_code == 400 and "allowed secret schema" in r.json()["detail"]
+
+
+def test_a_dry_run_without_created_secrets_does_not_unlock_an_execute_that_creates_them(env):
+    m = {"scope/key": "secrets/cat.sec.scope_key"}
+    env.store["applies"][0]["fingerprint"] = store.selection_fingerprint(job_params_dict(uc_secret_map=json.dumps(m)))
+    r = env.client.post("/api/applies", json={**EXECUTE_BODY, "uc_secret_map": m, "create_uc_secrets": True}, headers=OP)
+    assert r.status_code == 409

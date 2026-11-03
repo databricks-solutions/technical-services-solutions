@@ -1462,3 +1462,175 @@ def test_notebook_gate_wiring_every_gated_operation_and_single_use(monkeypatch):
                       w, dry_rows={DRY: row})
     first = next(r for r in calls["upserts"] if r.get("apply_id") == APPLY and r.get("status") == "RUNNING")
     assert first["dry_run_id"] == DRY
+
+
+# ---------------------------------------------------------------------------
+# Create Unity Catalog secrets from workspace secrets (Secrets.create_uc)
+# ---------------------------------------------------------------------------
+
+import base64 as _b64
+
+KEY_VALUE = "sk-live-VALUE-must-never-leak-123"
+
+
+class UcStore:
+    """secrets_uc like the API: create (AlreadyExists), get (NotFound), delete; get never returns the value."""
+
+    def __init__(self, existing=None, fail_create=None):
+        self.items = dict(existing or {})  # full name -> {"comment", "value"}
+        self.fail_create, self.calls = fail_create, []
+        self._n = 0
+
+    def get_secret(self, full_name, include_value=None):
+        if full_name not in self.items:
+            raise NotFound(full_name)
+        d = self.items[full_name]
+        return Obj({"full_name": full_name, "comment": d.get("comment"), "update_time": d.get("update_time")})
+
+    def create_secret(self, secret):
+        full = f"{secret.catalog_name}.{secret.schema_name}.{secret.name}"
+        self.calls.append(("create_secret", full))
+        if self.fail_create:
+            raise RuntimeError(self.fail_create)
+        if full in self.items:
+            raise AlreadyExists(full)
+        self._n += 1
+        self.items[full] = {"comment": secret.comment, "value": secret.value, "update_time": f"u{self._n}"}
+        return Obj({"full_name": full, "comment": secret.comment, "update_time": f"u{self._n}"})
+
+    def delete_secret(self, full_name):
+        self.calls.append(("delete_secret", full_name))
+        self.items.pop(full_name)
+
+
+class WsSecrets:
+    def __init__(self, values, unreadable=()):
+        self.values, self.unreadable, self.reads = values, set(unreadable), []
+
+    def get_secret(self, scope, key):
+        self.reads.append(f"{scope}/{key}")
+        if f"{scope}/{key}" in self.unreadable or f"{scope}/{key}" not in self.values:
+            raise PermissionDenied(f"no READ on scope {scope}")
+        return SimpleNamespace(key=key, value=_b64.b64encode(self.values[f"{scope}/{key}"].encode()).decode())
+
+
+def _create_world(existing=None, unreadable=(), fail_create=None):
+    w = FakeW(uc_known=())
+    w.secrets_uc = UcStore(existing, fail_create)
+    w.secrets = WsSecrets({"llm/openai": KEY_VALUE}, unreadable)
+    return w
+
+
+CREATE_MAP = {"llm/openai": "secrets/c.s.llm_openai"}
+
+
+def _run_create(monkeypatch, tmp_path, w, execute=True, uc_map=CREATE_MAP, allowed=("c.s",)):
+    monkeypatch.setattr(m, "inventory", lambda _w: [_ep(EXTERNAL)])
+    log = tmp_path / ("apply.jsonl" if execute else "dry.jsonl")
+    sec = a.Secrets(w, uc_map, False, dry_run=not execute, allowed_schemas=list(allowed), create_uc=True)
+    res = a.apply(w, ["proj-a-gpt"], "c", "s", execute, sec, str(log), apply_id=APPLY, ack_guardrails=True)
+    return res, log
+
+
+def _leaks(res, log=None) -> bool:
+    text = json.dumps(res, default=str) + (log.read_text() if log and log.exists() else "")
+    return KEY_VALUE in text or _b64.b64encode(KEY_VALUE.encode()).decode() in text
+
+
+def test_uc_secret_default_name_follows_uc_rules():
+    assert a.uc_secret_name("LLM/Open-AI.key") == "llm_open_ai_key"
+    assert a.uc_secret_name("/") == "secret"
+    assert len(a.uc_secret_name("s/" + "k" * 400)) == a.UC_NAME_MAX
+
+
+def test_create_secrets_dry_run_checks_readability_and_creates_nothing(tmp_path, monkeypatch):
+    w = _create_world()
+    res, log = _run_create(monkeypatch, tmp_path, w, execute=False)
+    sec = next(r for r in res if r["type"] == "uc_secret")
+    assert (sec["name"], sec["action"], sec["workspace_secret"]) == ("c.s.llm_openai", "would_create_secret", "llm/openai")
+    prov = next(r for r in res if r["type"] == "model_provider_service")
+    assert prov["action"] == "would_create"
+    assert w.secrets.reads == ["llm/openai"] and w.secrets_uc.calls == [] and w.ai_gateway.calls == []
+    assert not _leaks(res, log)
+
+
+def test_create_secrets_execute_then_rollback_removes_them_last(tmp_path, monkeypatch):
+    w = _create_world()
+    res, log = _run_create(monkeypatch, tmp_path, w)
+    sec = next(r for r in res if r["type"] == "uc_secret" and r["action"] == "created_secret")
+    assert sec["used_by"] and w.secrets_uc.items["c.s.llm_openai"]["value"] == KEY_VALUE
+    assert f"apply={APPLY}" in w.secrets_uc.items["c.s.llm_openai"]["comment"]
+    prov = next(iter(w.ai_gateway.providers.values()))
+    assert "c.s.llm_openai" in json.dumps(prov["config"]) and KEY_VALUE not in json.dumps(prov)
+    assert not _leaks(res, log)
+    preview = a.rollback(w, str(log), False, apply_id=APPLY)
+    assert ("uc_secret", "c.s.llm_openai", "would_delete") in [(r["type"], r["name"], r["action"]) for r in preview]
+    out = a.rollback(w, str(log), True, apply_id=APPLY)
+    order = [r["type"] for r in out if r["action"] == "deleted"]
+    assert order[-1] == "uc_secret" and "model_provider_service" in order
+    assert "c.s.llm_openai" not in w.secrets_uc.items and not _leaks(out)
+
+
+def test_rollback_keeps_a_created_secret_while_its_provider_stays(tmp_path, monkeypatch):
+    w = _create_world()
+    _, log = _run_create(monkeypatch, tmp_path, w)
+    out = a.rollback(w, str(log), True, apply_id=APPLY,
+                     protect={("model_provider_service", p): "used by another apply" for p in w.ai_gateway.providers})
+    kept = next(r for r in out if r["type"] == "uc_secret")
+    assert kept["action"] == "kept" and "still used by provider" in kept["reason"]
+    assert "c.s.llm_openai" in w.secrets_uc.items
+
+
+def test_unreadable_workspace_secret_is_manual_and_creates_nothing(tmp_path, monkeypatch):
+    w = _create_world(unreadable=("llm/openai",))
+    res, _ = _run_create(monkeypatch, tmp_path, w)
+    sec = next(r for r in res if r["type"] == "uc_secret")
+    assert sec["action"] == "manual" and "grant READ on the scope" in sec["reason"]
+    prov = next(r for r in res if r["type"] == "model_provider_service")
+    assert prov["action"] == "manual" and w.ai_gateway.providers == {} and w.secrets_uc.calls == []
+
+
+def test_existing_uc_secret_is_reused_and_not_deleted_by_rollback(tmp_path, monkeypatch):
+    w = _create_world(existing={"c.s.llm_openai": {"comment": "made by hand", "value": "other"}})
+    res, log = _run_create(monkeypatch, tmp_path, w)
+    sec = next(r for r in res if r["type"] == "uc_secret")
+    assert sec["action"] == "exists" and "can't be compared" in sec["note"]
+    assert w.secrets_uc.calls == [] and w.secrets.reads == []
+    out = a.rollback(w, str(log), True, apply_id=APPLY)
+    assert next(r for r in out if r["type"] == "uc_secret")["action"] == "kept"
+    assert w.secrets_uc.items["c.s.llm_openai"]["value"] == "other"
+
+
+def test_create_error_message_never_carries_the_value(tmp_path, monkeypatch):
+    w = _create_world(fail_create=f"bad request: value {KEY_VALUE} rejected")
+    res, log = _run_create(monkeypatch, tmp_path, w)
+    sec = next(r for r in res if r["type"] == "uc_secret" and r["action"] != "creating")
+    assert sec["action"] == "error" and "***" in sec["reason"]
+    assert next(r for r in res if r["type"] == "model_provider_service")["action"] == "manual"
+    assert not _leaks(res, log)
+
+
+def test_create_secret_outside_allowed_schemas_fails_before_any_change(tmp_path, monkeypatch):
+    w = _create_world()
+    with pytest.raises(a.PolicyError, match="outside the allowed"):
+        _run_create(monkeypatch, tmp_path, w, uc_map={"llm/openai": "secrets/c.other.llm_openai"})
+    assert w.secrets.reads == [] and w.secrets_uc.calls == [] and w.ai_gateway.calls == []
+
+
+def test_missing_name_for_a_needed_secret_is_manual(tmp_path, monkeypatch):
+    w = _create_world()
+    res, _ = _run_create(monkeypatch, tmp_path, w, uc_map={})
+    sec = next(r for r in res if r["type"] == "uc_secret")
+    assert sec["action"] == "manual" and "no Unity Catalog secret name" in sec["reason"]
+
+
+def test_fingerprint_includes_the_create_secrets_flag():
+    base = {"scan_run_id": "s", "endpoints": "a", "target_catalog": "c", "target_schema": "s",
+            "uc_secret_map": json.dumps(CREATE_MAP)}
+    assert store.selection_fingerprint({**base, "create_uc_secrets": "true"}) != store.selection_fingerprint(base)
+    assert store.selection_fingerprint({**base, "create_uc_secrets": "false"}) == store.selection_fingerprint(base)
+
+
+def test_an_endpoint_with_no_secret_reference_explains_the_plaintext_case():
+    with pytest.raises(a.Manual, match="plaintext API key"):
+        a.Secrets(None, {}, False).resolve(None)

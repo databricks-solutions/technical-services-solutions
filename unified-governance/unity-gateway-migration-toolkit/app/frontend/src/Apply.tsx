@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import { ageDays, api, fmt, isUnknownId, jobRunning, JobState, kindLabel, plural, relativeAge, sentence, useApi, useJob, usePollWhileRunning } from "./api";
 import { Badge, Card, Confirm, CopyButton, Elapsed, Empty, ErrorBox, ErrorState, ExportLink, JobLine, Notice, NavButton, PageHeader, Reason, Skeleton, SkeletonCard, SkeletonTable, Table } from "./ui";
 
@@ -7,9 +7,9 @@ const NOT_READY = ["INCOMPLETE", "BLOCKED"];
 export default function Apply({ scanRunId, setScanRunId, operator, active = true }: { scanRunId: string | null; setScanRunId: (id: string) => void; operator: boolean; active?: boolean }) {
   const scans = useApi<any[]>("/api/scans");
   const history = useApi<any[]>("/api/applies");
-  // Tabs stay mounted, so a scan that finished on the Scans tab only shows up here after a reload on opening the tab.
-  useEffect(() => { if (active) { scans.reload(); history.reload(); } }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
   const config = useApi<any>("/api/config");
+  // Tabs stay mounted, so a scan that finished on the Scans tab only shows up here after a reload on opening the tab.
+  useEffect(() => { if (active) { scans.reload(); history.reload(); config.reload(); } }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
   const maxAge: number = config.data?.max_scan_age_days ?? 14;
   const succeeded = (scans.data || []).filter((s) => s.status === "SUCCEEDED");
   const selectedScan = succeeded.find((s) => s.run_id === scanRunId);
@@ -131,17 +131,22 @@ function TargetField({ label, value, onChange, disabled }: { label: string; valu
   );
 }
 
-function SecretRow({ secret, value, error, disabled, onChange }: {
+/** Default Unity Catalog secret name for a workspace secret: scope_key, lower case, [a-z0-9_] only (the job's rule). */
+export const ucSecretLeaf = (scopeKey: string) =>
+  (scopeKey.toLowerCase().replace("/", "_").replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "secret").slice(0, 255);
+
+function SecretRow({ secret, value, error, disabled, onChange, label, hint }: {
   secret: string; value: string; error: string | null; disabled: boolean; onChange: (v: string) => void;
+  label?: string; hint?: ReactNode;
 }) {
   const id = useId();
   return (
     <div className="secret-row">
       <div className="field-group">
-        <label className="field" htmlFor={id}>Unity Catalog secret for workspace secret <code className="wrap">{secret}</code></label>
+        <label className="field" htmlFor={id}>{label || "Unity Catalog secret for workspace secret"} <code className="wrap">{secret}</code></label>
         <input id={id} value={value} disabled={disabled} spellCheck={false} onChange={(e) => onChange(e.target.value)}
                aria-invalid={!!error} aria-describedby={error ? `${id}-hint ${id}-error` : `${id}-hint`} />
-        <span id={`${id}-hint`} className="small muted">Format catalog.schema.name</span>
+        <span id={`${id}-hint`} className="small muted">{hint || "Format catalog.schema.name"}</span>
         {error && <span id={`${id}-error`} className="field-error">{error}</span>}
       </div>
     </div>
@@ -168,8 +173,10 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
     ? `/api/target-schema?catalog=${encodeURIComponent(checkCat)}&schema=${encodeURIComponent(checkSch)}` : null;
   const schema = useApi<any>(schemaPath);
   const [chosen, setChosen] = useState<Set<string>>(new Set());
-  const [secretMode, setSecretMode] = useState<"uc" | "read">("uc");
+  const [secretMode, setSecretMode] = useState<"uc" | "create" | "read">("uc");
   const [names, setNames] = useState<Record<string, string>>({});
+  const [createNames, setCreateNames] = useState<Record<string, string>>({});
+  const [createSchema, setCreateSchema] = useState<string>("");
   const [grants, setGrants] = useState(false);
   const [ack, setAck] = useState(false);
   const [allowStale, setAllowStale] = useState(false);
@@ -203,9 +210,13 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
     const schemaName = allowedSchemas.includes(target.toLowerCase()) ? target : allowedSchemas[0] || "<catalog>.<schema>";
     return `${schemaName}.${secret.split("/").pop()!.replace(/[^A-Za-z0-9_-]/g, "_")}`;
   };
-  const nameFor = (s: string) => names[s] ?? defaultName(s);
+  // Create mode: the job writes each Unity Catalog secret in one allowed schema (the target when it's allowed).
+  const createIn = createSchema && allowedSchemas.includes(createSchema) ? createSchema
+    : allowedSchemas.includes(target.toLowerCase()) ? target.toLowerCase() : allowedSchemas[0] || "";
+  const createNameFor = (s: string) => createNames[s] ?? `${createIn}.${ucSecretLeaf(s)}`;
+  const nameFor = (s: string) => (secretMode === "create" ? createNameFor(s) : names[s] ?? defaultName(s));
   const secretErrors: Record<string, string> = {};
-  if (secretMode === "uc" && !mappingOff) secrets.forEach((s) => { const e = secretError(nameFor(s), allowedSchemas); if (e) secretErrors[s] = e; });
+  if (secretMode !== "read" && !mappingOff) secrets.forEach((s) => { const e = secretError(nameFor(s), allowedSchemas); if (e) secretErrors[s] = e; });
   const secretErrorCount = Object.keys(secretErrors).length;
   const ucMapping = Object.fromEntries(secrets.map((s) => [s, `secrets/${nameFor(s)}`]));
 
@@ -217,7 +228,7 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
       if (!undone) String(a.endpoints || "").split(",").filter(Boolean).forEach((e) => { createdBy[e] = a.apply_id; });
     });
 
-  const sig = JSON.stringify({ e: Array.from(chosen).sort(), t: target.toLowerCase(), m: sortedObject(secretMode === "uc" ? ucMapping : {}), r: secretMode === "read", g: grants, a: ack });
+  const sig = JSON.stringify({ e: Array.from(chosen).sort(), t: target.toLowerCase(), m: sortedObject(secretMode !== "read" ? ucMapping : {}), r: secretMode === "read", c: secretMode === "create", g: grants, a: ack });
   const sigRef = useRef(sig);
   sigRef.current = sig;
   const job = useJob(jobId, (s: JobState) => {
@@ -259,7 +270,7 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
     schema.loading && !schema.data && "Checking the target schema.",
     schemaMissing && `The target schema ${target} doesn't exist yet (see the notice above).`,
     schemaNoGrant && "The jobs' identity needs CREATE SERVICE on the target schema (see the notice above).",
-    mappingOff && "Secret mapping is off (see Provider API keys).",
+    mappingOff && secretMode !== "read" && "Secret mapping is off (see Provider API keys).",
     secretErrorCount > 0 && `Fix ${plural(secretErrorCount, "Unity Catalog secret name")} under Provider API keys.`,
     staleBlocked && "This scan is too old: tick “Apply with this older scan anyway” to continue, or scan again.",
   ].filter(Boolean) as string[];
@@ -280,8 +291,8 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
     try {
       const r: any = await api("/api/applies", { method: "POST", body: JSON.stringify({
         mode, scan_run_id: scanRunId, endpoints: Array.from(chosen), target_catalog: tCat,
-        target_schema: tSch, uc_secret_map: secretMode === "uc" ? ucMapping : {},
-        allow_secret_read: secretMode === "read", grants, ack_guardrails: ack, allow_stale: allowStale,
+        target_schema: tSch, uc_secret_map: secretMode !== "read" ? ucMapping : {},
+        allow_secret_read: secretMode === "read", create_uc_secrets: secretMode === "create", grants, ack_guardrails: ack, allow_stale: allowStale,
         smoke_test: mode === "execute" && smokeTest,
         dry_run_id: mode === "execute" ? dry?.applyId || "" : "", confirm: mode === "execute" ? "EXECUTE" : "" }) });
       pending.current = { applyId: r.apply_id, sig, mode };
@@ -381,7 +392,30 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
                     <p className="small muted">Create the Unity Catalog secrets first, then name each one here. Allowed schemas: {allowedSchemas.length ? <code>{allowedSchemas.join(", ")}</code> : "none"}.</p>
                     {secrets.map((s) => (
                       <SecretRow key={s} secret={s} value={nameFor(s)} error={secretErrors[s] || null} disabled={false}
+                                 hint={<>An existing Unity Catalog secret that holds this key (not the target schema). Allowed schemas: {allowedSchemas.length ? <code>{allowedSchemas.join(", ")}</code> : "none"}.</>}
                                  onChange={(v) => setNames({ ...names, [s]: v })} />
+                    ))}
+                  </>)}
+                </div>
+              )}
+              <label className="choice"><input type="radio" name="secret-mode" checked={secretMode === "create"} disabled={allowedSchemas.length === 0}
+                     aria-describedby={allowedSchemas.length ? undefined : "secret-create-reason"} onChange={() => setSecretMode("create")} /> <span>Create Unity Catalog secrets from the workspace secrets</span></label>
+              {allowedSchemas.length === 0 && <p id="secret-create-reason" className="small muted reason">Not available: the installer didn't allow a Unity Catalog secret schema. Re-run the installer with Advanced: Allowed secret schemas set.</p>}
+              {secretMode === "create" && allowedSchemas.length > 0 && (
+                <div className="stack-sm secret-map">
+                  <p className="small muted">The apply job reads each workspace secret with its own identity and stores the value in a new Unity Catalog secret, which the provider service then references. Values are never shown or logged. The dry run checks that each workspace secret can be read; rollback deletes the secrets that run created.</p>
+                  {secrets.length === 0 ? <p className="small muted">The provider services in this plan need no API keys.</p> : (<>
+                    <div className="field-group">
+                      <label className="field" htmlFor="create-secret-schema">Schema for the new secrets</label>
+                      <select id="create-secret-schema" value={createIn} onChange={(e) => { setCreateSchema(e.target.value); setCreateNames({}); }}>
+                        {allowedSchemas.map((s) => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    {secrets.map((s) => (
+                      <SecretRow key={s} secret={s} value={createNameFor(s)} error={secretErrors[s] || null} disabled={false}
+                                 label="New Unity Catalog secret for workspace secret"
+                                 hint="Created by the apply job (catalog.schema.name). If it already exists, it's reused as is."
+                                 onChange={(v) => setCreateNames({ ...createNames, [s]: v })} />
                     ))}
                   </>)}
                 </div>
@@ -425,7 +459,7 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
                      body={<>
                        <p>Create these model services (and the provider services they need) in <code>{target}</code>:</p>
                        <ul className="small">{candidates.filter((p: any) => chosen.has(p.legacy_endpoint)).slice(0, 12).map((p: any) => <li key={p.legacy_endpoint}><code>{retarget(p.target_service)}</code> from <code>{p.legacy_endpoint}</code></li>)}{chosen.size > 12 && <li>and {chosen.size - 12} more</li>}</ul>
-                       <p className="small">Grants: <b>{grants ? "copied from legacy permissions" : "none"}</b>. Keys: <b>{secretMode === "uc" ? "Unity Catalog secret references" : "copied from workspace secrets"}</b>.</p>
+                       <p className="small">Grants: <b>{grants ? "copied from legacy permissions" : "none"}</b>. Keys: <b>{secretMode === "uc" ? "Unity Catalog secret references" : secretMode === "create" ? "new Unity Catalog secrets created from the workspace secrets" : "copied from workspace secrets"}</b>.</p>
                        <label className="choice"><input type="checkbox" checked={smokeTest} onChange={(e) => setSmokeTest(e.target.checked)} /> <span>Check the new services after creating them</span></label>
                        <Notice tone="warning" title="Rolling back later">
                          You can roll back from the history: it deletes the objects this run created (objects another run still uses are kept).

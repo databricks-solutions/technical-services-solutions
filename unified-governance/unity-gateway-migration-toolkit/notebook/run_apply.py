@@ -37,7 +37,7 @@
 
 for name, default in (("apply_id", ""), ("job_run_id", ""), ("results_schema", ""), ("mode", "dry_run"), ("endpoints", ""),
                       ("target_catalog", ""), ("target_schema", ""), ("uc_secret_map", ""),
-                      ("allow_secret_read", "false"), ("grants", "false"), ("rollback_of", ""),
+                      ("allow_secret_read", "false"), ("create_uc_secrets", "false"), ("grants", "false"), ("rollback_of", ""),
                       ("scan_run_id", ""), ("requested_by", ""), ("ack_guardrails", "false"), ("smoke_test", "false"),
                       ("force", "false"), ("secret_schemas", ""), ("allow_secret_read_enabled", "false"),
                       ("operation", "apply"), ("api_type", ""), ("prompt", "Reply with: ok"), ("services", ""),
@@ -126,7 +126,7 @@ fingerprint = None if (operation == "apply" and mode == "rollback") else store.r
     "operation": operation, "scan_run_id": g("scan_run_id"), "endpoints": g("endpoints"),
     "target_catalog": g("target_catalog"), "target_schema": g("target_schema"), "uc_secret_map": g("uc_secret_map"),
     "allow_secret_read": g("allow_secret_read"), "grants": g("grants"), "ack_guardrails": g("ack_guardrails"),
-    "services": g("services"), "api_type": g("api_type"), "prompt": g("prompt"), "rollback_of": g("rollback_of"),
+    "create_uc_secrets": g("create_uc_secrets"), "services": g("services"), "api_type": g("api_type"), "prompt": g("prompt"), "rollback_of": g("rollback_of"),
     "force": g("force")})
 # Execute follows a successful, recent dry run of the same settings (the app checks this too; the job doesn't rely
 # on it). Checked before this run's row is written, so a refused execute leaves no RUNNING row behind.
@@ -280,7 +280,8 @@ try:
         uc_map = json.loads(g("uc_secret_map")) if g("uc_secret_map").strip() else None
         allowed = [s.strip() for s in g("secret_schemas").split(",") if s.strip()]
         secrets = apply_mod.Secrets(w, uc_map, flag("allow_secret_read"), dry_run=not execute,
-                                    allowed_schemas=allowed, read_enabled=flag("allow_secret_read_enabled"))
+                                    allowed_schemas=allowed, read_enabled=flag("allow_secret_read_enabled"),
+                                    create_uc=flag("create_uc_secrets"))
         if execute:
             # Best-effort lock: this row is RUNNING now, so two runs starting together see each other and both stop.
             busy = store.running_applies(spark, w, schema, g("target_catalog"), g("target_schema"), apply_id)

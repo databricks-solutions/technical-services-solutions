@@ -58,7 +58,8 @@ export function Kpi({ label, value, sub, tone }: { label: string; value: ReactNo
 }
 
 const TONE: Record<string, string> = {
-  READY: "good", SUCCEEDED: "good", SUCCESS: "good", ok: "good", created: "good", granted: "good", deleted: "good", exists: "neutral",
+  READY: "good", SUCCEEDED: "good", SUCCESS: "good", ok: "good", created: "good", created_secret: "good", granted: "good", deleted: "good", exists: "neutral",
+  would_create_secret: "info",
   READY_WITH_WARNINGS: "warn", INCOMPLETE: "warn", NEEDS_ATTENTION: "warn", manual: "warn", would_create: "info",
   would_grant: "info", would_delete: "info", RUNNING: "info", PENDING: "info", QUEUED: "info", creating: "info",
   BLOCKED: "bad", FAILED: "bad", error: "bad", mismatch: "bad", CANCELED: "bad", TIMEDOUT: "bad", kept: "neutral", skipped: "neutral",
@@ -486,9 +487,74 @@ export function CopyButton({ text, label = "Copy" }: { text: string; label?: str
   );
 }
 
-/** Download menu for several exports: each item is a plain link to an export endpoint (the browser downloads the file). */
+/** Filename from a Content-Disposition header (filename*=UTF-8''... or filename="..."). */
+function dispositionName(h: string | null): string | null {
+  if (!h) return null;
+  const star = /filename\*\s*=\s*(?:UTF-8'')?([^;]+)/i.exec(h);
+  if (star) { try { return decodeURIComponent(star[1].trim().replace(/^"|"$/g, "")); } catch { /* fall through */ } }
+  const plain = /filename\s*=\s*"?([^";]+)"?/i.exec(h);
+  return plain ? plain[1].trim() : null;
+}
+
+export type DownloadState = { status: "idle" | "busy" | "done" | "error"; label?: string; error?: string };
+
+/** Fetches an export (same-origin, with the app's cookies) and saves it with the server's filename, so the page can
+ *  show "Preparing export…" until the file is ready, then "Downloaded", or the error. Shared by every export control. */
+export function useDownload() {
+  const [state, setState] = useState<DownloadState>({ status: "idle" });
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  const download = async (href: string, label: string) => {
+    if (state.status === "busy") return;
+    window.clearTimeout(timer.current);
+    setState({ status: "busy", label });
+    announce(`Preparing export: ${label}`);
+    try {
+      const res = await fetch(href, { credentials: "same-origin" });
+      if (!res.ok) {
+        let detail = res.statusText;
+        try { const b = await res.json(); detail = typeof b?.detail === "string" ? b.detail : JSON.stringify(b?.detail ?? b); } catch { /* not JSON */ }
+        throw new Error(`${res.status}: ${detail}`);
+      }
+      const blob = await res.blob();
+      const name = dispositionName(res.headers.get("Content-Disposition")) || href.split("?")[0].split("/").filter(Boolean).pop() || "export";
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 30000);
+      setState({ status: "done", label });
+      announce(`Downloaded: ${label}`);
+      timer.current = window.setTimeout(() => setState({ status: "idle" }), 4000);
+    } catch (e: any) {
+      const msg = String(e?.message || e);
+      setState({ status: "error", label, error: msg });
+      announce(`Export failed: ${label}. ${msg}`);
+    }
+  };
+  return { state, download, reset: () => setState({ status: "idle" }) };
+}
+
+/** The line under an export control: busy, downloaded, or the error (with a way to dismiss it). */
+function DownloadNote({ state, onDismiss }: { state: DownloadState; onDismiss: () => void }) {
+  if (state.status === "idle") return null;
+  if (state.status === "busy") return <span className="download-note small" role="status"><span className="spinner sm" aria-hidden="true" /> Preparing export…</span>;
+  if (state.status === "done") return <span className="download-note small text-good" role="status">Downloaded</span>;
+  return (
+    <span className="download-note small field-error" role="alert">
+      Couldn't export {state.label}: {state.error} <button className="btn link sm" onClick={onDismiss}>Dismiss</button>
+    </span>
+  );
+}
+
+/** Download menu for several exports. Each item fetches its file and shows progress (useDownload). */
 export function ExportMenu({ items, label = "Export" }: { items: { href: string; label: string; hint?: string }[]; label?: string }) {
   const ref = useRef<HTMLDetailsElement>(null);
+  const dl = useDownload();
+  const busy = dl.state.status === "busy";
   useEffect(() => {
     const close = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) ref.current.open = false; };
     const esc = (e: globalThis.KeyboardEvent) => { if (e.key === "Escape" && ref.current?.open) { ref.current.open = false; (ref.current.querySelector("summary") as HTMLElement)?.focus(); } };
@@ -497,23 +563,37 @@ export function ExportMenu({ items, label = "Export" }: { items: { href: string;
     return () => { document.removeEventListener("click", close); document.removeEventListener("keydown", esc); };
   }, []);
   return (
-    <details className="menu" ref={ref}>
-      <summary className="btn secondary sm">{label}<span aria-hidden="true">▾</span></summary>
-      <div className="menu-list">
-        {items.map((i) => (
-          <a key={i.href} href={i.href} download onClick={() => { if (ref.current) ref.current.open = false; }}>
-            {i.label}{i.hint && <span className="muted small">{i.hint}</span>}
-          </a>
-        ))}
-        <p className="menu-note small muted">Exports are limited to 200,000 rows.</p>
-      </div>
-    </details>
+    <span className="export-control">
+      <details className="menu" ref={ref}>
+        <summary className="btn secondary sm" aria-busy={busy || undefined}>{busy ? <><span className="spinner sm" aria-hidden="true" /> Preparing export…</> : label}<span aria-hidden="true">▾</span></summary>
+        <div className="menu-list">
+          {items.map((i) => (
+            <button key={i.href} type="button" className="menu-item" disabled={busy} aria-disabled={busy || undefined}
+                    onClick={() => { if (ref.current) ref.current.open = false; dl.download(i.href, i.label); }}>
+              {i.label}{i.hint && <span className="muted small">{i.hint}</span>}
+            </button>
+          ))}
+          <p className="menu-note small muted">Exports are limited to 200,000 rows.</p>
+        </div>
+      </details>
+      <DownloadNote state={dl.state} onDismiss={dl.reset} />
+    </span>
   );
 }
 
-/** One export is a plain download link, not a menu. */
+/** One export: a button that fetches the file and shows progress (useDownload). */
 export function ExportLink({ href, label }: { href: string; label: string }) {
-  return <a className="btn secondary sm" href={href} download>{label}</a>;
+  const dl = useDownload();
+  const busy = dl.state.status === "busy";
+  return (
+    <span className="export-control">
+      <button type="button" className="btn secondary sm" aria-busy={busy || undefined} disabled={busy}
+              onClick={() => dl.download(href, label)}>
+        {busy ? <><span className="spinner sm" aria-hidden="true" /> Preparing export…</> : label}
+      </button>
+      <DownloadNote state={dl.state} onDismiss={dl.reset} />
+    </span>
+  );
 }
 
 /** Confirm dialog. The confirm button names the consequence (`action`, e.g. "Create 2 services"). */

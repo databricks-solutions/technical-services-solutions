@@ -42,8 +42,8 @@ APPLY_COLUMNS = {
 }
 # The options that decide what an apply run does. An execute must match the dry run it follows on all of them.
 FINGERPRINT_KEYS = ("scan_run_id", "endpoints", "target_catalog", "target_schema", "uc_secret_map",
-                    "allow_secret_read", "grants", "ack_guardrails")
-FLAG_KEYS = ("allow_secret_read", "grants", "ack_guardrails")
+                    "allow_secret_read", "grants", "ack_guardrails", "create_uc_secrets")
+FLAG_KEYS = ("allow_secret_read", "grants", "ack_guardrails", "create_uc_secrets")
 
 
 def _now() -> str:
@@ -210,8 +210,10 @@ def selection_fingerprint(params: dict) -> str:
 
     Order-independent and tolerant of the forms the app and the job see: endpoints are sorted, the secret map is
     re-serialised with sorted keys, flags are compared in lower case, and a missing value counts as empty."""
-    body = json.dumps({k: _canon(k, params.get(k)) for k in FINGERPRINT_KEYS}, sort_keys=True)
-    return _sha256(body)
+    fields = {k: _canon(k, params.get(k)) for k in FINGERPRINT_KEYS}
+    if fields.get("create_uc_secrets") != "true":
+        fields.pop("create_uc_secrets")  # off reads like the runs from before the option, so their hashes still match
+    return _sha256(json.dumps(fields, sort_keys=True))
 
 
 def _canon(key: str, value) -> object:

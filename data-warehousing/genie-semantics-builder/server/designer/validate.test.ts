@@ -74,6 +74,10 @@ describe('validation', () => {
       "(CONCAT('dim_orders.customer.x', customer.c_name)) AS `Label`"
     );
     expect(expandedQuery(view, { name: 'total', dimensions: [], measures: ['Orders'] })).not.toContain('GROUP BY');
+    const ranked = validateMetricView(
+      YAML.replace('  - name: AOV\n', '  - name: Rank\n    expr: RANK() OVER (ORDER BY SUM(source.l_tax))\n$&')
+    ).view!;
+    expect(expandedQuery(ranked, { name: 'r', dimensions: ['Segment'], measures: ['Rank'] })).toBeNull();
   });
 
   it('compares rows with a numeric tolerance and hides values', () => {

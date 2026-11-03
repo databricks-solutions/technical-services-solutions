@@ -39,10 +39,11 @@ export function measureQuery(fullName: string, test: TestCase): string {
 
 /**
  * Plain SQL with the same meaning as the test: left joins, composed measures inlined, global filter as WHERE.
- * Null when it cannot be derived, for example for window measures.
+ * Null when it cannot be derived: window, partition and OVER () measures.
  */
 export function expandedQuery(view: MetricView, test: TestCase): string | null {
   const measures = new Map(view.measures.map((m) => [m.name.toLowerCase(), m]));
+  const plain = (m: MetricView['measures'][number]) => !m.window && !m.partition && !/\bOVER\s*\(/i.test(m.expr);
   const dims = new Map(view.dimensions.map((d) => [d.name.toLowerCase(), d]));
   const inline = (expr: string, depth: number): string => {
     if (depth > 10) throw new Error('measure references are too deep');
@@ -51,7 +52,7 @@ export function expandedQuery(view: MetricView, test: TestCase): string | null {
       expr.replace(/\b(?:MEASURE|AGG)\s*\(\s*(`(?:[^`]|``)+`|[A-Za-z_]\w*)\s*\)/gi, (_, ref: string) => {
         const key = (ref.startsWith('`') ? ref.slice(1, -1).replace(/``/g, '`') : ref).toLowerCase();
         const m = measures.get(key);
-        if (!m || m.window) throw new Error(`cannot inline ${ref}`);
+        if (!m || !plain(m)) throw new Error(`cannot inline ${ref}`);
         return `(${inline(m.expr, depth + 1)})`;
       })
     );
@@ -61,7 +62,7 @@ export function expandedQuery(view: MetricView, test: TestCase): string | null {
       ...test.dimensions.map((d) => `(${toDirectAliases(view, dims.get(d.toLowerCase())!.expr)}) AS ${quoteId(d)}`),
       ...test.measures.map((name) => {
         const m = measures.get(name.toLowerCase())!;
-        if (m.window) throw new Error('window measure');
+        if (!plain(m)) throw new Error('not plain SQL');
         return `(${inline(m.expr, 0)}) AS ${quoteId(name)}`;
       }),
     ];

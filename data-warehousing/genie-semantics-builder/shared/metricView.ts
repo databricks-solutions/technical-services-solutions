@@ -107,7 +107,17 @@ export const metricViewSchema = z.preprocess(
       filter: text.optional(),
       joins: z.array(join).optional(),
       dimensions: z.array(z.strictObject(field)).default([]),
-      measures: z.array(z.strictObject({ ...field, window: z.array(windowSpec).min(1).optional() })).default([]),
+      measures: z
+        .array(
+          z.strictObject({
+            ...field,
+            window: z.array(windowSpec).min(1).optional(),
+            partition: z
+              .strictObject({ include: z.array(text).min(1), outer_aggregate: z.enum(['avg', 'sum', 'min', 'max']) })
+              .optional(),
+          })
+        )
+        .default([]),
       materialization: z.unknown().optional(),
     })
     .refine((v) => v.dimensions.length + v.measures.length > 0, { message: 'Add at least one field or measure' })
@@ -178,10 +188,16 @@ export function semanticIssues(view: MetricView, profiles?: SourceProfiles): Met
   }
 
   const measureNames = new Set(view.measures.map((m) => m.name.toLowerCase()));
+  const isDimension = (name: string) => view.dimensions.some((d) => d.name.toLowerCase() === name.toLowerCase());
   view.measures.forEach((m, i) => {
+    if (m.partition) {
+      warn(['measures', i, 'partition'], 'partition is not in the documented spec and can change');
+      for (const name of m.partition.include)
+        if (!isDimension(name)) error(['measures', i, 'partition'], `Partition field "${name}" is not a dimension`);
+    }
     if (m.window) {
       for (const [w, spec] of m.window.entries()) {
-        if (!view.dimensions.some((d) => d.name.toLowerCase() === spec.order.toLowerCase()))
+        if (!isDimension(spec.order))
           error(['measures', i, 'window', w, 'order'], `Window order "${spec.order}" is not a dimension`);
       }
     }
@@ -247,6 +263,12 @@ export function semanticIssues(view: MetricView, profiles?: SourceProfiles): Met
     for (const [chain] of stripLiterals(expr).matchAll(CHAIN)) {
       const parts = splitChain(chain);
       const head = parts[0] ?? '';
+      // Inside a measure, a field name wins over a join name, so customer.c_custkey reads the field Customer.
+      if (path[0] === 'measures' && aliases.has(head) && isDimension(head))
+        error(
+          path,
+          `"${head}" is a field and a join name, so ${chain} does not resolve. Rename the field or the join.`
+        );
       if (head === 'source') {
         checkColumn(path, view.source, parts[1] ?? '', 'source');
         continue;

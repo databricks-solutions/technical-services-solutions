@@ -175,4 +175,34 @@ describe('validateMetricView', () => {
     const wrongKey = GOLDEN.replace('= customer.c_custkey', '= customer.c_nationkey');
     expect(validateMetricView(wrongKey, profiles).issues[0]?.message).toMatch(/do not cover the primary key/);
   });
+
+  it('rejects a measure that uses a join name that is also a field name', () => {
+    const clash = GOLDEN.replace('name: Nation\n', 'name: Dim_Orders\n').replace(
+      'COUNT(DISTINCT source.l_orderkey)',
+      'COUNT(DISTINCT dim_orders.o_orderkey)'
+    );
+    expect(errors(clash)[0]?.message).toMatch(/is a field and a join name/);
+    expect(errors(GOLDEN.replace('name: Nation\n', 'name: Customer\n'))).toEqual([]);
+  });
+
+  it('accepts ranking window functions and partition measures with a warning', () => {
+    const extra = GOLDEN.replace(
+      '  - name: Order Count\n',
+      `  - name: Revenue Rank
+    expr: RANK() OVER (PARTITION BY \`Region\` ORDER BY SUM(source.l_extendedprice) DESC)
+  - name: Avg Orders per Month
+    expr: COUNT(DISTINCT source.l_orderkey)
+    partition:
+      include: [Order Month]
+      outer_aggregate: avg
+$&`
+    );
+    const { view, issues } = validateMetricView(extra, profiles);
+    expect(issues.map((i) => [i.severity, i.message])).toEqual([
+      ['warning', expect.stringMatching(/partition is not in the documented spec/)],
+    ]);
+    expect(renderMetricView(view!)).toMatch(/outer_aggregate: avg/);
+    const badRef = extra.replace('include: [Order Month]', 'include: [Nope]');
+    expect(errors(badRef)[0]?.message).toMatch(/Partition field "Nope" is not a dimension/);
+  });
 });

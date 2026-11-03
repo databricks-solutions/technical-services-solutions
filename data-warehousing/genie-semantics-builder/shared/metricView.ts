@@ -21,7 +21,7 @@ const dateFormat = z.enum([
   'year_week',
 ]);
 
-const format = z.discriminatedUnion('type', [
+export const formatSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('number'), ...numeric, abbreviation }),
   z.strictObject({
     type: z.literal('currency'),
@@ -50,7 +50,7 @@ const field = {
   comment: text.optional(),
   synonyms: z.array(label).max(10).optional(),
   display_name: label.optional(),
-  format: format.optional(),
+  format: formatSchema.optional(),
 };
 
 const windowSpec = z.strictObject({

@@ -54,7 +54,7 @@ export interface SourceResult {
   recommendations: NewRecommendation[];
 }
 
-const MAX_SOURCES = 25;
+export const MAX_SOURCES = 25;
 
 export function readinessRepo(db: Db) {
   return {
@@ -184,6 +184,29 @@ export function readinessRepo(db: Db) {
   };
 }
 
+/** Profiles each source as the user. A table the user cannot read returns its error instead of a profile. */
+export function describeSources<S extends { fullName: string }>(
+  sources: S[],
+  ctx: { actor: string; projectId: string },
+  run: RunDeps
+): Promise<{ source: S; profile?: TableProfile; error?: string }[]> {
+  return Promise.all(
+    sources.map(async (source) => {
+      try {
+        const res = await runStatement(
+          `DESCRIBE TABLE EXTENDED ${quoteName(source.fullName)}`,
+          { ...ctx, approved: false },
+          run
+        );
+        return { source, profile: parseDescribe(source.fullName, res.rows) };
+      } catch (err) {
+        if (err instanceof StatementRejected) throw err;
+        return { source, error: (err as Error).message };
+      }
+    })
+  );
+}
+
 const idParam = z.object({ id: z.uuid() });
 const recParam = idParam.extend({ recId: z.uuid() });
 const applyBody = z.object({ statements: z.array(z.string().min(1).max(200_000)).min(1).max(200) });
@@ -217,22 +240,7 @@ export function registerReadinessRoutes(
       if (!sources.length) throw new HttpError(409, 'The confirmed brief has no candidate sources.');
       if (sources.length > MAX_SOURCES) throw new HttpError(400, `Assess at most ${MAX_SOURCES} sources at a time.`);
 
-      const run = runFor(req);
-      const described = await Promise.all(
-        sources.map(async (s) => {
-          try {
-            const res = await runStatement(
-              `DESCRIBE TABLE EXTENDED ${quoteName(s.fullName)}`,
-              { actor, projectId: project.id, approved: false },
-              run
-            );
-            return { source: s, profile: parseDescribe(s.fullName, res.rows) };
-          } catch (err) {
-            if (err instanceof StatementRejected) throw err;
-            return { source: s, error: (err as Error).message };
-          }
-        })
-      );
+      const described = await describeSources(sources, { actor, projectId: project.id }, runFor(req));
       const profiles = described.flatMap((d) => (d.profile ? [d.profile] : []));
 
       const llm = llmFor(req);

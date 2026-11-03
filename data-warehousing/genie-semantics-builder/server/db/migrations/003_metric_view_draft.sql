@@ -8,6 +8,7 @@ CREATE TABLE gsb.metric_view_draft (
   yaml text NOT NULL CHECK (length(yaml) BETWEEN 1 AND 200000),
   explanations jsonb NOT NULL DEFAULT '{}',
   tests jsonb NOT NULL DEFAULT '[]',
+  issues jsonb NOT NULL DEFAULT '[]',
   origin text NOT NULL CHECK (origin IN ('generated', 'refined', 'edited')),
   status text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'validated')),
   created_by text NOT NULL,

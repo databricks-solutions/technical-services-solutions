@@ -4,6 +4,7 @@ import { createApp, analytics, lakebase, server } from '@databricks/appkit';
 import { loadMigrations, migrate } from './db/migrate';
 import { registerCatalogRoutes } from './api/catalog';
 import { registerProjectRoutes } from './api/projects';
+import { registerDesignerRoutes } from './api/designer';
 import { registerReadinessRoutes } from './api/readiness';
 import { servingDeps } from './llm/llm';
 import { warehouseDeps } from './sql/runner';
@@ -26,6 +27,7 @@ createApp({
       const runFor = (req: Request) => warehouseDeps(pool, asUser(req));
       registerCatalogRoutes(app, runFor);
       registerReadinessRoutes(app, pool, llmFor, runFor);
+      registerDesignerRoutes(app, pool, llmFor, runFor);
     });
   },
 }).catch((err: unknown) => {

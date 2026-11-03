@@ -3,6 +3,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import pg from 'pg';
 import { loadMigrations, migrate } from '../db/migrate';
 import { projectRepo } from './projects';
+import { designerRepo } from './designer';
+import type { NewDraft } from './designer';
 import { readinessRepo } from './readiness';
 import type { BriefOutput } from '../llm/prompts/brief';
 
@@ -30,6 +32,7 @@ describe.skipIf(!url)('projectRepo on Postgres', () => {
   const pool = new pg.Pool({ connectionString: url });
   const repo = projectRepo(pool as never);
   const readiness = readinessRepo(pool as never);
+  const designer = designerRepo(pool as never);
 
   beforeAll(async () => {
     await pool.query('DROP SCHEMA IF EXISTS gsb CASCADE');
@@ -90,5 +93,36 @@ describe.skipIf(!url)('projectRepo on Postgres', () => {
     await readiness.saveAssessment('a@x.com', p.id, [{ ...result, assessment: null }]);
     view = await readiness.view(p.id);
     expect(view.recommendations.map((r) => r.status).sort()).toEqual(['applied', 'proposed']);
+  });
+
+  it('versions metric view drafts and rejects a save on a stale base', async () => {
+    const p = await repo.create('dana@example.com', { name: 'Design' });
+    const draft: NewDraft = {
+      name: 'sales_metrics',
+      yaml: 'source: a.b.c',
+      explanations: { summary: 's', measures: {}, dimensions: {} },
+      tests: [],
+      issues: [],
+      origin: 'generated',
+    };
+    expect(await designer.view(p.id)).toEqual({ draft: null, history: [] });
+    await designer.add('dana@example.com', p.id, draft);
+    await designer.add('dana@example.com', p.id, { ...draft, yaml: 'source: a.b.d', origin: 'edited' }, 1);
+    await expect(designer.add('dana@example.com', p.id, { ...draft, origin: 'edited' }, 1)).rejects.toThrow(
+      /newer version/
+    );
+    const view = await designer.view(p.id);
+    expect(view.draft).toMatchObject({ version: 2, yaml: 'source: a.b.d', origin: 'edited', status: 'draft' });
+    expect(view.history.map((h) => h.version)).toEqual([2, 1]);
+    expect((await designer.view(p.id, 1)).draft?.yaml).toBe('source: a.b.c');
+    await expect(designer.view(p.id, 9)).rejects.toThrow(/not found/);
+    const audit = await pool.query(
+      "SELECT detail FROM gsb.audit_log WHERE project_id = $1 AND action = 'save_metric_view_draft' ORDER BY id",
+      [p.id]
+    );
+    expect(audit.rows.map((r: { detail: unknown }) => r.detail)).toEqual([
+      { version: 1, origin: 'generated' },
+      { version: 2, origin: 'edited' },
+    ]);
   });
 });

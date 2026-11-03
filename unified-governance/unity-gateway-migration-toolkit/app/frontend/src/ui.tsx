@@ -293,13 +293,20 @@ export type Column<T> = {
   key: string; label: string; render?: (row: T) => ReactNode; num?: boolean; width?: string; sortable?: boolean;
   /** Hidden below 640px. The column stays in the table (and in exports) on larger screens. */
   hideOnPhone?: boolean;
+  /** In a collapsible table, the cell shows one line until its row is expanded. */
+  clamp?: boolean;
 };
 
-export function Table<T extends Record<string, any>>({ rows, columns, search, filterLabel, pageSize = 25, empty, label, tools, rowCurrent }: {
+export function Table<T extends Record<string, any>>({ rows, columns, search, filterLabel, pageSize = 25, empty, label, tools, rowCurrent, rowKey }: {
   rows: T[]; columns: Column<T>[]; search?: boolean; filterLabel?: string; pageSize?: number; empty?: ReactNode; label: string; tools?: ReactNode;
   /** Marks the row that is open elsewhere on the page (aria-current). */
   rowCurrent?: (row: T) => boolean;
+  /** Makes rows collapsible: clamp columns show one line until the row is expanded. Rows start collapsed. */
+  rowKey?: (row: T) => string;
 }) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const collapsible = !!rowKey && columns.some((c) => c.clamp);
+  const toggleRow = (k: string) => setExpanded((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 } | null>(null);
   const [page, setPage] = useState(0);
@@ -349,6 +356,14 @@ export function Table<T extends Record<string, any>>({ rows, columns, search, fi
             <caption className="sr-only">{label}</caption>
             <thead>
               <tr>
+                {collapsible && (
+                  <th scope="col" className="expand-col">
+                    <button className="btn link sm" aria-label={expanded.size ? "Collapse all rows" : "Expand all rows"}
+                            onClick={() => setExpanded(expanded.size ? new Set() : new Set(view.map((r) => rowKey!(r))))}>
+                      <span aria-hidden="true">{expanded.size ? "▾" : "▸"}</span>
+                    </button>
+                  </th>
+                )}
                 {columns.map((c) => (
                   <th key={c.key} scope="col" style={{ width: c.width }} className={cls(c.num && "num", c.hideOnPhone && "hide-phone")}
                       aria-sort={sort?.key === c.key ? (sort.dir === -1 ? "descending" : "ascending") : undefined}>
@@ -364,11 +379,25 @@ export function Table<T extends Record<string, any>>({ rows, columns, search, fi
             <tbody>
               {view.map((row, i) => {
                 const current = rowCurrent?.(row) ?? false;
+                const k = rowKey ? rowKey(row) : String(i);
+                const open = !collapsible || expanded.has(k);
                 return (
-                  <tr key={i} className={current ? "current" : undefined} aria-current={current ? "true" : undefined}>
-                    {columns.map((c) => (
-                      <td key={c.key} className={cls(c.num && "num", c.hideOnPhone && "hide-phone")}>{c.render ? c.render(row) : String(row[c.key] ?? "")}</td>
-                    ))}
+                  <tr key={rowKey ? k : i} className={current ? "current" : undefined} aria-current={current ? "true" : undefined}>
+                    {collapsible && (
+                      <td className="expand-col">
+                        <button className="btn link sm" aria-expanded={open} aria-label={open ? "Collapse this row" : "Show all of this row"} onClick={() => toggleRow(k)}>
+                          <span aria-hidden="true">{open ? "▾" : "▸"}</span>
+                        </button>
+                      </td>
+                    )}
+                    {columns.map((c) => {
+                      const content = c.render ? c.render(row) : String(row[c.key] ?? "");
+                      return (
+                        <td key={c.key} className={cls(c.num && "num", c.hideOnPhone && "hide-phone")}>
+                          {c.clamp && !open ? <div className="clamp" title={typeof content === "string" ? content : undefined}>{content}</div> : content}
+                        </td>
+                      );
+                    })}
                   </tr>
                 );
               })}

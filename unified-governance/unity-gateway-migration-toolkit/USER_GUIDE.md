@@ -706,7 +706,7 @@ The Overview charts each snapshot, and each chart has a **View data** table.
 | Apply (one run) | **Export results (CSV)** |
 | Verify and cut over | **Export CSV** (Unity Gateway traffic); **Export results (CSV)** (one run) |
 
-The run lists on Apply and Verify & cut over show the latest 5 runs by default (plus any that are running or open). **Executes and rollbacks** hides dry runs, and **All** shows every run with a filter.
+The run lists on Apply and Verify & cut over show the latest 5 runs by default (plus any that are running or open). **Executes and rollbacks** hides dry runs, and **All** shows every run with a filter. Rows start collapsed: long endpoint lists and results show one line. Click ▸ on a row to see all of it, or ▸ in the header for every row.
 
 Exports read the results as you, stop at 200,000 rows, and set `X-Truncated: true` when cut off. While a file is prepared the button shows **Preparing export…**, then **Downloaded**; an error appears next to the button.
 

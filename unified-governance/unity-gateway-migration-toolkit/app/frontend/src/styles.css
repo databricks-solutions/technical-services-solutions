@@ -304,3 +304,10 @@ pre.del { background: var(--danger-soft); color: #6e1526; } pre.add { background
 .status-strip .phone-only { display: none; }
 @media (max-width: 900px) { .status-strip .tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 @media (max-width: 640px) { .status-strip .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } .status-strip .phone-only { display: flex; flex-direction: column; margin-top: var(--space-2); } }
+
+/* Collapsible table rows: clamped cells show one line until the row is expanded. */
+.clamp { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; max-width: 42rem; }
+.clamp * { display: inline; }
+th.expand-col, td.expand-col { width: 2rem; padding-right: 0; }
+.expand-col .btn.link { text-decoration: none; font-size: 1rem; line-height: 1; padding: 0.15rem 0.35rem; border-radius: 4px; }
+.expand-col .btn.link:hover { background: var(--surface-2, rgba(0, 0, 0, 0.06)); }

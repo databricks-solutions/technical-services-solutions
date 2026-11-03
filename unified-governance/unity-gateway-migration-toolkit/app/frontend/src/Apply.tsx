@@ -62,14 +62,14 @@ export default function Apply({ scanRunId, setScanRunId, operator, active = true
       <Card title="History" actions={<button className="btn secondary sm" onClick={() => { if (!history.loading) history.reload(); }} aria-disabled={history.loading || undefined}>Reload</button>}>
         {history.loading && !history.data ? <SkeletonTable rows={3} label="Loading apply history" /> : history.error ? <ErrorState error={history.error} onRetry={history.reload} /> : (
           <div className="stack-sm">{runView.controls}
-          <Table label="Apply history" rows={runView.shown} pageSize={runView.view === "all" ? 15 : 25} search={runView.view === "all"} rowCurrent={(r) => r.apply_id === openApply}
+          <Table label="Apply history" rowKey={(r) => r.apply_id} rows={runView.shown} pageSize={runView.view === "all" ? 15 : 25} search={runView.view === "all"} rowCurrent={(r) => r.apply_id === openApply}
                  empty={<Empty title="No apply runs yet">Dry runs, executes and rollbacks appear here.</Empty>} columns={[
             { key: "started_at", label: "Started", render: (r) => <button className="btn link" onClick={() => openRun(r.apply_id)} aria-label={`Open ${r.mode.replace("_", " ")} run from ${String(r.started_at).slice(0, 16)}`}>{String(r.started_at).slice(0, 16)}</button> },
             { key: "mode", label: "Mode", render: (r) => <Badge value={r.mode} tone={r.mode === "execute" ? "bad" : r.mode === "rollback" ? "warn" : "info"} /> },
             { key: "status", label: "Status", render: (r) => <>
               <Badge value={r.status} />{r.rolled_back && <div className="small muted">Rolled back</div>}</> },
-            { key: "endpoints", label: "Endpoints", render: (r) => <span className="small">{r.mode === "rollback" ? `rollback of ${String(r.rollback_of).slice(0, 8)}` : r.endpoints}</span> },
-            { key: "summary", label: "Result", sortable: false, render: (r) => <Summary s={r.summary} /> },
+            { key: "endpoints", label: "Endpoints", clamp: true, render: (r) => <span className="small">{r.mode === "rollback" ? `rollback of ${String(r.rollback_of).slice(0, 8)}` : String(r.endpoints || "").split(",").join(", ")}</span> },
+            { key: "summary", label: "Result", sortable: false, clamp: true, render: (r) => <Summary s={r.summary} /> },
             { key: "requested_by", label: "By" },
           ]} />
           </div>

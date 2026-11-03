@@ -808,14 +808,14 @@ function RunHistory({ operator, runs }: { operator: boolean; runs: any }) {
         : runs.error ? <ErrorState error={runs.error} onRetry={runs.reload} />
         : (
           <div className="stack-sm">{runView.controls}
-          <Table label="Verify and cut-over runs" rows={runView.shown} pageSize={runView.view === "all" ? 15 : 25} search={runView.view === "all"} rowCurrent={(r) => r.apply_id === open}
+          <Table label="Verify and cut-over runs" rowKey={(r) => r.apply_id} rows={runView.shown} pageSize={runView.view === "all" ? 15 : 25} search={runView.view === "all"} rowCurrent={(r) => r.apply_id === open}
                  empty={<Empty title="No runs yet">Test calls, pauses, tracking changes and resumes appear here.</Empty>} columns={[
             { key: "started_at", label: "Started", render: (r) => <button className="btn link" onClick={() => setOpen(r.apply_id)} aria-label={`Open ${OPERATION_LABEL[r.operation] || r.operation} run from ${stamp(r.started_at)}`}>{stamp(r.started_at)}</button> },
             { key: "operation", label: "Step", render: (r) => OPERATION_LABEL[r.operation] || humanize(r.operation) },
             { key: "mode", label: "Mode", render: (r) => <Badge value={r.mode === "rollback" ? "resume" : r.mode} tone={r.mode === "execute" ? "bad" : r.mode === "rollback" ? "warn" : "info"} /> },
             { key: "status", label: "Status", render: (r) => <><Badge value={r.status} />{r.resumed && <div className="small muted">Resumed</div>}</> },
-            { key: "targets", label: "Targets", render: (r) => <span className="small">{r.operation === "test_call" ? r.services : r.endpoints}</span> },
-            { key: "summary", label: "Result", sortable: false, render: (r) => <span className="small">{summaryLine(r.summary) || "-"}</span> },
+            { key: "targets", label: "Targets", clamp: true, render: (r) => <span className="small">{r.operation === "test_call" ? r.services : r.endpoints}</span> },
+            { key: "summary", label: "Result", sortable: false, clamp: true, render: (r) => <span className="small">{summaryLine(r.summary) || "-"}</span> },
             { key: "requested_by", label: "By", hideOnPhone: true },
           ]} />
           </div>

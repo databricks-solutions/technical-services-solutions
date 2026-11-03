@@ -12,9 +12,10 @@ Provisions a full GCP network and a Databricks workspace attached to it — ever
 - Databricks MWS Network referencing the VPC/subnet
 - Databricks Workspace attached to that network
 - Admin user added to the workspace and assigned to the `admins` group
+- Unity Catalog metastore (created when `metastore_id` is empty, or an existing metastore is assigned)
 - GCS buckets for workspace cloud storage (created automatically by Databricks)
 
-> **On `terraform destroy`:** All resources above are removed. Nothing external is referenced, so teardown is self-contained (see [Teardown](#teardown) for known VPC deletion errors).
+> **On `terraform destroy`:** All resources above are removed, including a metastore created by this project. An existing metastore attached by ID is not destroyed. See [Teardown](#teardown) for known VPC deletion errors.
 
 ---
 
@@ -26,7 +27,7 @@ Provisions a full GCP network and a Databricks workspace attached to it — ever
 | `versions.tf` | Required Terraform providers and versions |
 | `providers.tf` | Google and Databricks provider configuration |
 | `network.tf` | GCP VPC, subnet, router, and NAT resources |
-| `databricks.tf` | MWS network, workspace, and admin user with group assignment |
+| `databricks.tf` | MWS network, workspace, Unity Catalog metastore, and admin user with group assignment |
 | `outputs.tf` | Output values after deployment |
 | `terraform.tfvars.example` | Template for variable values |
 | `service-account-impersonation.md` | Guide for using service account impersonation |
@@ -85,6 +86,8 @@ cp terraform.tfvars.example terraform.tfvars
 | `databricks_workspace_name` | string | Yes | Name for the new Databricks workspace |
 | `databricks_admin_user` | string | Yes | Admin user email — must already exist at the Databricks Account level |
 | `subnet_cidr` | string | Yes | CIDR block for the Databricks subnet (e.g. `10.10.0.0/20`) |
+| `metastore_id` | string | No | Existing Unity Catalog metastore ID. Leave empty to create a new metastore |
+| `metastore_name` | string | No | Name for a new metastore. Defaults to `<workspace>-metastore` |
 
 ---
 
@@ -111,6 +114,9 @@ databricks_workspace_name     = "<workspace-name>"
 databricks_admin_user         = "<admin-user-email>"
 
 subnet_cidr = "10.10.0.0/20"
+
+metastore_id   = ""
+metastore_name = ""
 ```
 
 #### 3. With CLI flags

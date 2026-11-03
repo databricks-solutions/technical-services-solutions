@@ -25,8 +25,10 @@ databricks_account_id     = "<account-id>"
 databricks_workspace_name = "<workspace-name>"
 databricks_admin_user     = "<admin-user-email>"
 
-# Optional Unity Catalog metastore. Leave empty for auto-create/auto-assign.
-metastore_id = ""
+# Unity Catalog: leave metastore_id empty to create a new metastore.
+# metastore_id   = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+metastore_id   = ""
+metastore_name = ""
 
 ######################################################
 # Backend Private Service Connect

@@ -4,36 +4,5 @@ import "@databricks/appkit-ui/react";
 import type { SQLTypeMarker, SQLStringMarker, SQLNumberMarker, SQLBooleanMarker, SQLBinaryMarker, SQLDateMarker, SQLTimestampMarker } from "@databricks/appkit-ui/js";
 
 declare module "@databricks/appkit-ui/react" {
-  interface QueryRegistry {
-    hello_world: {
-        name: "hello_world";
-        parameters: {
-          /** STRING - use sql.string() */
-          message: SQLStringMarker;
-        };
-        result: Array<{
-          /** @sqlType STRING */
-          value: string;
-        }>;
-      };
-    mocked_sales: {
-        name: "mocked_sales";
-        parameters: {
-          /** INT - use sql.int() */
-          max_month_num: SQLNumberMarker;
-        };
-        result: Array<{
-          /** @sqlType STRING */
-          month: string;
-          /** @sqlType INT */
-          month_num: number;
-          /** @sqlType INT */
-          revenue: number;
-          /** @sqlType INT */
-          expenses: number;
-          /** @sqlType INT */
-          customers: number;
-        }>;
-      };
-  }
+  interface QueryRegistry {}
 }

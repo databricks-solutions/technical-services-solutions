@@ -509,8 +509,7 @@
       "scopes": [
         "model-serving"
       ],
-      "deprecated": true,
-      "requiredByTemplate": true
+      "deprecated": true
     }
   },
   "scaffolding": {

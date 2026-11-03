@@ -175,7 +175,12 @@ export function registerDesignerRoutes(
         refineDesignRequest(ctx.brief, ctx.profiles, draft, instruction),
         llmFor(req)
       );
-      await repo.add(ctx.actor, ctx.project.id, { ...fromModel(out, ctx), origin: 'refined' }, draft.version);
+      await repo.add(
+        ctx.actor,
+        ctx.project.id,
+        { ...fromModel(out, ctx), name: draft.name, origin: 'refined' },
+        draft.version
+      );
       return repo.view(ctx.project.id);
     })
   );

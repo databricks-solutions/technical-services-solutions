@@ -1201,6 +1201,12 @@ DEPLOY_CLIENT_RE = re.compile(r"\bget_deploy_client\s*\(")
 PREDICT_CALL_RE = re.compile(r"\.\s*predict\s*\(")
 NAME_ARG_RE = re.compile(r"\b(name|endpoint|model)\s*=\s*([^,)\s]+)")
 DYNAMIC_MLFLOW_URI_RE = re.compile(r"endpoints:/(?=\{|['\"]\s*\+)")
+# Tabular inputs only custom ML model endpoints take (LLM chat and embedding calls send messages, prompt or input).
+TABULAR_ARG_RE = re.compile(r"\b(dataframe_records|dataframe_split|instances|inputs)\s*=")
+TABULAR_CALL_SUGGESTION = ("likely no change: the endpoint name is a variable, but the call sends tabular input "
+                           "(dataframe_records, dataframe_split, instances or inputs), which only custom model "
+                           "endpoints take, and custom model endpoints stay on /serving-endpoints. If it does reach a "
+                           "legacy endpoint, use the OpenAI client on <workspace>/ai-gateway/mlflow/v1")
 # Patterns for unresolved calls: the scan can't name the endpoint, so readiness treats them like a dynamic URL.
 VARIABLE_CALL_PATTERNS = ("sdk_openai_client", "sdk_serving_query", "mlflow_deployments_predict", "ChatDatabricks",
                           "mlflow_endpoint_uri")
@@ -1550,8 +1556,9 @@ class Scanner:
                               "check the current databricks-langchain docs for the endpoint= argument." + where)
                 hits.add(name)
             for pattern, token in variable.get(i, []):
-                self._add(asset_type, asset, i, pattern, token, None, variable_call_suggestion(pattern, file_names),
-                          fixable=False)
+                advice = (TABULAR_CALL_SUGGESTION if pattern == "custom_endpoint_call"
+                          else variable_call_suggestion(pattern, file_names))
+                self._add(asset_type, asset, i, pattern, token, None, advice, fixable=False)
             for m in MLFLOW_ENDPOINT_RE.finditer(line):
                 name = m.group(1)
                 if name not in self.names and not name.startswith("databricks-"):
@@ -1662,8 +1669,10 @@ class Scanner:
         for m in OPENAI_CLIENT_RE.finditer(text):
             add(m.start(), "sdk_openai_client", m.group(0).rstrip("( "))
         for m in SDK_QUERY_RE.finditer(text):
-            if self._is_variable(self._name_value(_balanced_args(text, m.end() - 1), ("name",))):
-                add(m.start(), "sdk_serving_query", "serving_endpoints.query")
+            args = _balanced_args(text, m.end() - 1)
+            if self._is_variable(self._name_value(args, ("name",))):
+                tabular = TABULAR_ARG_RE.search(args)
+                add(m.start(), "custom_endpoint_call" if tabular else "sdk_serving_query", "serving_endpoints.query")
         if DEPLOY_CLIENT_RE.search(text):
             for m in PREDICT_CALL_RE.finditer(text):
                 args = _balanced_args(text, m.end() - 1)

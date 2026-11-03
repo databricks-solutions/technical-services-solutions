@@ -1370,3 +1370,19 @@ def test_enforce_status_reads_the_workspace_setting(payload, want):
     w.api_client.do.assert_called_once_with("GET", "/api/2.1/settings/enforce_ai_gateway_v3_only", query={})
     lines = m._enforce_lines("on", "BLOCKED")
     assert "**on**" in lines[0] and "fail now" in lines[1]
+
+
+def test_variable_sdk_query_with_tabular_input_is_a_custom_model_call():
+    s, rows, eps = _sim_scanner()
+    s.scan_text("notebook", "/serve", "\n".join([
+        "resp = w.serving_endpoints.query(name=ENDPOINT, dataframe_records=sample)",   # 1: custom model shape
+        "pred = w.serving_endpoints.query(",                                          # 2
+        "    name=endpoint_name,",
+        "    dataframe_split=df)",
+        "emb = w.serving_endpoints.query(name=ep, input=[text])",                      # 5: embeddings: unresolved
+    ]))
+    assert {r.line: r.pattern for r in s.refs} == {1: "custom_endpoint_call", 2: "custom_endpoint_call",
+                                                    5: "sdk_serving_query"}
+    assert s.refs[0].suggestion.startswith("likely no change")
+    r = m.readiness(rows, s.refs, True, 30, eps)
+    assert [b["item"] for b in r["blockers"] if b["type"] == "unresolved_endpoint_call"] == ["/serve:5"]

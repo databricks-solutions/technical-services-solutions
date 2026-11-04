@@ -9,12 +9,15 @@ import type {
   ReadinessView,
   Recommendation,
   RecommendationStatus,
+  Link,
   PermissionCheck,
   RelatedTable,
+  RelationCheck,
 } from '../../shared/readiness';
 import { callTool } from '../llm/llm';
 import type { LlmDeps } from '../llm/llm';
 import { assessSourcePrompt, assessSourceRequest } from '../llm/prompts/readiness';
+import { relatePrompt, relateRequest } from '../llm/prompts/relate';
 import {
   buildRecommendations,
   checksFor,
@@ -31,7 +34,7 @@ import type { FixEffect } from '../readiness/score';
 import type { NewRecommendation, TableProfile } from '../readiness/profile';
 import { StatementRejected } from '../sql/allowlist';
 import { runStatement } from '../sql/runner';
-import type { RunDeps } from '../sql/runner';
+import type { RunContext, RunDeps } from '../sql/runner';
 import { projectRepo } from './projects';
 import { actorOf, handle, HttpError } from './http';
 
@@ -85,7 +88,12 @@ const isOpen = (status: RecommendationStatus) => status === 'proposed' || status
  * Scores come from the stored table metadata, not the warehouse. Applied fixes are folded into
  * that metadata, so the score moves as soon as a fix runs, before the next assessment.
  */
-export function buildView(sources: SourceRow[], recs: RecRow[], brief: SemanticBrief | null): ReadinessView {
+export function buildView(
+  sources: SourceRow[],
+  recs: RecRow[],
+  confirmed: { brief: SemanticBrief; version: number } | null
+): ReadinessView {
+  const brief = confirmed?.brief ?? null;
   const applied = recs.filter((r) => r.status === 'applied' && r.effect && r.full_name);
   const profiles = new Map<string, TableProfile>();
   for (const s of sources) {
@@ -100,7 +108,8 @@ export function buildView(sources: SourceRow[], recs: RecRow[], brief: SemanticB
   const items = briefItems(brief);
   const coveredItems = new Set(sources.flatMap((s) => (s.assessment?.coverage ?? []).map((c) => c.item)));
   const missing = items.filter((i) => !coveredItems.has(i));
-  const coverage = { covered: items.length - missing.length, total: items.length, missing };
+  const stale = sources.some((s) => s.assessment && s.assessment.briefVersion !== confirmed?.version);
+  const coverage = confirmed ? { covered: items.length - missing.length, total: items.length, missing, stale } : null;
   const base = all.length ? projectScore(all, coverage) : null;
 
   const gain = (r: RecRow) => {
@@ -205,13 +214,13 @@ export function readinessRepo(db: Db) {
                     s.full_name, r.created_at`,
           [projectId]
         ),
-        db.query<{ content: SemanticBrief }>(
-          `SELECT content->'brief' AS content FROM gsb.semantic_brief WHERE project_id = $1 AND status = 'confirmed'
+        db.query<{ brief: SemanticBrief; version: number }>(
+          `SELECT content->'brief' AS brief, version FROM gsb.semantic_brief WHERE project_id = $1 AND status = 'confirmed'
            ORDER BY version DESC LIMIT 1`,
           [projectId]
         ),
       ]);
-      return buildView(sources.rows, recs.rows, brief.rows[0]?.content ?? null);
+      return buildView(sources.rows, recs.rows, brief.rows[0] ?? null);
     },
 
     /** Replaces open fixes with the new assessment. Applied and rejected fixes stay as history. */
@@ -324,9 +333,41 @@ function validCoverage(pairs: { item: string; column: string }[], p: TableProfil
   });
 }
 
+/** Columns of every table in the schemas of the given tables, read as the user from information_schema. */
+async function schemaColumns(tables: string[], ctx: RunContext, run: RunDeps) {
+  const schemas = [...new Set(tables.map((t) => t.split('.').slice(0, 2).join('.')))].slice(0, MAX_RELATED_SCHEMAS);
+  const out = new Map<string, { name: string; type: string; comment: string }[]>();
+  for (const schema of schemas) {
+    const [catalog, name] = schema.split('.');
+    const res = await runStatement(
+      `SELECT table_name, column_name, data_type FROM system.information_schema.columns
+       WHERE table_catalog = ${sqlString(catalog)} AND table_schema = ${sqlString(name)}
+       ORDER BY table_name, ordinal_position LIMIT 20000`,
+      ctx,
+      run
+    );
+    for (const [t, c, type] of res.rows) {
+      const full = `${schema}.${t ?? ''}`;
+      out.set(full, [...(out.get(full) ?? []), { name: c ?? '', type: (type ?? '').toLowerCase(), comment: '' }]);
+    }
+  }
+  return out;
+}
+
+/** Tables connected by joins, largest group first. */
+export function joinGroups(tables: string[], links: Link[]): string[][] {
+  const parent = new Map(tables.map((t) => [t, t]));
+  const find = (t: string): string => (parent.get(t) === t ? t : find(parent.get(t)!));
+  for (const l of links) if (parent.has(l.from) && parent.has(l.to)) parent.set(find(l.from), find(l.to));
+  const groups = new Map<string, string[]>();
+  for (const t of tables) groups.set(find(t), [...(groups.get(find(t)) ?? []), t]);
+  return [...groups.values()].sort((a, b) => b.length - a.length);
+}
+
 const idParam = z.object({ id: z.uuid() });
 const recParam = idParam.extend({ recId: z.uuid() });
 const sourceParam = idParam.extend({ sourceId: z.uuid() });
+const checkBody = z.object({ tables: z.array(z.string().trim().regex(UC_TABLE_NAME)).min(1).max(MAX_SOURCES) });
 const addBody = z.object({ tables: z.array(z.string().trim().regex(UC_TABLE_NAME)).min(1).max(MAX_SOURCES) });
 const MAX_RELATED_SCHEMAS = 5;
 const short = (t: string) => t.split('.').pop()!;
@@ -355,17 +396,16 @@ export function registerReadinessRoutes(
     handle(async (req) => {
       const actor = actorOf(req);
       const project = await projects.get(actor, idParam.parse(req.params).id);
-      const brief = await projects.latestBrief(project.id);
-      if (brief?.status !== 'confirmed')
-        throw new HttpError(409, 'Confirm the Semantic Brief before you assess sources.');
+      const latest = await projects.latestBrief(project.id);
+      const brief = latest?.status === 'confirmed' ? latest : null;
       const { sources } = await repo.view(project.id);
-      if (!sources.length) throw new HttpError(409, 'The confirmed brief has no candidate sources.');
+      if (!sources.length) throw new HttpError(409, 'Add the tables to model first.');
       if (sources.length > MAX_SOURCES) throw new HttpError(400, `Assess at most ${MAX_SOURCES} sources at a time.`);
 
       const described = await describeSources(sources, { actor, projectId: project.id }, runFor(req));
       const profiles = described.flatMap((d) => (d.profile ? [d.profile] : []));
 
-      const items = briefItems(brief.brief);
+      const items = briefItems(brief?.brief ?? null);
       const llm = llmFor(req);
       const results = await Promise.all(
         described.map(async ({ source, profile, error }): Promise<SourceResult> => {
@@ -385,7 +425,7 @@ export function registerReadinessRoutes(
           const others = profiles.filter((p) => p !== profile);
           const out = await callTool(
             assessSourcePrompt,
-            assessSourceRequest(brief.brief, profile, checks, others),
+            assessSourceRequest(brief?.brief ?? null, profile, checks, others),
             llm
           );
           const byName = new Map<string, TableProfile>(others.map((o) => [o.fullName.toLowerCase(), o]));
@@ -397,6 +437,7 @@ export function registerReadinessRoutes(
               role: out.role,
               entity: out.entity,
               coverage: validCoverage(out.coverage, profile, items),
+              briefVersion: brief?.version ?? null,
               score: out.score,
               summary: out.summary,
               findings: out.findings,
@@ -516,31 +557,16 @@ export function registerReadinessRoutes(
         for (const f of profile.foreignKeys)
           add(f.references, `${short(profile.fullName)} declares a foreign key to it`);
 
-      const schemas = [...new Set(sources.map((s) => s.fullName.split('.').slice(0, 2).join('.')))].slice(
-        0,
-        MAX_RELATED_SCHEMAS
+      const tables = await schemaColumns(
+        sources.map((s) => s.fullName),
+        { actor, projectId: project.id, approved: false },
+        runFor(req)
       );
-      const run = runFor(req);
-      for (const schema of schemas) {
-        const [catalog, name] = schema.split('.');
-        const res = await runStatement(
-          `SELECT table_name, column_name FROM system.information_schema.columns
-           WHERE table_catalog = ${sqlString(catalog)} AND table_schema = ${sqlString(name)}
-           ORDER BY table_name, ordinal_position LIMIT 20000`,
-          { actor, projectId: project.id, approved: false },
-          run
-        );
-        const tables = new Map<string, { name: string; type: string; comment: string }[]>();
-        for (const [t, c] of res.rows) {
-          const full = `${schema}.${t ?? ''}`;
-          tables.set(full, [...(tables.get(full) ?? []), { name: c ?? '', type: '', comment: '' }]);
-        }
-        const isMine = (t: string) => mine.has(t.toLowerCase());
-        for (const l of inferLinks([...tables].map(([fullName, columns]) => ({ fullName, columns })))) {
-          if (isMine(l.from) && !isMine(l.to))
-            add(l.to, `${short(l.from)}.${l.column} matches ${short(l.to)}.${l.refColumn}`);
-          if (isMine(l.to) && !isMine(l.from)) add(l.from, `${short(l.from)}.${l.column} references ${short(l.to)}`);
-        }
+      const isMine = (t: string) => mine.has(t.toLowerCase());
+      for (const l of inferLinks([...tables].map(([fullName, columns]) => ({ fullName, columns })))) {
+        if (isMine(l.from) && !isMine(l.to))
+          add(l.to, `${short(l.from)}.${l.column} matches ${short(l.to)}.${l.refColumn}`);
+        if (isMine(l.to) && !isMine(l.from)) add(l.from, `${short(l.from)}.${l.column} references ${short(l.to)}`);
       }
       return [...reasons]
         .map(([table, why]) => ({ table, reasons: [...why] }))
@@ -639,6 +665,49 @@ export function registerReadinessRoutes(
       }
       checks.push(...tables.map((t) => fixCheck(t, actor, found.get(t.toLowerCase()) ?? null)));
       return checks;
+    })
+  );
+
+  /**
+   * Before tables are added: which of them, with the current sources, join together. Rules find
+   * the joins; the model explains them. Only names and types go to the model, never rows.
+   */
+  app.post(
+    '/api/projects/:id/sources/check',
+    handle(async (req): Promise<RelationCheck> => {
+      const actor = actorOf(req);
+      const project = await projects.get(actor, idParam.parse(req.params).id);
+      const { tables: picked } = checkBody.parse(req.body);
+      const { sources } = await repo.view(project.id);
+      const lower = (t: string) => t.toLowerCase();
+      const all = [...new Set([...sources.map((s) => lower(s.fullName)), ...picked.map(lower)])];
+      const columns = await schemaColumns(all, { actor, projectId: project.id, approved: false }, runFor(req));
+      const known = all.flatMap((t) => {
+        const cols = [...columns].find(([name]) => lower(name) === t)?.[1];
+        return cols ? [{ fullName: t, columns: cols }] : [];
+      });
+      const links = inferLinks(known);
+      const groups = joinGroups(all, links);
+      if (all.length < 2) return { links, groups, ai: null, aiError: null };
+      try {
+        const out = await callTool(
+          relatePrompt,
+          relateRequest(
+            known.map((k) => ({ table: k.fullName, columns: k.columns.map(({ name, type }) => ({ name, type })) })),
+            links
+          ),
+          llmFor(req)
+        );
+        const valid = new Set(all);
+        return {
+          links,
+          groups,
+          ai: { ...out, tables: out.tables.filter((t) => valid.has(lower(t.table))) },
+          aiError: null,
+        };
+      } catch (err) {
+        return { links, groups, ai: null, aiError: (err as Error).message.slice(0, 300) };
+      }
     })
   );
 }

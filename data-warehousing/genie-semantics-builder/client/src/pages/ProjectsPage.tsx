@@ -20,8 +20,8 @@ export const STAGE: Record<
   SubProjectStage,
   { label: string; color: 'default' | 'lemon' | 'indigo' | 'teal'; module: string }
 > = {
-  intent: { label: 'Defining intent', color: 'default', module: 'intake' },
-  sources: { label: 'Checking sources', color: 'lemon', module: 'sources' },
+  sources: { label: 'Choosing sources', color: 'default', module: 'sources' },
+  intent: { label: 'Defining intent', color: 'lemon', module: 'intake' },
   design: { label: 'Designing', color: 'indigo', module: 'designer' },
   validated: { label: 'Validated', color: 'teal', module: 'designer' },
 };

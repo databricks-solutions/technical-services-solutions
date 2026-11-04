@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import {
   Alert,
+  ArrowRightIcon,
   Button,
   Checkbox,
   Modal,
@@ -31,7 +32,7 @@ import { DataState } from '../components/DataState';
 import { OntologyGraph } from '../components/OntologyGraph';
 import { FixPermission, PermissionsPanel } from '../components/PermissionsPanel';
 import { MONO } from '../components/SqlBlock';
-import { TablePicker } from '../components/UcPicker';
+import { TableSelector } from '../components/TableSelector';
 
 type TagColor = 'teal' | 'lemon' | 'coral' | 'default';
 
@@ -312,24 +313,18 @@ function SourceDetail({ source, busy, onRemove }: { source: SourceReadiness; bus
   );
 }
 
-function AddTablesModal({ onAdd, onClose }: { onAdd: (tables: string[]) => Promise<void>; onClose: () => void }) {
-  const [tables, setTables] = useState<string[]>([]);
-  const [saving, setSaving] = useState(false);
+function AddTablesModal({
+  projectId,
+  onAdd,
+  onClose,
+}: {
+  projectId: string;
+  onAdd: (tables: string[]) => Promise<void>;
+  onClose: () => void;
+}) {
   return (
-    <Modal
-      componentId="gsb.sources.add_modal"
-      title="Add tables"
-      visible
-      okText={tables.length ? `Add ${tables.length} table${tables.length === 1 ? '' : 's'}` : 'Add tables'}
-      okButtonProps={{ disabled: !tables.length, loading: saving }}
-      cancelText="Cancel"
-      onCancel={onClose}
-      onOk={() => {
-        setSaving(true);
-        void onAdd(tables).finally(() => setSaving(false));
-      }}
-    >
-      <TablePicker value={tables} onChange={setTables} />
+    <Modal componentId="gsb.sources.add_modal" title="Add tables" visible footer={null} onCancel={onClose}>
+      <TableSelector projectId={projectId} addLabel={(n) => `Add ${n} table${n === 1 ? '' : 's'}`} onAdd={onAdd} />
     </Modal>
   );
 }
@@ -419,9 +414,41 @@ export function SourcesPage() {
   };
   const addTables = (tables: string[]) =>
     post('add', `/api/projects/${projectId}/sources`, { tables }).then(() => setAdding(undefined));
+  const intake = `/projects/${parentId}/sub/${projectId}/intake`;
+
+  // A new sub-project starts here: choose the tables, then the assessment runs at once.
+  if (view.status === 'ready' && view.data && !view.data.sources.length)
+    return (
+      <section aria-labelledby="gsb-setup" style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 960 }}>
+        <Typography.Title level={3} id="gsb-setup" withoutMargins>
+          Choose the tables to model
+        </Typography.Title>
+        <Typography.Text color="secondary">
+          Pick the tables for this metric view: usually one fact table, such as orders or sales, and the tables it joins
+          to. The app checks how they relate, then assesses them. You do not need to know your metrics yet: after this
+          step the AI suggests what you can build from these tables.
+        </Typography.Text>
+        {error && <Alert componentId="gsb.sources.error" type="error" closable={false} message={error} />}
+        <TableSelector
+          projectId={projectId}
+          addLabel={(n) => `Add ${n} table${n === 1 ? '' : 's'} and assess`}
+          onAdd={(tables) =>
+            post('add', `/api/projects/${projectId}/sources`, { tables }).then(() =>
+              post('run', `/api/projects/${projectId}/readiness/run`)
+            )
+          }
+        />
+        {busy === 'run' && (
+          <div role="status" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <Spinner label="Assessing" />
+            <Typography.Text color="secondary">Assessing the tables. This can take a minute.</Typography.Text>
+          </div>
+        )}
+      </section>
+    );
 
   const data = view.data;
-  const status = view.status === 'ready' && data && !data.sources.length ? 'empty' : view.status;
+  const status = view.status;
   const assessed = data?.sources.some((s) => s.report) ?? false;
   const fixes = [...(data?.recommendations ?? [])].sort(
     (a, b) => Number(isOpen(b)) - Number(isOpen(a)) || b.scoreGain - a.scoreGain
@@ -446,26 +473,7 @@ export function SourcesPage() {
 
   return (
     <>
-      <DataState
-        status={status}
-        message={
-          status === 'empty'
-            ? 'No sources yet. Confirm a Semantic Brief to register its tables, or add tables here.'
-            : view.error
-        }
-        onRetry={view.reload}
-        emptyAction={
-          <div style={{ display: 'flex', gap: 8 }}>
-            <Button
-              componentId="gsb.sources.go_intake"
-              onClick={() => void navigate(`/projects/${parentId}/sub/${projectId}/intake`)}
-            >
-              Go to Intent & Context
-            </Button>
-            {addButtons}
-          </div>
-        }
-      >
+      <DataState status={status} message={view.error} onRetry={view.reload}>
         {data && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -483,6 +491,19 @@ export function SourcesPage() {
                 {data.sources.length} source{data.sources.length === 1 ? '' : 's'}. The assessment reads metadata with
                 your permissions. Nothing changes until you approve a fix.
               </Typography.Text>
+              {assessed && (
+                <div style={{ marginLeft: 'auto' }}>
+                  <Button
+                    componentId="gsb.sources.next"
+                    type="primary"
+                    endIcon={<ArrowRightIcon />}
+                    disabled={!!busy}
+                    onClick={() => void navigate(intake)}
+                  >
+                    Next: Intent & Context
+                  </Button>
+                </div>
+              )}
             </div>
             {busy === 'run' && (
               <div role="status" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -611,7 +632,9 @@ export function SourcesPage() {
           </div>
         )}
       </DataState>
-      {adding === 'pick' && <AddTablesModal onAdd={addTables} onClose={() => setAdding(undefined)} />}
+      {adding === 'pick' && (
+        <AddTablesModal projectId={projectId} onAdd={addTables} onClose={() => setAdding(undefined)} />
+      )}
       {adding === 'related' && (
         <RelatedModal projectId={projectId} onAdd={addTables} onClose={() => setAdding(undefined)} />
       )}

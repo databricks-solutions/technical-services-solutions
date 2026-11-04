@@ -3,7 +3,10 @@ import { z } from 'zod';
 import type { LakebasePool } from '@databricks/appkit';
 import { chatSchema, intakeSchema, newProjectSchema, refineSchema } from '../../shared/brief';
 import type {
+  ChatMessage,
   DeletePlan,
+  IntakeContext,
+  MemoryItem,
   BriefVersion,
   NewProject,
   Project,
@@ -18,6 +21,8 @@ import type { LlmDeps } from '../llm/llm';
 import { draftBriefPrompt, draftBriefRequest, refineBriefPrompt, refineBriefRequest } from '../llm/prompts/brief';
 import type { BriefOutput } from '../llm/prompts/brief';
 import { chatBriefRequest, intakeChatPrompt, intakeChatRequest, mentionedTables } from '../llm/prompts/intake';
+import type { ChatContext } from '../llm/prompts/intake';
+import type { TableProfile } from '../readiness/profile';
 import { dropStatement } from '../designer/validate';
 import { runStatement } from '../sql/runner';
 import type { RunDeps } from '../sql/runner';
@@ -69,14 +74,15 @@ const toBrief = (r: BriefRow): BriefVersion => ({
 
 const PROJECT_COLUMNS = 'id, parent_id, name, description, created_by, created_at';
 
+// Sources come first, then the brief, then the design.
 const stageOf = (r: SummaryRow): SubProjectStage =>
   r.draft_status === 'validated'
     ? 'validated'
-    : r.draft_status
+    : r.draft_status || r.brief_status === 'confirmed'
       ? 'design'
-      : r.brief_status === 'confirmed'
-        ? 'sources'
-        : 'intent';
+      : r.sources > 0
+        ? 'intent'
+        : 'sources';
 
 /** Projects are private to their creator. Every query filters on created_by. */
 export function projectRepo(db: Db) {
@@ -107,6 +113,88 @@ export function projectRepo(db: Db) {
 
   return {
     get,
+
+    /** Assessed table metadata, the saved chat, and the memory of the top-level project. */
+    async intakeContext(projectId: string): Promise<IntakeContext & { metadata: ChatContext }> {
+      const [tables, session, memory] = await Promise.all([
+        db.query<{ full_name: string; profile: TableProfile | null; entity: string | null }>(
+          `SELECT s.full_name, r.profile, r.assessment->>'entity' AS entity FROM gsb.source s
+           LEFT JOIN LATERAL (SELECT profile, assessment FROM gsb.readiness_report
+                              WHERE source_id = s.id ORDER BY created_at DESC LIMIT 1) r ON true
+           WHERE s.project_id = $1 ORDER BY s.full_name`,
+          [projectId]
+        ),
+        db.query<{ messages: ChatMessage[] }>('SELECT messages FROM gsb.chat_session WHERE project_id = $1', [
+          projectId,
+        ]),
+        db.query<{
+          id: string;
+          kind: MemoryItem['kind'];
+          text: string;
+          detail: string | null;
+          from_name: string | null;
+        }>(
+          `SELECT m.id, m.kind, m.text, m.detail, f.name AS from_name FROM gsb.project_memory m
+           JOIN gsb.project p ON m.project_id = COALESCE(p.parent_id, p.id)
+           LEFT JOIN gsb.project f ON f.id = m.from_project_id
+           WHERE p.id = $1 ORDER BY m.kind DESC, m.text LIMIT 200`,
+          [projectId]
+        ),
+      ]);
+      const items = memory.rows.map((m) => ({
+        id: m.id,
+        kind: m.kind,
+        text: m.text,
+        detail: m.detail,
+        fromName: m.from_name,
+      }));
+      return {
+        tables: tables.rows.map((t) => t.full_name),
+        session: session.rows[0]?.messages ?? [],
+        memory: items,
+        metadata: {
+          tables: tables.rows.map((t) =>
+            t.profile
+              ? {
+                  table: t.full_name,
+                  entity: t.entity,
+                  comment: t.profile.comment || null,
+                  columns: t.profile.columns.map((c) => ({ name: c.name, type: c.type, comment: c.comment || null })),
+                  primaryKey: t.profile.primaryKey,
+                  foreignKeys: t.profile.foreignKeys,
+                }
+              : { table: t.full_name, note: 'Not assessed yet; columns unknown.' }
+          ),
+          memory: items.map(({ kind, text, detail }) => ({ kind, text, detail })),
+        },
+      };
+    },
+
+    async saveSession(actor: string, projectId: string, messages: ChatMessage[]): Promise<void> {
+      await db.query(
+        `INSERT INTO gsb.chat_session (project_id, messages, updated_by) VALUES ($1, $2, $3)
+         ON CONFLICT (project_id) DO UPDATE SET messages = EXCLUDED.messages, updated_by = $3, updated_at = now()`,
+        [projectId, JSON.stringify(messages), actor]
+      );
+    },
+
+    async clearSession(projectId: string): Promise<void> {
+      await db.query('DELETE FROM gsb.chat_session WHERE project_id = $1', [projectId]);
+    },
+
+    /** Removes a memory item of the sub-project's top-level project. */
+    async removeMemory(actor: string, projectId: string, memoryId: string): Promise<void> {
+      const { rows } = await db.query(
+        `WITH del AS (
+           DELETE FROM gsb.project_memory m USING gsb.project p
+           WHERE m.id = $2 AND p.id = $1 AND m.project_id = COALESCE(p.parent_id, p.id) RETURNING m.text
+         )
+         INSERT INTO gsb.audit_log (actor, action, project_id, target, outcome)
+         SELECT $3, 'remove_memory', $1, text, 'succeeded' FROM del RETURNING target`,
+        [projectId, memoryId, actor]
+      );
+      if (!rows[0]) throw new HttpError(404, 'Memory item not found.');
+    },
 
     /** The project, its sub-projects, and DROP statements for sandbox views that may still exist. */
     async deletePlan(actor: string, id: string): Promise<DeletePlan> {
@@ -208,6 +296,21 @@ export function projectRepo(db: Db) {
            SELECT $1, unnest($2::text[]), $3 ON CONFLICT (project_id, full_name) DO NOTHING`,
           [projectId, brief.brief.candidateSources, actor]
         );
+        // The brief's terms and assumptions become memory of the top-level project.
+        const memory = [
+          ...(brief.brief.glossary ?? []).map((g) => ['term', g.term, g.definition]),
+          ...(brief.brief.assumptions ?? []).map((a) => ['assumption', a, null]),
+        ];
+        if (memory.length)
+          await client.query(
+            `INSERT INTO gsb.project_memory (project_id, kind, text, detail, from_project_id, created_by)
+             SELECT COALESCE(p.parent_id, p.id), m.kind, m.text, m.detail, p.id, $3
+             FROM gsb.project p, jsonb_to_recordset($2::jsonb) AS m(kind text, text text, detail text)
+             WHERE p.id = $1
+             ON CONFLICT (project_id, kind, text)
+             DO UPDATE SET detail = EXCLUDED.detail, from_project_id = EXCLUDED.from_project_id`,
+            [projectId, JSON.stringify(memory.map(([kind, text, detail]) => ({ kind, text, detail }))), actor]
+          );
         await client.query(
           `INSERT INTO gsb.audit_log (actor, action, project_id, outcome, detail) VALUES ($1, 'confirm_brief', $2, 'succeeded', $3)`,
           [actor, projectId, { version }]
@@ -315,10 +418,17 @@ export function registerProjectRoutes(
     '/api/projects/:id/intake/chat',
     handle(async (req): Promise<IntakeReply> => {
       const project = await repo.get(actorOf(req), idParam.parse(req.params).id);
+      const actor = actorOf(req);
       const { messages } = chatSchema.parse(req.body);
-      const turn = await callTool(intakeChatPrompt, intakeChatRequest(project.description, messages), llmFor(req));
-      const allowed = new Set(mentionedTables(messages));
+      const context = await repo.intakeContext(project.id);
+      const turn = await callTool(
+        intakeChatPrompt,
+        intakeChatRequest(project.description, messages, context.metadata),
+        llmFor(req)
+      );
+      const allowed = new Set([...context.tables, ...mentionedTables(messages)].map((t) => t.toLowerCase()));
       const sources = turn.brief.candidateSources?.filter((t) => allowed.has(t.toLowerCase()));
+      await repo.saveSession(actor, project.id, [...messages, { role: 'assistant', content: turn.reply }]);
       return { ...turn, brief: { ...turn.brief, ...(sources ? { candidateSources: sources } : {}) } };
     })
   );
@@ -329,10 +439,45 @@ export function registerProjectRoutes(
       const actor = actorOf(req);
       const project = await repo.get(actor, idParam.parse(req.params).id);
       const { messages } = chatSchema.parse(req.body);
-      const output = await callTool(draftBriefPrompt, chatBriefRequest(project.description, messages), llmFor(req));
-      const allowed = new Set(mentionedTables(messages));
-      output.brief.candidateSources = output.brief.candidateSources.filter((t) => allowed.has(t.toLowerCase()));
+      const context = await repo.intakeContext(project.id);
+      const output = await callTool(
+        draftBriefPrompt,
+        chatBriefRequest(project.description, messages, context.metadata),
+        llmFor(req)
+      );
+      const allowed = new Set([...context.tables, ...mentionedTables(messages)].map((t) => t.toLowerCase()));
+      const picked = output.brief.candidateSources.filter((t) => allowed.has(t.toLowerCase()));
+      output.brief.candidateSources = picked.length ? picked : context.tables;
       return repo.addDraft(actor, project.id, output, { chat: messages.length });
+    })
+  );
+
+  app.get(
+    '/api/projects/:id/intake/context',
+    handle(async (req): Promise<IntakeContext> => {
+      const project = await repo.get(actorOf(req), idParam.parse(req.params).id);
+      const { metadata: _metadata, ...context } = await repo.intakeContext(project.id);
+      return context;
+    })
+  );
+
+  app.post(
+    '/api/projects/:id/intake/session/clear',
+    handle(async (req) => {
+      const project = await repo.get(actorOf(req), idParam.parse(req.params).id);
+      await repo.clearSession(project.id);
+      return { cleared: true };
+    })
+  );
+
+  app.post(
+    '/api/projects/:id/memory/:memoryId/remove',
+    handle(async (req) => {
+      const actor = actorOf(req);
+      const { id, memoryId } = idParam.extend({ memoryId: z.uuid() }).parse(req.params);
+      const project = await repo.get(actor, id);
+      await repo.removeMemory(actor, project.id, memoryId);
+      return { removed: true };
     })
   );
 

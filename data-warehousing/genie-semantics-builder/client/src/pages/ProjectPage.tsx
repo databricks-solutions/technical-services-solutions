@@ -19,15 +19,15 @@ import { DeleteProjectModal } from '../components/DeleteProjectModal';
 import { NewProjectModal, STAGE, subPath } from './ProjectsPage';
 
 const JOURNEY: { stage: SubProjectStage; label: string }[] = [
-  { stage: 'intent', label: 'Goal' },
   { stage: 'sources', label: 'Sources' },
+  { stage: 'intent', label: 'Goal' },
   { stage: 'design', label: 'Design' },
   { stage: 'validated', label: 'Validated' },
 ];
 
 const NEXT: Record<SubProjectStage, { text: string; action: string }> = {
-  intent: { text: 'Describe the goal with the AI guide and confirm the brief.', action: 'Continue intake' },
-  sources: { text: 'Check the source tables and fix what blocks a good model.', action: 'Check sources' },
+  sources: { text: 'Choose the tables to model, then check and fix them.', action: 'Choose sources' },
+  intent: { text: 'See what the AI suggests from your tables, then confirm the brief.', action: 'Define the goal' },
   design: { text: 'Design the metric view and validate it against the data.', action: 'Open designer' },
   validated: { text: 'The metric view passed validation. Review or refine it.', action: 'Open designer' },
 };
@@ -230,9 +230,9 @@ export function ProjectPage() {
               title="New sub-project"
               okText="Create sub-project"
               endpoint={`/api/projects/${project.id}/subprojects`}
-              goalHint="Which questions should this metric view answer? For example: net revenue by month and region."
+              goalHint="Optional. If you do not know yet, choose the tables first and the AI suggests what you can build."
               onClose={() => setCreating(false)}
-              onCreated={(s) => void navigate(subPath(project.id, s.id, 'intake'))}
+              onCreated={(s) => void navigate(subPath(project.id, s.id, 'sources'))}
             />
           )}
         </div>

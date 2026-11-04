@@ -101,3 +101,11 @@ describe('projectScore', () => {
     expect(after).toBeGreaterThan(before);
   });
 });
+
+describe('projectScore without a brief', () => {
+  it('leaves coverage out and scales the other areas to 100', () => {
+    const s = projectScore([users], null);
+    expect(s.areas.map((a) => a.id)).not.toContain('coverage');
+    expect(s.score).toBeLessThanOrEqual(100);
+  });
+});

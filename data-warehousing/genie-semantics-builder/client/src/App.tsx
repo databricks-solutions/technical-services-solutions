@@ -28,8 +28,8 @@ import { SourcesPage } from './pages/SourcesPage';
 
 // Sub-project modules appear here as each phase ships.
 const projectModules = [
+  { slug: 'sources', label: 'Sources & Readiness', icon: <CatalogIcon />, page: <SourcesPage /> },
   { slug: 'intake', label: 'Intent & Context', icon: <SparkleIcon />, page: <IntakePage /> },
-  { slug: 'sources', label: 'Source Readiness', icon: <CatalogIcon />, page: <SourcesPage /> },
   { slug: 'patterns', label: 'Modeling patterns', icon: <BeakerIcon />, page: <PlaygroundPage /> },
   { slug: 'designer', label: 'Metric Designer', icon: <ChartLineIcon />, page: <DesignerPage /> },
 ];

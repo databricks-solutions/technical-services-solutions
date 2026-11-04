@@ -148,8 +148,11 @@ export function tableAreas(p: TableProfile, project: TableProfile[]): AreaScore[
 export const tableScore = (areas: AreaScore[]) =>
   Math.round(areas.reduce((s, a) => s + a.weight * a.score, 0) / TABLE_WEIGHT);
 
-/** Mean of the table areas over the sub-project, plus the coverage of the brief. */
-export function projectScore(profiles: TableProfile[], coverage: Coverage): { score: number; areas: AreaScore[] } {
+/** Mean of the table areas over the sub-project, plus the coverage of the brief once a brief exists. */
+export function projectScore(
+  profiles: TableProfile[],
+  coverage: (Coverage & { stale?: boolean }) | null
+): { score: number; areas: AreaScore[] } {
   const perTable = profiles.map((p) => tableAreas(p, profiles));
   const areas: AreaScore[] = (['documentation', 'keys', 'types', 'naming'] as const).map((id, i) => {
     const scores = perTable.map((a) => a[i]);
@@ -165,18 +168,22 @@ export function projectScore(profiles: TableProfile[], coverage: Coverage): { sc
           : (worst?.detail ?? ''),
     };
   });
-  areas.push({
-    id: 'coverage',
-    label: 'Brief coverage',
-    weight: WEIGHTS.coverage,
-    score: pct(coverage.covered, coverage.total),
-    detail: coverage.total
-      ? coverage.missing.length
-        ? `${coverage.covered} of ${coverage.total} measures and dimensions have a source column. Missing: ${coverage.missing.join(', ')}.`
-        : `All ${coverage.total} measures and dimensions have a source column.`
-      : 'The brief has no measures or dimensions yet.',
-  });
-  return { score: Math.round(areas.reduce((s, a) => s + a.weight * a.score, 0) / 100), areas };
+  if (coverage)
+    areas.push({
+      id: 'coverage',
+      label: 'Brief coverage',
+      weight: WEIGHTS.coverage,
+      score: pct(coverage.covered, coverage.total),
+      detail: coverage.stale
+        ? 'The brief changed after the last assessment. Assess again to map it to the columns.'
+        : coverage.total
+          ? coverage.missing.length
+            ? `${coverage.covered} of ${coverage.total} measures and dimensions have a source column. Missing: ${coverage.missing.join(', ')}.`
+            : `All ${coverage.total} measures and dimensions have a source column.`
+          : 'The brief has no measures or dimensions yet.',
+    });
+  const weight = areas.reduce((s, a) => s + a.weight, 0);
+  return { score: Math.round(areas.reduce((s, a) => s + a.weight * a.score, 0) / weight), areas };
 }
 
 export function applyEffect(p: TableProfile, e: FixEffect): TableProfile {

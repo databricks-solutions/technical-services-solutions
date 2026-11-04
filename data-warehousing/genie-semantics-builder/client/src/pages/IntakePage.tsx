@@ -1,19 +1,20 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
-import { useParams } from 'react-router';
+import { useNavigate, useParams } from 'react-router';
 import {
   Alert,
   Button,
   FormUI,
   Input,
   Table,
+  TrashIcon,
   TableCell,
   TableHeader,
   TableRow,
   Tag,
   Typography,
 } from '@databricks/design-system';
-import type { BriefVersion, ProjectDetail, SemanticBrief } from '../../../shared/brief';
+import type { BriefVersion, IntakeContext, MemoryItem, ProjectDetail, SemanticBrief } from '../../../shared/brief';
 import { api, useResource } from '../api';
 import { DataState } from '../components/DataState';
 import { IntakeChat } from '../components/IntakeChat';
@@ -212,9 +213,68 @@ function BriefPanel({
   );
 }
 
+/** Terms and assumptions confirmed in this project's sub-projects. The chat reuses them. */
+function MemoryPanel({
+  projectId,
+  items,
+  onRemoved,
+}: {
+  projectId: string;
+  items: MemoryItem[];
+  onRemoved: (id: string) => void;
+}) {
+  const [error, setError] = useState<string>();
+  return (
+    <section aria-labelledby="gsb-memory" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <Typography.Title level={4} id="gsb-memory" withoutMargins>
+        Project memory ({items.length})
+      </Typography.Title>
+      <Typography.Text color="secondary" size="sm">
+        {items.length
+          ? 'Terms and assumptions from confirmed briefs in this project. The AI reuses them, so terms mean the same thing in every sub-project.'
+          : 'Empty. When you confirm a brief, its terms and assumptions are saved here for the other sub-projects of this project.'}
+      </Typography.Text>
+      {error && <FormUI.Message type="error" message={error} />}
+      {items.length > 0 && (
+        <ul style={{ margin: 0, paddingLeft: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {items.map((m) => (
+            <li key={m.id} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+              <div style={{ flex: 1 }}>
+                <Typography.Text bold={m.kind === 'term'}>{m.text}</Typography.Text>
+                {m.detail && <Typography.Text>: {m.detail}</Typography.Text>}
+                <br />
+                <Typography.Text color="secondary" size="sm">
+                  {m.kind === 'term' ? 'Term' : 'Assumption'}
+                  {m.fromName ? ` from ${m.fromName}` : ''}
+                </Typography.Text>
+              </div>
+              <Button
+                componentId="gsb.intake.memory_remove"
+                size="small"
+                type="tertiary"
+                icon={<TrashIcon />}
+                aria-label={`Remove ${m.text} from project memory`}
+                onClick={() =>
+                  void api(`/api/projects/${projectId}/memory/${m.id}/remove`, {}).then(
+                    () => onRemoved(m.id),
+                    (err: unknown) => setError((err as Error).message)
+                  )
+                }
+              />
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 export function IntakePage() {
   const { projectId = '' } = useParams();
+  const { parentId = '' } = useParams();
+  const navigate = useNavigate();
   const detail = useResource<ProjectDetail>(`/api/projects/${projectId}`);
+  const context = useResource<IntakeContext>(`/api/projects/${projectId}/intake/context`);
   const [chatting, setChatting] = useState(false);
   const [draft, setDraft] = useState<Partial<SemanticBrief>>({});
   const setBrief = (brief: BriefVersion) => {
@@ -234,12 +294,44 @@ export function IntakePage() {
             onStartOver={() => {
               setDraft({});
               setChatting(true);
+              void api(`/api/projects/${projectId}/intake/session/clear`, {}).then(() => {
+                if (context.data) context.setData({ ...context.data, session: [] });
+              });
             }}
           />
         ) : (
           <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start', flexWrap: 'wrap' }}>
             <div style={{ flex: '1 1 480px', minWidth: 360 }}>
-              <IntakeChat projectId={projectId} onDraft={setDraft} onSaved={setBrief} />
+              <DataState status={context.status} message={context.error} onRetry={context.reload}>
+                {context.data && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    {!context.data.tables.length && (
+                      <Alert
+                        componentId="gsb.intake.no_sources"
+                        type="info"
+                        closable={false}
+                        message="Choose your tables first, and the AI can suggest what to build from them."
+                        action={
+                          <Button
+                            componentId="gsb.intake.go_sources"
+                            size="small"
+                            onClick={() => void navigate(`/projects/${parentId}/sub/${projectId}/sources`)}
+                          >
+                            Choose tables
+                          </Button>
+                        }
+                      />
+                    )}
+                    <IntakeChat
+                      key={context.data.session.length ? 'resume' : 'new'}
+                      projectId={projectId}
+                      context={context.data}
+                      onDraft={setDraft}
+                      onSaved={setBrief}
+                    />
+                  </div>
+                )}
+              </DataState>
             </div>
             <aside
               aria-label="Brief draft"
@@ -261,6 +353,16 @@ export function IntakePage() {
                 <Tag componentId="gsb.intake.live">Updates as you chat</Tag>
               </div>
               <BriefView brief={draft} />
+              {context.data && (
+                <MemoryPanel
+                  projectId={projectId}
+                  items={context.data.memory}
+                  onRemoved={(id) =>
+                    context.data &&
+                    context.setData({ ...context.data, memory: context.data.memory.filter((m) => m.id !== id) })
+                  }
+                />
+              )}
             </aside>
           </div>
         ))}

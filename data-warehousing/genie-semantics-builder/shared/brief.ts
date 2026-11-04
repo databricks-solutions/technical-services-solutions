@@ -100,6 +100,8 @@ export interface IntakeReply {
   suggestions: string[];
   brief: Partial<SemanticBrief>;
   ready: boolean;
+  /** Metric views the AI proposes from the source tables. Empty unless it is proposing. */
+  ideas: MetricIdea[];
 }
 
 /** What a delete removes. cleanup drops sandbox views the project may have left in Unity Catalog. */
@@ -107,4 +109,27 @@ export interface DeletePlan {
   name: string;
   subProjects: string[];
   cleanup: string[];
+}
+
+export interface MemoryItem {
+  id: string;
+  kind: 'term' | 'assumption';
+  text: string;
+  detail: string | null;
+  /** Sub-project whose confirmed brief added it. */
+  fromName: string | null;
+}
+
+/** What the intake chat starts from: the assessed tables, the saved chat, and the project memory. */
+export interface IntakeContext {
+  tables: string[];
+  session: ChatMessage[];
+  memory: MemoryItem[];
+}
+
+export interface MetricIdea {
+  title: string;
+  question: string;
+  measures: string[];
+  dimensions: string[];
 }

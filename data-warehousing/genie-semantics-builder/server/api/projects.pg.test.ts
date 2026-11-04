@@ -73,8 +73,8 @@ describe.skipIf(!url)('projectRepo on Postgres', () => {
     const list = await repo.list('n@x.com');
     expect(list.map((p) => p.name)).toEqual(['Sales']);
     expect(list[0]?.subProjects.map((s) => [s.name, s.stage, s.sources]).sort()).toEqual([
-      ['Returns', 'intent', 0],
-      ['Revenue', 'sources', 2],
+      ['Returns', 'sources', 0],
+      ['Revenue', 'design', 2],
     ]);
     expect(await repo.list('other@x.com')).toEqual([]);
   });
@@ -94,13 +94,46 @@ describe.skipIf(!url)('projectRepo on Postgres', () => {
     await expect(repo.remove('other@x.com', parent.id)).rejects.toMatchObject({ status: 404 });
     await repo.remove('d@x.com', parent.id);
     expect(await repo.list('d@x.com')).toEqual([]);
-    const left = await pool.query('SELECT count(*)::int AS n FROM gsb.pattern_run WHERE project_id = $1', [sub.id]);
+    const left = await pool.query<{ n: number }>('SELECT count(*)::int AS n FROM gsb.pattern_run WHERE project_id = $1', [sub.id]);
     expect(left.rows[0].n).toBe(0);
     const audit = await pool.query(
       "SELECT target FROM gsb.audit_log WHERE action = 'delete_project' AND project_id = $1",
       [parent.id]
     );
     expect(audit.rows).toEqual([{ target: 'Gone' }]);
+  });
+
+  it('shares confirmed terms with sibling sub-projects and saves the chat', async () => {
+    const parent = await repo.create('m@x.com', { name: 'Memory' });
+    const revenue = await repo.create('m@x.com', { name: 'Revenue' }, parent.id);
+    const returns = await repo.create('m@x.com', { name: 'Returns' }, parent.id);
+    const withTerms = {
+      ...output,
+      brief: {
+        ...output.brief,
+        glossary: [{ term: 'Net Revenue', definition: 'Price less discount.' }],
+        assumptions: ['Fiscal year starts in July.'],
+      },
+    };
+    await repo.addDraft('m@x.com', revenue.id, withTerms, {});
+    await repo.confirm('m@x.com', revenue.id, 1);
+
+    const ctx = await repo.intakeContext(returns.id);
+    expect(ctx.memory.map((m) => [m.kind, m.text, m.fromName])).toEqual([
+      ['term', 'Net Revenue', 'Revenue'],
+      ['assumption', 'Fiscal year starts in July.', 'Revenue'],
+    ]);
+    expect(ctx.metadata.memory).toHaveLength(2);
+
+    await repo.saveSession('m@x.com', returns.id, [{ role: 'user', content: 'hi' }]);
+    expect((await repo.intakeContext(returns.id)).session).toEqual([{ role: 'user', content: 'hi' }]);
+    await repo.clearSession(returns.id);
+    expect((await repo.intakeContext(returns.id)).session).toEqual([]);
+
+    const other = await repo.create('m@x.com', { name: 'Other' });
+    await expect(repo.removeMemory('m@x.com', other.id, ctx.memory[0].id)).rejects.toMatchObject({ status: 404 });
+    await repo.removeMemory('m@x.com', returns.id, ctx.memory[0].id);
+    expect((await repo.intakeContext(revenue.id)).memory).toHaveLength(1);
   });
 
   it('keeps projects private to their creator', async () => {

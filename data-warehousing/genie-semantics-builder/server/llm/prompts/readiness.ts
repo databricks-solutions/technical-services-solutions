@@ -57,12 +57,12 @@ export type AssessmentOutput = z.infer<typeof assessmentOutput>;
 
 export const assessSourcePrompt: ToolPrompt<AssessmentOutput> = {
   id: 'readiness.assess',
-  version: 2,
+  version: 3,
   system: `You are a semantic modeling advisor for Databricks Unity Catalog metric views.
 Assess one source table against a confirmed Semantic Brief and propose metadata fixes.
 Rules:
 - Use only the columns and tables you receive. Use exact column and table names. Never invent names.
-- Base the score on fit for the brief: the needed measures and dimensions, the time grains, descriptions, and declared keys.
+- Without a brief, judge general readiness for metric views. With a brief, base the score on fit for the brief: the needed measures and dimensions, the time grains, descriptions, and declared keys.
 - Write descriptions in plain business language, one sentence each, without SQL.
 - Propose a primary key only when the column names make the key clear, for example an id or key column.
 - In coverage, map a brief measure or dimension only to a column that holds it or that it is computed from.
@@ -85,12 +85,12 @@ const describeTable = (p: TableProfile) => ({
 });
 
 export function assessSourceRequest(
-  brief: SemanticBrief,
+  brief: SemanticBrief | null,
   table: TableProfile,
   checks: ReadinessCheck[],
   others: TableProfile[]
 ): string {
-  const scope = {
+  const scope = brief && {
     title: brief.title,
     businessGoal: brief.businessGoal,
     measures: brief.measures,
@@ -98,8 +98,10 @@ export function assessSourceRequest(
     timeGrains: brief.timeGrains,
   };
   return [
-    'Assess this table for the Semantic Brief.',
-    untrusted('semantic_brief', JSON.stringify(scope, null, 2)),
+    scope
+      ? 'Assess this table for the Semantic Brief.'
+      : 'Assess this table for metric views in general. No brief exists yet, so return an empty coverage list.',
+    scope ? untrusted('semantic_brief', JSON.stringify(scope, null, 2)) : '',
     untrusted('table', JSON.stringify(describeTable(table), null, 2)),
     untrusted('deterministic_checks', JSON.stringify(checks.map(({ id, status, detail }) => ({ id, status, detail })))),
     untrusted(
@@ -108,5 +110,7 @@ export function assessSourceRequest(
         others.map((o) => ({ table: o.fullName, columns: o.columns.map((c) => c.name), primaryKey: o.primaryKey }))
       )
     ),
-  ].join('\n\n');
+  ]
+    .filter(Boolean)
+    .join('\n\n');
 }

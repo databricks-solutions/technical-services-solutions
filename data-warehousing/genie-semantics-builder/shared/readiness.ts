@@ -13,6 +13,8 @@ export interface Assessment {
   entity?: string;
   /** Brief measures and dimensions this table can source, by column. */
   coverage?: { item: string; column: string }[];
+  /** Brief version the coverage was mapped against. null when no brief was confirmed. */
+  briefVersion?: number | null;
   score: number;
   summary: string;
   findings: string[];
@@ -97,4 +99,17 @@ export interface PermissionCheck {
   detail: string;
   /** Statements a catalog or table owner can run to grant what is missing. Never run by the app. */
   grants: string[];
+}
+
+/** How selected tables relate before they are added: rule-based joins and groups, plus the AI view. */
+export interface RelationCheck {
+  links: Link[];
+  /** Tables connected by joins, largest group first. More than one group means some tables do not join. */
+  groups: string[][];
+  ai: {
+    summary: string;
+    tables: { table: string; belongs: boolean; reason: string }[];
+    suggestion: string;
+  } | null;
+  aiError: string | null;
 }

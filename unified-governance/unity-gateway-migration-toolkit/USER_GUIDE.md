@@ -104,7 +104,7 @@ A **legacy endpoint** is a v1 serving endpoint (`/serving-endpoints/<name>/invoc
 
 The installer notebook is the only file you import. It creates everything inside the workspace in about 5 minutes.
 
-1. Download `unity-gateway-migration-toolkit.zip` from the [release page](https://github.com/databricks-solutions/technical-services-solutions/releases/tag/unity-gateway-migration-toolkit-latest) and unzip it. In the workspace, go to your home folder, choose **Import**, and import `INSTALL_unity_gateway_migration_toolkit_0_10_0.py` from the zip's top folder.
+1. Download `unity-gateway-migration-toolkit.zip` from the [release page](https://github.com/databricks-solutions/technical-services-solutions/releases/tag/unity-gateway-migration-toolkit-latest) and unzip it. In the workspace, go to your home folder, choose **Import**, and import `INSTALL_unity_gateway_migration_toolkit_0_10_1.py` from the zip's top folder.
 2. Open the notebook. Set **Install: Results catalog** (a catalog where you can create a schema) and **Install: SQL warehouse**. Leave the other widgets at their defaults ([Installer widgets](#installer-widgets)). If the widget panel shows widgets from an older installer, remove them once, then run again.
 3. Click **Run all**.
 
@@ -152,7 +152,7 @@ Import the newer installer and run it with the same widgets. Results history is 
 Scan again: 0.10.1 finds more calls and fewer false ones. Tables and jobs don't change.
 
 - **Calls with a variable endpoint name.** `get_open_ai_client()`, `serving_endpoints.query(name=<variable>)`, the MLflow deployments client, `ChatDatabricks(endpoint=<variable>)` and `endpoints:/{...}` URIs are now `unresolved_endpoint_call` blockers. These clients are bound to `/serving-endpoints`, so changing only the name gives a 404.
-- **Calls to custom model endpoints** are now `custom_endpoint_call` (no change) instead of a move, and are no longer warnings.
+- **Calls to custom model endpoints** are now `custom_endpoint_call` (no change) instead of a move, and are no longer warnings. A `serving_endpoints.query` call with a variable name and tabular input (`dataframe_records`, `dataframe_split`, `instances` or `inputs`) is a `tabular_endpoint_call` warning: usually a custom model, but the scan can't name it.
 - **External models that forward to a `databricks-*` endpoint** (provider `databricks-model-serving`) are now an `external_model_on_ppt` blocker: Enforce stops the endpoint they forward to.
 - **Custom agents.** Calls inside MLflow model code (a `PythonModel` class) name the custom endpoint that serves the model and say how to re-log it. `System Service Principal` callers of a pay-per-token endpoint get a `custom_endpoint_inner_call` warning. Usage tracking can now be turned on for custom model endpoints (never paused).
 - **Enforce status.** READINESS.md and `readiness.json` (`enforce`) show whether Enforce Unity Gateway is on.
@@ -279,6 +279,9 @@ Caveats that matter:
 - When you change a URL, move the token from the `all-apis` scope to `ai-gateway`. An `ai-gateway` token on a legacy URL returns 403.
 - Changing `/invocations` to `/chat/completions` changes the body to OpenAI format, with the model service as `model`.
 - Never move a Responses client to Chat Completions. A change of API type needs application-level testing first.
+- Some clients only call `/serving-endpoints`, so changing only the endpoint name gives a 404: `w.serving_endpoints.get_open_ai_client()`, `w.serving_endpoints.query`, the MLflow deployments client, and `ChatDatabricks` without `use_ai_gateway=True`. Change the client, as each finding says.
+- Calls to custom model endpoints (your own ML models) need no change. They stay on `/serving-endpoints`, and Enforce doesn't affect them.
+- A custom agent that calls an LLM from its model code fails on Unity Gateway with automatic authentication (a misleading `NotFound`). Re-log it with explicit credentials, an `ai-gateway` scoped token or a service principal secret in `environment_vars`, or move it to a Databricks App. Then turn on its usage tracking.
 
 **Workspace-bound v2 endpoints.** Keep the route and change only the model name, from the flat name to the three-part `system.ai` name in the plan (the `target` in CODE_FIXES.md):
 
@@ -659,7 +662,8 @@ The `type` is the stable name in `readiness.json`. The label and action are what
 | `pay_per_token_call` | Blocker | Code calls a Databricks pay-per-token endpoint | Switch the calls to `<target>`, then re-scan. If the endpoint also embeds for an AI Search index, switch only the direct calls and keep the endpoint |
 | `v2_workspace_call` | Blocker | Code calls a v2 workspace endpoint | Set the model to `<target>`, keep the `/ai-gateway/` route, then re-scan |
 | `vector_search` | Blocker | AI Search index embeds with a legacy endpoint | Keep the endpoint, and don't enforce Unity Gateway until the index can re-embed with a supported `system.ai` embedding service. Support is rolling out model by model: check the AI Search docs |
-| `unresolved_endpoint_call` | Blocker | Code calls a serving endpoint the scan can't name | Find which endpoint the call reaches at run time. A legacy one: move the call to `/ai-gateway/`. A custom model or feature serving one: name it in the code so the scan can see it |
+| `unresolved_endpoint_call` | Blocker | Code calls a serving endpoint the scan can't name | Find which endpoint the call reaches at run time. A legacy one: rewrite the client as the finding says (changing only the name gives a 404). A custom model or feature serving one: no change, and putting its name in the code or a config value lets the next scan confirm it |
+| `tabular_endpoint_call` | Warning | Code sends tabular input to an endpoint the scan can't name | Usually a custom model endpoint, which needs no change. Confirm which endpoint it calls |
 | `external_model_on_ppt` | Blocker | External model endpoint forwards to a pay-per-token endpoint | Move its callers to the `system.ai` model (or a model service with that destination) before enforcing |
 | `agent_bricks_vector_search` | Blocker | Agent Bricks agent uses AI Search | Check its index and embedding model before enforcing |
 | `app_resource` | Blocker | App declares a legacy serving endpoint resource | Replace it with the Unity Gateway service, grant `EXECUTE`, call `/ai-gateway/` |
@@ -861,7 +865,7 @@ Grouped by where the problem shows up.
 - **Prototype.** Test on a non-production workspace first, and review every result.
 - **Apply providers.** OpenAI, Azure OpenAI (API key) and Anthropic only. Bedrock, Gemini, Microsoft Foundry and Azure Entra auth are manual.
 - **AI Search.** When this version was tested (October 30, 2026), AI Search didn't accept `system.ai` embedding endpoints. Until it does, indexes on legacy `databricks-*` embeddings block enforcement. The toolkit doesn't test workarounds such as self-managed embeddings.
-- **`ai_query`** can't call custom model services yet, so `ai_query` on custom legacy endpoints stays on legacy.
+- **`ai_query`** can only call `system.ai` model services so far, not the model services you create, so `ai_query` on an external model or PT endpoint keeps calling that endpoint until it can.
 - **Code outside the workspace** is visible only with `--local-path`. Coding agents on laptops show up as callers, not as code.
 - **MLflow judges.** Registered judges aren't scanned (there is no public API). Judge URIs in notebook code are.
 - **Usage data** can lag a few hours. The window (30 days by default) can miss rare callers.

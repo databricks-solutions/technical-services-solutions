@@ -1372,7 +1372,7 @@ def test_enforce_status_reads_the_workspace_setting(payload, want):
     assert "**on**" in lines[0] and "fail now" in lines[1]
 
 
-def test_variable_sdk_query_with_tabular_input_is_a_custom_model_call():
+def test_variable_sdk_query_with_tabular_input_is_a_warning():
     s, rows, eps = _sim_scanner()
     s.scan_text("notebook", "/serve", "\n".join([
         "resp = w.serving_endpoints.query(name=ENDPOINT, dataframe_records=sample)",   # 1: custom model shape
@@ -1380,9 +1380,15 @@ def test_variable_sdk_query_with_tabular_input_is_a_custom_model_call():
         "    name=endpoint_name,",
         "    dataframe_split=df)",
         "emb = w.serving_endpoints.query(name=ep, input=[text])",                      # 5: embeddings: unresolved
+        "out = w.serving_endpoints.query(name=EP, inputs=payload)",                    # 6: inputs= (review, Nov 4)
     ]))
-    assert {r.line: r.pattern for r in s.refs} == {1: "custom_endpoint_call", 2: "custom_endpoint_call",
-                                                    5: "sdk_serving_query"}
-    assert s.refs[0].suggestion.startswith("likely no change")
+    assert {r.line: r.pattern for r in s.refs} == {1: "tabular_endpoint_call", 2: "tabular_endpoint_call",
+                                                    5: "sdk_serving_query", 6: "tabular_endpoint_call"}
+    assert s.refs[0].suggestion.startswith("probably no change") and "Confirm which endpoint" in s.refs[0].suggestion
     r = m.readiness(rows, s.refs, True, 30, eps)
     assert [b["item"] for b in r["blockers"] if b["type"] == "unresolved_endpoint_call"] == ["/serve:5"]
+    # The scan can't name the endpoint, so the call stays visible as a warning instead of being dropped.
+    assert [w["item"] for w in r["warnings"] if w["type"] == "tabular_endpoint_call"] == ["/serve:1", "/serve:2", "/serve:6"]
+    # Nothing retires (only custom endpoints): an unnamed call can't reach a legacy endpoint, so no finding.
+    custom_only = [x for x in rows if x.kind == "custom_model"]
+    assert not [w for w in m.readiness(custom_only, s.refs, True, 30, eps)["warnings"] if w["type"] == "tabular_endpoint_call"]

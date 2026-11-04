@@ -49,7 +49,7 @@ SECRET_SCHEMA = "main.ug_secrets"
 WAREHOUSE_ID = "5f2c9a1b7d3e4f60"
 DEADLINE = "2027-03-30"
 DEADLINE_AS_OF = "2026-11-01"
-TOOLKIT = "0.10.0"
+TOOLKIT = "0.10.1"
 
 # Anchor for every relative timestamp: the server start time, to the minute.
 T0 = datetime.now(timezone.utc).replace(second=0, microsecond=0)

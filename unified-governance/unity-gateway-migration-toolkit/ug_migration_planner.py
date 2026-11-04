@@ -1203,10 +1203,10 @@ NAME_ARG_RE = re.compile(r"\b(name|endpoint|model)\s*=\s*([^,)\s]+)")
 DYNAMIC_MLFLOW_URI_RE = re.compile(r"endpoints:/(?=\{|['\"]\s*\+)")
 # Tabular inputs only custom ML model endpoints take (LLM chat and embedding calls send messages, prompt or input).
 TABULAR_ARG_RE = re.compile(r"\b(dataframe_records|dataframe_split|instances|inputs)\s*=")
-TABULAR_CALL_SUGGESTION = ("likely no change: the endpoint name is a variable, but the call sends tabular input "
-                           "(dataframe_records, dataframe_split, instances or inputs), which only custom model "
-                           "endpoints take, and custom model endpoints stay on /serving-endpoints. If it does reach a "
-                           "legacy endpoint, use the OpenAI client on <workspace>/ai-gateway/mlflow/v1")
+TABULAR_CALL_SUGGESTION = ("probably no change: the endpoint name is a variable, but the call sends tabular input "
+                           "(dataframe_records, dataframe_split, instances or inputs), the shape custom model endpoints "
+                           "take, and custom model endpoints stay on /serving-endpoints. Confirm which endpoint it "
+                           "calls: if it's a legacy endpoint, use the OpenAI client on <workspace>/ai-gateway/mlflow/v1")
 # Patterns for unresolved calls: the scan can't name the endpoint, so readiness treats them like a dynamic URL.
 VARIABLE_CALL_PATTERNS = ("sdk_openai_client", "sdk_serving_query", "mlflow_deployments_predict", "ChatDatabricks",
                           "mlflow_endpoint_uri")
@@ -1259,6 +1259,9 @@ def model_code_note(cls: str, endpoints: list[str] | None) -> str:
             "App. Also turn on the endpoint's usage tracking; its own callers need no change")
 
 
+# The advice for an unnamed call that reaches a custom model or feature serving endpoint (same text in both guides).
+CUSTOM_UNNAMED_ACTION = ("A custom model or feature serving endpoint: no change, and putting its name in the code or a "
+                         "config value lets the next scan confirm it")
 SYSTEM_SP_NAME = "System Service Principal"  # display name of a serving endpoint's automatic-auth identity
 
 
@@ -1556,7 +1559,7 @@ class Scanner:
                               "check the current databricks-langchain docs for the endpoint= argument." + where)
                 hits.add(name)
             for pattern, token in variable.get(i, []):
-                advice = (TABULAR_CALL_SUGGESTION if pattern == "custom_endpoint_call"
+                advice = (TABULAR_CALL_SUGGESTION if pattern == "tabular_endpoint_call"
                           else variable_call_suggestion(pattern, file_names))
                 self._add(asset_type, asset, i, pattern, token, None, advice, fixable=False)
             for m in MLFLOW_ENDPOINT_RE.finditer(line):
@@ -1672,7 +1675,8 @@ class Scanner:
             args = _balanced_args(text, m.end() - 1)
             if self._is_variable(self._name_value(args, ("name",))):
                 tabular = TABULAR_ARG_RE.search(args)
-                add(m.start(), "custom_endpoint_call" if tabular else "sdk_serving_query", "serving_endpoints.query")
+                # The name is unknown, so it stays a finding (a warning): the input shape only suggests a custom model.
+                add(m.start(), "tabular_endpoint_call" if tabular else "sdk_serving_query", "serving_endpoints.query")
         if DEPLOY_CLIENT_RE.search(text):
             for m in PREDICT_CALL_RE.finditer(text):
                 args = _balanced_args(text, m.end() - 1)
@@ -2405,6 +2409,9 @@ PATTERN_TEXT = {  # code-reference pattern -> (plain label, one-line action)
     "sdk_openai_client": ("Code uses the SDK's serving-endpoints OpenAI client",
                           "switch to DatabricksOpenAI(use_ai_gateway=True) or the OpenAI client on /ai-gateway/mlflow/v1"),
     "custom_endpoint_call": ("Code calls a custom model endpoint", "no change: custom model endpoints stay on legacy serving"),
+    "tabular_endpoint_call": ("Code sends tabular input to an endpoint the scan can't name",
+                              "confirm which endpoint it calls: a custom model endpoint needs no change, a legacy one "
+                              "moves to the OpenAI client on /ai-gateway/mlflow/v1"),
     "v2_gateway_model": ("Client sends a legacy model name on the gateway route (v2)",
                          "set model to the system.ai model and keep the route (see CODE_FIXES.md)"),
     "ai_gateway_regional_host": ("Code calls a regional AI Gateway host",
@@ -2638,13 +2645,17 @@ def readiness(rows: list[PlanRow], refs: list[ClientReference], traffic_ok: bool
         loc = x.asset + (f":{x.line}" if x.line else "")
         if x.pattern == "custom_endpoint_call":
             continue  # custom model endpoints aren't retired: listed in CODE_FIXES.md as "no change", not a finding
+        if x.pattern == "tabular_endpoint_call":
+            if retiring:  # probably a custom model, but the scan can't name it: a warning, not a blocker
+                label, action = PATTERN_TEXT[x.pattern]
+                warnings.append(_flag(x.pattern, loc, x.suggestion, label, action))
+            continue
         if x.pattern in VARIABLE_CALL_PATTERNS and not x.legacy_endpoint and retiring:
             # A client bound to /serving-endpoints with a run-time name: same unknown as a dynamic URL.
             blockers.append(_flag("unresolved_endpoint_call", loc, x.suggestion,
                                   "Code calls a serving endpoint the scan can't name",
                                   "find which endpoint it calls at run time. A legacy endpoint: rewrite the client "
-                                  "as described (changing only the name gives a 404). A custom model endpoint: no "
-                                  "change"))
+                                  "as described (changing only the name gives a 404). " + CUSTOM_UNNAMED_ACTION))
             continue
         if x.asset_type == "vector_search_index":
             blockers.append(_flag("vector_search", x.asset.removeprefix("index "),
@@ -2682,8 +2693,7 @@ def readiness(rows: list[PlanRow], refs: list[ClientReference], traffic_ok: bool
                                   "can't tell whether it reaches a legacy endpoint",
                                   "Code calls a serving endpoint the scan can't name",
                                   "find which endpoint it calls at run time. A legacy endpoint: move the call to "
-                                  "/ai-gateway/ (see CODE_FIXES.md). A custom model or feature serving endpoint: "
-                                  "put the name in the code or a config value so the scan can confirm it, then re-scan"))
+                                  "/ai-gateway/ (see CODE_FIXES.md). " + CUSTOM_UNNAMED_ACTION))
         elif x.asset_type == "app":
             label, action = _ref_text(x)
             warnings.append(_flag(x.pattern, loc, x.suggestion, label, action))

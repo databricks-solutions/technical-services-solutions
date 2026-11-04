@@ -5,6 +5,8 @@
   INSTALL_unity_gateway_migration_toolkit_<version>.py in this folder
 - checks that __version__ (ug_migration_planner.py), version (app/frontend/package.json) and toolkit_version
   (databricks.yml) are the same
+- checks that every installer or zip file name the guides mention (*.md) carries that version, so a guide never tells
+  people to import a file the release doesn't ship
 
 Exit 0 when everything matches, 1 with a message per problem otherwise. Stdlib only.
 """
@@ -40,6 +42,26 @@ def versions() -> dict[str, str]:
     }
 
 
+# A versioned customer file name in the docs: INSTALL_..._0_10_1.py or unity-gateway-migration-toolkit-0.10.1.zip.
+VERSIONED_NAME_RE = re.compile(r"INSTALL_unity_gateway_migration_toolkit_(\d+_\d+_\d+)\.py"
+                               r"|unity-gateway-migration-toolkit-(\d+\.\d+\.\d+)\.zip")
+
+
+def stale_doc_names(version: str) -> list[str]:
+    """Versioned installer or zip names in the guides that don't match version (file:line: name)."""
+    out = []
+    for name in sorted(os.listdir(HERE)):
+        if not name.endswith(".md"):
+            continue
+        with open(os.path.join(HERE, name)) as f:
+            for i, line in enumerate(f, 1):
+                for m in VERSIONED_NAME_RE.finditer(line):
+                    found = (m.group(1) or "").replace("_", ".") or m.group(2)
+                    if found != version:
+                        out.append(f"{name}:{i}: {m.group(0)}")
+    return out
+
+
 def main() -> int:
     problems = []
     v = versions()
@@ -56,10 +78,11 @@ def main() -> int:
                 if a.read() != b.read():
                     problems.append(f"{os.path.basename(committed)} doesn't match a fresh build from the sources: "
                                     "rebuild with ./package.sh and commit the new installer")
+    problems += [f"{loc} names another version's file: use the {version} name" for loc in stale_doc_names(version)]
     for p in problems:
         print("FAIL:", p)
     if not problems:
-        print(f"OK: toolkit {version}, installer matches the sources")
+        print(f"OK: toolkit {version}, installer matches the sources, guides name {version} files")
     return 1 if problems else 0
 
 

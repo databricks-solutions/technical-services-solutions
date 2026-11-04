@@ -86,7 +86,9 @@ function SubProjectCard({
   onDelete: () => void;
 }) {
   const navigate = useNavigate();
-  const open = () => void navigate(subPath(parentId, sub.id, STAGE[sub.stage].module));
+  // Opening a sub-project starts on its sources; the Next button goes to the step that is due.
+  const open = () => void navigate(subPath(parentId, sub.id, 'sources'));
+  const goNext = () => void navigate(subPath(parentId, sub.id, STAGE[sub.stage].module));
   const next = NEXT[sub.stage];
   return (
     <Card componentId="gsb.project.sub_card" width="100%" onClick={open}>
@@ -125,7 +127,7 @@ function SubProjectCard({
             endIcon={<ArrowRightIcon />}
             onClick={(e) => {
               e.stopPropagation();
-              open();
+              goNext();
             }}
           >
             {next.action}

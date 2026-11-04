@@ -11,10 +11,10 @@ interface Node {
   warnings: string[];
 }
 
-const W = 220;
-const H = 44;
-const INDENT = 32;
-const ROW = H + 16;
+const W = 300;
+const H = 56;
+const INDENT = 44;
+const ROW = H + 20;
 
 const startsWith = (path: (string | number)[], prefix: (string | number)[]) =>
   prefix.every((p, i) => path[i] === p) && path[prefix.length] !== 'joins';
@@ -43,7 +43,7 @@ function layout(view: MetricView, issues: MetricViewIssue[]): Node[] {
 
 const short = (table: string) => {
   const last = table.split('.').pop() ?? table;
-  return last.length > 26 ? `${last.slice(0, 25)}...` : last;
+  return last.length > 36 ? `${last.slice(0, 35)}...` : last;
 };
 
 /** Join tree as a diagram plus the same facts as a list, so screen readers get the keys too. */
@@ -65,10 +65,10 @@ export function JoinDiagram({ view, issues }: { view: MetricView; issues: Metric
         }
         stroke={kind === 'warn' ? 'var(--db-alert-border-warning)' : 'var(--db-border-strong)'}
       />
-      <text x={10} y={18} fontSize={13} fontWeight={600} fill="var(--db-text-base)">
+      <text x={12} y={23} fontSize={14} fontWeight={600} fill="var(--db-text-base)">
         {title}
       </text>
-      <text x={10} y={34} fontSize={11} fill="var(--db-text-subtle)">
+      <text x={12} y={42} fontSize={12} fill="var(--db-text-subtle)">
         {sub}
       </text>
     </g>
@@ -84,7 +84,7 @@ export function JoinDiagram({ view, issues }: { view: MetricView; issues: Metric
         viewBox={`0 0 ${depth * INDENT + W + 1} ${(nodes.length + 1) * ROW}`}
       >
         {nodes.map((n) => {
-          const x1 = (n.depth - 1) * INDENT + 14;
+          const x1 = (n.depth - 1) * INDENT + 18;
           const y1 = n.parentRow * ROW + H;
           const y2 = n.row * ROW + H / 2;
           return (

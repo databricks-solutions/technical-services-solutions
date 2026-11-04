@@ -11,6 +11,7 @@ import {
   TableCell,
   TableHeader,
   TableRow,
+  Tabs,
   Tag,
   Typography,
 } from '@databricks/design-system';
@@ -138,6 +139,43 @@ function Issues({ issues, live }: { issues: MetricViewIssue[]; live: boolean }) 
   );
 }
 
+function FieldCard({
+  title,
+  tag,
+  explanation,
+  expr,
+}: {
+  title: string;
+  tag?: string;
+  explanation: string;
+  expr: string;
+}) {
+  return (
+    <article
+      aria-label={title}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 6,
+        padding: 12,
+        border: '1px solid var(--db-border-base)',
+        borderRadius: 8,
+        minWidth: 0,
+      }}
+    >
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <Typography.Text bold>{title}</Typography.Text>
+        {tag && <Tag componentId="gsb.designer.field_tag">{tag}</Tag>}
+      </div>
+      <Typography.Text>{explanation}</Typography.Text>
+      <code style={{ ...MONO, color: 'var(--db-text-subtle)', overflowWrap: 'anywhere' }}>{expr}</code>
+    </article>
+  );
+}
+
+const GRID = { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 } as const;
+
+/** Measures and dimensions as cards that lead with what they mean, then how they are computed. */
 function Fields({
   draft,
   view,
@@ -149,50 +187,35 @@ function Fields({
   return (
     <>
       <Typography.Title level={4} withoutMargins>
-        Measures
+        Measures ({view.measures.length})
       </Typography.Title>
-      <Table>
-        <TableRow isHeader>
-          <TableHeader componentId="gsb.designer.m_name">Name</TableHeader>
-          <TableHeader componentId="gsb.designer.m_kind">Type</TableHeader>
-          <TableHeader componentId="gsb.designer.m_explain">How it is computed</TableHeader>
-        </TableRow>
+      <div style={GRID}>
         {view.measures.map((m) => {
           const e = explain.measures[m.name];
           return (
-            <TableRow key={m.name}>
-              <TableCell>{m.display_name ?? m.name}</TableCell>
-              <TableCell>{e ? ADDITIVITY[e.additivity] : '-'}</TableCell>
-              <TableCell multiline>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <span>{e?.explanation ?? m.comment ?? 'No explanation yet.'}</span>
-                  <code style={{ ...MONO, color: 'var(--db-text-subtle)' }}>{m.expr}</code>
-                </div>
-              </TableCell>
-            </TableRow>
+            <FieldCard
+              key={m.name}
+              title={m.display_name ?? m.name}
+              tag={e ? ADDITIVITY[e.additivity] : m.window ? 'Window' : undefined}
+              explanation={e?.explanation ?? m.comment ?? 'No explanation yet.'}
+              expr={m.expr}
+            />
           );
         })}
-      </Table>
+      </div>
       <Typography.Title level={4} withoutMargins>
-        Dimensions
+        Dimensions ({view.dimensions.length})
       </Typography.Title>
-      <Table>
-        <TableRow isHeader>
-          <TableHeader componentId="gsb.designer.d_name">Name</TableHeader>
-          <TableHeader componentId="gsb.designer.d_explain">How it is computed</TableHeader>
-        </TableRow>
+      <div style={GRID}>
         {view.dimensions.map((d) => (
-          <TableRow key={d.name}>
-            <TableCell>{d.display_name ?? d.name}</TableCell>
-            <TableCell multiline>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <span>{explain.dimensions[d.name]?.explanation ?? d.comment ?? 'No explanation yet.'}</span>
-                <code style={{ ...MONO, color: 'var(--db-text-subtle)' }}>{d.expr}</code>
-              </div>
-            </TableCell>
-          </TableRow>
+          <FieldCard
+            key={d.name}
+            title={d.display_name ?? d.name}
+            explanation={explain.dimensions[d.name]?.explanation ?? d.comment ?? 'No explanation yet.'}
+            expr={d.expr}
+          />
         ))}
-      </Table>
+      </div>
     </>
   );
 }
@@ -310,6 +333,7 @@ function Designer({
   const [busy, setBusy] = useState<'save' | 'refine' | 'generate' | 'plan' | 'validate'>();
   const [plan, setPlan] = useState<ValidationPlan>();
   const [error, setError] = useState<string>();
+  const [tab, setTab] = useState<DesignerTab>('model');
   const dirty = yaml !== draft.yaml;
 
   const live = useMemo(() => validateMetricView(yaml), [yaml]);
@@ -335,18 +359,85 @@ function Designer({
     );
   };
 
+  const errors = issues.filter((i) => i.severity === 'error').length;
+  const askPlan = () => {
+    setBusy('plan');
+    setError(undefined);
+    api<ValidationPlan>(`/api/projects/${projectId}/designs/${draft.version}/validation`).then(
+      (p) => {
+        setBusy(undefined);
+        setPlan(p);
+      },
+      (err: unknown) => {
+        setBusy(undefined);
+        setError((err as Error).message);
+      }
+    );
+  };
+  const save = () => run('save', `/api/projects/${projectId}/designs`, { baseVersion: draft.version, yaml });
+
+  // One clear next action, from the state of the draft.
+  const next: { text: string; action?: { label: string; onClick: () => void; disabled?: boolean } } = errors
+    ? {
+        text: `Fix ${errors} error${errors === 1 ? '' : 's'} in the YAML before you validate.`,
+        action: { label: 'Open the YAML', onClick: () => setTab('yaml') },
+      }
+    : dirty
+      ? {
+          text: 'You have unsaved changes. Save them as a new version.',
+          action: { label: 'Save version', onClick: save },
+        }
+      : draft.status !== 'validated'
+        ? {
+            text: `Validate the design: ${draft.tests.length} test${draft.tests.length === 1 ? '' : 's'} run in the sandbox as you.`,
+            action: { label: 'Validate in sandbox', onClick: askPlan, disabled: !draft.tests.length },
+          }
+        : { text: 'Validated. Refine it with the AI, or try a modeling pattern. Optimize and publish come next.' };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <Typography.Text bold>
-          {draft.name}, version {draft.version}
-        </Typography.Text>
+        <Typography.Title level={3} withoutMargins>
+          {draft.name}
+        </Typography.Title>
+        <Tag componentId="gsb.designer.version">Version {draft.version}</Tag>
         <Tag componentId="gsb.designer.origin">{ORIGIN[draft.origin]}</Tag>
         <Tag componentId="gsb.designer.status" color={draft.status === 'validated' ? 'teal' : 'lemon'}>
           {draft.status === 'validated' ? 'Validated' : 'Not validated'}
         </Tag>
         {dirty && <Tag componentId="gsb.designer.dirty">Unsaved changes</Tag>}
       </div>
+
+      <div
+        role="status"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+          padding: 12,
+          borderRadius: 8,
+          background: 'var(--db-surface-subtle)',
+          flexWrap: 'wrap',
+        }}
+      >
+        <div>
+          <Typography.Text bold>Next: </Typography.Text>
+          <Typography.Text>{next.text}</Typography.Text>
+        </div>
+        {next.action && (
+          <Button
+            componentId="gsb.designer.next"
+            type="primary"
+            loading={busy === 'save' || busy === 'plan' || busy === 'validate'}
+            disabled={!!busy || next.action.disabled}
+            onClick={next.action.onClick}
+          >
+            {next.action.label}
+          </Button>
+        )}
+      </div>
+
       {draft.origin !== 'edited' && (
         <Alert
           componentId="gsb.designer.ai_notice"
@@ -358,101 +449,153 @@ function Designer({
       )}
       {error && <Alert componentId="gsb.designer.error" type="error" closable={false} message={error} />}
 
-      <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-        <section
-          aria-labelledby="gsb-designer-yaml-label"
-          style={{ flex: '1 1 420px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}
-        >
-          <FormUI.Label htmlFor="gsb-designer-yaml" id="gsb-designer-yaml-label">
-            Metric view YAML
-          </FormUI.Label>
-          <YamlEditor value={yaml} onChange={setYaml} />
-          <div style={{ display: 'flex', gap: 8 }}>
-            <Button
-              componentId="gsb.designer.save"
-              type="primary"
-              loading={busy === 'save'}
-              disabled={!dirty || !!busy}
-              onClick={() => run('save', `/api/projects/${projectId}/designs`, { baseVersion: draft.version, yaml })}
-            >
-              Save version
-            </Button>
-            <Button componentId="gsb.designer.discard" disabled={!dirty || !!busy} onClick={() => setYaml(draft.yaml)}>
-              Discard changes
-            </Button>
+      <Tabs.Root componentId="gsb.designer.tabs" value={tab} onValueChange={(v) => setTab(v as DesignerTab)}>
+        <Tabs.List>
+          <Tabs.Trigger value="model">Model</Tabs.Trigger>
+          <Tabs.Trigger value="yaml">YAML{errors ? ` (${errors} errors)` : dirty ? ' (unsaved)' : ''}</Tabs.Trigger>
+          <Tabs.Trigger value="tests">Tests ({draft.tests.length})</Tabs.Trigger>
+          <Tabs.Trigger value="history">History ({data.history.length})</Tabs.Trigger>
+        </Tabs.List>
+
+        <Tabs.Content value="model">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingTop: 16 }}>
+            {view ? (
+              <>
+                <section
+                  aria-labelledby="gsb-designer-joins"
+                  style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+                >
+                  <Typography.Title level={4} id="gsb-designer-joins" withoutMargins>
+                    Joins
+                  </Typography.Title>
+                  <JoinDiagram view={view} issues={issues} />
+                </section>
+                <Fields draft={draft} view={view} />
+              </>
+            ) : (
+              <Typography.Text color="secondary">Fix the YAML errors to see the model.</Typography.Text>
+            )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 720 }}>
+              <FormUI.Label htmlFor="gsb-designer-refine">Ask the AI for a change</FormUI.Label>
+              <Input.TextArea
+                componentId="gsb.designer.refine_input"
+                id="gsb-designer-refine"
+                value={instruction}
+                autoSize={{ minRows: 2, maxRows: 6 }}
+                placeholder="For example: add a gross margin measure and a ship year dimension."
+                onChange={(e) => setInstruction(e.target.value)}
+              />
+              {dirty && <FormUI.Hint>Save or discard your edits before you ask the AI for a change.</FormUI.Hint>}
+              <div style={{ display: 'flex', gap: 8 }}>
+                <Button
+                  componentId="gsb.designer.refine"
+                  loading={busy === 'refine'}
+                  disabled={dirty || instruction.trim().length < 3 || !!busy}
+                  onClick={() => run('refine', `/api/projects/${projectId}/designs/refine`, { instruction })}
+                >
+                  Apply change
+                </Button>
+                <Button
+                  componentId="gsb.designer.regenerate"
+                  loading={busy === 'generate'}
+                  disabled={dirty || !!busy}
+                  onClick={() => run('generate', `/api/projects/${projectId}/designs/generate`, {})}
+                >
+                  Generate a new design
+                </Button>
+              </div>
+              {(busy === 'refine' || busy === 'generate') && (
+                <div role="status">
+                  <Typography.Text color="secondary">
+                    Reading the tables and designing. This can take a minute.
+                  </Typography.Text>
+                </div>
+              )}
+            </div>
           </div>
-          <Issues issues={issues} live={dirty} />
-        </section>
+        </Tabs.Content>
 
-        <section
-          aria-labelledby="gsb-designer-model"
-          style={{ flex: '1 1 420px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12 }}
-        >
-          <Typography.Title level={3} id="gsb-designer-model" withoutMargins>
-            Model
-          </Typography.Title>
-          {view ? (
-            <>
-              <JoinDiagram view={view} issues={issues} />
-              <Fields draft={draft} view={view} />
-            </>
-          ) : (
-            <Typography.Text color="secondary">Fix the YAML errors to see the model.</Typography.Text>
-          )}
-        </section>
-      </div>
-
-      <section aria-labelledby="gsb-designer-tests" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <Typography.Title level={3} id="gsb-designer-tests" withoutMargins>
-          Test cases
-        </Typography.Title>
-        <Typography.Text color="secondary">
-          Validation creates the metric view in the sandbox schema, runs each test as you, and compares the result with
-          plain SQL derived from the YAML.
-        </Typography.Text>
-        {draft.tests.length ? (
-          <ul style={{ margin: 0, paddingLeft: 20 }}>
-            {draft.tests.map((t) => (
-              <li key={t.name}>
-                <Typography.Text bold>{t.name}</Typography.Text>: {t.measures.join(', ')}
-                {t.dimensions.length ? ` by ${t.dimensions.join(', ')}` : ' in total'}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <Typography.Text>No test cases match the current fields.</Typography.Text>
-        )}
-        <div>
-          <Button
-            componentId="gsb.designer.validate"
-            type="primary"
-            loading={busy === 'plan' || busy === 'validate'}
-            disabled={dirty || !!busy || !draft.tests.length || draft.issues.some((i) => i.severity === 'error')}
-            onClick={() => {
-              setBusy('plan');
-              setError(undefined);
-              api<ValidationPlan>(`/api/projects/${projectId}/designs/${draft.version}/validation`).then(
-                (p) => {
-                  setBusy(undefined);
-                  setPlan(p);
-                },
-                (err: unknown) => {
-                  setBusy(undefined);
-                  setError((err as Error).message);
-                }
-              );
-            }}
+        <Tabs.Content value="yaml">
+          <section
+            aria-labelledby="gsb-designer-yaml-label"
+            style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 16 }}
           >
-            Validate in sandbox
-          </Button>
-        </div>
-        {busy === 'validate' && (
-          <div role="status">
-            <Typography.Text color="secondary">Creating the sandbox view and running the tests.</Typography.Text>
-          </div>
-        )}
-        {data.validation && <ValidationResults run={data.validation} />}
-      </section>
+            <FormUI.Label htmlFor="gsb-designer-yaml" id="gsb-designer-yaml-label">
+              Metric view YAML
+            </FormUI.Label>
+            <YamlEditor value={yaml} onChange={setYaml} />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Button
+                componentId="gsb.designer.save"
+                type="primary"
+                loading={busy === 'save'}
+                disabled={!dirty || !!busy}
+                onClick={save}
+              >
+                Save version
+              </Button>
+              <Button
+                componentId="gsb.designer.discard"
+                disabled={!dirty || !!busy}
+                onClick={() => setYaml(draft.yaml)}
+              >
+                Discard changes
+              </Button>
+            </div>
+            <Issues issues={issues} live={dirty} />
+          </section>
+        </Tabs.Content>
+
+        <Tabs.Content value="tests">
+          <section style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 16 }}>
+            <Typography.Text color="secondary">
+              Validation creates the metric view in the sandbox schema, runs each test as you, and compares the result
+              with plain SQL derived from the YAML.
+            </Typography.Text>
+            {draft.tests.length ? (
+              <ul style={{ margin: 0, paddingLeft: 20 }}>
+                {draft.tests.map((t) => (
+                  <li key={t.name}>
+                    <Typography.Text bold>{t.name}</Typography.Text>: {t.measures.join(', ')}
+                    {t.dimensions.length ? ` by ${t.dimensions.join(', ')}` : ' in total'}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <Typography.Text>No test cases match the current fields.</Typography.Text>
+            )}
+            <div>
+              <Button
+                componentId="gsb.designer.validate"
+                type="primary"
+                loading={busy === 'plan' || busy === 'validate'}
+                disabled={dirty || !!busy || !draft.tests.length || draft.issues.some((i) => i.severity === 'error')}
+                onClick={askPlan}
+              >
+                Validate in sandbox
+              </Button>
+            </div>
+            {busy === 'validate' && (
+              <div role="status">
+                <Typography.Text color="secondary">Creating the sandbox view and running the tests.</Typography.Text>
+              </div>
+            )}
+            {data.validation && <ValidationResults run={data.validation} />}
+          </section>
+        </Tabs.Content>
+
+        <Tabs.Content value="history">
+          <History
+            projectId={projectId}
+            history={data.history}
+            current={draft.version}
+            busy={!!busy}
+            onRestore={(old) =>
+              run('save', `/api/projects/${projectId}/designs`, { baseVersion: draft.version, yaml: old })
+            }
+          />
+        </Tabs.Content>
+      </Tabs.Root>
 
       <Modal
         componentId="gsb.designer.validate_modal"
@@ -483,48 +626,106 @@ function Designer({
           </div>
         )}
       </Modal>
+    </div>
+  );
+}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 720 }}>
-        <FormUI.Label htmlFor="gsb-designer-refine">Ask for a change</FormUI.Label>
-        <Input.TextArea
-          componentId="gsb.designer.refine_input"
-          id="gsb-designer-refine"
-          value={instruction}
-          autoSize={{ minRows: 2, maxRows: 6 }}
-          placeholder="For example: add a gross margin measure and a ship year dimension."
-          onChange={(e) => setInstruction(e.target.value)}
-        />
-        {dirty && <FormUI.Hint>Save or discard your edits before you ask the AI for a change.</FormUI.Hint>}
-        <div style={{ display: 'flex', gap: 8 }}>
-          <Button
-            componentId="gsb.designer.refine"
-            loading={busy === 'refine'}
-            disabled={dirty || instruction.trim().length < 3 || !!busy}
-            onClick={() => run('refine', `/api/projects/${projectId}/designs/refine`, { instruction })}
-          >
-            Apply change
-          </Button>
-          <Button
-            componentId="gsb.designer.regenerate"
-            loading={busy === 'generate'}
-            disabled={dirty || !!busy}
-            onClick={() => run('generate', `/api/projects/${projectId}/designs/generate`, {})}
-          >
-            Generate a new design
-          </Button>
+type DesignerTab = 'model' | 'yaml' | 'tests' | 'history';
+
+function VersionYaml({
+  projectId,
+  version,
+  current,
+  busy,
+  onRestore,
+}: {
+  projectId: string;
+  version: number;
+  current: number;
+  busy: boolean;
+  onRestore: (yaml: string) => void;
+}) {
+  const res = useResource<DesignerView>(`/api/projects/${projectId}/designs?version=${version}`);
+  const shown = res.data?.draft;
+  return (
+    <DataState status={res.status} message={res.error} onRetry={res.reload}>
+      {shown && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <SqlBlock label={`Version ${shown.version} YAML (read-only)`} sql={shown.yaml} />
+          {shown.version !== current && (
+            <div>
+              <Button componentId="gsb.designer.restore" disabled={busy} onClick={() => onRestore(shown.yaml)}>
+                Restore as a new version
+              </Button>
+            </div>
+          )}
         </div>
-        {(busy === 'refine' || busy === 'generate') && (
-          <div role="status">
-            <Typography.Text color="secondary">
-              Reading the tables and designing. This can take a minute.
-            </Typography.Text>
-          </div>
-        )}
-      </div>
+      )}
+    </DataState>
+  );
+}
 
-      <Typography.Text color="secondary">
-        {data.history.length} version{data.history.length === 1 ? '' : 's'}. Every save and AI change adds a version.
-      </Typography.Text>
+/** Every version, newest first. A version opens read-only; Restore saves its YAML as a new version. */
+function History({
+  projectId,
+  history,
+  current,
+  busy,
+  onRestore,
+}: {
+  projectId: string;
+  history: DesignerView['history'];
+  current: number;
+  busy: boolean;
+  onRestore: (yaml: string) => void;
+}) {
+  const [open, setOpen] = useState<number>();
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 16 }}>
+      <Table>
+        <TableRow isHeader>
+          <TableHeader componentId="gsb.designer.h_version">Version</TableHeader>
+          <TableHeader componentId="gsb.designer.h_origin">Change</TableHeader>
+          <TableHeader componentId="gsb.designer.h_status">Status</TableHeader>
+          <TableHeader componentId="gsb.designer.h_by">By</TableHeader>
+          <TableHeader componentId="gsb.designer.h_view">View</TableHeader>
+        </TableRow>
+        {[...history]
+          .sort((a, b) => b.version - a.version)
+          .map((h) => (
+            <TableRow key={h.version}>
+              <TableCell>
+                {h.version}
+                {h.version === current ? ' (current)' : ''}
+              </TableCell>
+              <TableCell>{ORIGIN[h.origin]}</TableCell>
+              <TableCell>{h.status === 'validated' ? 'Validated' : 'Not validated'}</TableCell>
+              <TableCell>
+                {h.createdBy}, {new Date(h.createdAt).toLocaleString()}
+              </TableCell>
+              <TableCell>
+                <Button
+                  componentId="gsb.designer.h_open"
+                  size="small"
+                  type="tertiary"
+                  onClick={() => setOpen(open === h.version ? undefined : h.version)}
+                >
+                  {open === h.version ? 'Close' : 'Open'}
+                </Button>
+              </TableCell>
+            </TableRow>
+          ))}
+      </Table>
+      {open && (
+        <VersionYaml
+          key={open}
+          projectId={projectId}
+          version={open}
+          current={current}
+          busy={busy}
+          onRestore={onRestore}
+        />
+      )}
     </div>
   );
 }

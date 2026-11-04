@@ -23,7 +23,7 @@ import { DesignerPage } from './pages/DesignerPage';
 import { IntakePage } from './pages/IntakePage';
 import { PlaygroundPage } from './pages/PlaygroundPage';
 import { ProjectPage } from './pages/ProjectPage';
-import { ProjectsPage, STAGE, subPath } from './pages/ProjectsPage';
+import { ProjectsPage, subPath } from './pages/ProjectsPage';
 import { SourcesPage } from './pages/SourcesPage';
 
 // Sub-project modules appear here as each phase ships.
@@ -111,7 +111,7 @@ function Shell() {
                           {p.id === inProject && p.subProjects.length > 0 && (
                             <NavList.SubList aria-label={`${p.name} sub-projects`}>
                               {p.subProjects.map((s) => {
-                                const path = subPath(p.id, s.id, STAGE[s.stage].module);
+                                const path = subPath(p.id, s.id, 'sources');
                                 return (
                                   <NavList.SubItem key={s.id}>
                                     <NavList.SubLink

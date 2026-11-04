@@ -142,7 +142,18 @@
   name: "MLOps Readiness Scorecard"
   kind: "Databricks notebook"
   path: "production-readiness/mlops-readiness-scorecard"
+
 - slug: unity-gateway-migration-toolkit
   name: "Unity Gateway Migration Toolkit"
   kind: "Installer notebook + Databricks App + Declarative Automation Bundle"
   path: "unified-governance/unity-gateway-migration-toolkit"
+
+- slug: genie-agent-scanner
+  name: "Genie Agent Scanner"
+  kind: "Agent skill"
+  path: "genie/genie-agent-scanner"
+
+- slug: snowflake-source-extract
+  name: "Snowflake Source Extract"
+  kind: "Python script"
+  path: "dw-migration/source-extracts/snowflake"

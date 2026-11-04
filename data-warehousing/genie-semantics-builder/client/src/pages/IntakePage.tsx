@@ -71,34 +71,42 @@ function BriefView({ brief }: { brief: Partial<SemanticBrief> }) {
         <List items={b.keyQuestions} empty="Not defined yet" />
       </Section>
       <Section title="Measures">
-        <Table>
-          <TableRow isHeader>
-            <TableHeader componentId="gsb.brief.measure_name">Name</TableHeader>
-            <TableHeader componentId="gsb.brief.measure_agg">Aggregation</TableHeader>
-            <TableHeader componentId="gsb.brief.measure_desc">Description</TableHeader>
-          </TableRow>
-          {b.measures.map((m) => (
-            <TableRow key={m.name}>
-              <TableCell>{m.name}</TableCell>
-              <TableCell>{m.aggregation.replace('_', ' ')}</TableCell>
-              <TableCell>{m.description}</TableCell>
+        {!b.measures.length ? (
+          <Typography.Text color="secondary">None yet</Typography.Text>
+        ) : (
+          <Table>
+            <TableRow isHeader>
+              <TableHeader componentId="gsb.brief.measure_name">Name</TableHeader>
+              <TableHeader componentId="gsb.brief.measure_agg">Aggregation</TableHeader>
+              <TableHeader componentId="gsb.brief.measure_desc">Description</TableHeader>
             </TableRow>
-          ))}
-        </Table>
+            {b.measures.map((m) => (
+              <TableRow key={m.name}>
+                <TableCell>{m.name}</TableCell>
+                <TableCell>{m.aggregation.replace('_', ' ')}</TableCell>
+                <TableCell>{m.description}</TableCell>
+              </TableRow>
+            ))}
+          </Table>
+        )}
       </Section>
       <Section title="Dimensions">
-        <Table>
-          <TableRow isHeader>
-            <TableHeader componentId="gsb.brief.dim_name">Name</TableHeader>
-            <TableHeader componentId="gsb.brief.dim_desc">Description</TableHeader>
-          </TableRow>
-          {b.dimensions.map((d) => (
-            <TableRow key={d.name}>
-              <TableCell>{d.name}</TableCell>
-              <TableCell>{d.description}</TableCell>
+        {!b.dimensions.length ? (
+          <Typography.Text color="secondary">None yet</Typography.Text>
+        ) : (
+          <Table>
+            <TableRow isHeader>
+              <TableHeader componentId="gsb.brief.dim_name">Name</TableHeader>
+              <TableHeader componentId="gsb.brief.dim_desc">Description</TableHeader>
             </TableRow>
-          ))}
-        </Table>
+            {b.dimensions.map((d) => (
+              <TableRow key={d.name}>
+                <TableCell>{d.name}</TableCell>
+                <TableCell>{d.description}</TableCell>
+              </TableRow>
+            ))}
+          </Table>
+        )}
       </Section>
       <Section title="Time grains">
         <div style={{ display: 'flex', gap: 4 }}>

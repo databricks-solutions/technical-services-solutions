@@ -41,6 +41,10 @@ const RUN_TAG: Record<PatternRun['status'], { color: 'teal' | 'coral' | 'lemon';
   running: { color: 'lemon', label: 'Running' },
 };
 
+/** Dates at midnight UTC come back as timestamps; show the date only. */
+const cell = (v: string | null) =>
+  v === null ? 'null' : /^\d{4}-\d{2}-\d{2}T00:00:00(\.0+)?Z$/.test(v) ? v.slice(0, 10) : v;
+
 function ExpectedTable({ pattern }: { pattern: Pattern }) {
   const { columns, rows } = pattern.expected;
   return (
@@ -56,7 +60,7 @@ function ExpectedTable({ pattern }: { pattern: Pattern }) {
         {rows.map((r, i) => (
           <TableRow key={i}>
             {r.map((v, j) => (
-              <TableCell key={j}>{v ?? 'null'}</TableCell>
+              <TableCell key={j}>{cell(v)}</TableCell>
             ))}
           </TableRow>
         ))}
@@ -107,13 +111,24 @@ const role = (r: string) => r.replace(/_/g, ' ');
 
 /** Rule-based: matches the pattern roles to source columns by type and name. */
 function FitNotice({ fit, assessed }: { fit: PatternFit | undefined; assessed: boolean }) {
+  const { projectId = '', parentId = '' } = useParams();
+  const navigate = useNavigate();
   if (!assessed || !fit)
     return (
       <Alert
         componentId="gsb.playground.fit_unknown"
         type="info"
         closable={false}
-        message="Assess your sources on Source Readiness to see if this pattern fits your data."
+        message="Assess your sources to see if this pattern fits your data."
+        description={
+          <Button
+            componentId="gsb.playground.fit_assess"
+            size="small"
+            onClick={() => void navigate(`/projects/${parentId}/sub/${projectId}/sources`)}
+          >
+            Open Sources & Readiness
+          </Button>
+        }
       />
     );
   const found = fit.found.map((f) => `${role(f.role)}: ${f.match}`).join('; ');

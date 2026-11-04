@@ -450,6 +450,7 @@ export function SourcesPage() {
   const data = view.data;
   const status = view.status;
   const assessed = data?.sources.some((s) => s.report) ?? false;
+  const unassessed = data?.sources.filter((s) => !s.report).length ?? 0;
   const fixes = [...(data?.recommendations ?? [])].sort(
     (a, b) => Number(isOpen(b)) - Number(isOpen(a)) || b.scoreGain - a.scoreGain
   );
@@ -488,8 +489,11 @@ export function SourcesPage() {
               </Button>
               {addButtons}
               <Typography.Text color="secondary">
-                {data.sources.length} source{data.sources.length === 1 ? '' : 's'}. The assessment reads metadata with
-                your permissions. Nothing changes until you approve a fix.
+                {data.sources.length} source{data.sources.length === 1 ? '' : 's'}
+                {assessed && unassessed > 0
+                  ? `, ${unassessed} not assessed yet. Assess again to include ${unassessed === 1 ? 'it' : 'them'} in the score.`
+                  : '.'}{' '}
+                The assessment reads metadata with your permissions. Nothing changes until you approve a fix.
               </Typography.Text>
               {assessed && (
                 <div style={{ marginLeft: 'auto' }}>

@@ -141,11 +141,13 @@ function Issues({ issues, live }: { issues: MetricViewIssue[]; live: boolean }) 
 
 function FieldCard({
   title,
+  name,
   tag,
   explanation,
   expr,
 }: {
   title: string;
+  name: string;
   tag?: string;
   explanation: string;
   expr: string;
@@ -167,8 +169,13 @@ function FieldCard({
         <Typography.Text bold>{title}</Typography.Text>
         {tag && <Tag componentId="gsb.designer.field_tag">{tag}</Tag>}
       </div>
+      {name !== title && (
+        <code style={{ ...MONO, color: 'var(--db-text-subtle)', overflowWrap: 'anywhere' }}>{name}</code>
+      )}
       <Typography.Text>{explanation}</Typography.Text>
-      <code style={{ ...MONO, color: 'var(--db-text-subtle)', overflowWrap: 'anywhere' }}>{expr}</code>
+      <code style={{ ...MONO, color: 'var(--db-text-subtle)', overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>
+        {expr}
+      </code>
     </article>
   );
 }
@@ -196,9 +203,15 @@ function Fields({
             <FieldCard
               key={m.name}
               title={m.display_name ?? m.name}
+              name={m.name}
               tag={e ? ADDITIVITY[e.additivity] : m.window ? 'Window' : undefined}
               explanation={e?.explanation ?? m.comment ?? 'No explanation yet.'}
-              expr={m.expr}
+              expr={[
+                m.expr,
+                ...(m.window ?? []).map(
+                  (w) => `window: ${[w.order, w.range, w.offset && `offset ${w.offset}`].filter(Boolean).join(', ')}`
+                ),
+              ].join('\n')}
             />
           );
         })}
@@ -211,6 +224,7 @@ function Fields({
           <FieldCard
             key={d.name}
             title={d.display_name ?? d.name}
+            name={d.name}
             explanation={explain.dimensions[d.name]?.explanation ?? d.comment ?? 'No explanation yet.'}
             expr={d.expr}
           />
@@ -688,6 +702,7 @@ function History({
           <TableHeader componentId="gsb.designer.h_origin">Change</TableHeader>
           <TableHeader componentId="gsb.designer.h_status">Status</TableHeader>
           <TableHeader componentId="gsb.designer.h_by">By</TableHeader>
+          <TableHeader componentId="gsb.designer.h_when">When</TableHeader>
           <TableHeader componentId="gsb.designer.h_view">View</TableHeader>
         </TableRow>
         {[...history]
@@ -700,9 +715,8 @@ function History({
               </TableCell>
               <TableCell>{ORIGIN[h.origin]}</TableCell>
               <TableCell>{h.status === 'validated' ? 'Validated' : 'Not validated'}</TableCell>
-              <TableCell>
-                {h.createdBy}, {new Date(h.createdAt).toLocaleString()}
-              </TableCell>
+              <TableCell>{h.createdBy}</TableCell>
+              <TableCell>{new Date(h.createdAt).toLocaleString()}</TableCell>
               <TableCell>
                 <Button
                   componentId="gsb.designer.h_open"

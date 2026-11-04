@@ -595,7 +595,11 @@ export function registerReadinessRoutes(
         if (!cache.has(key))
           cache.set(
             key,
-            uc.effective(type, name).catch(() => [])
+            uc.effective(type, name).catch((err: unknown) => {
+              // A missing grant reads as "Not found"; the reason stays in the server log.
+              console.warn(`Effective permissions on ${type} ${name}: ${(err as Error).message.slice(0, 200)}`);
+              return [];
+            })
           );
         return cache.get(key)!;
       };
@@ -609,11 +613,18 @@ export function registerReadinessRoutes(
       ];
       if (sandbox) {
         const { catalog } = parents(`${sandbox}.x`);
-        const [onCatalog, onSchema] = await Promise.all([effective('catalog', catalog), effective('schema', sandbox)]);
+        const [onCatalog, onSchema, schemaOwner, catalogOwner] = await Promise.all([
+          effective('catalog', catalog),
+          effective('schema', sandbox),
+          uc.owner('schema', sandbox).catch(() => undefined),
+          uc.owner('catalog', catalog).catch(() => undefined),
+        ]);
         const canCreate =
-          holds(onCatalog, who, ['USE_CATALOG']) &&
-          holds(onSchema, who, ['USE_SCHEMA']) &&
-          holds(onSchema, who, ['CREATE_TABLE']);
+          owns(schemaOwner, who) ||
+          owns(catalogOwner, who) ||
+          (holds(onCatalog, who, ['USE_CATALOG']) &&
+            holds(onSchema, who, ['USE_SCHEMA']) &&
+            holds(onSchema, who, ['CREATE_TABLE']));
         checks.push(sandboxCheck(sandbox, actor, canCreate));
       } else checks.push(sandboxCheck(null, actor, false));
 

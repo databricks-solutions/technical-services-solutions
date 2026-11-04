@@ -352,7 +352,7 @@ export function IntakePage() {
                 </Typography.Title>
                 <Tag componentId="gsb.intake.live">Updates as you chat</Tag>
               </div>
-              <BriefView brief={draft} />
+              <BriefView brief={Object.keys(draft).length ? draft : (context.data?.lastTurn?.brief ?? {})} />
               {context.data && (
                 <MemoryPanel
                   projectId={projectId}

@@ -436,11 +436,13 @@ export function registerProjectRoutes(
       );
       const allowed = new Set([...context.tables, ...mentionedTables(messages)].map((t) => t.toLowerCase()));
       const sources = turn.brief.candidateSources?.filter((t) => allowed.has(t.toLowerCase()));
+      const brief = { ...turn.brief, ...(sources ? { candidateSources: sources } : {}) };
       await repo.saveSession(actor, project.id, [...messages, { role: 'assistant', content: turn.reply }], {
         ideas: turn.ideas,
         suggestions: turn.suggestions,
+        brief,
       });
-      return { ...turn, brief: { ...turn.brief, ...(sources ? { candidateSources: sources } : {}) } };
+      return { ...turn, brief };
     })
   );
 

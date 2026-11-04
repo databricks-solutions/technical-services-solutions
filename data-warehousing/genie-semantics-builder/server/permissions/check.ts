@@ -53,8 +53,7 @@ export function readCheck(
   r: { error?: string; owner?: boolean; missing: (keyof typeof PRIVILEGE_SQL)[] }
 ): PermissionCheck {
   const base = { id: `select:${table}`, group: 'sources' as const, label: `Read ${table}` };
-  if (r.error && SCOPE_MISSING.test(r.error))
-    return { ...base, status: 'warn', detail: SCOPE_MESSAGE, grants: [] };
+  if (r.error && SCOPE_MISSING.test(r.error)) return { ...base, status: 'warn', detail: SCOPE_MESSAGE, grants: [] };
   if (r.error) {
     const code = /\b([A-Z][A-Z_]{4,})\b/.exec(r.error)?.[1];
     return {

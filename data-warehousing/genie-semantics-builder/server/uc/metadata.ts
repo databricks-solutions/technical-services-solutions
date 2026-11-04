@@ -32,6 +32,8 @@ export interface UcDeps {
   table(fullName: string): Promise<UcTableInfo>;
   /** Effective privileges on a securable, inherited ones included, for every principal. */
   effective(type: 'catalog' | 'schema' | 'table', fullName: string): Promise<EffectiveGrant[]>;
+  /** Owner of a catalog or schema. */
+  owner(type: 'catalog' | 'schema', fullName: string): Promise<string | undefined>;
   /** The user name and the display names of the user's groups. */
   me(): Promise<{ userName: string; groups: string[] }>;
   /** Resolves when the user can see the app's SQL warehouse. */
@@ -94,6 +96,12 @@ export function ucDeps(runAsUser: RunAsUser): UcDeps {
           privileges: (a.privileges ?? []).map((p) => String(p.privilege ?? '')),
         }));
       }),
+    owner: (type, fullName) =>
+      runAsUser(async () =>
+        type === 'catalog'
+          ? (await client().catalogs.get({ name: fullName })).owner
+          : (await client().schemas.get({ full_name: fullName })).owner
+      ),
     me: () =>
       runAsUser(async () => {
         const me = await client().currentUser.me();

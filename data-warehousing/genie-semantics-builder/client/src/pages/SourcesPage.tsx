@@ -29,7 +29,7 @@ import type {
 } from '../../../shared/readiness';
 import { api, useResource } from '../api';
 import { DataState } from '../components/DataState';
-import { OntologyGraph } from '../components/OntologyGraph';
+import { LineageGraph } from '../components/LineageGraph';
 import { FixPermission, PermissionsPanel } from '../components/PermissionsPanel';
 import { MONO } from '../components/SqlBlock';
 import { TableSelector } from '../components/TableSelector';
@@ -520,7 +520,7 @@ export function SourcesPage() {
             <Tabs.Root componentId="gsb.sources.tabs" defaultValue="plan">
               <Tabs.List>
                 <Tabs.Trigger value="plan">Improvement plan ({openFixes.length})</Tabs.Trigger>
-                <Tabs.Trigger value="ontology">Ontology</Tabs.Trigger>
+                <Tabs.Trigger value="lineage">Lineage</Tabs.Trigger>
                 <Tabs.Trigger value="tables">Tables ({data.sources.length})</Tabs.Trigger>
                 <Tabs.Trigger value="permissions">Permissions</Tabs.Trigger>
               </Tabs.List>
@@ -551,13 +551,14 @@ export function SourcesPage() {
                 </div>
               </Tabs.Content>
 
-              <Tabs.Content value="ontology">
+              <Tabs.Content value="lineage">
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 16 }}>
                   <Typography.Text color="secondary">
-                    Business entities and how they join. Solid lines are declared foreign keys. Dashed lines are joins
-                    suggested by the key names; declare them to document the model.
+                    How the tables join, column to column, with fact tables on the left. Solid arrows are declared
+                    foreign keys. Dashed arrows are joins suggested by the key names; declare them in the improvement
+                    plan to document the model.
                   </Typography.Text>
-                  {assessed ? <OntologyGraph ontology={data.ontology} /> : null}
+                  {assessed ? <LineageGraph ontology={data.ontology} /> : null}
                   {data.ontology.unmapped.length > 0 && (
                     <Alert
                       componentId="gsb.sources.unmapped"

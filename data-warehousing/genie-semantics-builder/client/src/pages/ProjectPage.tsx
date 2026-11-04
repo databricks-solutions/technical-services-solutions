@@ -15,6 +15,7 @@ function SubProjectCard({ parentId, sub }: { parentId: string; sub: SubProjectSu
   return (
     <Card
       componentId="gsb.project.sub_card"
+      width="100%"
       onClick={() => void navigate(subPath(parentId, sub.id, STAGE[sub.stage].module))}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

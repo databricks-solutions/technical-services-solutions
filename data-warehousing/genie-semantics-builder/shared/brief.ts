@@ -86,3 +86,18 @@ export interface UcTable {
   name: string;
   type: string;
 }
+
+export const chatSchema = z.object({
+  messages: z
+    .array(z.object({ role: z.enum(['user', 'assistant']), content: text(4000).min(1) }))
+    .min(1)
+    .max(40),
+});
+export type ChatMessage = z.infer<typeof chatSchema>['messages'][number];
+
+export interface IntakeReply {
+  reply: string;
+  suggestions: string[];
+  brief: Partial<SemanticBrief>;
+  ready: boolean;
+}

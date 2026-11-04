@@ -103,7 +103,7 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
   const navigate = useNavigate();
   const subs = project.subProjects;
   return (
-    <Card componentId="gsb.projects.card" onClick={() => void navigate(`/projects/${project.id}`)}>
+    <Card componentId="gsb.projects.card" width="100%" onClick={() => void navigate(`/projects/${project.id}`)}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minHeight: 140 }}>
         <Typography.Title level={4} withoutMargins>
           {project.name}

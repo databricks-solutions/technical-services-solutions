@@ -13,132 +13,10 @@ import {
   Tag,
   Typography,
 } from '@databricks/design-system';
-import { intakeSchema, UC_TABLE_NAME } from '../../../shared/brief';
-import type { BriefVersion, IntakeInput, ProjectDetail } from '../../../shared/brief';
+import type { BriefVersion, ProjectDetail, SemanticBrief } from '../../../shared/brief';
 import { api, useResource } from '../api';
 import { DataState } from '../components/DataState';
-import { TablePicker } from '../components/UcPicker';
-
-interface IntakeFields {
-  goal: string;
-  audience: string;
-  questions: string;
-  terms: string;
-  sources: string[];
-}
-
-function toInput(f: IntakeFields): IntakeInput {
-  return {
-    goal: f.goal,
-    audience: f.audience || undefined,
-    questions: f.questions || undefined,
-    terms: f.terms || undefined,
-    sources: f.sources,
-  };
-}
-
-function TextField(props: {
-  id: string;
-  label: string;
-  hint?: string;
-  required?: boolean;
-  multiline?: boolean;
-  value: string;
-  error?: string;
-  onChange: (v: string) => void;
-}) {
-  const common = {
-    componentId: `gsb.intake.${props.id}`,
-    id: `gsb-intake-${props.id}`,
-    value: props.value,
-    'aria-invalid': props.error ? true : undefined,
-    onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => props.onChange(e.target.value),
-  };
-  return (
-    <div>
-      <FormUI.Label htmlFor={common.id} required={props.required}>
-        {props.label}
-      </FormUI.Label>
-      {props.hint && <FormUI.Hint>{props.hint}</FormUI.Hint>}
-      {props.multiline ? <Input.TextArea {...common} autoSize={{ minRows: 3, maxRows: 8 }} /> : <Input {...common} />}
-      {props.error && <FormUI.Message type="error" message={props.error} />}
-    </div>
-  );
-}
-
-function IntakeForm({ projectId, onDrafted }: { projectId: string; onDrafted: (b: BriefVersion) => void }) {
-  const [f, setF] = useState<IntakeFields>({ goal: '', audience: '', questions: '', terms: '', sources: [] });
-  const [errors, setErrors] = useState<Partial<Record<keyof IntakeFields, string>>>({});
-  const [submitError, setSubmitError] = useState<string>();
-  const [busy, setBusy] = useState(false);
-  const set = (key: Exclude<keyof IntakeFields, 'sources'>) => (v: string) => setF((prev) => ({ ...prev, [key]: v }));
-
-  const submit = () => {
-    const input = toInput(f);
-    const parsed = intakeSchema.safeParse(input);
-    const bad = input.sources.filter((s) => !UC_TABLE_NAME.test(s));
-    if (!parsed.success || bad.length) {
-      const goal = parsed.success ? undefined : parsed.error.issues.find((i) => i.path[0] === 'goal')?.message;
-      setErrors({ goal, sources: bad.length ? `Use catalog.schema.table: ${bad.join(', ')}` : undefined });
-      return;
-    }
-    setErrors({});
-    setSubmitError(undefined);
-    setBusy(true);
-    api<BriefVersion>(`/api/projects/${projectId}/briefs`, parsed.data).then(onDrafted, (err: unknown) => {
-      setSubmitError((err as Error).message);
-      setBusy(false);
-    });
-  };
-
-  return (
-    <form
-      style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 720 }}
-      onSubmit={(e) => {
-        e.preventDefault();
-        submit();
-      }}
-    >
-      <TextField
-        id="goal"
-        label="What do you want to measure, and why?"
-        required
-        multiline
-        value={f.goal}
-        error={errors.goal}
-        onChange={set('goal')}
-      />
-      <TextField
-        id="audience"
-        label="Who will use it?"
-        hint="For example: finance analysts, regional sales managers."
-        value={f.audience}
-        onChange={set('audience')}
-      />
-      <TextField
-        id="questions"
-        label="Key questions"
-        hint="One per line."
-        multiline
-        value={f.questions}
-        onChange={set('questions')}
-      />
-      <TextField id="terms" label="Business terms and definitions" multiline value={f.terms} onChange={set('terms')} />
-      <div role="group" aria-labelledby="gsb-intake-sources-label">
-        <FormUI.Label id="gsb-intake-sources-label">Candidate source tables</FormUI.Label>
-        <FormUI.Hint>Pick tables from the catalogs and schemas you can access.</FormUI.Hint>
-        <TablePicker value={f.sources} onChange={(sources) => setF((prev) => ({ ...prev, sources }))} />
-        {errors.sources && <FormUI.Message type="error" message={errors.sources} />}
-      </div>
-      {submitError && <Alert componentId="gsb.intake.error" type="error" closable={false} message={submitError} />}
-      <div>
-        <Button componentId="gsb.intake.generate" type="primary" htmlType="submit" loading={busy}>
-          {busy ? 'Drafting the brief' : 'Generate brief'}
-        </Button>
-      </div>
-    </form>
-  );
-}
+import { IntakeChat } from '../components/IntakeChat';
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -164,18 +42,32 @@ function List({ items, empty = 'None' }: { items: string[]; empty?: string }) {
   );
 }
 
-function BriefView({ version }: { version: BriefVersion }) {
-  const b = version.brief;
+const EMPTY: SemanticBrief = {
+  title: '',
+  businessGoal: '',
+  audience: [],
+  keyQuestions: [],
+  measures: [],
+  dimensions: [],
+  timeGrains: [],
+  candidateSources: [],
+  glossary: [],
+  assumptions: [],
+  openQuestions: [],
+};
+
+function BriefView({ brief }: { brief: Partial<SemanticBrief> }) {
+  const b = { ...EMPTY, ...brief };
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 960 }}>
-      <Section title={b.title}>
-        <Typography.Paragraph withoutMargins>{b.businessGoal}</Typography.Paragraph>
+      <Section title={b.title || 'Untitled brief'}>
+        <Typography.Paragraph withoutMargins>{b.businessGoal || 'The goal is not defined yet.'}</Typography.Paragraph>
       </Section>
       <Section title="Audience">
         <List items={b.audience} empty="Not specified" />
       </Section>
       <Section title="Key questions">
-        <List items={b.keyQuestions} />
+        <List items={b.keyQuestions} empty="Not defined yet" />
       </Section>
       <Section title="Measures">
         <Table>
@@ -281,7 +173,7 @@ function BriefPanel({
         message="Generated by AI. Review every section before you confirm."
         description={version.summary}
       />
-      <BriefView version={version} />
+      <BriefView brief={version.brief} />
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 720 }}>
         <FormUI.Label htmlFor="gsb-brief-refine">Ask for a change</FormUI.Label>
         <Input.TextArea
@@ -323,29 +215,55 @@ function BriefPanel({
 export function IntakePage() {
   const { projectId = '' } = useParams();
   const detail = useResource<ProjectDetail>(`/api/projects/${projectId}`);
-  const [startOver, setStartOver] = useState(false);
+  const [chatting, setChatting] = useState(false);
+  const [draft, setDraft] = useState<Partial<SemanticBrief>>({});
   const setBrief = (brief: BriefVersion) => {
     if (detail.data) detail.setData({ ...detail.data, brief });
-    setStartOver(false);
+    setChatting(false);
   };
+  const saved = detail.data?.brief;
 
   return (
     <DataState status={detail.status} message={detail.error} onRetry={detail.reload}>
-      {detail.data && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <Typography.Text color="secondary">{detail.data.project.name}</Typography.Text>
-          {detail.data.brief && !startOver ? (
-            <BriefPanel
-              projectId={projectId}
-              version={detail.data.brief}
-              onChange={setBrief}
-              onStartOver={() => setStartOver(true)}
-            />
-          ) : (
-            <IntakeForm projectId={projectId} onDrafted={setBrief} />
-          )}
-        </div>
-      )}
+      {detail.data &&
+        (saved && !chatting ? (
+          <BriefPanel
+            projectId={projectId}
+            version={saved}
+            onChange={setBrief}
+            onStartOver={() => {
+              setDraft({});
+              setChatting(true);
+            }}
+          />
+        ) : (
+          <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+            <div style={{ flex: '1 1 480px', minWidth: 360 }}>
+              <IntakeChat projectId={projectId} onDraft={setDraft} onSaved={setBrief} />
+            </div>
+            <aside
+              aria-label="Brief draft"
+              style={{
+                flex: '1 1 360px',
+                minWidth: 320,
+                padding: 16,
+                border: '1px solid var(--db-border-base)',
+                borderRadius: 8,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 12,
+              }}
+            >
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <Typography.Title level={4} withoutMargins>
+                  Brief draft
+                </Typography.Title>
+                <Tag componentId="gsb.intake.live">Updates as you chat</Tag>
+              </div>
+              <BriefView brief={draft} />
+            </aside>
+          </div>
+        ))}
     </DataState>
   );
 }

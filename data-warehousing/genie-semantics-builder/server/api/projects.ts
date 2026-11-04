@@ -1,11 +1,12 @@
 import type { Application, Request } from 'express';
 import { z } from 'zod';
 import type { LakebasePool } from '@databricks/appkit';
-import { intakeSchema, newProjectSchema, refineSchema } from '../../shared/brief';
+import { chatSchema, intakeSchema, newProjectSchema, refineSchema } from '../../shared/brief';
 import type {
   BriefVersion,
   NewProject,
   Project,
+  IntakeReply,
   ProjectDetail,
   ProjectSummary,
   SubProjectStage,
@@ -15,6 +16,7 @@ import { callTool } from '../llm/llm';
 import type { LlmDeps } from '../llm/llm';
 import { draftBriefPrompt, draftBriefRequest, refineBriefPrompt, refineBriefRequest } from '../llm/prompts/brief';
 import type { BriefOutput } from '../llm/prompts/brief';
+import { chatBriefRequest, intakeChatPrompt, intakeChatRequest, mentionedTables } from '../llm/prompts/intake';
 import { actorOf, handle, HttpError } from './http';
 
 type Db = Pick<LakebasePool, 'query' | 'connect'>;
@@ -227,6 +229,32 @@ export function registerProjectRoutes(app: Application, db: Db, llmFor: (req: Re
       const input = intakeSchema.parse(req.body);
       const output = await callTool(draftBriefPrompt, draftBriefRequest(input), llmFor(req));
       return repo.addDraft(actor, project.id, output, input);
+    })
+  );
+
+  /** One interview turn. The conversation lives in the browser until the user saves a draft. */
+  app.post(
+    '/api/projects/:id/intake/chat',
+    handle(async (req): Promise<IntakeReply> => {
+      const project = await repo.get(actorOf(req), idParam.parse(req.params).id);
+      const { messages } = chatSchema.parse(req.body);
+      const turn = await callTool(intakeChatPrompt, intakeChatRequest(project.description, messages), llmFor(req));
+      const allowed = new Set(mentionedTables(messages));
+      const sources = turn.brief.candidateSources?.filter((t) => allowed.has(t.toLowerCase()));
+      return { ...turn, brief: { ...turn.brief, ...(sources ? { candidateSources: sources } : {}) } };
+    })
+  );
+
+  app.post(
+    '/api/projects/:id/intake/save',
+    handle(async (req) => {
+      const actor = actorOf(req);
+      const project = await repo.get(actor, idParam.parse(req.params).id);
+      const { messages } = chatSchema.parse(req.body);
+      const output = await callTool(draftBriefPrompt, chatBriefRequest(project.description, messages), llmFor(req));
+      const allowed = new Set(mentionedTables(messages));
+      output.brief.candidateSources = output.brief.candidateSources.filter((t) => allowed.has(t.toLowerCase()));
+      return repo.addDraft(actor, project.id, output, { chat: messages.length });
     })
   );
 

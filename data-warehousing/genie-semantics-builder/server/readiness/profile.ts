@@ -21,47 +21,6 @@ export interface TableProfile {
   foreignKeys: ForeignKey[];
 }
 
-type Row = (string | null)[];
-
-const keyList = (s: string) => s.split(',').map((c) => c.trim().replace(/^`|`$/g, '').replace(/``/g, '`'));
-const unquoteName = (s: string) =>
-  s
-    .split('.')
-    .map((p) => p.replace(/^`|`$/g, ''))
-    .join('.');
-
-/** Parses `DESCRIBE TABLE EXTENDED` rows: (col_name, data_type, comment). */
-export function parseDescribe(fullName: string, rows: Row[]): TableProfile {
-  const profile: TableProfile = { fullName, comment: '', columns: [], primaryKey: [], foreignKeys: [] };
-  let section: 'columns' | 'detail' | 'constraints' | 'other' = 'columns';
-  for (const [rawName, rawType, rawComment] of rows) {
-    const name = (rawName ?? '').trim();
-    const value = (rawType ?? '').trim();
-    if (name.startsWith('#')) {
-      section = name === '# Detailed Table Information' ? 'detail' : name === '# Constraints' ? 'constraints' : 'other';
-      continue;
-    }
-    if (!name) {
-      if (section === 'columns') section = 'other';
-      continue;
-    }
-    if (section === 'columns') profile.columns.push({ name, type: value, comment: (rawComment ?? '').trim() });
-    else if (section === 'detail' && name === 'Comment') profile.comment = value;
-    else if (section === 'constraints') {
-      const pk = /^PRIMARY KEY \((.+?)\)/i.exec(value);
-      const fk = /^FOREIGN KEY \((.+?)\) REFERENCES (\S+) \((.+?)\)/i.exec(value);
-      if (pk) profile.primaryKey = keyList(pk[1]);
-      if (fk)
-        profile.foreignKeys.push({
-          columns: keyList(fk[1]),
-          references: unquoteName(fk[2]),
-          refColumns: keyList(fk[3]),
-        });
-    }
-  }
-  return profile;
-}
-
 const pct = (n: number, d: number) => (d ? Math.round((100 * n) / d) : 0);
 
 export function checksFor(p: TableProfile): ReadinessCheck[] {

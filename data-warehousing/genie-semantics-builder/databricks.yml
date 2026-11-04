@@ -42,9 +42,13 @@ resources:
       # Start the app automatically on deploy.
       lifecycle:
         started: true
+      # Metadata comes from the Unity Catalog API (read-only scopes); the warehouse runs queries and approved DDL.
       user_api_scopes:
         - sql
         - serving.serving-endpoints
+        - catalog.catalogs:read
+        - catalog.schemas:read
+        - catalog.tables:read
 
       # The resources which this app has access to.
       resources:

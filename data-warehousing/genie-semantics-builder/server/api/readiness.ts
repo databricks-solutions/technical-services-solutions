@@ -18,23 +18,16 @@ import { callTool } from '../llm/llm';
 import type { LlmDeps } from '../llm/llm';
 import { assessSourcePrompt, assessSourceRequest } from '../llm/prompts/readiness';
 import { relatePrompt, relateRequest } from '../llm/prompts/relate';
-import {
-  buildRecommendations,
-  checksFor,
-  inaccessibleChecks,
-  parseDescribe,
-  quoteName,
-  sqlString,
-} from '../readiness/profile';
+import { buildRecommendations, checksFor, inaccessibleChecks } from '../readiness/profile';
 import { sandboxSchema } from '../designer/validate';
-import { fixCheck, sandboxCheck, selectCheck } from '../permissions/check';
-import { CAN_CREATE } from './catalog';
+import { fixCheck, holds, owns, readCheck, sandboxCheck } from '../permissions/check';
+import { profileFromTable } from '../uc/metadata';
+import type { EffectiveGrant, UcDeps, UcTableInfo } from '../uc/metadata';
 import { applyEffect, inferLinks, projectScore, tableAreas, tableScore } from '../readiness/score';
 import type { FixEffect } from '../readiness/score';
 import type { NewRecommendation, TableProfile } from '../readiness/profile';
-import { StatementRejected } from '../sql/allowlist';
 import { runStatement } from '../sql/runner';
-import type { RunContext, RunDeps } from '../sql/runner';
+import type { RunDeps } from '../sql/runner';
 import { projectRepo } from './projects';
 import { actorOf, handle, HttpError } from './http';
 
@@ -299,23 +292,16 @@ export function readinessRepo(db: Db) {
   };
 }
 
-/** Profiles each source as the user. A table the user cannot read returns its error instead of a profile. */
+/** Profiles each source from the Unity Catalog API, as the user. A table the user cannot read returns its error. */
 export function describeSources<S extends { fullName: string }>(
   sources: S[],
-  ctx: { actor: string; projectId: string },
-  run: RunDeps
+  uc: UcDeps
 ): Promise<{ source: S; profile?: TableProfile; error?: string }[]> {
   return Promise.all(
     sources.map(async (source) => {
       try {
-        const res = await runStatement(
-          `DESCRIBE TABLE EXTENDED ${quoteName(source.fullName)}`,
-          { ...ctx, approved: false },
-          run
-        );
-        return { source, profile: parseDescribe(source.fullName, res.rows) };
+        return { source, profile: profileFromTable(source.fullName, await uc.table(source.fullName)) };
       } catch (err) {
-        if (err instanceof StatementRejected) throw err;
         return { source, error: (err as Error).message };
       }
     })
@@ -333,24 +319,22 @@ function validCoverage(pairs: { item: string; column: string }[], p: TableProfil
   });
 }
 
-/** Columns of every table in the schemas of the given tables, read as the user from information_schema. */
-async function schemaColumns(tables: string[], ctx: RunContext, run: RunDeps) {
+/** Columns of every table in the schemas of the given tables, from the Unity Catalog API as the user. */
+async function schemaColumns(tables: string[], uc: UcDeps) {
   const schemas = [...new Set(tables.map((t) => t.split('.').slice(0, 2).join('.')))].slice(0, MAX_RELATED_SCHEMAS);
   const out = new Map<string, { name: string; type: string; comment: string }[]>();
-  for (const schema of schemas) {
-    const [catalog, name] = schema.split('.');
-    const res = await runStatement(
-      `SELECT table_name, column_name, data_type FROM system.information_schema.columns
-       WHERE table_catalog = ${sqlString(catalog)} AND table_schema = ${sqlString(name)}
-       ORDER BY table_name, ordinal_position LIMIT 20000`,
-      ctx,
-      run
-    );
-    for (const [t, c, type] of res.rows) {
-      const full = `${schema}.${t ?? ''}`;
-      out.set(full, [...(out.get(full) ?? []), { name: c ?? '', type: (type ?? '').toLowerCase(), comment: '' }]);
-    }
-  }
+  const lists = await Promise.all(
+    schemas.map(async (schema) => {
+      const [catalog, name] = schema.split('.');
+      return { schema, tables: await uc.tables(catalog, name, true) };
+    })
+  );
+  for (const { schema, tables: list } of lists)
+    for (const t of list)
+      out.set(
+        `${schema}.${t.name ?? ''}`,
+        (t.columns ?? []).map((c) => ({ name: c.name ?? '', type: (c.type_text ?? '').toLowerCase(), comment: '' }))
+      );
   return out;
 }
 
@@ -378,7 +362,8 @@ export function registerReadinessRoutes(
   app: Application,
   db: Db,
   llmFor: (req: Request) => LlmDeps,
-  runFor: (req: Request) => RunDeps
+  runFor: (req: Request) => RunDeps,
+  ucFor: (req: Request) => UcDeps
 ) {
   const projects = projectRepo(db);
   const repo = readinessRepo(db);
@@ -402,7 +387,7 @@ export function registerReadinessRoutes(
       if (!sources.length) throw new HttpError(409, 'Add the tables to model first.');
       if (sources.length > MAX_SOURCES) throw new HttpError(400, `Assess at most ${MAX_SOURCES} sources at a time.`);
 
-      const described = await describeSources(sources, { actor, projectId: project.id }, runFor(req));
+      const described = await describeSources(sources, ucFor(req));
       const profiles = described.flatMap((d) => (d.profile ? [d.profile] : []));
 
       const items = briefItems(brief?.brief ?? null);
@@ -533,7 +518,7 @@ export function registerReadinessRoutes(
 
   /**
    * Tables in the same schemas that join to the sources: declared foreign keys from the last
-   * assessment, and key-name matches from information_schema, read as the user.
+   * assessment, and key-name matches from the Unity Catalog API, read as the user.
    */
   app.get(
     '/api/projects/:id/sources/related',
@@ -559,8 +544,7 @@ export function registerReadinessRoutes(
 
       const tables = await schemaColumns(
         sources.map((s) => s.fullName),
-        { actor, projectId: project.id, approved: false },
-        runFor(req)
+        ucFor(req)
       );
       const isMine = (t: string) => mine.has(t.toLowerCase());
       for (const l of inferLinks([...tables].map(([fullName, columns]) => ({ fullName, columns })))) {
@@ -575,8 +559,8 @@ export function registerReadinessRoutes(
   );
 
   /**
-   * What the user needs, checked as the user. Reads use a real `SELECT ... LIMIT 0`; ownership,
-   * MODIFY and CREATE TABLE come from information_schema, so a missing grant is "not found".
+   * What the user needs, from the Unity Catalog and SQL warehouse APIs as the user. No warehouse
+   * query runs. Effective permissions include inherited and group grants.
    */
   app.get(
     '/api/projects/:id/permissions',
@@ -584,86 +568,87 @@ export function registerReadinessRoutes(
       const actor = actorOf(req);
       const project = await projects.get(actor, idParam.parse(req.params).id);
       const { sources } = await repo.view(project.id);
-      const ctx = { actor, projectId: project.id, approved: false };
-      const run = runFor(req);
+      const uc = ucFor(req);
       const sandbox = sandboxSchema();
-      const checks: PermissionCheck[] = [];
-
+      const warehouse = {
+        id: 'warehouse',
+        group: 'warehouse' as const,
+        label: 'Run queries on the SQL warehouse',
+      };
       try {
-        let canCreate = false;
-        if (sandbox) {
-          const [catalog, schema] = sandbox.split('.');
-          const res = await runStatement(
-            `SELECT count(*) FROM system.information_schema.schemata s
-             JOIN system.information_schema.catalogs c ON c.catalog_name = s.catalog_name
-             WHERE s.catalog_name = ${sqlString(catalog)} AND s.schema_name = ${sqlString(schema)} AND ${CAN_CREATE}`,
-            ctx,
-            run
-          );
-          canCreate = Number(res.rows[0]?.[0]) > 0;
-        } else {
-          await runStatement('SELECT 1', ctx, run);
-        }
-        checks.push({
-          id: 'warehouse',
-          group: 'warehouse',
-          label: 'Run queries on the SQL warehouse',
-          status: 'pass',
-          detail: 'You have CAN USE on the SQL warehouse of the app.',
-          grants: [],
-        });
-        checks.push(sandboxCheck(sandbox, actor, canCreate));
+        await uc.warehouse();
       } catch (err) {
-        if (err instanceof StatementRejected) throw err;
         const code = /\b([A-Z][A-Z_]{4,})\b/.exec((err as Error).message)?.[1];
         return [
           {
-            id: 'warehouse',
-            group: 'warehouse',
-            label: 'Run queries on the SQL warehouse',
+            ...warehouse,
             status: 'fail',
-            detail: `Queries do not run${code ? ` (${code})` : ''}. Ask a workspace admin for CAN USE on the SQL warehouse of the app.`,
+            detail: `You cannot use the SQL warehouse of the app${code ? ` (${code})` : ''}. Ask a workspace admin for CAN USE on it.`,
             grants: [],
           },
         ];
       }
+      const who = await uc.me();
+      const cache = new Map<string, Promise<EffectiveGrant[]>>();
+      const effective = (type: 'catalog' | 'schema' | 'table', name: string) => {
+        const key = `${type}:${name}`;
+        if (!cache.has(key))
+          cache.set(
+            key,
+            uc.effective(type, name).catch(() => [])
+          );
+        return cache.get(key)!;
+      };
+      const parents = (t: string) => {
+        const [c, s] = t.split('.');
+        return { catalog: c, schema: `${c}.${s}` };
+      };
+
+      const checks: PermissionCheck[] = [
+        { ...warehouse, status: 'pass', detail: 'You can use the SQL warehouse of the app.', grants: [] },
+      ];
+      if (sandbox) {
+        const { catalog } = parents(`${sandbox}.x`);
+        const [onCatalog, onSchema] = await Promise.all([effective('catalog', catalog), effective('schema', sandbox)]);
+        const canCreate =
+          holds(onCatalog, who, ['USE_CATALOG']) &&
+          holds(onSchema, who, ['USE_SCHEMA']) &&
+          holds(onSchema, who, ['CREATE_TABLE']);
+        checks.push(sandboxCheck(sandbox, actor, canCreate));
+      } else checks.push(sandboxCheck(null, actor, false));
 
       const tables = sources.map((s) => s.fullName);
-      const probes = await Promise.all(
+      const results = await Promise.all(
         tables.map(async (t) => {
+          const { catalog, schema } = parents(t);
+          let info: UcTableInfo;
           try {
-            await runStatement(`SELECT 1 FROM ${quoteName(t)} LIMIT 0`, ctx, run);
-            return selectCheck(t, actor, null);
+            info = await uc.table(t);
           } catch (err) {
-            if (err instanceof StatementRejected) throw err;
-            return selectCheck(t, actor, (err as Error).message);
+            return { t, read: readCheck(t, actor, { error: (err as Error).message, missing: [] }), fix: null };
           }
+          const [onCatalog, onSchema, onTable] = await Promise.all([
+            effective('catalog', catalog),
+            effective('schema', schema),
+            effective('table', t),
+          ]);
+          const owner = owns(info.owner, who);
+          const missing = (
+            [
+              ['USE_CATALOG', onCatalog],
+              ['USE_SCHEMA', onSchema],
+              ['SELECT', onTable],
+            ] as const
+          ).flatMap(([p, grants]) => (holds(grants, who, [p]) ? [] : [p]));
+          return {
+            t,
+            read: readCheck(t, actor, { owner, missing }),
+            fix: { owner, modify: holds(onTable, who, ['MODIFY']) },
+          };
         })
       );
-      checks.push(...probes);
-
-      const found = new Map<string, { owner: boolean; modify: boolean }>();
-      if (tables.length) {
-        const match = tables
-          .map((t) => {
-            const [c, sc, n] = t.toLowerCase().split('.');
-            return `(lower(t.table_catalog) = ${sqlString(c)} AND lower(t.table_schema) = ${sqlString(sc)} AND lower(t.table_name) = ${sqlString(n)})`;
-          })
-          .join(' OR ');
-        const mine = (col: string) => `(${col} = current_user() OR is_account_group_member(${col}))`;
-        const res = await runStatement(
-          `SELECT t.table_catalog, t.table_schema, t.table_name, ${mine('t.table_owner')} AS is_owner,
-             EXISTS (SELECT 1 FROM system.information_schema.table_privileges p
-                     WHERE p.table_catalog = t.table_catalog AND p.table_schema = t.table_schema AND p.table_name = t.table_name
-                       AND p.privilege_type IN ('MODIFY', 'ALL_PRIVILEGES') AND ${mine('p.grantee')}) AS can_modify
-           FROM system.information_schema.tables t WHERE ${match}`,
-          ctx,
-          run
-        );
-        for (const [c, sc, n, owner, modify] of res.rows)
-          found.set(`${c}.${sc}.${n}`.toLowerCase(), { owner: owner === 'true', modify: modify === 'true' });
-      }
-      checks.push(...tables.map((t) => fixCheck(t, actor, found.get(t.toLowerCase()) ?? null)));
+      checks.push(...results.map((r) => r.read));
+      checks.push(...results.map((r) => fixCheck(r.t, actor, r.fix)));
       return checks;
     })
   );
@@ -681,7 +666,7 @@ export function registerReadinessRoutes(
       const { sources } = await repo.view(project.id);
       const lower = (t: string) => t.toLowerCase();
       const all = [...new Set([...sources.map((s) => lower(s.fullName)), ...picked.map(lower)])];
-      const columns = await schemaColumns(all, { actor, projectId: project.id, approved: false }, runFor(req));
+      const columns = await schemaColumns(all, ucFor(req));
       const known = all.flatMap((t) => {
         const cols = [...columns].find(([name]) => lower(name) === t)?.[1];
         return cols ? [{ fullName: t, columns: cols }] : [];

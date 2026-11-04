@@ -1,22 +1,29 @@
 import { describe, expect, it } from 'vitest';
 import { checkStatement } from '../sql/allowlist';
-import { buildRecommendations, checksFor, parseDescribe } from './profile';
+import { profileFromTable } from '../uc/metadata';
+import type { UcTableInfo } from '../uc/metadata';
+import { buildRecommendations, checksFor } from './profile';
 import type { TableProfile } from './profile';
 
-const ROWS = [
-  ['o_orderkey', 'bigint', ''],
-  ['o_custkey', 'bigint', 'Customer key'],
-  ['o_orderdate', 'string', ''],
-  ['', '', ''],
-  ['# Detailed Table Information', '', ''],
-  ['Catalog', 'sandbox', ''],
-  ['Comment', 'Customer orders', ''],
-  ['Type', 'MANAGED', ''],
-  ['', '', ''],
-  ['# Constraints', '', ''],
-  ['orders_pk', 'PRIMARY KEY (`o_orderkey`) RELY', ''],
-  ['orders_cust_fk', 'FOREIGN KEY (`o_custkey`) REFERENCES `sandbox`.`gsb`.`customer` (`c_custkey`)', ''],
-];
+// The shape the Unity Catalog tables API returns.
+const ORDERS: UcTableInfo = {
+  comment: 'Customer orders',
+  columns: [
+    { name: 'o_orderkey', type_text: 'bigint' },
+    { name: 'o_custkey', type_text: 'bigint', comment: 'Customer key' },
+    { name: 'o_orderdate', type_text: 'string' },
+  ],
+  table_constraints: [
+    { primary_key_constraint: { child_columns: ['o_orderkey'] } },
+    {
+      foreign_key_constraint: {
+        child_columns: ['o_custkey'],
+        parent_table: 'sandbox.gsb.customer',
+        parent_columns: ['c_custkey'],
+      },
+    },
+  ],
+};
 
 const customer: TableProfile = {
   fullName: 'sandbox.gsb.customer',
@@ -34,9 +41,9 @@ const nation: TableProfile = {
   columns: [{ name: 'n_nationkey', type: 'bigint', comment: '' }],
 };
 
-describe('parseDescribe', () => {
+describe('profileFromTable', () => {
   it('reads columns, the table comment and constraints', () => {
-    const p = parseDescribe('sandbox.gsb.orders', ROWS);
+    const p = profileFromTable('sandbox.gsb.orders', ORDERS);
     expect(p.columns.map((c) => c.name)).toEqual(['o_orderkey', 'o_custkey', 'o_orderdate']);
     expect(p.comment).toBe('Customer orders');
     expect(p.primaryKey).toEqual(['o_orderkey']);
@@ -47,7 +54,7 @@ describe('parseDescribe', () => {
 
   it('flags missing comments and dates stored as text', () => {
     const checks = Object.fromEntries(
-      checksFor(parseDescribe('sandbox.gsb.orders', ROWS)).map((c) => [c.id, c.status])
+      checksFor(profileFromTable('sandbox.gsb.orders', ORDERS)).map((c) => [c.id, c.status])
     );
     expect(checks).toMatchObject({
       table_comment: 'pass',

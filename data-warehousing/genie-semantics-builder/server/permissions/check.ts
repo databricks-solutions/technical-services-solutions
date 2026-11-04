@@ -20,30 +20,67 @@ const readGrants = (table: string, principal: string) => {
   ];
 };
 
-/** Result of `SELECT 1 FROM table LIMIT 0` as the user: the real proof of read access. */
-export function selectCheck(table: string, principal: string, error: string | null): PermissionCheck {
+export interface Identity {
+  userName: string;
+  groups: string[];
+}
+
+const PRIVILEGE_SQL: Record<string, { sql: string; type: Securable }> = {
+  USE_CATALOG: { sql: 'USE CATALOG', type: 'CATALOG' },
+  USE_SCHEMA: { sql: 'USE SCHEMA', type: 'SCHEMA' },
+  SELECT: { sql: 'SELECT', type: 'TABLE' },
+};
+
+/** True when the user, or one of the user's groups, holds one of the privileges (directly or inherited). */
+export const holds = (grants: { principal: string; privileges: string[] }[], who: Identity, wanted: string[]) =>
+  grants.some(
+    (g) =>
+      (g.principal === who.userName || who.groups.includes(g.principal)) &&
+      g.privileges.some((p) => p === 'ALL_PRIVILEGES' || wanted.includes(p))
+  );
+
+export const owns = (owner: string | undefined, who: Identity) =>
+  !!owner && (owner === who.userName || who.groups.includes(owner));
+
+/**
+ * Read access from the Unity Catalog API: the table is visible, and USE CATALOG, USE SCHEMA and
+ * SELECT are held directly, through a group, or by inheritance. Owners pass.
+ */
+export function readCheck(
+  table: string,
+  principal: string,
+  r: { error?: string; owner?: boolean; missing: (keyof typeof PRIVILEGE_SQL)[] }
+): PermissionCheck {
   const base = { id: `select:${table}`, group: 'sources' as const, label: `Read ${table}` };
-  if (!error) return { ...base, status: 'pass', detail: 'USE CATALOG, USE SCHEMA and SELECT work.', grants: [] };
-  const m = /does not have ([A-Z][A-Z _]*?) on (Catalog|Schema|Table|View) '([^']+)'/i.exec(error);
-  if (m) {
-    const type = (m[2].toUpperCase() === 'VIEW' ? 'TABLE' : m[2].toUpperCase()) as Securable;
+  if (r.error) {
+    const code = /\b([A-Z][A-Z_]{4,})\b/.exec(r.error)?.[1];
     return {
       ...base,
       status: 'fail',
-      detail: `Missing ${m[1].toUpperCase()} on ${m[3]}.`,
-      grants: [grant(m[1].toUpperCase(), type, m[3], principal)],
+      detail: `You cannot see this table${code ? ` (${code})` : ''}. It may not exist, or USE CATALOG or USE SCHEMA is missing.`,
+      grants: readGrants(table, principal),
     };
   }
-  const code = /\b([A-Z][A-Z_]{4,})\b/.exec(error)?.[1];
+  if (r.owner || !r.missing.length)
+    return {
+      ...base,
+      status: 'pass',
+      detail: r.owner ? 'You own the table.' : 'USE CATALOG, USE SCHEMA and SELECT found.',
+      grants: [],
+    };
+  const { catalog, schema } = parts(table);
+  const target = { CATALOG: catalog, SCHEMA: schema, TABLE: table };
   return {
     ...base,
-    status: 'fail',
-    detail: `The table cannot be read${code ? ` (${code})` : ''}. It may not exist, or a privilege is missing.`,
-    grants: readGrants(table, principal),
+    status: 'warn',
+    detail: `Not found: ${r.missing.map((m) => PRIVILEGE_SQL[m].sql).join(', ')}. A nested group grant can still allow it.`,
+    grants: r.missing.map((m) =>
+      grant(PRIVILEGE_SQL[m].sql, PRIVILEGE_SQL[m].type, target[PRIVILEGE_SQL[m].type], principal)
+    ),
   };
 }
 
-/** Ownership and MODIFY come from information_schema, which lists direct and group grants. */
+/** Ownership and MODIFY come from the Unity Catalog API, with inherited and group grants. */
 export function fixCheck(
   table: string,
   principal: string,
@@ -62,8 +99,7 @@ export function fixCheck(
   return {
     ...base,
     status: 'warn',
-    detail:
-      'Not found: no ownership or MODIFY grant. Comments need MODIFY, keys need the owner. Inherited grants are not listed.',
+    detail: 'Not found: no ownership or MODIFY grant. Comments need MODIFY, keys need the owner.',
     grants: [grant('MODIFY', 'TABLE', table, principal)],
   };
 }

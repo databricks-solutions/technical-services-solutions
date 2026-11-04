@@ -45,8 +45,8 @@ export function PermissionsPanel({ projectId }: { projectId: string }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <Typography.Text color="secondary">
-          Checked live with your identity. Reads are tested with a query that returns no rows. Ownership and grants come
-          from information_schema, so a grant inherited from the metastore can show as not found. The app never runs
+          Checked live with your identity through the Unity Catalog API, with inherited and group grants. A grant through a
+          nested group can show as not found. The app never runs
           GRANT statements; send them to the owner.
         </Typography.Text>
         <Button componentId="gsb.permissions.recheck" size="small" onClick={checks.reload}>

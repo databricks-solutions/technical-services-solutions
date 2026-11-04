@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fixCheck, grant, sandboxCheck, selectCheck } from './check';
+import { fixCheck, grant, holds, readCheck, sandboxCheck } from './check';
 
 describe('grant', () => {
   it('quotes the securable and the principal', () => {
@@ -7,23 +7,34 @@ describe('grant', () => {
   });
 });
 
-describe('selectCheck', () => {
-  it('passes when the probe query ran', () => {
-    expect(selectCheck('c.s.t', 'a@x.com', null)).toMatchObject({ status: 'pass', grants: [] });
+describe('readCheck', () => {
+  it('passes for the owner or when every privilege is held', () => {
+    expect(readCheck('c.s.t', 'a@x.com', { owner: true, missing: ['SELECT'] }).status).toBe('pass');
+    expect(readCheck('c.s.t', 'a@x.com', { missing: [] })).toMatchObject({ status: 'pass', grants: [] });
   });
 
-  it('names the missing privilege from the Unity Catalog error', () => {
-    const c = selectCheck(
-      'c.s.t',
-      'a@x.com',
-      "[INSUFFICIENT_PERMISSIONS] User does not have USE SCHEMA on Schema 'c.s'."
-    );
+  it('lists the GRANT for each missing privilege', () => {
+    const c = readCheck('c.s.t', 'a@x.com', { missing: ['USE_SCHEMA', 'SELECT'] });
+    expect(c.status).toBe('warn');
+    expect(c.grants).toEqual([
+      'GRANT USE SCHEMA ON SCHEMA `c`.`s` TO `a@x.com`;',
+      'GRANT SELECT ON TABLE `c`.`s`.`t` TO `a@x.com`;',
+    ]);
+  });
+
+  it('fails when the table cannot be seen', () => {
+    const c = readCheck('c.s.t', 'a@x.com', { error: 'TABLE_DOES_NOT_EXIST', missing: [] });
     expect(c.status).toBe('fail');
-    expect(c.grants).toEqual(['GRANT USE SCHEMA ON SCHEMA `c`.`s` TO `a@x.com`;']);
+    expect(c.grants).toHaveLength(3);
   });
+});
 
-  it('lists every grant when the error is not specific', () => {
-    expect(selectCheck('c.s.t', 'a@x.com', 'TABLE_OR_VIEW_NOT_FOUND').grants).toHaveLength(3);
+describe('holds', () => {
+  const who = { userName: 'a@x.com', groups: ['analysts'] };
+  it('counts group and ALL_PRIVILEGES grants', () => {
+    expect(holds([{ principal: 'analysts', privileges: ['SELECT'] }], who, ['SELECT'])).toBe(true);
+    expect(holds([{ principal: 'a@x.com', privileges: ['ALL_PRIVILEGES'] }], who, ['MODIFY'])).toBe(true);
+    expect(holds([{ principal: 'others', privileges: ['SELECT'] }], who, ['SELECT'])).toBe(false);
   });
 });
 

@@ -30,6 +30,8 @@ function toHttp(err: unknown): HttpError {
   if (err instanceof StatementRejected) return new HttpError(400, err.message);
   const status = (err as { statusCode?: number }).statusCode;
   if (status === 401 || status === 403) {
+    // The API message names the missing privilege or scope; the client gets a generic text.
+    console.warn(`Databricks API ${status}: ${(err as Error).message.slice(0, 300)}`);
     return new HttpError(403, 'Your Databricks permissions do not allow this action.');
   }
   if ((err as { code?: string }).code === '23505')

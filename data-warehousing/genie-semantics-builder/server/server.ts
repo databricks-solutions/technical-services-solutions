@@ -8,6 +8,7 @@ import { registerDesignerRoutes } from './api/designer';
 import { registerPatternRoutes } from './api/patterns';
 import { loadPatterns } from './patterns/library';
 import { registerReadinessRoutes } from './api/readiness';
+import { ucDeps } from './uc/metadata';
 import { servingDeps } from './llm/llm';
 import { warehouseDeps } from './sql/runner';
 
@@ -30,10 +31,11 @@ createApp({
     const llmFor = (req: Request) => servingDeps(asUser(req));
     appkit.server.extend((app) => {
       const runFor = (req: Request) => warehouseDeps(pool, asUser(req));
+      const ucFor = (req: Request) => ucDeps(asUser(req));
       registerProjectRoutes(app, pool, llmFor, runFor);
-      registerCatalogRoutes(app, runFor);
-      registerReadinessRoutes(app, pool, llmFor, runFor);
-      registerDesignerRoutes(app, pool, llmFor, runFor, patterns);
+      registerCatalogRoutes(app, ucFor);
+      registerReadinessRoutes(app, pool, llmFor, runFor, ucFor);
+      registerDesignerRoutes(app, pool, llmFor, runFor, ucFor, patterns);
       registerPatternRoutes(app, pool, patterns, runFor);
     });
   },

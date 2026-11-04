@@ -40,6 +40,7 @@ import type { RunDeps } from '../sql/runner';
 import { projectRepo } from './projects';
 import { actorOf, handle, HttpError } from './http';
 import { describeSources, MAX_SOURCES } from './readiness';
+import type { UcDeps } from '../uc/metadata';
 
 type Db = Pick<LakebasePool, 'query' | 'connect'>;
 
@@ -199,6 +200,7 @@ export function registerDesignerRoutes(
   db: Db,
   llmFor: (req: Request) => LlmDeps,
   runFor: (req: Request) => RunDeps,
+  ucFor: (req: Request) => UcDeps,
   patterns: Pattern[] = []
 ) {
   const projects = projectRepo(db);
@@ -220,8 +222,7 @@ export function registerDesignerRoutes(
     if (rows.length > MAX_SOURCES) throw new HttpError(400, `Design with at most ${MAX_SOURCES} sources.`);
     const described = await describeSources(
       rows.map((r) => ({ fullName: r.full_name })),
-      { actor, projectId: project.id },
-      runFor(req)
+      ucFor(req)
     );
     const profiles = described.flatMap((d) => (d.profile ? [d.profile] : []));
     if (!profiles.length) throw new HttpError(403, 'You cannot read any of the project sources.');

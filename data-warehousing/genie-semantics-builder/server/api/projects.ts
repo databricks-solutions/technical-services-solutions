@@ -113,8 +113,7 @@ export function projectRepo(db: Db) {
            (SELECT status FROM gsb.metric_view_draft d WHERE d.project_id = p.id ORDER BY version DESC LIMIT 1) AS draft_status,
            (SELECT count(*)::int FROM gsb.source s WHERE s.project_id = p.id) AS sources,
            GREATEST(p.created_at,
-             (SELECT MAX(created_at) FROM gsb.semantic_brief b WHERE b.project_id = p.id),
-             (SELECT MAX(created_at) FROM gsb.metric_view_draft d WHERE d.project_id = p.id)) AS last_activity
+             (SELECT MAX(at) FROM gsb.audit_log a WHERE a.project_id = p.id)) AS last_activity
          FROM gsb.project p WHERE p.created_by = $1 ORDER BY p.created_at DESC LIMIT 500`,
         [actor]
       );

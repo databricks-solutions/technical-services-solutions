@@ -1,41 +1,128 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
-import { Button, Card, PlusIcon, Stepper, Typography } from '@databricks/design-system';
+import {
+  ArrowRightIcon,
+  Button,
+  Card,
+  CheckCircleFillIcon,
+  CircleIcon,
+  CircleOutlineIcon,
+  PlusIcon,
+  Tag,
+  Typography,
+} from '@databricks/design-system';
 import type { ProjectSummary, SubProjectStage, SubProjectSummary } from '../../../shared/brief';
 import { useResource } from '../api';
 import { DataState } from '../components/DataState';
 import { NewProjectModal, STAGE, subPath } from './ProjectsPage';
 
-const ORDER: SubProjectStage[] = ['intent', 'sources', 'design', 'validated'];
-const STEPS = ['Intent', 'Sources', 'Design', 'Validated'];
+const JOURNEY: { stage: SubProjectStage; label: string }[] = [
+  { stage: 'intent', label: 'Goal' },
+  { stage: 'sources', label: 'Sources' },
+  { stage: 'design', label: 'Design' },
+  { stage: 'validated', label: 'Validated' },
+];
+
+const NEXT: Record<SubProjectStage, { text: string; action: string }> = {
+  intent: { text: 'Describe the goal with the AI guide and confirm the brief.', action: 'Continue intake' },
+  sources: { text: 'Check the source tables and fix what blocks a good model.', action: 'Check sources' },
+  design: { text: 'Design the metric view and validate it against the data.', action: 'Open designer' },
+  validated: { text: 'The metric view passed validation. Review or refine it.', action: 'Open designer' },
+};
+
+function Journey({ stage }: { stage: SubProjectStage }) {
+  const at = JOURNEY.findIndex((j) => j.stage === stage);
+  return (
+    <ol
+      aria-label="Progress"
+      style={{ display: 'flex', gap: 16, flexWrap: 'wrap', margin: 0, padding: 0, listStyle: 'none' }}
+    >
+      {JOURNEY.map((j, i) => {
+        const done = i < at || stage === 'validated';
+        const current = i === at && !done;
+        return (
+          <li
+            key={j.stage}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+              color: done
+                ? 'var(--db-alert-icon-color-success)'
+                : current
+                  ? 'var(--db-accent-text)'
+                  : 'var(--db-text-subtle)',
+              fontWeight: current ? 600 : undefined,
+            }}
+          >
+            {done ? <CheckCircleFillIcon /> : current ? <CircleIcon /> : <CircleOutlineIcon />}
+            <span>{j.label}</span>
+            <span style={SR_ONLY}>{done ? ', done' : current ? ', current step' : ', not started'}</span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+const SR_ONLY = {
+  position: 'absolute',
+  width: 1,
+  height: 1,
+  overflow: 'hidden',
+  clip: 'rect(0 0 0 0)',
+  whiteSpace: 'nowrap',
+} as const;
 
 function SubProjectCard({ parentId, sub }: { parentId: string; sub: SubProjectSummary }) {
   const navigate = useNavigate();
-  const at = ORDER.indexOf(sub.stage);
+  const open = () => void navigate(subPath(parentId, sub.id, STAGE[sub.stage].module));
+  const next = NEXT[sub.stage];
   return (
-    <Card
-      componentId="gsb.project.sub_card"
-      width="100%"
-      onClick={() => void navigate(subPath(parentId, sub.id, STAGE[sub.stage].module))}
-    >
+    <Card componentId="gsb.project.sub_card" width="100%" onClick={open}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <div>
-          <Typography.Title level={4} withoutMargins>
-            {sub.name}
-          </Typography.Title>
-          <Typography.Text color="secondary">{sub.description ?? 'No goal yet.'}</Typography.Text>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+          <div>
+            <Typography.Title level={4} withoutMargins>
+              {sub.name}
+            </Typography.Title>
+            <Typography.Text color="secondary">{sub.description ?? 'No goal yet.'}</Typography.Text>
+          </div>
+          <Tag componentId="gsb.project.sub_stage" color={STAGE[sub.stage].color}>
+            {STAGE[sub.stage].label}
+          </Tag>
         </div>
-        <Stepper
-          currentStepIndex={sub.stage === 'validated' ? ORDER.length : at}
-          steps={STEPS.map((title, i) => ({
-            title,
-            status: i < at || sub.stage === 'validated' ? 'completed' : undefined,
-          }))}
-          localizeStepNumber={(n) => String(n)}
-          responsive={false}
-        />
-        <Typography.Text color="secondary">
-          {sub.sources} source{sub.sources === 1 ? '' : 's'}, last activity{' '}
+        <Journey stage={sub.stage} />
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+            padding: 12,
+            borderRadius: 8,
+            background: 'var(--db-surface-subtle)',
+          }}
+        >
+          <div>
+            <Typography.Text bold>Next: </Typography.Text>
+            <Typography.Text>{next.text}</Typography.Text>
+          </div>
+          <Button
+            componentId="gsb.project.sub_next"
+            type="primary"
+            size="small"
+            endIcon={<ArrowRightIcon />}
+            onClick={(e) => {
+              e.stopPropagation();
+              open();
+            }}
+          >
+            {next.action}
+          </Button>
+        </div>
+        <Typography.Text color="secondary" size="sm">
+          {sub.sources} source{sub.sources === 1 ? '' : 's'} - last activity{' '}
           {new Date(sub.lastActivity).toLocaleString()}
         </Typography.Text>
       </div>

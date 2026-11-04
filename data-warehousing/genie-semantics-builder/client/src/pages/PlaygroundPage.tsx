@@ -5,6 +5,7 @@ import {
   Button,
   Input,
   Modal,
+  NavList,
   Table,
   TableCell,
   TableHeader,
@@ -293,34 +294,37 @@ export function PlaygroundPage() {
               allowClear
             />
             {!shown.length && <Typography.Text color="secondary">No pattern matches the filter.</Typography.Text>}
-            {categories.map((c) => (
-              <div key={c} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <Typography.Text bold>{c}</Typography.Text>
-                {shown
-                  .filter((p) => p.category === c)
-                  .map((p) => {
-                    const run = runs.data?.find((r) => r.slug === p.slug);
-                    return (
-                      <Button
-                        key={p.slug}
-                        componentId="gsb.playground.select"
-                        type="tertiary"
-                        aria-current={p.slug === selected?.slug ? 'true' : undefined}
-                        onClick={() => setParams({ pattern: p.slug })}
-                        style={{
-                          justifyContent: 'flex-start',
-                          fontWeight: p.slug === selected?.slug ? 600 : undefined,
-                          background:
-                            p.slug === selected?.slug ? 'var(--db-action-tertiary-background-hover)' : undefined,
-                        }}
-                      >
-                        {p.title}
-                        {run?.status === 'passed' ? ' (passed)' : run?.status === 'failed' ? ' (failed)' : ''}
-                      </Button>
-                    );
-                  })}
-              </div>
-            ))}
+            <NavList.Root aria-label="Pattern list">
+              {categories.map((c) => (
+                <NavList.Group key={c}>
+                  <NavList.GroupLabel>{c}</NavList.GroupLabel>
+                  <NavList.GroupContent>
+                    <NavList.List style={{ paddingLeft: 16 }}>
+                      {shown
+                        .filter((p) => p.category === c)
+                        .map((p) => {
+                          const run = runs.data?.find((r) => r.slug === p.slug);
+                          return (
+                            <NavList.Item key={p.slug}>
+                              <NavList.Link
+                                href={`?pattern=${p.slug}`}
+                                active={p.slug === selected?.slug}
+                                label={p.title}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  setParams({ pattern: p.slug });
+                                }}
+                              />
+                              {run?.status === 'passed' && <NavList.Badge>Passed</NavList.Badge>}
+                              {run?.status === 'failed' && <NavList.Badge>Failed</NavList.Badge>}
+                            </NavList.Item>
+                          );
+                        })}
+                    </NavList.List>
+                  </NavList.GroupContent>
+                </NavList.Group>
+              ))}
+            </NavList.Root>
           </nav>
           <div style={{ flex: 1, minWidth: 320 }}>
             {selected && (

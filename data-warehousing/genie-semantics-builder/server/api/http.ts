@@ -19,6 +19,11 @@ export function actorOf(req: Request): string {
   throw new HttpError(401, 'Sign in to use this app.');
 }
 
+/** The user's token predates a scope the app now requests, so the user must sign in again. */
+export const SCOPE_MISSING = /invalid scope|does not have required scopes/i;
+export const SCOPE_MESSAGE =
+  'Your sign-in does not include a permission scope this app needs. Sign out of the app and sign in again to accept it.';
+
 function toHttp(err: unknown): HttpError {
   if (err instanceof HttpError) return err;
   if (err instanceof ZodError) {
@@ -29,6 +34,7 @@ function toHttp(err: unknown): HttpError {
   }
   if (err instanceof StatementRejected) return new HttpError(400, err.message);
   const status = (err as { statusCode?: number }).statusCode;
+  if (err instanceof Error && SCOPE_MISSING.test(err.message)) return new HttpError(403, SCOPE_MESSAGE);
   if (status === 401 || status === 403) {
     // The API message names the missing privilege or scope; the client gets a generic text.
     console.warn(`Databricks API ${status}: ${(err as Error).message.slice(0, 300)}`);

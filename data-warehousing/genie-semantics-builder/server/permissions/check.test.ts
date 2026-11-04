@@ -22,6 +22,17 @@ describe('readCheck', () => {
     ]);
   });
 
+  it('asks for a new sign-in when the token lacks the scope', () => {
+    const c = readCheck('c.s.t', 'a@x.com', { error: 'Invalid scope, required scopes: unity-catalog', missing: [] });
+    expect(c).toMatchObject({ status: 'warn', grants: [] });
+    expect(c.detail).toMatch(/sign in again/);
+    const other = readCheck('c.s.t', 'a@x.com', {
+      error: 'Provided OAuth token does not have required scopes: unity-catalog',
+      missing: [],
+    });
+    expect(other.status).toBe('warn');
+  });
+
   it('fails when the table cannot be seen', () => {
     const c = readCheck('c.s.t', 'a@x.com', { error: 'TABLE_DOES_NOT_EXIST', missing: [] });
     expect(c.status).toBe('fail');

@@ -101,3 +101,10 @@ export interface IntakeReply {
   brief: Partial<SemanticBrief>;
   ready: boolean;
 }
+
+/** What a delete removes. cleanup drops sandbox views the project may have left in Unity Catalog. */
+export interface DeletePlan {
+  name: string;
+  subProjects: string[];
+  cleanup: string[];
+}

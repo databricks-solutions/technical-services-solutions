@@ -52,3 +52,11 @@ export interface PatternPlan {
   sandboxView: string;
   statements: string[];
 }
+
+/** Rule-based fit of a pattern to the sub-project sources. No AI. */
+export interface PatternFit {
+  slug: string;
+  status: 'fits' | 'partial' | 'missing';
+  found: { role: string; match: string }[];
+  missing: string[];
+}

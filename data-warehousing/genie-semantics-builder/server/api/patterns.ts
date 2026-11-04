@@ -2,9 +2,11 @@ import type { Application, Request } from 'express';
 import { z } from 'zod';
 import type { LakebasePool } from '@databricks/appkit';
 import { validateSchema } from '../../shared/designer';
-import type { Pattern, PatternPlan, PatternRun } from '../../shared/patterns';
+import type { Pattern, PatternFit, PatternPlan, PatternRun } from '../../shared/patterns';
 import { compareRows, createStatement, dropStatement, sandboxSchema, sandboxViewName } from '../designer/validate';
+import { patternFit } from '../patterns/fit';
 import { SLUG, testQueryFor } from '../patterns/library';
+import type { TableProfile } from '../readiness/profile';
 import { runStatement } from '../sql/runner';
 import type { RunDeps } from '../sql/runner';
 import { projectRepo } from './projects';
@@ -119,6 +121,22 @@ export function registerPatternRoutes(
     handle(async (req) => {
       const project = await projects.get(actorOf(req), z.object({ id: z.uuid() }).parse(req.params).id);
       return runs.latest(project.id);
+    })
+  );
+
+  /** Fit from the table metadata of the last source assessment. Empty when no source was assessed. */
+  app.get(
+    '/api/projects/:id/patterns/fit',
+    handle(async (req): Promise<PatternFit[]> => {
+      const project = await projects.get(actorOf(req), z.object({ id: z.uuid() }).parse(req.params).id);
+      const { rows } = await db.query<{ profile: TableProfile }>(
+        `SELECT DISTINCT ON (r.source_id) r.profile FROM gsb.readiness_report r
+         JOIN gsb.source s ON s.id = r.source_id
+         WHERE r.project_id = $1 AND r.profile IS NOT NULL ORDER BY r.source_id, r.created_at DESC`,
+        [project.id]
+      );
+      const tables = rows.map((r) => r.profile);
+      return tables.length ? patterns.map((p) => patternFit(p, tables)) : [];
     })
   );
 

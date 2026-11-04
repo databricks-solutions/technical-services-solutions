@@ -8,12 +8,14 @@ import {
   CircleIcon,
   CircleOutlineIcon,
   PlusIcon,
+  TrashIcon,
   Tag,
   Typography,
 } from '@databricks/design-system';
 import type { ProjectSummary, SubProjectStage, SubProjectSummary } from '../../../shared/brief';
 import { useResource } from '../api';
 import { DataState } from '../components/DataState';
+import { DeleteProjectModal } from '../components/DeleteProjectModal';
 import { NewProjectModal, STAGE, subPath } from './ProjectsPage';
 
 const JOURNEY: { stage: SubProjectStage; label: string }[] = [
@@ -74,7 +76,15 @@ const SR_ONLY = {
   whiteSpace: 'nowrap',
 } as const;
 
-function SubProjectCard({ parentId, sub }: { parentId: string; sub: SubProjectSummary }) {
+function SubProjectCard({
+  parentId,
+  sub,
+  onDelete,
+}: {
+  parentId: string;
+  sub: SubProjectSummary;
+  onDelete: () => void;
+}) {
   const navigate = useNavigate();
   const open = () => void navigate(subPath(parentId, sub.id, STAGE[sub.stage].module));
   const next = NEXT[sub.stage];
@@ -121,10 +131,25 @@ function SubProjectCard({ parentId, sub }: { parentId: string; sub: SubProjectSu
             {next.action}
           </Button>
         </div>
-        <Typography.Text color="secondary" size="sm">
-          {sub.sources} source{sub.sources === 1 ? '' : 's'} - last activity{' '}
-          {new Date(sub.lastActivity).toLocaleString()}
-        </Typography.Text>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+          <Typography.Text color="secondary" size="sm">
+            {sub.sources} source{sub.sources === 1 ? '' : 's'} - last activity{' '}
+            {new Date(sub.lastActivity).toLocaleString()}
+          </Typography.Text>
+          <Button
+            componentId="gsb.project.sub_delete"
+            type="tertiary"
+            size="small"
+            icon={<TrashIcon />}
+            aria-label={`Delete sub-project ${sub.name}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+          >
+            Delete
+          </Button>
+        </div>
       </div>
     </Card>
   );
@@ -135,6 +160,7 @@ export function ProjectPage() {
   const navigate = useNavigate();
   const projects = useResource<ProjectSummary[]>('/api/projects');
   const [creating, setCreating] = useState(false);
+  const [deleting, setDeleting] = useState<{ id: string; kind: 'project' | 'sub-project' }>();
   const project = projects.data?.find((p) => p.id === parentId);
   const status = projects.status === 'ready' && !project ? 'error' : projects.status;
   const newButton = (
@@ -154,12 +180,27 @@ export function ProjectPage() {
               </Typography.Title>
               <Typography.Text color="secondary">{project.description ?? 'No business goal yet.'}</Typography.Text>
             </div>
-            {newButton}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Button
+                componentId="gsb.project.delete"
+                danger
+                icon={<TrashIcon />}
+                onClick={() => setDeleting({ id: project.id, kind: 'project' })}
+              >
+                Delete project
+              </Button>
+              {newButton}
+            </div>
           </div>
           {project.subProjects.length ? (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))', gap: 16 }}>
               {project.subProjects.map((s) => (
-                <SubProjectCard key={s.id} parentId={project.id} sub={s} />
+                <SubProjectCard
+                  key={s.id}
+                  parentId={project.id}
+                  sub={s}
+                  onDelete={() => setDeleting({ id: s.id, kind: 'sub-project' })}
+                />
               ))}
             </div>
           ) : (
@@ -167,6 +208,18 @@ export function ProjectPage() {
               status="empty"
               message="A sub-project builds one metric view, for example Revenue or Returns. The AI guides you from intent to a validated design."
               emptyAction={newButton}
+            />
+          )}
+          {deleting && (
+            <DeleteProjectModal
+              projectId={deleting.id}
+              kind={deleting.kind}
+              onClose={() => setDeleting(undefined)}
+              onDeleted={() => {
+                setDeleting(undefined);
+                if (deleting.kind === 'project') void navigate('/');
+                else projects.reload();
+              }}
             />
           )}
           {creating && (

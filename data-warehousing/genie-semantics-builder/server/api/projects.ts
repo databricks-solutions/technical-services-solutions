@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { LakebasePool } from '@databricks/appkit';
 import { chatSchema, intakeSchema, newProjectSchema, refineSchema } from '../../shared/brief';
 import type {
+  DeletePlan,
   BriefVersion,
   NewProject,
   Project,
@@ -17,6 +18,9 @@ import type { LlmDeps } from '../llm/llm';
 import { draftBriefPrompt, draftBriefRequest, refineBriefPrompt, refineBriefRequest } from '../llm/prompts/brief';
 import type { BriefOutput } from '../llm/prompts/brief';
 import { chatBriefRequest, intakeChatPrompt, intakeChatRequest, mentionedTables } from '../llm/prompts/intake';
+import { dropStatement } from '../designer/validate';
+import { runStatement } from '../sql/runner';
+import type { RunDeps } from '../sql/runner';
 import { actorOf, handle, HttpError } from './http';
 
 type Db = Pick<LakebasePool, 'query' | 'connect'>;
@@ -103,6 +107,41 @@ export function projectRepo(db: Db) {
 
   return {
     get,
+
+    /** The project, its sub-projects, and DROP statements for sandbox views that may still exist. */
+    async deletePlan(actor: string, id: string): Promise<DeletePlan> {
+      const project = await get(actor, id);
+      const { rows } = await db.query<{ name: string | null; view: string | null }>(
+        `WITH p AS (SELECT id, name FROM gsb.project WHERE id = $1 OR parent_id = $1)
+         SELECT name, NULL AS view FROM p WHERE id <> $1
+         UNION ALL
+         SELECT NULL, r.sandbox_view FROM gsb.pattern_run r JOIN p ON p.id = r.project_id WHERE r.removed_at IS NULL
+         UNION ALL
+         SELECT NULL, v.sandbox_view FROM gsb.validation_run v
+           JOIN gsb.metric_view_draft d ON d.id = v.draft_id JOIN p ON p.id = d.project_id
+           WHERE v.status IN ('running', 'passed', 'failed')`,
+        [project.id]
+      );
+      const views = [...new Set(rows.flatMap((r) => (r.view ? [r.view] : [])))].sort();
+      return {
+        name: project.name,
+        subProjects: rows.flatMap((r) => (r.name ? [r.name] : [])).sort(),
+        cleanup: views.map(dropStatement),
+      };
+    },
+
+    /** Deletes the project and, by cascade, its sub-projects and metadata. The audit log keeps the record. */
+    async remove(actor: string, id: string): Promise<void> {
+      const { rows } = await db.query(
+        `WITH del AS (DELETE FROM gsb.project WHERE id = $1 AND created_by = $2 RETURNING id, name, parent_id)
+         INSERT INTO gsb.audit_log (actor, action, project_id, target, outcome, detail)
+         SELECT $2, CASE WHEN parent_id IS NULL THEN 'delete_project' ELSE 'delete_subproject' END, id, name,
+                'succeeded', jsonb_build_object('parent_id', parent_id)
+         FROM del RETURNING id`,
+        [id, actor]
+      );
+      if (!rows[0]) throw new HttpError(404, 'Project not found.');
+    },
     latestBrief,
 
     /** Top-level projects of the actor, each with its sub-projects and their stage. */
@@ -189,7 +228,14 @@ const idParam = z.object({ id: z.uuid() });
 const versionParam = idParam.extend({ version: z.coerce.number().int().positive() });
 
 /** Lakebase is app-only, so handlers run in app scope. Only the model call opens a user scope. */
-export function registerProjectRoutes(app: Application, db: Db, llmFor: (req: Request) => LlmDeps) {
+const deleteBody = z.object({ cleanup: z.array(z.string().max(2000)).max(500) });
+
+export function registerProjectRoutes(
+  app: Application,
+  db: Db,
+  llmFor: (req: Request) => LlmDeps,
+  runFor: (req: Request) => RunDeps
+) {
   const repo = projectRepo(db);
 
   app.get(
@@ -200,6 +246,39 @@ export function registerProjectRoutes(app: Application, db: Db, llmFor: (req: Re
   app.post(
     '/api/projects',
     handle((req) => repo.create(actorOf(req), newProjectSchema.parse(req.body)))
+  );
+
+  app.get(
+    '/api/projects/:id/delete',
+    handle((req) => repo.deletePlan(actorOf(req), idParam.parse(req.params).id))
+  );
+
+  /**
+   * cleanup must be all or none of the plan's statements, exactly as shown. A drop that fails
+   * stops the delete, so no view is left without a record.
+   */
+  app.post(
+    '/api/projects/:id/delete',
+    handle(async (req) => {
+      const actor = actorOf(req);
+      const { id } = idParam.parse(req.params);
+      const { cleanup } = deleteBody.parse(req.body);
+      const plan = await repo.deletePlan(actor, id);
+      if (cleanup.length && (cleanup.length !== plan.cleanup.length || cleanup.some((s, i) => s !== plan.cleanup[i])))
+        throw new HttpError(409, 'The sandbox views changed. Reload and review the delete again.');
+      for (const s of cleanup) {
+        try {
+          await runStatement(s, { actor, projectId: id, approved: true }, runFor(req));
+        } catch (err) {
+          throw new HttpError(
+            409,
+            `Could not drop a sandbox view, so nothing was deleted: ${(err as Error).message.slice(0, 300)}`
+          );
+        }
+      }
+      await repo.remove(actor, id);
+      return { deleted: true };
+    })
   );
 
   app.post(

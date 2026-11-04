@@ -29,8 +29,8 @@ createApp({
         appkit.asUser(req).run(() => fn());
     const llmFor = (req: Request) => servingDeps(asUser(req));
     appkit.server.extend((app) => {
-      registerProjectRoutes(app, pool, llmFor);
       const runFor = (req: Request) => warehouseDeps(pool, asUser(req));
+      registerProjectRoutes(app, pool, llmFor, runFor);
       registerCatalogRoutes(app, runFor);
       registerReadinessRoutes(app, pool, llmFor, runFor);
       registerDesignerRoutes(app, pool, llmFor, runFor, patterns);

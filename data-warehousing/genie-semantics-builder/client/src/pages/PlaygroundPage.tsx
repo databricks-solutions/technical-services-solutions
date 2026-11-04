@@ -13,7 +13,7 @@ import {
   Tag,
   Typography,
 } from '@databricks/design-system';
-import type { Pattern, PatternPlan, PatternRun } from '../../../shared/patterns';
+import type { Pattern, PatternFit, PatternPlan, PatternRun } from '../../../shared/patterns';
 import { api, useResource } from '../api';
 import { DataState } from '../components/DataState';
 import { SqlBlock } from '../components/SqlBlock';
@@ -103,13 +103,49 @@ function ApproveSql({
   );
 }
 
+const role = (r: string) => r.replace(/_/g, ' ');
+
+/** Rule-based: matches the pattern roles to source columns by type and name. */
+function FitNotice({ fit, assessed }: { fit: PatternFit | undefined; assessed: boolean }) {
+  if (!assessed || !fit)
+    return (
+      <Alert
+        componentId="gsb.playground.fit_unknown"
+        type="info"
+        closable={false}
+        message="Assess your sources on Source Readiness to see if this pattern fits your data."
+      />
+    );
+  const found = fit.found.map((f) => `${role(f.role)}: ${f.match}`).join('; ');
+  const missing = fit.missing.map(role).join(', ');
+  return (
+    <Alert
+      componentId="gsb.playground.fit"
+      type={fit.status === 'fits' ? 'success' : 'warning'}
+      closable={false}
+      message={
+        fit.status === 'fits'
+          ? 'Fits your sources'
+          : fit.status === 'partial'
+            ? `Partly fits. Missing: ${missing}`
+            : `Does not fit yet. Missing: ${missing}`
+      }
+      description={found ? `Found ${found}. Checked by rules on column names and types, not by AI.` : undefined}
+    />
+  );
+}
+
 function PatternDetail({
   pattern,
   run,
+  fit,
+  assessed,
   onRun,
 }: {
   pattern: Pattern;
   run: PatternRun | undefined;
+  fit: PatternFit | undefined;
+  assessed: boolean;
   onRun: (run: PatternRun) => void;
 }) {
   const { projectId = '', parentId = '' } = useParams();
@@ -179,12 +215,24 @@ function PatternDetail({
         <Typography.Text bold>Sample question: </Typography.Text>
         <Typography.Text>{pattern.question}</Typography.Text>
       </div>
+      <FitNotice fit={fit} assessed={assessed} />
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <Button componentId="gsb.playground.try" type="primary" loading={busy && !approve} onClick={review}>
+        <Button
+          componentId="gsb.playground.try"
+          type={fit?.status === 'fits' ? undefined : 'primary'}
+          loading={busy && !approve}
+          onClick={review}
+        >
           Try in sandbox
         </Button>
-        <Button componentId="gsb.playground.apply" loading={applying} disabled={busy} onClick={apply}>
+        <Button
+          componentId="gsb.playground.apply"
+          type={fit?.status === 'fits' ? 'primary' : undefined}
+          loading={applying}
+          disabled={busy}
+          onClick={apply}
+        >
           Apply to my data
         </Button>
         {run && run.cleanup.length > 0 && !removed && (
@@ -259,6 +307,8 @@ export function PlaygroundPage() {
   const [filter, setFilter] = useState('');
   const patterns = useResource<Pattern[]>('/api/patterns');
   const runs = useResource<PatternRun[]>(`/api/projects/${projectId}/patterns/runs`);
+  const fits = useResource<PatternFit[]>(`/api/projects/${projectId}/patterns/fit`);
+  const fitOf = (slug: string) => fits.data?.find((f) => f.slug === slug);
   const list = patterns.data ?? [];
   const needle = filter.trim().toLowerCase();
   const shown = list.filter((p) =>
@@ -315,6 +365,7 @@ export function PlaygroundPage() {
                                   setParams({ pattern: p.slug });
                                 }}
                               />
+                              {fitOf(p.slug)?.status === 'fits' && <NavList.Badge>Fits</NavList.Badge>}
                               {run?.status === 'passed' && <NavList.Badge>Passed</NavList.Badge>}
                               {run?.status === 'failed' && <NavList.Badge>Failed</NavList.Badge>}
                             </NavList.Item>
@@ -332,6 +383,8 @@ export function PlaygroundPage() {
                 key={selected.slug}
                 pattern={selected}
                 run={runs.data?.find((r) => r.slug === selected.slug)}
+                fit={fitOf(selected.slug)}
+                assessed={!!fits.data?.length}
                 onRun={(r) => runs.setData([...(runs.data ?? []).filter((x) => x.slug !== r.slug), r])}
               />
             )}

@@ -79,6 +79,30 @@ describe.skipIf(!url)('projectRepo on Postgres', () => {
     expect(await repo.list('other@x.com')).toEqual([]);
   });
 
+  it('plans and deletes a project with its sub-projects and sandbox views', async () => {
+    const parent = await repo.create('d@x.com', { name: 'Gone' });
+    const sub = await repo.create('d@x.com', { name: 'Child' }, parent.id);
+    const plan = { sandboxView: 'a.b.pattern_ranking__gsb_1', statements: ['CREATE ...'] };
+    const run = await patternRuns.start('d@x.com', sub.id, 'ranking', plan, 'SELECT 1');
+    await patternRuns.finish(run, 'passed', 1, '');
+
+    expect(await repo.deletePlan('d@x.com', parent.id)).toEqual({
+      name: 'Gone',
+      subProjects: ['Child'],
+      cleanup: ['DROP VIEW IF EXISTS `a`.`b`.`pattern_ranking__gsb_1`'],
+    });
+    await expect(repo.remove('other@x.com', parent.id)).rejects.toMatchObject({ status: 404 });
+    await repo.remove('d@x.com', parent.id);
+    expect(await repo.list('d@x.com')).toEqual([]);
+    const left = await pool.query('SELECT count(*)::int AS n FROM gsb.pattern_run WHERE project_id = $1', [sub.id]);
+    expect(left.rows[0].n).toBe(0);
+    const audit = await pool.query(
+      "SELECT target FROM gsb.audit_log WHERE action = 'delete_project' AND project_id = $1",
+      [parent.id]
+    );
+    expect(audit.rows).toEqual([{ target: 'Gone' }]);
+  });
+
   it('keeps projects private to their creator', async () => {
     const p = await repo.create('a@x.com', { name: 'TPC-H' });
     expect((await repo.list('a@x.com')).map((x) => x.id)).toContain(p.id);

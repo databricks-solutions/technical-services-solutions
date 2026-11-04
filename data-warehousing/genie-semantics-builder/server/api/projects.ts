@@ -2,7 +2,15 @@ import type { Application, Request } from 'express';
 import { z } from 'zod';
 import type { LakebasePool } from '@databricks/appkit';
 import { intakeSchema, newProjectSchema, refineSchema } from '../../shared/brief';
-import type { BriefVersion, NewProject, Project, ProjectDetail } from '../../shared/brief';
+import type {
+  BriefVersion,
+  NewProject,
+  Project,
+  ProjectDetail,
+  ProjectSummary,
+  SubProjectStage,
+  SubProjectSummary,
+} from '../../shared/brief';
 import { callTool } from '../llm/llm';
 import type { LlmDeps } from '../llm/llm';
 import { draftBriefPrompt, draftBriefRequest, refineBriefPrompt, refineBriefRequest } from '../llm/prompts/brief';
@@ -13,12 +21,18 @@ type Db = Pick<LakebasePool, 'query' | 'connect'>;
 
 interface ProjectRow {
   id: string;
+  parent_id: string | null;
   name: string;
   description: string | null;
-  target_catalog: string | null;
-  target_schema: string | null;
   created_by: string;
   created_at: Date;
+}
+
+interface SummaryRow extends ProjectRow {
+  brief_status: 'draft' | 'confirmed' | null;
+  draft_status: 'draft' | 'validated' | null;
+  sources: number;
+  last_activity: Date;
 }
 
 interface BriefRow {
@@ -31,10 +45,9 @@ interface BriefRow {
 
 const toProject = (r: ProjectRow): Project => ({
   id: r.id,
+  parentId: r.parent_id,
   name: r.name,
   description: r.description,
-  targetCatalog: r.target_catalog,
-  targetSchema: r.target_schema,
   createdBy: r.created_by,
   createdAt: r.created_at.toISOString(),
 });
@@ -48,7 +61,16 @@ const toBrief = (r: BriefRow): BriefVersion => ({
   confirmedAt: r.confirmed_at?.toISOString() ?? null,
 });
 
-const PROJECT_COLUMNS = 'id, name, description, target_catalog, target_schema, created_by, created_at';
+const PROJECT_COLUMNS = 'id, parent_id, name, description, created_by, created_at';
+
+const stageOf = (r: SummaryRow): SubProjectStage =>
+  r.draft_status === 'validated'
+    ? 'validated'
+    : r.draft_status
+      ? 'design'
+      : r.brief_status === 'confirmed'
+        ? 'sources'
+        : 'intent';
 
 /** Projects are private to their creator. Every query filters on created_by. */
 export function projectRepo(db: Db) {
@@ -81,24 +103,42 @@ export function projectRepo(db: Db) {
     get,
     latestBrief,
 
-    async list(actor: string): Promise<Project[]> {
-      const { rows } = await db.query<ProjectRow>(
-        `SELECT ${PROJECT_COLUMNS} FROM gsb.project WHERE created_by = $1 ORDER BY created_at DESC LIMIT 200`,
+    /** Top-level projects of the actor, each with its sub-projects and their stage. */
+    async list(actor: string): Promise<ProjectSummary[]> {
+      const { rows } = await db.query<SummaryRow>(
+        `SELECT p.id, p.parent_id, p.name, p.description, p.created_by, p.created_at,
+           (SELECT status FROM gsb.semantic_brief b WHERE b.project_id = p.id ORDER BY version DESC LIMIT 1) AS brief_status,
+           (SELECT status FROM gsb.metric_view_draft d WHERE d.project_id = p.id ORDER BY version DESC LIMIT 1) AS draft_status,
+           (SELECT count(*)::int FROM gsb.source s WHERE s.project_id = p.id) AS sources,
+           GREATEST(p.created_at,
+             (SELECT MAX(created_at) FROM gsb.semantic_brief b WHERE b.project_id = p.id),
+             (SELECT MAX(created_at) FROM gsb.metric_view_draft d WHERE d.project_id = p.id)) AS last_activity
+         FROM gsb.project p WHERE p.created_by = $1 ORDER BY p.created_at DESC LIMIT 500`,
         [actor]
       );
-      return rows.map(toProject);
+      const children = new Map<string, SubProjectSummary[]>();
+      for (const r of rows.filter((x) => x.parent_id)) {
+        const list = children.get(r.parent_id!) ?? [];
+        list.push({
+          ...toProject(r),
+          stage: stageOf(r),
+          sources: r.sources,
+          lastActivity: r.last_activity.toISOString(),
+        });
+        children.set(r.parent_id!, list);
+      }
+      return rows.filter((r) => !r.parent_id).map((r) => ({ ...toProject(r), subProjects: children.get(r.id) ?? [] }));
     },
 
-    async create(actor: string, p: NewProject): Promise<Project> {
+    async create(actor: string, p: NewProject, parentId: string | null = null): Promise<Project> {
       const { rows } = await db.query<ProjectRow>(
-        `INSERT INTO gsb.project (name, description, target_catalog, target_schema, created_by)
-         VALUES ($1, $2, $3, $4, $5) RETURNING ${PROJECT_COLUMNS}`,
-        [p.name, p.description ?? null, p.targetCatalog ?? null, p.targetSchema ?? null, actor]
+        `INSERT INTO gsb.project (name, description, parent_id, created_by)
+         VALUES ($1, $2, $3, $4) RETURNING ${PROJECT_COLUMNS}`,
+        [p.name, p.description ?? null, parentId, actor]
       );
-      await audit(actor, 'create_project', rows[0].id, { name: p.name });
+      await audit(actor, parentId ? 'create_subproject' : 'create_project', rows[0].id, { name: p.name, parentId });
       return toProject(rows[0]);
     },
-
     async addDraft(actor: string, projectId: string, output: BriefOutput, input: unknown): Promise<BriefVersion> {
       const { rows } = await db.query<BriefRow>(
         `INSERT INTO gsb.semantic_brief (project_id, version, content, created_by)
@@ -159,6 +199,16 @@ export function registerProjectRoutes(app: Application, db: Db, llmFor: (req: Re
   app.post(
     '/api/projects',
     handle((req) => repo.create(actorOf(req), newProjectSchema.parse(req.body)))
+  );
+
+  app.post(
+    '/api/projects/:id/subprojects',
+    handle(async (req) => {
+      const actor = actorOf(req);
+      const parent = await repo.get(actor, idParam.parse(req.params).id);
+      if (parent.parentId) throw new HttpError(400, 'A sub-project cannot have sub-projects.');
+      return repo.create(actor, newProjectSchema.parse(req.body), parent.id);
+    })
   );
 
   app.get(

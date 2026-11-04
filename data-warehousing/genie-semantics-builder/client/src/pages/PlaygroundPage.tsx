@@ -111,7 +111,7 @@ function PatternDetail({
   run: PatternRun | undefined;
   onRun: (run: PatternRun) => void;
 }) {
-  const { projectId = '' } = useParams();
+  const { projectId = '', parentId = '' } = useParams();
   const base = `/api/projects/${projectId}/patterns/${pattern.slug}/try`;
   const [approve, setApprove] = useState<{ kind: 'try' | 'drop'; statements: string[] }>();
   const [busy, setBusy] = useState(false);
@@ -124,7 +124,7 @@ function PatternDetail({
     setError(undefined);
     setApplying(true);
     api(`/api/projects/${projectId}/patterns/${pattern.slug}/apply`, {}).then(
-      () => void navigate(`/projects/${projectId}/designer`),
+      () => void navigate(`/projects/${parentId}/sub/${projectId}/designer`),
       (err: unknown) => {
         setApplying(false);
         setError((err as Error).message);

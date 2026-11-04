@@ -43,19 +43,29 @@ export const refineSchema = z.object({ instruction: text(2000).min(3) });
 export const newProjectSchema = z.object({
   name: text(200).min(1, 'Name is required'),
   description: text(4000).optional(),
-  targetCatalog: z.string().trim().regex(UC_NAME_PART).optional(),
-  targetSchema: z.string().trim().regex(UC_NAME_PART).optional(),
 });
 export type NewProject = z.infer<typeof newProjectSchema>;
 
 export interface Project {
   id: string;
+  /** Set for a sub-project. A sub-project holds one brief, its sources and its metric view designs. */
+  parentId: string | null;
   name: string;
   description: string | null;
-  targetCatalog: string | null;
-  targetSchema: string | null;
   createdBy: string;
   createdAt: string;
+}
+
+export type SubProjectStage = 'intent' | 'sources' | 'design' | 'validated';
+
+export interface SubProjectSummary extends Project {
+  stage: SubProjectStage;
+  sources: number;
+  lastActivity: string;
+}
+
+export interface ProjectSummary extends Project {
+  subProjects: SubProjectSummary[];
 }
 
 export interface BriefVersion {

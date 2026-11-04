@@ -1,7 +1,10 @@
 import type { ReactNode } from 'react';
 import { createBrowserRouter, Outlet, RouterProvider, useLocation, useMatch, useNavigate } from 'react-router';
+import type { ProjectSummary } from '../../shared/brief';
+import { useResource } from './api';
 import {
   BeakerIcon,
+  Breadcrumb,
   CatalogIcon,
   ChartLineIcon,
   FolderIcon,
@@ -18,6 +21,7 @@ import type { ThemePreference } from './theme';
 import { DesignerPage } from './pages/DesignerPage';
 import { IntakePage } from './pages/IntakePage';
 import { PlaygroundPage } from './pages/PlaygroundPage';
+import { ProjectPage } from './pages/ProjectPage';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { SourcesPage } from './pages/SourcesPage';
 
@@ -27,13 +31,42 @@ interface Destination {
   icon: ReactNode;
 }
 
-// Project modules appear here as each phase ships.
+// Sub-project modules appear here as each phase ships.
 const projectModules = [
-  { slug: 'intake', label: 'Intent & Context', icon: <SparkleIcon /> },
-  { slug: 'sources', label: 'Source Readiness', icon: <CatalogIcon /> },
-  { slug: 'designer', label: 'Metric Designer', icon: <ChartLineIcon /> },
-  { slug: 'playground', label: 'Playground', icon: <BeakerIcon /> },
+  { slug: 'intake', label: 'Intent & Context', icon: <SparkleIcon />, page: <IntakePage /> },
+  { slug: 'sources', label: 'Source Readiness', icon: <CatalogIcon />, page: <SourcesPage /> },
+  { slug: 'patterns', label: 'Modeling patterns', icon: <BeakerIcon />, page: <PlaygroundPage /> },
+  { slug: 'designer', label: 'Metric Designer', icon: <ChartLineIcon />, page: <DesignerPage /> },
 ];
+
+function Crumbs() {
+  const navigate = useNavigate();
+  const match = useMatch('/projects/:parentId/*');
+  const subId = useMatch('/projects/:parentId/sub/:projectId/*')?.params.projectId;
+  const parentId = match?.params.parentId;
+  const projects = useResource<ProjectSummary[]>('/api/projects');
+  if (!parentId) return null;
+  const project = projects.data?.find((p) => p.id === parentId);
+  const sub = project?.subProjects.find((s) => s.id === subId);
+  const link = (path: string, label: string) => (
+    <a
+      href={path}
+      onClick={(e) => {
+        e.preventDefault();
+        void navigate(path);
+      }}
+    >
+      {label}
+    </a>
+  );
+  return (
+    <Breadcrumb>
+      <Breadcrumb.Item>{link('/', 'Projects')}</Breadcrumb.Item>
+      <Breadcrumb.Item>{link(`/projects/${parentId}`, project?.name ?? 'Project')}</Breadcrumb.Item>
+      {subId && <Breadcrumb.Item>{sub?.name ?? 'Sub-project'}</Breadcrumb.Item>}
+    </Breadcrumb>
+  );
+}
 
 function ThemeSelect() {
   const { preference, setPreference } = useThemePreference();
@@ -55,11 +88,15 @@ function ThemeSelect() {
 function Shell() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const projectId = useMatch('/projects/:projectId/*')?.params.projectId;
+  const sub = useMatch('/projects/:parentId/sub/:projectId/*')?.params;
   const destinations: Destination[] = [
     { path: '/', label: 'Projects', icon: <FolderIcon /> },
-    ...(projectId
-      ? projectModules.map((m) => ({ path: `/projects/${projectId}/${m.slug}`, label: m.label, icon: m.icon }))
+    ...(sub
+      ? projectModules.map((m) => ({
+          path: `/projects/${sub.parentId}/sub/${sub.projectId}/${m.slug}`,
+          label: m.label,
+          icon: m.icon,
+        }))
       : []),
   ];
 
@@ -108,7 +145,8 @@ function Shell() {
           </Typography.Title>
           <ThemeSelect />
         </header>
-        <main style={{ flex: 1, overflow: 'auto', padding: 24 }}>
+        <main style={{ flex: 1, overflow: 'auto', padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <Crumbs />
           <ErrorBoundary>
             <Outlet />
           </ErrorBoundary>
@@ -142,37 +180,13 @@ const router = createBrowserRouter([
         ),
       },
       {
-        path: '/projects/:projectId/intake',
-        element: (
-          <Page title="Intent & Context">
-            <IntakePage />
-          </Page>
-        ),
+        path: '/projects/:parentId',
+        element: <ProjectPage />,
       },
-      {
-        path: '/projects/:projectId/sources',
-        element: (
-          <Page title="Source Readiness">
-            <SourcesPage />
-          </Page>
-        ),
-      },
-      {
-        path: '/projects/:projectId/designer',
-        element: (
-          <Page title="Metric Designer">
-            <DesignerPage />
-          </Page>
-        ),
-      },
-      {
-        path: '/projects/:projectId/playground',
-        element: (
-          <Page title="Playground">
-            <PlaygroundPage />
-          </Page>
-        ),
-      },
+      ...projectModules.map((m) => ({
+        path: `/projects/:parentId/sub/:projectId/${m.slug}`,
+        element: <Page title={m.label}>{m.page}</Page>,
+      })),
       { path: '*', element: <Page title="Not found">{null}</Page> },
     ],
   },

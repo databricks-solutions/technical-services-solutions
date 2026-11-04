@@ -170,7 +170,7 @@ function FixCard({
 }
 
 export function SourcesPage() {
-  const { projectId = '' } = useParams();
+  const { projectId = '', parentId = '' } = useParams();
   const navigate = useNavigate();
   const view = useResource<ReadinessView>(`/api/projects/${projectId}/readiness`);
   const [busy, setBusy] = useState<string>();
@@ -202,7 +202,10 @@ export function SourcesPage() {
       message={status === 'empty' ? 'Confirm a Semantic Brief to register its candidate sources.' : view.error}
       onRetry={view.reload}
       emptyAction={
-        <Button componentId="gsb.sources.go_intake" onClick={() => void navigate(`/projects/${projectId}/intake`)}>
+        <Button
+          componentId="gsb.sources.go_intake"
+          onClick={() => void navigate(`/projects/${parentId}/sub/${projectId}/intake`)}
+        >
           Go to Intent & Context
         </Button>
       }

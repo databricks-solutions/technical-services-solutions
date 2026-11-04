@@ -42,6 +42,43 @@ describe.skipIf(!url)('projectRepo on Postgres', () => {
   });
   afterAll(() => pool.end());
 
+  it('moves each existing project into a sub-project of a new parent', async () => {
+    const all = await loadMigrations(path.resolve('server/db/migrations'));
+    await pool.query('DROP SCHEMA IF EXISTS gsb CASCADE');
+    await migrate(
+      pool,
+      all.filter((m) => m.version < '006')
+    );
+    const { rows } = await pool.query<{ id: string }>(
+      "INSERT INTO gsb.project (name, created_by) VALUES ('Old', 'a@x.com') RETURNING id"
+    );
+    await pool.query("INSERT INTO gsb.source (project_id, full_name, added_by) VALUES ($1, 'a.b.c', 'a@x.com')", [
+      rows[0].id,
+    ]);
+    await migrate(pool, all);
+    const [top] = await repo.list('a@x.com');
+    expect(top).toMatchObject({ name: 'Old', parentId: null });
+    expect(top?.subProjects).toMatchObject([{ id: rows[0].id, name: 'Old', stage: 'intent', sources: 1 }]);
+    await pool.query('DROP SCHEMA gsb CASCADE');
+    await migrate(pool, all);
+  });
+
+  it('nests sub-projects under their project and reports their stage', async () => {
+    const parent = await repo.create('n@x.com', { name: 'Sales' });
+    const sub = await repo.create('n@x.com', { name: 'Revenue', description: 'Net revenue' }, parent.id);
+    await repo.create('n@x.com', { name: 'Returns' }, parent.id);
+    expect(sub.parentId).toBe(parent.id);
+    await repo.addDraft('n@x.com', sub.id, output, {});
+    await repo.confirm('n@x.com', sub.id, 1);
+    const list = await repo.list('n@x.com');
+    expect(list.map((p) => p.name)).toEqual(['Sales']);
+    expect(list[0]?.subProjects.map((s) => [s.name, s.stage, s.sources]).sort()).toEqual([
+      ['Returns', 'intent', 0],
+      ['Revenue', 'sources', 2],
+    ]);
+    expect(await repo.list('other@x.com')).toEqual([]);
+  });
+
   it('keeps projects private to their creator', async () => {
     const p = await repo.create('a@x.com', { name: 'TPC-H' });
     expect((await repo.list('a@x.com')).map((x) => x.id)).toContain(p.id);

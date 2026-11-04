@@ -295,7 +295,7 @@ export function IntakePage() {
               setDraft({});
               setChatting(true);
               void api(`/api/projects/${projectId}/intake/session/clear`, {}).then(() => {
-                if (context.data) context.setData({ ...context.data, session: [] });
+                if (context.data) context.setData({ ...context.data, session: [], lastTurn: null });
               });
             }}
           />

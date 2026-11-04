@@ -1,9 +1,14 @@
 import { useState } from 'react';
+import type { ReactNode } from 'react';
 import {
+  CatalogIcon,
   Checkbox,
+  ChevronDownIcon,
+  ChevronRightIcon,
   FormUI,
-  SimpleSelect,
-  SimpleSelectOption,
+  Input,
+  SchemaIcon,
+  SearchIcon,
   Spinner,
   Tag,
   Typography,
@@ -12,89 +17,64 @@ import type { UcTable } from '../../../shared/brief';
 import { useResource } from '../api';
 
 const q = encodeURIComponent;
+const INDENT = 20;
 
-function NameSelect({
-  id,
-  label,
-  path,
-  value,
-  onChange,
-}: {
-  id: string;
-  label: string;
-  path: string;
-  value?: string;
-  onChange: (v: string) => void;
-}) {
-  const names = useResource<string[]>(path);
-  const empty = names.status === 'ready' && !names.data?.length;
+function Loading({ label }: { label: string }) {
   return (
-    <div style={{ flex: 1, minWidth: 0 }}>
-      <SimpleSelect
-        componentId={`gsb.uc.${id}`}
-        id={`gsb-uc-${id}`}
-        label={label}
-        value={value ?? ''}
-        disabled={names.status !== 'ready' || empty}
-        placeholder={
-          names.status === 'loading'
-            ? 'Loading'
-            : empty
-              ? `No ${label.toLowerCase()}s you can access`
-              : `Select a ${label.toLowerCase()}`
-        }
-        onChange={(e) => onChange(e.target.value)}
-      >
-        {(names.data ?? []).map((n) => (
-          <SimpleSelectOption key={n} value={n}>
-            {n}
-          </SimpleSelectOption>
-        ))}
-      </SimpleSelect>
-      {names.status === 'error' || names.status === 'forbidden' ? (
-        <FormUI.Message type="error" message={names.error ?? 'Could not load the list.'} />
-      ) : null}
-    </div>
+    <li style={{ listStyle: 'none', padding: 4 }}>
+      <Spinner size="small" label={label} />
+    </li>
   );
 }
 
-/** Catalog and schema dropdowns, limited to what the signed-in user can access. */
-export function CatalogSchemaSelect({
-  idPrefix,
-  purpose = 'browse',
-  catalog,
-  schema,
-  onChange,
+/** A disclosure row: a button that opens its children, which load only when open. */
+function Node({
+  icon,
+  label,
+  count,
+  depth,
+  children,
 }: {
-  idPrefix: string;
-  /** publish: only regular catalogs and schemas where the user can create tables. */
-  purpose?: 'browse' | 'publish';
-  catalog?: string;
-  schema?: string;
-  onChange: (catalog: string | undefined, schema: string | undefined) => void;
+  icon: ReactNode;
+  label: string;
+  count: number;
+  depth: number;
+  children: () => ReactNode;
 }) {
+  const [open, setOpen] = useState(false);
   return (
-    <div style={{ display: 'flex', gap: 12 }}>
-      <NameSelect
-        id={`${idPrefix}_catalog`}
-        label="Catalog"
-        path={`/api/uc/catalogs?purpose=${purpose}`}
-        value={catalog}
-        onChange={(c) => onChange(c, undefined)}
-      />
-      {catalog ? (
-        <NameSelect
-          key={catalog}
-          id={`${idPrefix}_schema`}
-          label="Schema"
-          path={`/api/uc/schemas?catalog=${q(catalog)}&purpose=${purpose}`}
-          value={schema}
-          onChange={(s) => onChange(catalog, s)}
-        />
-      ) : (
-        <div style={{ flex: 1 }} />
-      )}
-    </div>
+    <li style={{ listStyle: 'none' }}>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          width: '100%',
+          padding: `4px 4px 4px ${depth * INDENT + 4}px`,
+          border: 'none',
+          borderRadius: 4,
+          background: 'transparent',
+          color: 'var(--db-text-base)',
+          cursor: 'pointer',
+          textAlign: 'left',
+          font: 'inherit',
+          fontSize: 13,
+        }}
+      >
+        {open ? <ChevronDownIcon /> : <ChevronRightIcon />}
+        {icon}
+        <span>{label}</span>
+        {count > 0 && (
+          <Tag componentId="gsb.uc.node_count" color="indigo">
+            {count} selected
+          </Tag>
+        )}
+      </button>
+      {open && <ul style={{ margin: 0, padding: 0 }}>{children()}</ul>}
+    </li>
   );
 }
 
@@ -110,59 +90,128 @@ function TableChecklist({
   onToggle: (fullName: string, on: boolean) => void;
 }) {
   const tables = useResource<UcTable[]>(`/api/uc/tables?catalog=${q(catalog)}&schema=${q(schema)}`);
-  if (tables.status === 'loading') return <Spinner label="Loading tables" />;
+  const pad = { paddingLeft: 2 * INDENT + 28 };
+  if (tables.status === 'loading') return <Loading label="Loading tables" />;
   if (tables.status !== 'ready')
-    return <FormUI.Message type="error" message={tables.error ?? 'Could not load the tables.'} />;
+    return (
+      <li style={{ listStyle: 'none' }}>
+        <FormUI.Message type="error" message={tables.error ?? 'Could not load the tables.'} />
+      </li>
+    );
   if (!tables.data?.length)
-    return <Typography.Text color="secondary">This schema has no tables you can access.</Typography.Text>;
+    return (
+      <li style={{ listStyle: 'none', ...pad }}>
+        <Typography.Text color="secondary">No tables you can access.</Typography.Text>
+      </li>
+    );
   return (
-    <div
-      role="group"
-      aria-label={`Tables in ${catalog}.${schema}`}
-      style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 240, overflow: 'auto' }}
-    >
-      {tables.data.map((t) => {
-        const full = `${catalog}.${schema}.${t.name}`;
-        return (
-          <Checkbox
-            key={t.name}
-            componentId="gsb.uc.table"
-            isChecked={selected.includes(full)}
-            onChange={(on) => onToggle(full, on)}
-          >
-            {t.name}
-            {t.type && t.type !== 'MANAGED' && t.type !== 'EXTERNAL' ? (
-              <Typography.Text color="secondary"> ({t.type.toLowerCase().replace(/_/g, ' ')})</Typography.Text>
-            ) : null}
-          </Checkbox>
-        );
-      })}
-    </div>
+    <li style={{ listStyle: 'none', ...pad }}>
+      <div
+        role="group"
+        aria-label={`Tables in ${catalog}.${schema}`}
+        style={{ display: 'flex', flexDirection: 'column', gap: 2 }}
+      >
+        {tables.data.map((t) => {
+          const full = `${catalog}.${schema}.${t.name}`;
+          return (
+            <Checkbox
+              key={t.name}
+              componentId="gsb.uc.table"
+              isChecked={selected.includes(full)}
+              onChange={(on) => onToggle(full, on)}
+            >
+              {t.name}
+              {t.type && t.type !== 'MANAGED' && t.type !== 'EXTERNAL' ? (
+                <Typography.Text color="secondary"> ({t.type.toLowerCase().replace(/_/g, ' ')})</Typography.Text>
+              ) : null}
+            </Checkbox>
+          );
+        })}
+      </div>
+    </li>
   );
 }
 
-/** Browse catalogs and schemas, then tick tables. Selections can span schemas. */
+function SchemaList({
+  catalog,
+  selected,
+  onToggle,
+}: {
+  catalog: string;
+  selected: string[];
+  onToggle: (fullName: string, on: boolean) => void;
+}) {
+  const schemas = useResource<string[]>(`/api/uc/schemas?purpose=browse&catalog=${q(catalog)}`);
+  if (schemas.status === 'loading') return <Loading label="Loading schemas" />;
+  if (schemas.status !== 'ready')
+    return (
+      <li style={{ listStyle: 'none' }}>
+        <FormUI.Message type="error" message={schemas.error ?? 'Could not load the schemas.'} />
+      </li>
+    );
+  return (
+    <>
+      {(schemas.data ?? []).map((s) => (
+        <Node
+          key={s}
+          icon={<SchemaIcon />}
+          label={s}
+          depth={1}
+          count={selected.filter((t) => t.startsWith(`${catalog}.${s}.`)).length}
+        >
+          {() => <TableChecklist catalog={catalog} schema={s} selected={selected} onToggle={onToggle} />}
+        </Node>
+      ))}
+    </>
+  );
+}
+
+/** Catalog Explorer style: open catalogs and schemas, tick tables. Selections can span schemas. */
 export function TablePicker({ value, onChange }: { value: string[]; onChange: (tables: string[]) => void }) {
-  const [browse, setBrowse] = useState<{ catalog?: string; schema?: string }>({});
+  const catalogs = useResource<string[]>('/api/uc/catalogs?purpose=browse');
+  const [filter, setFilter] = useState('');
   const toggle = (full: string, on: boolean) =>
     onChange(on ? [...value.filter((t) => t !== full), full] : value.filter((t) => t !== full));
+  const shown = (catalogs.data ?? []).filter((c) => c.toLowerCase().includes(filter.trim().toLowerCase()));
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <CatalogSchemaSelect
-        idPrefix="sources"
-        catalog={browse.catalog}
-        schema={browse.schema}
-        onChange={(catalog, schema) => setBrowse({ catalog, schema })}
+      <Input
+        componentId="gsb.uc.filter"
+        aria-label="Filter catalogs"
+        placeholder="Filter catalogs"
+        prefix={<SearchIcon />}
+        value={filter}
+        onChange={(e) => setFilter(e.target.value)}
+        allowClear
+        style={{ maxWidth: 360 }}
       />
-      {browse.catalog && browse.schema && (
-        <TableChecklist
-          key={`${browse.catalog}.${browse.schema}`}
-          catalog={browse.catalog}
-          schema={browse.schema}
-          selected={value}
-          onToggle={toggle}
-        />
-      )}
+      <div
+        style={{
+          maxHeight: 360,
+          overflow: 'auto',
+          padding: 4,
+          border: '1px solid var(--db-border-base)',
+          borderRadius: 8,
+        }}
+      >
+        {catalogs.status !== 'loading' && catalogs.status !== 'ready' && (
+          <FormUI.Message type="error" message={catalogs.error ?? 'Could not load the catalogs.'} />
+        )}
+        <ul aria-label="Unity Catalog" style={{ margin: 0, padding: 0 }}>
+          {catalogs.status === 'loading' && <Loading label="Loading catalogs" />}
+          {shown.map((c) => (
+            <Node
+              key={c}
+              icon={<CatalogIcon />}
+              label={c}
+              depth={0}
+              count={value.filter((t) => t.startsWith(`${c}.`)).length}
+            >
+              {() => <SchemaList catalog={c} selected={value} onToggle={toggle} />}
+            </Node>
+          ))}
+        </ul>
+      </div>
       {value.length > 0 && (
         <div aria-label="Selected tables" style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
           {value.map((t) => (

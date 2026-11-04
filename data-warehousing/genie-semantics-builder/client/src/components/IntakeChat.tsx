@@ -128,9 +128,13 @@ export function IntakeChat({
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([opening(context.tables), ...context.session]);
   const [suggestions, setSuggestions] = useState<string[]>(
-    context.tables.length && !context.session.length ? [DISCOVER, 'I already know my goal'] : []
+    context.session.length
+      ? (context.lastTurn?.suggestions ?? [])
+      : context.tables.length
+        ? [DISCOVER, 'I already know my goal']
+        : []
   );
-  const [ideas, setIdeas] = useState<MetricIdea[]>([]);
+  const [ideas, setIdeas] = useState<MetricIdea[]>(context.lastTurn?.ideas ?? []);
   const [ready, setReady] = useState(false);
   const [text, setText] = useState('');
   const [cursor, setCursor] = useState(0);
@@ -217,7 +221,12 @@ export function IntakeChat({
         {ideas.length > 0 && (
           <div
             aria-label="Suggested metric views"
-            style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', minWidth: 0, gap: 8 }}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+              minWidth: 0,
+              gap: 8,
+            }}
           >
             {ideas.map((idea) => (
               <IdeaCard

@@ -124,9 +124,10 @@ export function projectRepo(db: Db) {
            WHERE s.project_id = $1 ORDER BY s.full_name`,
           [projectId]
         ),
-        db.query<{ messages: ChatMessage[] }>('SELECT messages FROM gsb.chat_session WHERE project_id = $1', [
-          projectId,
-        ]),
+        db.query<{ messages: ChatMessage[]; last_turn: IntakeContext['lastTurn'] }>(
+          'SELECT messages, last_turn FROM gsb.chat_session WHERE project_id = $1',
+          [projectId]
+        ),
         db.query<{
           id: string;
           kind: MemoryItem['kind'];
@@ -151,6 +152,7 @@ export function projectRepo(db: Db) {
       return {
         tables: tables.rows.map((t) => t.full_name),
         session: session.rows[0]?.messages ?? [],
+        lastTurn: session.rows[0]?.last_turn ?? null,
         memory: items,
         metadata: {
           tables: tables.rows.map((t) =>
@@ -170,11 +172,17 @@ export function projectRepo(db: Db) {
       };
     },
 
-    async saveSession(actor: string, projectId: string, messages: ChatMessage[]): Promise<void> {
+    async saveSession(
+      actor: string,
+      projectId: string,
+      messages: ChatMessage[],
+      lastTurn: IntakeContext['lastTurn'] = null
+    ): Promise<void> {
       await db.query(
-        `INSERT INTO gsb.chat_session (project_id, messages, updated_by) VALUES ($1, $2, $3)
-         ON CONFLICT (project_id) DO UPDATE SET messages = EXCLUDED.messages, updated_by = $3, updated_at = now()`,
-        [projectId, JSON.stringify(messages), actor]
+        `INSERT INTO gsb.chat_session (project_id, messages, last_turn, updated_by) VALUES ($1, $2, $4, $3)
+         ON CONFLICT (project_id)
+         DO UPDATE SET messages = EXCLUDED.messages, last_turn = EXCLUDED.last_turn, updated_by = $3, updated_at = now()`,
+        [projectId, JSON.stringify(messages), actor, lastTurn && JSON.stringify(lastTurn)]
       );
     },
 
@@ -428,7 +436,10 @@ export function registerProjectRoutes(
       );
       const allowed = new Set([...context.tables, ...mentionedTables(messages)].map((t) => t.toLowerCase()));
       const sources = turn.brief.candidateSources?.filter((t) => allowed.has(t.toLowerCase()));
-      await repo.saveSession(actor, project.id, [...messages, { role: 'assistant', content: turn.reply }]);
+      await repo.saveSession(actor, project.id, [...messages, { role: 'assistant', content: turn.reply }], {
+        ideas: turn.ideas,
+        suggestions: turn.suggestions,
+      });
       return { ...turn, brief: { ...turn.brief, ...(sources ? { candidateSources: sources } : {}) } };
     })
   );

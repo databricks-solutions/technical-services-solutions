@@ -94,7 +94,10 @@ describe.skipIf(!url)('projectRepo on Postgres', () => {
     await expect(repo.remove('other@x.com', parent.id)).rejects.toMatchObject({ status: 404 });
     await repo.remove('d@x.com', parent.id);
     expect(await repo.list('d@x.com')).toEqual([]);
-    const left = await pool.query<{ n: number }>('SELECT count(*)::int AS n FROM gsb.pattern_run WHERE project_id = $1', [sub.id]);
+    const left = await pool.query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM gsb.pattern_run WHERE project_id = $1',
+      [sub.id]
+    );
     expect(left.rows[0].n).toBe(0);
     const audit = await pool.query(
       "SELECT target FROM gsb.audit_log WHERE action = 'delete_project' AND project_id = $1",
@@ -125,8 +128,13 @@ describe.skipIf(!url)('projectRepo on Postgres', () => {
     ]);
     expect(ctx.metadata.memory).toHaveLength(2);
 
-    await repo.saveSession('m@x.com', returns.id, [{ role: 'user', content: 'hi' }]);
+    const lastTurn = {
+      ideas: [{ title: 'Returns', question: 'q', measures: ['Rate'], dimensions: [] }],
+      suggestions: ['a'],
+    };
+    await repo.saveSession('m@x.com', returns.id, [{ role: 'user', content: 'hi' }], lastTurn);
     expect((await repo.intakeContext(returns.id)).session).toEqual([{ role: 'user', content: 'hi' }]);
+    expect((await repo.intakeContext(returns.id)).lastTurn).toEqual(lastTurn);
     await repo.clearSession(returns.id);
     expect((await repo.intakeContext(returns.id)).session).toEqual([]);
 

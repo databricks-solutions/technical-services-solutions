@@ -124,6 +124,8 @@ export interface MemoryItem {
 export interface IntakeContext {
   tables: string[];
   session: ChatMessage[];
+  /** Ideas and quick replies of the last saved turn. */
+  lastTurn: { ideas: MetricIdea[]; suggestions: string[] } | null;
   memory: MemoryItem[];
 }
 

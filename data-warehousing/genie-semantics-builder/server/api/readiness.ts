@@ -29,7 +29,7 @@ import type { NewRecommendation, TableProfile } from '../readiness/profile';
 import { runStatement } from '../sql/runner';
 import type { RunDeps } from '../sql/runner';
 import { projectRepo } from './projects';
-import { actorOf, handle, HttpError } from './http';
+import { actorOf, handle, HttpError, SCOPE_MESSAGE, SCOPE_MISSING } from './http';
 
 type Db = Pick<LakebasePool, 'query' | 'connect'>;
 
@@ -625,7 +625,13 @@ export function registerReadinessRoutes(
           try {
             info = await uc.table(t);
           } catch (err) {
-            return { t, read: readCheck(t, actor, { error: (err as Error).message, missing: [] }), fix: null };
+            const message = (err as Error).message;
+            return {
+              t,
+              read: readCheck(t, actor, { error: message, missing: [] }),
+              fix: null,
+              scope: SCOPE_MISSING.test(message),
+            };
           }
           const [onCatalog, onSchema, onTable] = await Promise.all([
             effective('catalog', catalog),
@@ -648,7 +654,13 @@ export function registerReadinessRoutes(
         })
       );
       checks.push(...results.map((r) => r.read));
-      checks.push(...results.map((r) => fixCheck(r.t, actor, r.fix)));
+      checks.push(
+        ...results.map((r) =>
+          'scope' in r && r.scope
+            ? { ...fixCheck(r.t, actor, null), detail: SCOPE_MESSAGE, grants: [] }
+            : fixCheck(r.t, actor, r.fix)
+        )
+      );
       return checks;
     })
   );

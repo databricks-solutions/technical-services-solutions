@@ -1,4 +1,4 @@
-# Genie Semantics Builder
+# Semantics Builder
 
 A Databricks App that helps teams design, validate, optimize and govern Unity Catalog metric views,
 with an LLM advisor behind every step and a human approval in front of every change.

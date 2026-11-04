@@ -77,7 +77,7 @@ function Shell() {
         {({ showExpandedContent }) => {
           const side = showExpandedContent ? 'side' : 'only';
           return (
-            <NavList.Root aria-label="Genie Semantics Builder">
+            <NavList.Root aria-label="Semantics Builder">
               <NavList.Group>
                 <NavList.GroupContent>
                   <NavList.List>
@@ -171,7 +171,7 @@ function Shell() {
           }}
         >
           <Typography.Title level={3} withoutMargins>
-            Genie Semantics Builder
+            Semantics Builder
           </Typography.Title>
           <ThemeSelect />
         </header>

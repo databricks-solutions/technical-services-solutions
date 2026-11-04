@@ -13,7 +13,7 @@ import {
   Typography,
 } from '@databricks/design-system';
 import type { ProjectSummary, SubProjectStage, SubProjectSummary } from '../../../shared/brief';
-import { useResource } from '../api';
+import { PROJECTS_CHANGED, useResource } from '../api';
 import { DataState } from '../components/DataState';
 import { DeleteProjectModal } from '../components/DeleteProjectModal';
 import { NewProjectModal, STAGE, subPath } from './ProjectsPage';
@@ -218,7 +218,10 @@ export function ProjectPage() {
               onDeleted={() => {
                 setDeleting(undefined);
                 if (deleting.kind === 'project') void navigate('/');
-                else projects.reload();
+                else {
+                  projects.reload();
+                  window.dispatchEvent(new Event(PROJECTS_CHANGED));
+                }
               }}
             />
           )}

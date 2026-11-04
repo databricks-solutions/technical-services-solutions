@@ -25,6 +25,9 @@ export function statusOf(err: unknown): DataStateStatus {
 }
 
 /** Loads a resource and maps the result to the four required data states. */
+/** Fired after a delete that does not change the URL, so the navigation tree refreshes. */
+export const PROJECTS_CHANGED = 'gsb:projects-changed';
+
 export function useResource<T>(path: string) {
   const [state, setState] = useState<{ path: string; status: DataStateStatus; data?: T; error?: string }>({
     path,
@@ -45,5 +48,7 @@ export function useResource<T>(path: string) {
       fetchIt();
     },
     setData: (data: T) => setState({ path, status: 'ready', data }),
+    /** Refetches without a loading state. Stable across renders. */
+    refresh: fetchIt,
   };
 }

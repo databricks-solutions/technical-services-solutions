@@ -1,13 +1,14 @@
-import type { ReactNode } from 'react';
+import { useEffect } from 'react';
+import type { MouseEvent, ReactNode } from 'react';
 import { createBrowserRouter, Outlet, RouterProvider, useLocation, useMatch, useNavigate } from 'react-router';
 import type { ProjectSummary } from '../../shared/brief';
-import { useResource } from './api';
+import { PROJECTS_CHANGED, useResource } from './api';
 import {
   BeakerIcon,
-  Breadcrumb,
   CatalogIcon,
   ChartLineIcon,
   FolderIcon,
+  HomeIcon,
   NavList,
   NavListSidebar,
   SimpleSelect,
@@ -22,14 +23,8 @@ import { DesignerPage } from './pages/DesignerPage';
 import { IntakePage } from './pages/IntakePage';
 import { PlaygroundPage } from './pages/PlaygroundPage';
 import { ProjectPage } from './pages/ProjectPage';
-import { ProjectsPage } from './pages/ProjectsPage';
+import { ProjectsPage, STAGE, subPath } from './pages/ProjectsPage';
 import { SourcesPage } from './pages/SourcesPage';
-
-interface Destination {
-  path: string;
-  label: string;
-  icon: ReactNode;
-}
 
 // Sub-project modules appear here as each phase ships.
 const projectModules = [
@@ -38,35 +33,6 @@ const projectModules = [
   { slug: 'patterns', label: 'Modeling patterns', icon: <BeakerIcon />, page: <PlaygroundPage /> },
   { slug: 'designer', label: 'Metric Designer', icon: <ChartLineIcon />, page: <DesignerPage /> },
 ];
-
-function Crumbs() {
-  const navigate = useNavigate();
-  const match = useMatch('/projects/:parentId/*');
-  const subId = useMatch('/projects/:parentId/sub/:projectId/*')?.params.projectId;
-  const parentId = match?.params.parentId;
-  const projects = useResource<ProjectSummary[]>('/api/projects');
-  if (!parentId) return null;
-  const project = projects.data?.find((p) => p.id === parentId);
-  const sub = project?.subProjects.find((s) => s.id === subId);
-  const link = (path: string, label: string) => (
-    <a
-      href={path}
-      onClick={(e) => {
-        e.preventDefault();
-        void navigate(path);
-      }}
-    >
-      {label}
-    </a>
-  );
-  return (
-    <Breadcrumb>
-      <Breadcrumb.Item>{link('/', 'Projects')}</Breadcrumb.Item>
-      <Breadcrumb.Item>{link(`/projects/${parentId}`, project?.name ?? 'Project')}</Breadcrumb.Item>
-      {subId && <Breadcrumb.Item>{sub?.name ?? 'Sub-project'}</Breadcrumb.Item>}
-    </Breadcrumb>
-  );
-}
 
 function ThemeSelect() {
   const { preference, setPreference } = useThemePreference();
@@ -88,46 +54,110 @@ function ThemeSelect() {
 function Shell() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
+  const inProject = useMatch('/projects/:parentId/*')?.params.parentId;
   const sub = useMatch('/projects/:parentId/sub/:projectId/*')?.params;
-  const destinations: Destination[] = [
-    { path: '/', label: 'Projects', icon: <FolderIcon /> },
-    ...(sub
-      ? projectModules.map((m) => ({
-          path: `/projects/${sub.parentId}/sub/${sub.projectId}/${m.slug}`,
-          label: m.label,
-          icon: m.icon,
-        }))
-      : []),
-  ];
+  const projects = useResource<ProjectSummary[]>('/api/projects');
+  const { refresh } = projects;
+  // Pages create and delete projects, so the tree refreshes on each navigation.
+  useEffect(() => refresh(), [pathname, refresh]);
+  useEffect(() => {
+    window.addEventListener(PROJECTS_CHANGED, refresh);
+    return () => window.removeEventListener(PROJECTS_CHANGED, refresh);
+  }, [refresh]);
+  const current = projects.data?.find((p) => p.id === inProject);
+  const subName = current?.subProjects.find((s) => s.id === sub?.projectId)?.name ?? 'Sub-project';
+  const go = (path: string) => (e: MouseEvent) => {
+    e.preventDefault();
+    void navigate(path);
+  };
 
   return (
     <div style={{ display: 'flex', height: '100%' }}>
       <NavListSidebar componentId="gsb.shell.sidebar">
-        {({ showExpandedContent }) => (
-          <NavList.Root aria-label="Genie Semantics Builder">
-            <NavList.Group>
-              <NavList.GroupContent>
-                <NavList.List>
-                  {destinations.map((d) => (
-                    <NavList.Item key={d.path}>
+        {({ showExpandedContent }) => {
+          const side = showExpandedContent ? 'side' : 'only';
+          return (
+            <NavList.Root aria-label="Genie Semantics Builder">
+              <NavList.Group>
+                <NavList.GroupContent>
+                  <NavList.List>
+                    <NavList.Item>
                       <NavList.Link
-                        href={d.path}
-                        active={pathname === d.path}
-                        icon={d.icon}
-                        iconPosition={showExpandedContent ? 'side' : 'only'}
-                        label={d.label}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          void navigate(d.path);
-                        }}
+                        href="/"
+                        active={pathname === '/'}
+                        icon={<HomeIcon />}
+                        iconPosition={side}
+                        label="All projects"
+                        onClick={go('/')}
                       />
                     </NavList.Item>
-                  ))}
-                </NavList.List>
-              </NavList.GroupContent>
-            </NavList.Group>
-          </NavList.Root>
-        )}
+                  </NavList.List>
+                </NavList.GroupContent>
+              </NavList.Group>
+              {showExpandedContent && !!projects.data?.length && (
+                <NavList.Group>
+                  <NavList.GroupLabel>Projects</NavList.GroupLabel>
+                  <NavList.GroupContent>
+                    <NavList.List>
+                      {projects.data.map((p) => (
+                        <NavList.Item key={p.id}>
+                          <NavList.Link
+                            href={`/projects/${p.id}`}
+                            active={pathname === `/projects/${p.id}`}
+                            icon={<FolderIcon />}
+                            label={p.name}
+                            onClick={go(`/projects/${p.id}`)}
+                          />
+                          {p.id === inProject && p.subProjects.length > 0 && (
+                            <NavList.SubList aria-label={`${p.name} sub-projects`}>
+                              {p.subProjects.map((s) => {
+                                const path = subPath(p.id, s.id, STAGE[s.stage].module);
+                                return (
+                                  <NavList.SubItem key={s.id}>
+                                    <NavList.SubLink
+                                      href={path}
+                                      active={s.id === sub?.projectId}
+                                      label={s.name}
+                                      onClick={go(path)}
+                                    />
+                                  </NavList.SubItem>
+                                );
+                              })}
+                            </NavList.SubList>
+                          )}
+                        </NavList.Item>
+                      ))}
+                    </NavList.List>
+                  </NavList.GroupContent>
+                </NavList.Group>
+              )}
+              {sub && (
+                <NavList.Group>
+                  {showExpandedContent && <NavList.GroupLabel>{subName}</NavList.GroupLabel>}
+                  <NavList.GroupContent>
+                    <NavList.List>
+                      {projectModules.map((m) => {
+                        const path = subPath(sub.parentId!, sub.projectId!, m.slug);
+                        return (
+                          <NavList.Item key={m.slug}>
+                            <NavList.Link
+                              href={path}
+                              active={pathname === path}
+                              icon={m.icon}
+                              iconPosition={side}
+                              label={m.label}
+                              onClick={go(path)}
+                            />
+                          </NavList.Item>
+                        );
+                      })}
+                    </NavList.List>
+                  </NavList.GroupContent>
+                </NavList.Group>
+              )}
+            </NavList.Root>
+          );
+        }}
       </NavListSidebar>
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <header
@@ -146,7 +176,6 @@ function Shell() {
           <ThemeSelect />
         </header>
         <main style={{ flex: 1, overflow: 'auto', padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <Crumbs />
           <ErrorBoundary>
             <Outlet />
           </ErrorBoundary>

@@ -1,4 +1,5 @@
 import type { ReadinessCheck, Recommendation } from '../../shared/readiness';
+import type { FixEffect } from './score';
 
 export interface ColumnProfile {
   name: string;
@@ -149,7 +150,9 @@ export interface Proposal {
   foreignKeys: ForeignKey[];
 }
 
-export type NewRecommendation = Pick<Recommendation, 'kind' | 'title' | 'rationale' | 'statements'>;
+export type NewRecommendation = Pick<Recommendation, 'kind' | 'title' | 'rationale' | 'statements'> & {
+  effect: FixEffect;
+};
 
 /**
  * Turns model proposals into SQL. The model never writes SQL: names are checked against the
@@ -176,6 +179,7 @@ export function buildRecommendations(
       title: `Describe ${p.fullName}`,
       rationale: 'A table description helps Genie and metric view authors choose the right table.',
       statements: [`COMMENT ON TABLE ${table} IS ${sqlString(tableComment)}`],
+      effect: { tableComment: true },
     });
   }
 
@@ -193,6 +197,7 @@ export function buildRecommendations(
       title: `Describe ${columnStatements.length} columns of ${p.fullName}`,
       rationale: 'Column descriptions become the default descriptions of dimensions and measures.',
       statements: columnStatements,
+      effect: { columns: [...seen] },
     });
   }
 
@@ -206,6 +211,7 @@ export function buildRecommendations(
         ...pk.map((c) => `ALTER TABLE ${table} ALTER COLUMN ${quoteId(c)} SET NOT NULL`),
         `ALTER TABLE ${table} ADD CONSTRAINT ${quoteId(constraintName(p.fullName, 'pk'))} PRIMARY KEY (${pk.map(quoteId).join(', ')})`,
       ],
+      effect: { primaryKey: pk },
     });
   }
 
@@ -225,6 +231,7 @@ export function buildRecommendations(
       statements: [
         `ALTER TABLE ${table} ADD CONSTRAINT ${quoteId(constraintName(p.fullName, `${ref.fullName.split('.').pop()}_fk`))} FOREIGN KEY (${local.map(quoteId).join(', ')}) REFERENCES ${quoteName(ref.fullName)} (${remote.map(quoteId).join(', ')})`,
       ],
+      effect: { foreignKey: { columns: local, references: ref.fullName, refColumns: remote } },
     });
   }
   return out;

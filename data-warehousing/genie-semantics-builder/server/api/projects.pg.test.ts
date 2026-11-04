@@ -115,19 +115,39 @@ describe.skipIf(!url)('projectRepo on Postgres', () => {
       title: 'Describe',
       rationale: 'Why',
       statements: ["COMMENT ON TABLE a.b.c IS 'x'"],
+      effect: { tableComment: true as const },
     };
-    const result = { sourceId: source.sourceId, role: 'fact' as const, checks: [], model: 'm', recommendations: [fix] };
+    const profile = {
+      fullName: source.fullName,
+      comment: '',
+      columns: [{ name: 'order_date', type: 'date', comment: '' }],
+      primaryKey: [],
+      foreignKeys: [],
+    };
+    const result = {
+      sourceId: source.sourceId,
+      role: 'fact' as const,
+      checks: [],
+      model: 'm',
+      profile,
+      score: 1,
+      recommendations: [fix],
+    };
     await readiness.saveAssessment('a@x.com', p.id, [
       { ...result, assessment: { role: 'fact', score: 40, summary: 's', findings: [] } },
     ]);
 
     let view = await readiness.view(p.id);
-    expect(view.sources.find((s) => s.sourceId === source.sourceId)?.report?.score).toBe(40);
+    const before = view.score!.score;
+    expect(view.sources.find((s) => s.sourceId === source.sourceId)?.report?.areas).toHaveLength(4);
     const rec = view.recommendations[0];
+    expect(rec.scoreGain).toBeGreaterThan(0);
     await expect(readiness.claim('a@x.com', p.id, rec.id, ['DROP TABLE a.b.c'])).rejects.toMatchObject({ status: 409 });
     await readiness.claim('a@x.com', p.id, rec.id, rec.statements);
     await expect(readiness.claim('a@x.com', p.id, rec.id, rec.statements)).rejects.toMatchObject({ status: 409 });
     await readiness.finish(rec.id, 'applied', null);
+    // The applied fix counts before the next assessment.
+    expect((await readiness.view(p.id)).score!.score).toBe(before + rec.scoreGain);
 
     await readiness.saveAssessment('a@x.com', p.id, [{ ...result, assessment: null }]);
     view = await readiness.view(p.id);

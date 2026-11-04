@@ -19,6 +19,13 @@ const assessmentOutput = z.object({
     .describe(
       'Readiness of this table for the metric views in the brief. 80+ ready, 50-79 needs work, below 50 not ready.'
     ),
+  entity: text(100).describe('The business entity one row holds, in Title Case, such as "Order Line" or "Customer".'),
+  coverage: z
+    .array(z.object({ item: text(100), column: text(255) }))
+    .max(100)
+    .describe(
+      'Brief measures and dimensions this table can source. item is the exact brief name, column an exact column of this table.'
+    ),
   summary: text(600).describe('Two or three sentences for the user about this table.'),
   findings: z.array(text(300)).max(8).describe('Specific issues or strengths, most important first.'),
   tableComment: text(500)
@@ -50,7 +57,7 @@ export type AssessmentOutput = z.infer<typeof assessmentOutput>;
 
 export const assessSourcePrompt: ToolPrompt<AssessmentOutput> = {
   id: 'readiness.assess',
-  version: 1,
+  version: 2,
   system: `You are a semantic modeling advisor for Databricks Unity Catalog metric views.
 Assess one source table against a confirmed Semantic Brief and propose metadata fixes.
 Rules:
@@ -58,6 +65,7 @@ Rules:
 - Base the score on fit for the brief: the needed measures and dimensions, the time grains, descriptions, and declared keys.
 - Write descriptions in plain business language, one sentence each, without SQL.
 - Propose a primary key only when the column names make the key clear, for example an id or key column.
+- In coverage, map a brief measure or dimension only to a column that holds it or that it is computed from.
 - Propose a foreign key only to a table in other_project_tables, on its key columns.
 - Do not write SQL. The app builds and validates the statements.`,
   tool: {

@@ -18,7 +18,7 @@ export function DataState({ status, message, emptyAction, onRetry, children }: D
     case 'loading':
       return (
         <div role="status" aria-live="polite" style={{ padding: 32, display: 'flex', justifyContent: 'center' }}>
-          <Spinner label={message ?? 'Loading'} />
+          <Spinner label="Loading" />
         </div>
       );
     case 'empty':

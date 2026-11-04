@@ -61,7 +61,7 @@ function Bubble({ message }: { message: ChatMessage }) {
           padding: '8px 12px',
           borderRadius: 8,
           whiteSpace: 'pre-wrap',
-          background: mine ? 'var(--db-accent-surface-subtle)' : 'var(--db-background-secondary)',
+          background: mine ? 'var(--db-accent-surface-subtle)' : 'var(--db-surface-subtle)',
           border: '1px solid var(--db-border-base)',
         }}
       >

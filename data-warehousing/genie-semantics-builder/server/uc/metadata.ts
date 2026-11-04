@@ -16,11 +16,6 @@ export interface UcTableInfo {
   }[];
 }
 
-export interface EffectiveGrant {
-  principal: string;
-  privileges: string[];
-}
-
 /**
  * Metadata reads through the Unity Catalog REST API, as the calling user. The SQL warehouse is
  * kept for real queries and approved DDL.
@@ -30,8 +25,6 @@ export interface UcDeps {
   schemas(catalog: string): Promise<string[]>;
   tables(catalog: string, schema: string, withColumns: boolean): Promise<UcTableInfo[]>;
   table(fullName: string): Promise<UcTableInfo>;
-  /** Effective privileges on a securable, inherited ones included, for every principal. */
-  effective(type: 'catalog' | 'schema' | 'table', fullName: string): Promise<EffectiveGrant[]>;
   /** Owner of a catalog or schema. */
   owner(type: 'catalog' | 'schema', fullName: string): Promise<string | undefined>;
   /** The user name and the display names of the user's groups. */
@@ -88,14 +81,6 @@ export function ucDeps(runAsUser: RunAsUser): UcDeps {
         ).sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
       ),
     table: (fullName) => runAsUser(() => client().tables.get({ full_name: fullName })),
-    effective: (type, fullName) =>
-      runAsUser(async () => {
-        const res = await client().grants.getEffective({ securable_type: type, full_name: fullName });
-        return (res.privilege_assignments ?? []).map((a) => ({
-          principal: a.principal ?? '',
-          privileges: (a.privileges ?? []).map((p) => String(p.privilege ?? '')),
-        }));
-      }),
     owner: (type, fullName) =>
       runAsUser(async () =>
         type === 'catalog'

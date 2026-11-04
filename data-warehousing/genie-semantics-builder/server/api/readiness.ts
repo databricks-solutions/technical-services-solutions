@@ -20,16 +20,16 @@ import { assessSourcePrompt, assessSourceRequest } from '../llm/prompts/readines
 import { relatePrompt, relateRequest } from '../llm/prompts/relate';
 import { buildRecommendations, checksFor, inaccessibleChecks } from '../readiness/profile';
 import { sandboxSchema } from '../designer/validate';
-import { fixCheck, holds, owns, readCheck, sandboxCheck } from '../permissions/check';
+import { fixCheck, owns, readCheck, sandboxCheck } from '../permissions/check';
 import { profileFromTable } from '../uc/metadata';
-import type { EffectiveGrant, UcDeps, UcTableInfo } from '../uc/metadata';
+import type { UcDeps } from '../uc/metadata';
 import { applyEffect, inferLinks, projectScore, tableAreas, tableScore } from '../readiness/score';
 import type { FixEffect } from '../readiness/score';
 import type { NewRecommendation, TableProfile } from '../readiness/profile';
 import { runStatement } from '../sql/runner';
 import type { RunDeps } from '../sql/runner';
 import { projectRepo } from './projects';
-import { actorOf, handle, HttpError, SCOPE_MESSAGE, SCOPE_MISSING } from './http';
+import { actorOf, handle, HttpError } from './http';
 
 type Db = Pick<LakebasePool, 'query' | 'connect'>;
 
@@ -589,89 +589,33 @@ export function registerReadinessRoutes(
         ];
       }
       const who = await uc.me();
-      const cache = new Map<string, Promise<EffectiveGrant[]>>();
-      const effective = (type: 'catalog' | 'schema' | 'table', name: string) => {
-        const key = `${type}:${name}`;
-        if (!cache.has(key))
-          cache.set(
-            key,
-            uc.effective(type, name).catch((err: unknown) => {
-              // A missing grant reads as "Not found"; the reason stays in the server log.
-              console.warn(`Effective permissions on ${type} ${name}: ${(err as Error).message.slice(0, 200)}`);
-              return [];
-            })
-          );
-        return cache.get(key)!;
-      };
-      const parents = (t: string) => {
-        const [c, s] = t.split('.');
-        return { catalog: c, schema: `${c}.${s}` };
-      };
-
+      const ownership = (owner: string | undefined) => ({ owner, mine: owns(owner, who) });
       const checks: PermissionCheck[] = [
         { ...warehouse, status: 'pass', detail: 'You can use the SQL warehouse of the app.', grants: [] },
       ];
       if (sandbox) {
-        const { catalog } = parents(`${sandbox}.x`);
-        const [onCatalog, onSchema, schemaOwner, catalogOwner] = await Promise.all([
-          effective('catalog', catalog),
-          effective('schema', sandbox),
+        const [schemaOwner, catalogOwner] = await Promise.all([
           uc.owner('schema', sandbox).catch(() => undefined),
-          uc.owner('catalog', catalog).catch(() => undefined),
+          uc.owner('catalog', sandbox.split('.')[0]).catch(() => undefined),
         ]);
-        const canCreate =
-          owns(schemaOwner, who) ||
-          owns(catalogOwner, who) ||
-          (holds(onCatalog, who, ['USE_CATALOG']) &&
-            holds(onSchema, who, ['USE_SCHEMA']) &&
-            holds(onSchema, who, ['CREATE_TABLE']));
-        checks.push(sandboxCheck(sandbox, actor, canCreate));
-      } else checks.push(sandboxCheck(null, actor, false));
+        const o = owns(catalogOwner, who) ? ownership(catalogOwner) : ownership(schemaOwner);
+        checks.push(sandboxCheck(sandbox, actor, o));
+      } else checks.push(sandboxCheck(null, actor, { mine: false }));
 
-      const tables = sources.map((s) => s.fullName);
       const results = await Promise.all(
-        tables.map(async (t) => {
-          const { catalog, schema } = parents(t);
-          let info: UcTableInfo;
+        sources.map(async ({ fullName: t }) => {
           try {
-            info = await uc.table(t);
+            const info = await uc.table(t);
+            return { read: readCheck(t, actor, {}), fix: fixCheck(t, actor, ownership(info.owner)) };
           } catch (err) {
-            const message = (err as Error).message;
             return {
-              t,
-              read: readCheck(t, actor, { error: message, missing: [] }),
-              fix: null,
-              scope: SCOPE_MISSING.test(message),
+              read: readCheck(t, actor, { error: (err as Error).message }),
+              fix: fixCheck(t, actor, { mine: false }),
             };
           }
-          const [onCatalog, onSchema, onTable] = await Promise.all([
-            effective('catalog', catalog),
-            effective('schema', schema),
-            effective('table', t),
-          ]);
-          const owner = owns(info.owner, who);
-          const missing = (
-            [
-              ['USE_CATALOG', onCatalog],
-              ['USE_SCHEMA', onSchema],
-              ['SELECT', onTable],
-            ] as const
-          ).flatMap(([p, grants]) => (holds(grants, who, [p]) ? [] : [p]));
-          return {
-            t,
-            read: readCheck(t, actor, { owner, missing }),
-            fix: { owner, modify: holds(onTable, who, ['MODIFY']) },
-          };
         })
       );
-      checks.push(...results.map((r) => r.read));
-      checks.push(
-        ...results.map((r) =>
-          'scope' in r && r.scope
-            ? { ...fixCheck(r.t, actor, null), detail: SCOPE_MESSAGE, grants: [] }
-            : fixCheck(r.t, actor, r.fix)
-        )
-      );
+      checks.push(...results.map((r) => r.read), ...results.map((r) => r.fix));
       return checks;
     })
   );

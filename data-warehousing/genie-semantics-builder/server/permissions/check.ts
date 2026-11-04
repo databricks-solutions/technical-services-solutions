@@ -1,5 +1,4 @@
 import type { PermissionCheck } from '../../shared/readiness';
-import { SCOPE_MESSAGE, SCOPE_MISSING } from '../api/http';
 import { quoteId, quoteName } from '../readiness/profile';
 
 type Securable = 'CATALOG' | 'SCHEMA' | 'TABLE';
@@ -7,106 +6,57 @@ type Securable = 'CATALOG' | 'SCHEMA' | 'TABLE';
 export const grant = (privilege: string, type: Securable, name: string, principal: string) =>
   `GRANT ${privilege} ON ${type} ${quoteName(name)} TO ${quoteId(principal)};`;
 
-const parts = (table: string) => {
-  const [c, s] = table.split('.');
-  return { catalog: c, schema: `${c}.${s}` };
-};
-
-const readGrants = (table: string, principal: string) => {
-  const { catalog, schema } = parts(table);
-  return [
-    grant('USE CATALOG', 'CATALOG', catalog, principal),
-    grant('USE SCHEMA', 'SCHEMA', schema, principal),
-    grant('SELECT', 'TABLE', table, principal),
-  ];
-};
-
 export interface Identity {
   userName: string;
   groups: string[];
 }
 
-const PRIVILEGE_SQL: Record<string, { sql: string; type: Securable }> = {
-  USE_CATALOG: { sql: 'USE CATALOG', type: 'CATALOG' },
-  USE_SCHEMA: { sql: 'USE SCHEMA', type: 'SCHEMA' },
-  SELECT: { sql: 'SELECT', type: 'TABLE' },
-};
-
-/** True when the user, or one of the user's groups, holds one of the privileges (directly or inherited). */
-export const holds = (grants: { principal: string; privileges: string[] }[], who: Identity, wanted: string[]) =>
-  grants.some(
-    (g) =>
-      (g.principal === who.userName || who.groups.includes(g.principal)) &&
-      g.privileges.some((p) => p === 'ALL_PRIVILEGES' || wanted.includes(p))
-  );
-
 export const owns = (owner: string | undefined, who: Identity) =>
   !!owner && (owner === who.userName || who.groups.includes(owner));
 
+/** Who owns a securable, and whether that is the user or one of the user's groups. */
+export interface Ownership {
+  owner?: string;
+  mine: boolean;
+}
+
+const askOwner = (owner: string | undefined, fallback: string) => (owner ? `Ask ${owner}` : `Ask ${fallback}`);
+
 /**
- * Read access from the Unity Catalog API: the table is visible, and USE CATALOG, USE SCHEMA and
- * SELECT are held directly, through a group, or by inheritance. Owners pass.
+ * Unity Catalog shows a user only the tables they have a privilege on, so a table that loads as the
+ * user is readable enough to model. A missing SELECT shows when its first query runs as the user.
  */
-export function readCheck(
-  table: string,
-  principal: string,
-  r: { error?: string; owner?: boolean; missing: (keyof typeof PRIVILEGE_SQL)[] }
-): PermissionCheck {
+export function readCheck(table: string, principal: string, r: { error?: string }): PermissionCheck {
   const base = { id: `select:${table}`, group: 'sources' as const, label: `Read ${table}` };
-  if (r.error && SCOPE_MISSING.test(r.error)) return { ...base, status: 'warn', detail: SCOPE_MESSAGE, grants: [] };
-  if (r.error) {
-    const code = /\b([A-Z][A-Z_]{4,})\b/.exec(r.error)?.[1];
-    return {
-      ...base,
-      status: 'fail',
-      detail: `You cannot see this table${code ? ` (${code})` : ''}. It may not exist, or USE CATALOG or USE SCHEMA is missing.`,
-      grants: readGrants(table, principal),
-    };
-  }
-  if (r.owner || !r.missing.length)
-    return {
-      ...base,
-      status: 'pass',
-      detail: r.owner ? 'You own the table.' : 'USE CATALOG, USE SCHEMA and SELECT found.',
-      grants: [],
-    };
-  const { catalog, schema } = parts(table);
-  const target = { CATALOG: catalog, SCHEMA: schema, TABLE: table };
+  if (!r.error)
+    return { ...base, status: 'pass', detail: 'You can see this table. Queries on it run as you.', grants: [] };
+  const [c, s] = table.split('.');
+  const code = /\b([A-Z][A-Z_]{4,})\b/.exec(r.error)?.[1];
   return {
     ...base,
-    status: 'warn',
-    detail: `Not found: ${r.missing.map((m) => PRIVILEGE_SQL[m].sql).join(', ')}. A nested group grant can still allow it.`,
-    grants: r.missing.map((m) =>
-      grant(PRIVILEGE_SQL[m].sql, PRIVILEGE_SQL[m].type, target[PRIVILEGE_SQL[m].type], principal)
-    ),
+    status: 'fail',
+    detail: `You cannot see this table${code ? ` (${code})` : ''}. Ask the table owner for these grants.`,
+    grants: [
+      grant('USE CATALOG', 'CATALOG', c, principal),
+      grant('USE SCHEMA', 'SCHEMA', `${c}.${s}`, principal),
+      grant('SELECT', 'TABLE', table, principal),
+    ],
   };
 }
 
-/** Ownership and MODIFY come from the Unity Catalog API, with inherited and group grants. */
-export function fixCheck(
-  table: string,
-  principal: string,
-  found: { owner: boolean; modify: boolean } | null
-): PermissionCheck {
+export function fixCheck(table: string, principal: string, o: Ownership): PermissionCheck {
   const base = { id: `fix:${table}`, group: 'fixes' as const, label: `Apply fixes on ${table}` };
-  if (found?.owner)
+  if (o.mine)
     return { ...base, status: 'pass', detail: 'You own the table: comments and keys can be applied.', grants: [] };
-  if (found?.modify)
-    return {
-      ...base,
-      status: 'warn',
-      detail: 'MODIFY found: comments can be applied. Keys need the table owner.',
-      grants: [],
-    };
   return {
     ...base,
     status: 'warn',
-    detail: 'Not found: no ownership or MODIFY grant. Comments need MODIFY, keys need the owner.',
+    detail: `${askOwner(o.owner, 'the table owner')} for MODIFY to apply comments. Keys need the owner to apply them.`,
     grants: [grant('MODIFY', 'TABLE', table, principal)],
   };
 }
 
-export function sandboxCheck(schema: string | null, principal: string, canCreate: boolean): PermissionCheck {
+export function sandboxCheck(schema: string | null, principal: string, o: Ownership): PermissionCheck {
   const base = { id: 'sandbox', group: 'sandbox' as const, label: 'Create views in the sandbox schema' };
   if (!schema)
     return {
@@ -116,12 +66,12 @@ export function sandboxCheck(schema: string | null, principal: string, canCreate
         'No sandbox schema is set. The app admin sets GSB_SANDBOX_SCHEMA so validations and pattern tests can run.',
       grants: [],
     };
-  if (canCreate) return { ...base, status: 'pass', detail: `You can create views in ${schema}.`, grants: [] };
+  if (o.mine) return { ...base, status: 'pass', detail: `You own ${schema}: views can be created.`, grants: [] };
   const catalog = schema.split('.')[0];
   return {
     ...base,
     status: 'warn',
-    detail: `Not found: CREATE TABLE on ${schema}. Validations and pattern tests create temporary views there.`,
+    detail: `${askOwner(o.owner, 'the schema owner')} for CREATE TABLE on ${schema} if validations fail. Validations and pattern tests create temporary views there.`,
     grants: [
       grant('USE CATALOG', 'CATALOG', catalog, principal),
       grant('USE SCHEMA', 'SCHEMA', schema, principal),

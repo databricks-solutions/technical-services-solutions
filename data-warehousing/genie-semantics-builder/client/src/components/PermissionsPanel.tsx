@@ -6,7 +6,7 @@ import { MONO } from './SqlBlock';
 
 const RESULT: Record<CheckStatus, { color: 'teal' | 'lemon' | 'coral'; label: string }> = {
   pass: { color: 'teal', label: 'Pass' },
-  warn: { color: 'lemon', label: 'Not found' },
+  warn: { color: 'lemon', label: 'Ask the owner' },
   fail: { color: 'coral', label: 'Fail' },
 };
 
@@ -45,8 +45,8 @@ export function PermissionsPanel({ projectId }: { projectId: string }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <Typography.Text color="secondary">
-          Checked live with your identity through the Unity Catalog API, with inherited and group grants. A grant
-          through a nested group can show as not found. The app never runs GRANT statements; send them to the owner.
+          Checked live as you through the Unity Catalog API. You see only the tables you have access to. The app never
+          runs GRANT statements; send them to the owner named in each row.
         </Typography.Text>
         <Button componentId="gsb.permissions.recheck" size="small" onClick={checks.reload}>
           Check again
@@ -58,7 +58,7 @@ export function PermissionsPanel({ projectId }: { projectId: string }) {
             componentId="gsb.permissions.missing"
             type="warning"
             closable={false}
-            message={`${missing.length} grant${missing.length === 1 ? '' : 's'} may be missing`}
+            message={`${missing.length} grant${missing.length === 1 ? '' : 's'} to ask for`}
             description={<Grants grants={missing} />}
           />
         )}

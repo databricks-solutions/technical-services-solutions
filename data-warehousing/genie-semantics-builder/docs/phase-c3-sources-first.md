@@ -48,3 +48,18 @@ documented REST API for apps.
 - Order approved: Sources, Readiness, Intent & Context, Modeling patterns, Metric Designer.
 - Memory: Lakebase sessions and project memory, not the managed agent memory store.
 - The relationship check adds an AI explanation of why tables do or do not belong together, besides the key-name rules.
+- Permissions: no effective-grants check. `grants.getEffective` needs the `unity-catalog` OAuth scope, which an app
+  cannot declare (tested with the `:read` and the full `catalog.*` scopes, after a new sign-in). The app relies on
+  Unity Catalog visibility instead: a table that loads as the user can be modeled; a missing SELECT shows when its
+  first query runs. Fix and sandbox checks pass for owners and otherwise name the owner to ask, with the GRANT.
+
+## Later, phase f (Publish and Govern)
+
+Once a metric view is certified, its owner can:
+
+- **Transfer ownership** to another user or group (`ALTER VIEW ... OWNER TO ...`), for example from the modeler to
+  the data team group, with an audit entry.
+- **Grant access** (`GRANT SELECT ON VIEW ...`) to users and groups, and show who has access.
+
+Both run as SQL on the warehouse as the user, with the `sql` scope, because the Unity Catalog grants API needs the
+`unity-catalog` scope. Both are explicit, reviewed actions: the app shows the statement before it runs.

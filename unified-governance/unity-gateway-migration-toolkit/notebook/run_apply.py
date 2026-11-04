@@ -168,6 +168,12 @@ elif g("scan_run_id"):  # every operation driven by a scan acts on that scan's w
     if scan_ws != target_req:
         raise ValueError(f"scan {g('scan_run_id')} is of workspace {scan_ws or 'the hub'}, not "
                          f"{target_req or 'the hub'}: use a scan of the workspace it changes")
+if operation == "enable_tracking":  # only trackable endpoints of the scan's plan (the app checks this too)
+    if not g("scan_run_id"):
+        raise ValueError("usage tracking needs the scan whose plan lists the endpoints")
+    _untrackable = apply_mod.untrackable_endpoints(endpoints, store.plan_kinds(spark, schema, g("scan_run_id")))
+    if _untrackable:
+        raise ValueError(apply_mod.UNTRACKABLE.format(names=", ".join(_untrackable)))
 if operation == "test_call":  # only services the toolkit planned or created, or system.ai (the app checks this too)
     _targets, _created = store.test_call_candidates(spark, schema, g("scan_run_id"))
     _bad = apply_mod.untestable_services(services, _targets,

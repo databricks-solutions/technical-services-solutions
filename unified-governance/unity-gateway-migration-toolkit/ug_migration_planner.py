@@ -32,7 +32,7 @@ from urllib.parse import urlsplit
 
 from databricks.sdk import WorkspaceClient
 
-__version__ = "0.10.0"
+__version__ = "0.10.1"
 DISCLAIMER = ("Prototype from Databricks Shared Technical Services, provided as is. It only reads unless you run apply or "
               "rollback, or snapshots; review results before acting.")
 
@@ -140,6 +140,22 @@ class ClientReference:
 
 def _get(w: WorkspaceClient, path: str, query: dict | None = None) -> dict:
     return w.api_client.do("GET", path, query=query or {})
+
+
+ENFORCE_SETTING = "enforce_ai_gateway_v3_only"
+
+
+def enforce_status(w: WorkspaceClient) -> str:
+    """The workspace's Enforce Unity Gateway setting: on, off, or unknown with the reason (read-only).
+
+    Read from GET /api/2.1/settings/enforce_ai_gateway_v3_only (the CLI's workspace-settings-v2
+    get-public-workspace-setting); verified Nov 3, 2026. The effective value includes the account default."""
+    try:
+        d = _get(w, f"/api/2.1/settings/{ENFORCE_SETTING}")
+    except Exception as error:
+        return f"unknown: {str(error)[:120]}"
+    val = (d.get("effective_boolean_val") or d.get("boolean_val") or {}).get("value")
+    return "unknown: the setting has no value" if val is None else ("on" if val else "off")
 
 
 def workspace_id_of(w: WorkspaceClient) -> str:
@@ -899,6 +915,19 @@ def provider_status(dest: dict) -> str:
     return "unknown_provider"
 
 
+PPT_BACKED_NEED = ("forwards to the pay-per-token endpoint {model} through the databricks-model-serving provider, so it "
+                   "stops working when Enforce is on: move its callers to {target}, or to a model service with that "
+                   "system.ai destination to keep the rate limit and inference table")
+
+
+def ppt_backed_models(ep: "LegacyEndpoint") -> list[str]:
+    """databricks-* pay-per-token endpoints an external model endpoint calls through the databricks-model-serving
+    provider. Enforce stops those endpoints, so the external model endpoint breaks with them."""
+    return sorted({str(d.get("model")) for d in ep.destinations
+                   if d.get("type") == "external_model" and d.get("provider") == "databricks-model-serving"
+                   and str(d.get("model") or "").startswith("databricks-")})
+
+
 def _provider_key(dest: dict) -> str:
     """Group external-model destinations that can share one provider service."""
     cfg = json.dumps(dest.get("provider_config") or {}, sort_keys=True)
@@ -1081,6 +1110,8 @@ def plan(endpoints: list[LegacyEndpoint], sys_map: dict[str, str], usage: dict[s
         route_pct = {r.get("served_model_name") or r.get("served_entity_name"): r.get("traffic_percentage")
                      for r in ep.traffic_routes}
         destinations, provider_names, statuses = [], [], []
+        for model in ppt_backed_models(ep):
+            needs.append(PPT_BACKED_NEED.format(model=model, target=sys_map.get(model) or "a system.ai model"))
         for d in ep.destinations:
             if d["type"] == "external_model":
                 pkey = _provider_key(d)
@@ -1163,6 +1194,108 @@ ROUTE_URL_RE = re.compile(r"https?://[A-Za-z0-9.\-]+\.serving\.(?:azure)?databri
 DYNAMIC_URL_RE = re.compile(r"/serving-endpoints/(?:[{$%'\"]|\s*\+)")
 DYNAMIC_URL_SUGGESTION = ("manual: the endpoint name is built at run time, so no URL can be rewritten here; "
                           "point this call at /ai-gateway/mlflow/v1 with the model service name")
+# Client calls whose endpoint name comes from a variable, parameter or f-string, so no legacy name is on the line.
+# Each client is bound to /serving-endpoints, so swapping only the name for a model service gives a 404.
+OPENAI_CLIENT_RE = re.compile(r"\bget_open_ai_client\s*\(")
+DEPLOY_CLIENT_RE = re.compile(r"\bget_deploy_client\s*\(")
+PREDICT_CALL_RE = re.compile(r"\.\s*predict\s*\(")
+NAME_ARG_RE = re.compile(r"\b(name|endpoint|model)\s*=\s*([^,)\s]+)")
+DYNAMIC_MLFLOW_URI_RE = re.compile(r"endpoints:/(?=\{|['\"]\s*\+)")
+# Tabular inputs only custom ML model endpoints take (LLM chat and embedding calls send messages, prompt or input).
+TABULAR_ARG_RE = re.compile(r"\b(dataframe_records|dataframe_split|instances|inputs)\s*=")
+TABULAR_CALL_SUGGESTION = ("probably no change: the endpoint name is a variable, but the call sends tabular input "
+                           "(dataframe_records, dataframe_split, instances or inputs), the shape custom model endpoints "
+                           "take, and custom model endpoints stay on /serving-endpoints. Confirm which endpoint it "
+                           "calls: if it's a legacy endpoint, use the OpenAI client on <workspace>/ai-gateway/mlflow/v1")
+# Patterns for unresolved calls: the scan can't name the endpoint, so readiness treats them like a dynamic URL.
+VARIABLE_CALL_PATTERNS = ("sdk_openai_client", "sdk_serving_query", "mlflow_deployments_predict", "ChatDatabricks",
+                          "mlflow_endpoint_uri")
+# Patterns that become "no change" when the named endpoint is a custom model endpoint (not retired by Unity Gateway).
+CUSTOM_CALL_PATTERNS = ("legacy_endpoint_name", "sdk_serving_query", "ai_query", "serving_endpoints_url",
+                        "mlflow_deployments_predict", "config_value", "ChatDatabricks")
+
+
+MODEL_CLASS_RE = re.compile(r"^([ \t]*)class\s+(\w+)\s*\([^)\n]*PythonModel[^)\n]*\)\s*:", re.M)
+LOG_MODEL_RE = re.compile(r"\blog_model\s*\(")
+
+
+def model_classes(text: str) -> dict[str, tuple[int, int]]:
+    """MLflow PythonModel classes in the text: class name -> (first line, last line) of its body."""
+    lines = text.split("\n")
+    out = {}
+    for m in MODEL_CLASS_RE.finditer(text):
+        start = text.count("\n", 0, m.start()) + 1
+        indent, end = len(m.group(1)), start
+        for i in range(start, len(lines)):  # lines[i] is line i + 1
+            line = lines[i]
+            if line.strip() and len(line) - len(line.lstrip()) <= indent:
+                break
+            end = i + 1
+        out[m.group(2)] = (start, end)
+    return out
+
+
+def served_by(text: str, custom_models: dict[str, str]) -> dict[str, list[str]]:
+    """Model class -> custom endpoints serving the model it is logged as (log_model(python_model=Class(...),
+    registered_model_name=...)); matched on the model name's last part, since the catalog is often a variable."""
+    out: dict[str, list[str]] = {}
+    for m in LOG_MODEL_RE.finditer(text):
+        args = _balanced_args(text, m.end() - 1)
+        cls = re.search(r"python_model\s*=\s*(\w+)\s*\(", args)
+        reg = re.search(r"registered_model_name\s*=\s*f?['\"]([^'\"]+)['\"]", args)
+        if not cls or not reg:
+            continue
+        leaf = reg.group(1).split(".")[-1].split("}")[-1]
+        out[cls.group(1)] = sorted(e for e, model in custom_models.items() if str(model).split(".")[-1] == leaf)
+    return out
+
+
+# How code should authenticate to /ai-gateway/ (security review, Nov 4): never a literal secret value.
+CREDENTIALS_ADVICE = ("Credentials: service principal OAuth (M2M) first; a PAT with the ai-gateway scope only as a "
+                      "fallback. Keep both in a secret scope and pass them as {{secrets/<scope>/<key>}} references "
+                      "(for example in the endpoint's environment_vars), never as a literal value")
+
+
+def model_code_note(cls: str, endpoints: list[str] | None) -> str:
+    where = (f"custom endpoint {', '.join(endpoints)}" if endpoints else "a custom serving endpoint, if one serves it")
+    return (f"; this call is in MLflow model code (class {cls}), so it runs inside {where}. Under automatic "
+            "authentication a Unity Gateway call from an endpoint fails with a misleading NotFound: re-log the model "
+            "to call <workspace>/ai-gateway/mlflow/v1/chat/completions with explicit credentials and redeploy, or move "
+            "the agent to a Databricks App. " + CREDENTIALS_ADVICE + ". Also turn on the endpoint's usage tracking; its "
+            "own callers need no change")
+
+
+# The advice for an unnamed call that reaches a custom model or feature serving endpoint (same text in both guides).
+CUSTOM_UNNAMED_ACTION = ("A custom model or feature serving endpoint: no change, and putting its name in the code or a "
+                         "config value lets the next scan confirm it")
+SYSTEM_SP_NAME = "System Service Principal"  # display name of a serving endpoint's automatic-auth identity
+
+
+def custom_endpoint_suggestion(name: str) -> str:
+    return (f"no change: {name} is a custom model endpoint. Custom model endpoints aren't retired by Unity Gateway "
+            "or affected by Enforce, and /ai-gateway/ doesn't serve them, so callers stay on /serving-endpoints "
+            "(and ai_query keeps the endpoint name)")
+
+
+def variable_call_suggestion(client: str, names: list[str]) -> str:
+    """Advice for a client call whose endpoint name the scan can't read."""
+    fixes = {
+        "sdk_openai_client": "w.serving_endpoints.get_open_ai_client() is bound to /serving-endpoints. Use "
+                             "DatabricksOpenAI(use_ai_gateway=True) from databricks-openai, or "
+                             "OpenAI(base_url='<workspace>/ai-gateway/mlflow/v1') with service principal OAuth (M2M), or an ai-gateway scoped PAT kept in a secret scope",
+        "sdk_serving_query": "Databricks SDK serving_endpoints.query only calls serving endpoints; use the OpenAI "
+                             "client on <workspace>/ai-gateway/mlflow/v1 with service principal OAuth (M2M), or an ai-gateway scoped PAT kept in a secret scope",
+        "mlflow_deployments_predict": "the MLflow deployments client only calls /serving-endpoints/<name>/invocations; "
+                                      "use the OpenAI client on <workspace>/ai-gateway/mlflow/v1",
+        "ChatDatabricks": "ChatDatabricks needs model='<model service>' and use_ai_gateway=True "
+                          "(databricks-langchain>=0.19.0)",
+        "mlflow_endpoint_uri": "endpoints:/ URIs only reach serving endpoints; upgrade MLflow to 3.16+ and use "
+                               "databricks:/<model service>",
+    }[client]
+    hint = f" This file also names {', '.join(names[:3])}, which may be the value." if names else ""
+    return (f"manual: the endpoint name comes from a variable, so the scan can't tell which endpoint this calls. If it's "
+            f"a legacy endpoint, changing only the name gives a 404: {fixes}. If it's a custom model endpoint, no "
+            f"change.{hint}")
 # Short or common names ("test", "gpt") only count when the line says what they are for.
 GENERIC_NAMES = {"test", "default", "model", "llm", "chat", "prod", "dev", "demo", "embed", "embedding", "endpoint", "main"}
 KEY_CONTEXT_RE = re.compile(r"(endpoint|model|serving|llm|embed)\w*['\"]?\s*[:=(,]\s*$", re.I)
@@ -1239,8 +1372,11 @@ def ipynb_cells(text: str) -> list[str] | None:
 class Scanner:
     def __init__(self, endpoint_names: Iterable[str], sys_map: dict[str, str], plan_rows: list[PlanRow],
                  endpoint_urls: dict[str, str] | None = None, v2_names: Iterable[str] | None = None,
-                 target_api_types: dict[str, list[str]] | None = None):
+                 target_api_types: dict[str, list[str]] | None = None,
+                 custom_models: dict[str, str] | None = None):
         self.names = {n for n in endpoint_names if n}
+        # Custom endpoint -> the UC model it serves, to tie calls inside MLflow model code to the endpoint.
+        self.custom_models = {e: m for e, m in (custom_models or {}).items() if e and m}
         self.v2_names = {n for n in (v2_names or []) if n}  # workspace-bound v2 endpoints (route + model name)
         # supported_api_types of each system.ai target: a v2 route the target can't serve is a manual decision.
         self.target_api_types = target_api_types or {}
@@ -1249,6 +1385,8 @@ class Scanner:
         self.url_hosts = {urlsplit(u).netloc: n for u, n in (endpoint_urls or {}).items() if u and n}
         self.sys_map = sys_map
         self.targets = {r.legacy_endpoint: r.target_service for r in plan_rows if r.target_service}
+        # Custom model endpoints stay on legacy serving: their callers need no change.
+        self.custom = {r.legacy_endpoint for r in plan_rows if r.kind == "custom_model"}
         alt = "|".join(sorted((re.escape(n) for n in self.names), key=len, reverse=True))
         # Quoted legacy endpoint names; longest first so similar names don't shadow each other.
         self.name_re = re.compile(r"(['\"])(" + alt + r")\1") if self.names else None
@@ -1347,6 +1485,25 @@ class Scanner:
 
     def _scan(self, asset_type: str, asset: str, text: str) -> None:
         text = text.replace("\r\n", "\n").replace("\r", "\n")
+        first = len(self.refs)
+        self._scan_lines(asset_type, asset, text)
+        self._mark_model_code(text, self.refs[first:])
+
+    def _mark_model_code(self, text: str, refs: list) -> None:
+        """Calls inside MLflow model code (a PythonModel class) run inside the serving endpoint that serves it.
+
+        Under automatic authentication a Unity Gateway call from there fails with a misleading NotFound, so the fix
+        is a re-logged model with explicit credentials (or an app), and the endpoint's own callers don't change."""
+        models = model_classes(text)
+        if not models:
+            return
+        served = served_by(text, self.custom_models)
+        for x in refs:
+            cls = next((c for c, (start, end) in models.items() if x.line and start <= x.line <= end), None)
+            if cls and x.pattern != "custom_endpoint_call":
+                x.suggestion += model_code_note(cls, served.get(cls))
+
+    def _scan_lines(self, asset_type: str, asset: str, text: str) -> None:
         lines = text.split("\n")
 
         def line_of(pos: int) -> int:
@@ -1369,6 +1526,8 @@ class Scanner:
                 spanning.setdefault(arg_line, []).append(
                     ("ChatDatabricks", a.group(3), a.group(2) + a.group(3) + a.group(2),
                      arg_line != line_of(m.start())))
+        variable = self._variable_calls(text, line_of)
+        file_names = sorted({m.group(2) for m in self.name_re.finditer(text)} - self.custom) if self.name_re else []
 
         in_endpoint_block = 0  # lines left inside a YAML "serving_endpoint:" mapping
         previous = ""
@@ -1405,6 +1564,10 @@ class Scanner:
                               f"'{self._target_for(name) or '<model service>'}' and use_ai_gateway=True; "
                               "check the current databricks-langchain docs for the endpoint= argument." + where)
                 hits.add(name)
+            for pattern, token in variable.get(i, []):
+                advice = (TABULAR_CALL_SUGGESTION if pattern == "tabular_endpoint_call"
+                          else variable_call_suggestion(pattern, file_names))
+                self._add(asset_type, asset, i, pattern, token, None, advice, fixable=False)
             for m in MLFLOW_ENDPOINT_RE.finditer(line):
                 name = m.group(1)
                 if name not in self.names and not name.startswith("databricks-"):
@@ -1485,7 +1648,57 @@ class Scanner:
                                   "(and move the client to /ai-gateway/)")
                     hits.add(name)
 
+    @staticmethod
+    def _name_value(args: str, keys: tuple[str, ...]) -> str | None:
+        """The raw value of the first keyword argument in keys, else the first positional argument."""
+        for m in NAME_ARG_RE.finditer(args):
+            if m.group(1) in keys:
+                return m.group(2)
+        first = args.split(",")[0].strip()
+        return first if first and "=" not in first else None
+
+    @staticmethod
+    def _is_variable(value: str | None) -> bool:
+        """True for a name, attribute, call or f-string; False for a quoted literal or nothing."""
+        if not value:
+            return False
+        if value[0] in "'\"":
+            return False
+        return bool(re.match(r"[A-Za-z_]", value))
+
+    def _variable_calls(self, text: str, line_of) -> dict[int, list[tuple[str, str]]]:
+        """Client calls whose endpoint name isn't a literal: line -> [(pattern, token)].
+
+        Literal names are left to the per-name checks (and literals that aren't legacy names are not our business)."""
+        out: dict[int, list[tuple[str, str]]] = {}
+
+        def add(pos: int, pattern: str, token: str) -> None:
+            out.setdefault(line_of(pos), []).append((pattern, token))
+
+        for m in OPENAI_CLIENT_RE.finditer(text):
+            add(m.start(), "sdk_openai_client", m.group(0).rstrip("( "))
+        for m in SDK_QUERY_RE.finditer(text):
+            args = _balanced_args(text, m.end() - 1)
+            if self._is_variable(self._name_value(args, ("name",))):
+                tabular = TABULAR_ARG_RE.search(args)
+                # The name is unknown, so it stays a finding (a warning): the input shape only suggests a custom model.
+                add(m.start(), "tabular_endpoint_call" if tabular else "sdk_serving_query", "serving_endpoints.query")
+        if DEPLOY_CLIENT_RE.search(text):
+            for m in PREDICT_CALL_RE.finditer(text):
+                args = _balanced_args(text, m.end() - 1)
+                if "endpoint" in args and self._is_variable(self._name_value(args, ("endpoint",))):
+                    add(m.start(), "mlflow_deployments_predict", "predict(endpoint=...)")
+        for m in CHAT_DATABRICKS_START_RE.finditer(text):
+            args = _balanced_args(text, m.end() - 1)
+            if "use_ai_gateway" not in args and self._is_variable(self._name_value(args, ("endpoint", "model"))):
+                add(m.start(), "ChatDatabricks", "ChatDatabricks(")
+        for m in DYNAMIC_MLFLOW_URI_RE.finditer(text):
+            add(m.start(), "mlflow_endpoint_uri", "endpoints:/{...}")
+        return out
+
     def _add(self, asset_type, asset, line, pattern, match, legacy_endpoint, suggestion, fixable: bool = True) -> None:
+        if legacy_endpoint in self.custom and pattern in CUSTOM_CALL_PATTERNS:
+            pattern, suggestion, fixable = "custom_endpoint_call", custom_endpoint_suggestion(legacy_endpoint), False
         if legacy_endpoint and EMBEDDING_RE.search(legacy_endpoint) and asset_type != "vector_search_index":
             suggestion += ("; embedding model: if this feeds an AI Search index, keep it until AI Search "
                            "supports a system.ai embedding service for it")
@@ -2199,6 +2412,12 @@ PATTERN_TEXT = {  # code-reference pattern -> (plain label, one-line action)
                                    "rewrite it by hand with the OpenAI client on /ai-gateway/mlflow/v1 (see CODE_FIXES.md)"),
     "sdk_serving_query": ("Databricks SDK query call names a legacy endpoint",
                           "rewrite it by hand with the OpenAI client on /ai-gateway/mlflow/v1 (see CODE_FIXES.md)"),
+    "sdk_openai_client": ("Code uses the SDK's serving-endpoints OpenAI client",
+                          "switch to DatabricksOpenAI(use_ai_gateway=True) or the OpenAI client on /ai-gateway/mlflow/v1"),
+    "custom_endpoint_call": ("Code calls a custom model endpoint", "no change: custom model endpoints stay on legacy serving"),
+    "tabular_endpoint_call": ("Code sends tabular input to an endpoint the scan can't name",
+                              "confirm which endpoint it calls: a custom model endpoint needs no change, a legacy one "
+                              "moves to the OpenAI client on /ai-gateway/mlflow/v1"),
     "v2_gateway_model": ("Client sends a legacy model name on the gateway route (v2)",
                          "set model to the system.ai model and keep the route (see CODE_FIXES.md)"),
     "ai_gateway_regional_host": ("Code calls a regional AI Gateway host",
@@ -2360,7 +2579,16 @@ def readiness(rows: list[PlanRow], refs: list[ClientReference], traffic_ok: bool
             if r.v2_requests:
                 detail += (f"; {r.v2_requests:,} of them AI Gateway v2 traffic, which retires with all legacy endpoints "
                            f"on {deadline_text()}")
-            if r.kind in ("external_model", "provisioned_throughput"):
+            ppt = ppt_backed_models(by_name[r.legacy_endpoint]) if r.legacy_endpoint in by_name else []
+            if ppt:
+                # It forwards to a databricks-* pay-per-token endpoint, which Enforce stops: its callers break too.
+                direct = sorted({row_by[p].target_service for p in ppt if p in row_by and row_by[p].target_service})
+                blockers.append(_flag("external_model_on_ppt", r.legacy_endpoint,
+                                      f"{detail}; forwards to {', '.join(ppt)}, which Enforce stops",
+                                      "External model endpoint forwards to a pay-per-token endpoint",
+                                      f"move the callers to {target} (or straight to "
+                                      f"{', '.join(direct) or 'the system.ai model'}) before enforcing"))
+            elif r.kind in ("external_model", "provisioned_throughput"):
                 # Enforce leaves existing external model and PT endpoints queryable; they retire with v1.
                 warnings.append(_flag("legacy_traffic_kept_after_enforce", r.legacy_endpoint,
                                       detail + " (keeps working after Enforce)",
@@ -2403,8 +2631,38 @@ def readiness(rows: list[PlanRow], refs: list[ClientReference], traffic_ok: bool
                                       "Databricks Apps before enforcing"))
         # A PT endpoint behind a Unity Gateway model service keeps serving after the deadline (the service routes to
         # its capacity), so the wrapper itself needs no warning; direct callers of the endpoint are flagged as traffic.
+    # Measured Nov 3, 2026: a custom agent endpoint's automatic-auth identity shows up as "System Service Principal".
+    custom = sorted(r.legacy_endpoint for r in rows if r.kind == "custom_model")
+    inner: dict[str, int] = {}
+    for c in callers or []:
+        ep = c.get("endpoint_name")
+        if c.get("requester_name") == SYSTEM_SP_NAME and ep in row_by and row_by[ep].action != "out_of_scope":
+            inner[ep] = inner.get(ep, 0) + int(c.get("requests") or 0)
+    for ep, n in sorted(inner.items()):
+        warnings.append(_flag(
+            "custom_endpoint_inner_call", ep,
+            f"{n:,} requests from a {SYSTEM_SP_NAME}: usually a serving endpoint calling {ep} with automatic "
+            "authentication, such as a custom agent" + (f". Custom endpoints here: {', '.join(custom[:5])}" if custom else ""),
+            "A serving endpoint may call this endpoint from its model code",
+            "find the custom endpoint whose model code calls it: re-log the model with explicit credentials to call "
+            "the model service (see CODE_FIXES.md), and turn on that endpoint's usage tracking. Its own callers need "
+            "no change"))
     for x in refs:
         loc = x.asset + (f":{x.line}" if x.line else "")
+        if x.pattern == "custom_endpoint_call":
+            continue  # custom model endpoints aren't retired: listed in CODE_FIXES.md as "no change", not a finding
+        if x.pattern == "tabular_endpoint_call":
+            if retiring:  # probably a custom model, but the scan can't name it: a warning, not a blocker
+                label, action = PATTERN_TEXT[x.pattern]
+                warnings.append(_flag(x.pattern, loc, x.suggestion, label, action))
+            continue
+        if x.pattern in VARIABLE_CALL_PATTERNS and not x.legacy_endpoint and retiring:
+            # A client bound to /serving-endpoints with a run-time name: same unknown as a dynamic URL.
+            blockers.append(_flag("unresolved_endpoint_call", loc, x.suggestion,
+                                  "Code calls a serving endpoint the scan can't name",
+                                  "find which endpoint it calls at run time. A legacy endpoint: rewrite the client "
+                                  "as described (changing only the name gives a 404). " + CUSTOM_UNNAMED_ACTION))
+            continue
         if x.asset_type == "vector_search_index":
             blockers.append(_flag("vector_search", x.asset.removeprefix("index "),
                                   f"embeds with {x.legacy_endpoint}; AI Search can't embed with a system.ai service "
@@ -2433,7 +2691,7 @@ def readiness(rows: list[PlanRow], refs: list[ClientReference], traffic_ok: bool
                                   "ai_query calls a model with no Unity Gateway service yet",
                                   "keep this call, or switch it to a system.ai model (see CODE_FIXES.md)"))
         elif x.pattern == "serving_endpoints_url" and not x.legacy_endpoint \
-                and x.suggestion == DYNAMIC_URL_SUGGESTION and retiring:
+                and x.suggestion.startswith(DYNAMIC_URL_SUGGESTION) and retiring:  # notes (model code) may follow
             # The name is built at run time, so the scan can't tell whether this call reaches a legacy endpoint.
             # With legacy endpoints in the workspace that is an unknown caller, so it holds readiness back.
             blockers.append(_flag("unresolved_endpoint_call", loc,
@@ -2441,8 +2699,7 @@ def readiness(rows: list[PlanRow], refs: list[ClientReference], traffic_ok: bool
                                   "can't tell whether it reaches a legacy endpoint",
                                   "Code calls a serving endpoint the scan can't name",
                                   "find which endpoint it calls at run time. A legacy endpoint: move the call to "
-                                  "/ai-gateway/ (see CODE_FIXES.md). A custom model or feature serving endpoint: "
-                                  "put the name in the code or a config value so the scan can confirm it, then re-scan"))
+                                  "/ai-gateway/ (see CODE_FIXES.md). " + CUSTOM_UNNAMED_ACTION))
         elif x.asset_type == "app":
             label, action = _ref_text(x)
             warnings.append(_flag(x.pattern, loc, x.suggestion, label, action))
@@ -2543,7 +2800,8 @@ def readiness(rows: list[PlanRow], refs: list[ClientReference], traffic_ok: bool
         # Measured: endpoints with usage tracking off still log rows in system.serving.endpoint_usage, so zero
         # rows isn't proof of "untracked". Warn (callers outside the window), don't hold readiness back.
         untracked = [r.legacy_endpoint for r in rows if not r.requests_window and r.legacy_endpoint in by_name
-                     and r.kind != "v2_workspace_endpoint" and by_name[r.legacy_endpoint].usage_tracking is not True]
+                     and r.kind != "v2_workspace_endpoint" and r.action != "out_of_scope"
+                     and by_name[r.legacy_endpoint].usage_tracking is not True]
         if untracked:
             warnings.append(_flag(
                 "no_traffic_in_window", _n(len(untracked), "endpoint"),
@@ -2551,16 +2809,31 @@ def readiness(rows: list[PlanRow], refs: list[ClientReference], traffic_ok: bool
                 + (" ..." if len(untracked) > 5 else ""),
                 "No requests in the window and usage tracking is off",
                 "confirm with the owners that no infrequent job (monthly, quarterly) calls them"))
+        quiet_ppt = []
         for r in rows:
             if r.kind in ("system_ppt", "v2_workspace_endpoint") and not r.requests_window \
                     and r.legacy_endpoint not in referenced:
+                if r.kind == "system_ppt":
+                    quiet_ppt.append(r.legacy_endpoint)  # folded into one warning: a workspace lists dozens
+                    continue
                 warnings.append(_flag(
                     "confirm_infrequent_callers", r.legacy_endpoint,
                     f"no requests in {days} days and no code found that calls it: a job that runs monthly or "
                     "quarterly would not show up in the window",
-                    "Pay-per-token endpoint has no traffic and no known callers" if r.kind == "system_ppt"
-                    else "v2 endpoint had traffic before the window but none in it, and no known callers",
+                    "v2 endpoint had traffic before the window but none in it, and no known callers",
                     "confirm infrequent callers (monthly or quarterly jobs) with the owners before enforcing"))
+        if quiet_ppt:
+            flag = _flag(
+                "confirm_infrequent_callers", quiet_ppt[0] if len(quiet_ppt) == 1 else _n(len(quiet_ppt), "endpoint"),
+                f"{_n(len(quiet_ppt), 'pay-per-token endpoint')} with no requests in {days} days and no code found "
+                "that calls them: a job that runs monthly or quarterly would not show up in the window. "
+                + ", ".join(quiet_ppt[:8]) + (" ..." if len(quiet_ppt) > 8 else ""),
+                "Pay-per-token endpoint has no traffic and no known callers" if len(quiet_ppt) == 1
+                else "Pay-per-token endpoints have no traffic and no known callers",
+                "confirm infrequent callers (monthly or quarterly jobs) with the owners before enforcing. Built-in "
+                "endpoints nobody calls need no action")
+            flag["endpoints"] = quiet_ppt
+            warnings.append(flag)
     candidates = []
     if traffic_ok and not gaps:
         for r in rows:
@@ -2603,6 +2876,16 @@ def _capped(items: list[str], cap: int, more_in: str) -> list[str]:
     return out
 
 
+def _enforce_lines(enforce: str | None, status: str) -> list[str]:
+    if not enforce:
+        return []
+    text = {"on": "on", "off": "off"}.get(enforce, f"unknown ({enforce.removeprefix('unknown: ')})")
+    lines = [f"Enforce Unity Gateway is currently **{text}** in this workspace."]
+    if enforce == "on" and status == "BLOCKED":
+        lines.append("Enforce is already on, so the blockers below are calls that fail now.")
+    return lines + [""]
+
+
 def readiness_md(ws_url: str, r: dict, days: int) -> str:
     from collections import Counter
     import shlex
@@ -2612,7 +2895,7 @@ def readiness_md(ws_url: str, r: dict, days: int) -> str:
              f"by unity-gateway-migration-toolkit {__version__}",
              f"Legacy endpoints (v1 and v2) retire on {deadline_text()} ({DEADLINE_AS_OF}).", "",
              f"> {DISCLAIMER}", "",
-             f"**Status: {status}**", "", "## Status", "",
+             f"**Status: {status}**", "", *_enforce_lines(r.get("enforce"), status), "## Status", "",
              *[f"- **{k}**: {v}" for k, v in STATUS_MEANING.items()], "",
              "## Next steps", "", *[f"{i}. {s}" for i, s in enumerate(_next_steps(r), 1)], ""]
     if r.get("scan_roots"):
@@ -2914,6 +3197,8 @@ def _run(w, out_dir, warehouse_id, days, target_catalog, target_schema, scan_roo
         roots += [r for r in app_roots if r not in roots]
         scanner = Scanner((e.name for e in endpoints), sys_map, rows,
                           {e.endpoint_url: e.name for e in endpoints if e.endpoint_url},
+                          custom_models={e.name: d.get("model") for e in endpoints if e.kind == "custom_model"
+                                         for d in e.destinations if d.get("model")},
                           v2_names=[e.name for e in endpoints if e.kind == "v2_workspace_endpoint"]
                           + [n for n, u in usage.items() if int(u.get("v2_requests") or 0)],
                           target_api_types=target_api_types)
@@ -2946,9 +3231,11 @@ def _run(w, out_dir, warehouse_id, days, target_catalog, target_schema, scan_roo
     _write_csv(os.path.join(out_dir, "callers.csv"), callers)
     with open(os.path.join(out_dir, "system_ai_map.json"), "w") as f:
         json.dump(sys_map, f, indent=1, sort_keys=True)
-    ready = readiness(rows, refs, traffic_ok, days, endpoints, coverage, scanned=not skip_scan, callers=by_req)
+    # The named callers: readiness reads requester_name (a custom agent's identity is "System Service Principal").
+    ready = readiness(rows, refs, traffic_ok, days, endpoints, coverage, scanned=not skip_scan, callers=callers)
     ready["traffic_status"] = traffic_status
     ready["workspace_id"] = workspace_id
+    ready["enforce"] = enforce_status(w)
     ready["scan_roots"] = roots
     with open(os.path.join(out_dir, "READINESS.md"), "w") as f:
         f.write(readiness_md(ws_url, ready, days))

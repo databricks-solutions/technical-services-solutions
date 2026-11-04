@@ -16,7 +16,7 @@ const MAX_PUBLISH_CATALOGS = 50;
 
 // information_schema does not list owner privileges, so ownership is checked separately.
 // This is a hint for the picker; the DDL itself is still checked by Unity Catalog.
-const CAN_CREATE = `(
+export const CAN_CREATE = `(
   s.schema_owner = current_user() OR c.catalog_owner = current_user()
   OR is_account_group_member(s.schema_owner) OR is_account_group_member(c.catalog_owner)
   OR EXISTS (SELECT 1 FROM system.information_schema.schema_privileges p

@@ -9,6 +9,7 @@ import type {
   ReadinessView,
   Recommendation,
   RecommendationStatus,
+  PermissionCheck,
   RelatedTable,
 } from '../../shared/readiness';
 import { callTool } from '../llm/llm';
@@ -22,6 +23,9 @@ import {
   quoteName,
   sqlString,
 } from '../readiness/profile';
+import { sandboxSchema } from '../designer/validate';
+import { fixCheck, sandboxCheck, selectCheck } from '../permissions/check';
+import { CAN_CREATE } from './catalog';
 import { applyEffect, inferLinks, projectScore, tableAreas, tableScore } from '../readiness/score';
 import type { FixEffect } from '../readiness/score';
 import type { NewRecommendation, TableProfile } from '../readiness/profile';
@@ -541,6 +545,100 @@ export function registerReadinessRoutes(
       return [...reasons]
         .map(([table, why]) => ({ table, reasons: [...why] }))
         .sort((a, b) => b.reasons.length - a.reasons.length || a.table.localeCompare(b.table));
+    })
+  );
+
+  /**
+   * What the user needs, checked as the user. Reads use a real `SELECT ... LIMIT 0`; ownership,
+   * MODIFY and CREATE TABLE come from information_schema, so a missing grant is "not found".
+   */
+  app.get(
+    '/api/projects/:id/permissions',
+    handle(async (req): Promise<PermissionCheck[]> => {
+      const actor = actorOf(req);
+      const project = await projects.get(actor, idParam.parse(req.params).id);
+      const { sources } = await repo.view(project.id);
+      const ctx = { actor, projectId: project.id, approved: false };
+      const run = runFor(req);
+      const sandbox = sandboxSchema();
+      const checks: PermissionCheck[] = [];
+
+      try {
+        let canCreate = false;
+        if (sandbox) {
+          const [catalog, schema] = sandbox.split('.');
+          const res = await runStatement(
+            `SELECT count(*) FROM system.information_schema.schemata s
+             JOIN system.information_schema.catalogs c ON c.catalog_name = s.catalog_name
+             WHERE s.catalog_name = ${sqlString(catalog)} AND s.schema_name = ${sqlString(schema)} AND ${CAN_CREATE}`,
+            ctx,
+            run
+          );
+          canCreate = Number(res.rows[0]?.[0]) > 0;
+        } else {
+          await runStatement('SELECT 1', ctx, run);
+        }
+        checks.push({
+          id: 'warehouse',
+          group: 'warehouse',
+          label: 'Run queries on the SQL warehouse',
+          status: 'pass',
+          detail: 'You have CAN USE on the SQL warehouse of the app.',
+          grants: [],
+        });
+        checks.push(sandboxCheck(sandbox, actor, canCreate));
+      } catch (err) {
+        if (err instanceof StatementRejected) throw err;
+        const code = /\b([A-Z][A-Z_]{4,})\b/.exec((err as Error).message)?.[1];
+        return [
+          {
+            id: 'warehouse',
+            group: 'warehouse',
+            label: 'Run queries on the SQL warehouse',
+            status: 'fail',
+            detail: `Queries do not run${code ? ` (${code})` : ''}. Ask a workspace admin for CAN USE on the SQL warehouse of the app.`,
+            grants: [],
+          },
+        ];
+      }
+
+      const tables = sources.map((s) => s.fullName);
+      const probes = await Promise.all(
+        tables.map(async (t) => {
+          try {
+            await runStatement(`SELECT 1 FROM ${quoteName(t)} LIMIT 0`, ctx, run);
+            return selectCheck(t, actor, null);
+          } catch (err) {
+            if (err instanceof StatementRejected) throw err;
+            return selectCheck(t, actor, (err as Error).message);
+          }
+        })
+      );
+      checks.push(...probes);
+
+      const found = new Map<string, { owner: boolean; modify: boolean }>();
+      if (tables.length) {
+        const match = tables
+          .map((t) => {
+            const [c, sc, n] = t.toLowerCase().split('.');
+            return `(lower(t.table_catalog) = ${sqlString(c)} AND lower(t.table_schema) = ${sqlString(sc)} AND lower(t.table_name) = ${sqlString(n)})`;
+          })
+          .join(' OR ');
+        const mine = (col: string) => `(${col} = current_user() OR is_account_group_member(${col}))`;
+        const res = await runStatement(
+          `SELECT t.table_catalog, t.table_schema, t.table_name, ${mine('t.table_owner')} AS is_owner,
+             EXISTS (SELECT 1 FROM system.information_schema.table_privileges p
+                     WHERE p.table_catalog = t.table_catalog AND p.table_schema = t.table_schema AND p.table_name = t.table_name
+                       AND p.privilege_type IN ('MODIFY', 'ALL_PRIVILEGES') AND ${mine('p.grantee')}) AS can_modify
+           FROM system.information_schema.tables t WHERE ${match}`,
+          ctx,
+          run
+        );
+        for (const [c, sc, n, owner, modify] of res.rows)
+          found.set(`${c}.${sc}.${n}`.toLowerCase(), { owner: owner === 'true', modify: modify === 'true' });
+      }
+      checks.push(...tables.map((t) => fixCheck(t, actor, found.get(t.toLowerCase()) ?? null)));
+      return checks;
     })
   );
 }

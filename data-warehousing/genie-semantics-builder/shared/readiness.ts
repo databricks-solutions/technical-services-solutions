@@ -87,3 +87,14 @@ export interface ReadinessView {
   sources: SourceReadiness[];
   recommendations: Recommendation[];
 }
+
+export interface PermissionCheck {
+  id: string;
+  group: 'warehouse' | 'sources' | 'sandbox' | 'fixes';
+  label: string;
+  /** warn: the check found no grant, but inherited or group grants can still allow it. */
+  status: CheckStatus;
+  detail: string;
+  /** Statements a catalog or table owner can run to grant what is missing. Never run by the app. */
+  grants: string[];
+}

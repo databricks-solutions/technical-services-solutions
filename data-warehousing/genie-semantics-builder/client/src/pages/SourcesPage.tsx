@@ -29,6 +29,7 @@ import type {
 import { api, useResource } from '../api';
 import { DataState } from '../components/DataState';
 import { OntologyGraph } from '../components/OntologyGraph';
+import { FixPermission, PermissionsPanel } from '../components/PermissionsPanel';
 import { MONO } from '../components/SqlBlock';
 import { TablePicker } from '../components/UcPicker';
 
@@ -500,6 +501,7 @@ export function SourcesPage() {
                 <Tabs.Trigger value="plan">Improvement plan ({openFixes.length})</Tabs.Trigger>
                 <Tabs.Trigger value="ontology">Ontology</Tabs.Trigger>
                 <Tabs.Trigger value="tables">Tables ({data.sources.length})</Tabs.Trigger>
+                <Tabs.Trigger value="permissions">Permissions</Tabs.Trigger>
               </Tabs.List>
 
               <Tabs.Content value="plan">
@@ -571,6 +573,11 @@ export function SourcesPage() {
                   ))}
                 </div>
               </Tabs.Content>
+              <Tabs.Content value="permissions">
+                <div style={{ paddingTop: 16 }}>
+                  <PermissionsPanel projectId={projectId} />
+                </div>
+              </Tabs.Content>
             </Tabs.Root>
 
             <Modal
@@ -596,6 +603,7 @@ export function SourcesPage() {
                     closable={false}
                     message="This SQL runs as you on the SQL warehouse and changes Unity Catalog metadata. It does not change table data."
                   />
+                  {reviewing.sourceName && <FixPermission projectId={projectId} table={reviewing.sourceName} />}
                   <Sql statements={reviewing.statements} />
                 </div>
               )}

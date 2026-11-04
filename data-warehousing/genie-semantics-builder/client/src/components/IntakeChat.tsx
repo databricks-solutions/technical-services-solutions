@@ -91,7 +91,10 @@ export function IntakeChat({
   const mention = mentionAt(text, cursor);
   const { level, options } = useMentionOptions(mention?.parts ?? null);
 
-  useEffect(() => end.current?.scrollIntoView({ block: 'nearest' }), [messages, busy]);
+  // Block body: scrollIntoView can return a promise, which React would call as a cleanup.
+  useEffect(() => {
+    void end.current?.scrollIntoView({ block: 'nearest' });
+  }, [messages, busy]);
 
   const send = (content: string) => {
     if (!content.trim() || busy) return;

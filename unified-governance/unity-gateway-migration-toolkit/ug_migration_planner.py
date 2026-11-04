@@ -1215,7 +1215,7 @@ CUSTOM_CALL_PATTERNS = ("legacy_endpoint_name", "sdk_serving_query", "ai_query",
                         "mlflow_deployments_predict", "config_value", "ChatDatabricks")
 
 
-MODEL_CLASS_RE = re.compile(r"^([ \t]*)class\s+(\w+)\s*\([^)]*PythonModel[^)]*\)\s*:", re.M)
+MODEL_CLASS_RE = re.compile(r"^([ \t]*)class\s+(\w+)\s*\([^)\n]*PythonModel[^)\n]*\)\s*:", re.M)
 LOG_MODEL_RE = re.compile(r"\blog_model\s*\(")
 
 
@@ -1250,13 +1250,19 @@ def served_by(text: str, custom_models: dict[str, str]) -> dict[str, list[str]]:
     return out
 
 
+# How code should authenticate to /ai-gateway/ (security review, Nov 4): never a literal secret value.
+CREDENTIALS_ADVICE = ("Credentials: service principal OAuth (M2M) first; a PAT with the ai-gateway scope only as a "
+                      "fallback. Keep both in a secret scope and pass them as {{secrets/<scope>/<key>}} references "
+                      "(for example in the endpoint's environment_vars), never as a literal value")
+
+
 def model_code_note(cls: str, endpoints: list[str] | None) -> str:
     where = (f"custom endpoint {', '.join(endpoints)}" if endpoints else "a custom serving endpoint, if one serves it")
     return (f"; this call is in MLflow model code (class {cls}), so it runs inside {where}. Under automatic "
             "authentication a Unity Gateway call from an endpoint fails with a misleading NotFound: re-log the model "
-            "to call <workspace>/ai-gateway/mlflow/v1/chat/completions with explicit credentials (an ai-gateway scoped "
-            "token or a service principal secret in environment_vars) and redeploy, or move the agent to a Databricks "
-            "App. Also turn on the endpoint's usage tracking; its own callers need no change")
+            "to call <workspace>/ai-gateway/mlflow/v1/chat/completions with explicit credentials and redeploy, or move "
+            "the agent to a Databricks App. " + CREDENTIALS_ADVICE + ". Also turn on the endpoint's usage tracking; its "
+            "own callers need no change")
 
 
 # The advice for an unnamed call that reaches a custom model or feature serving endpoint (same text in both guides).
@@ -1276,9 +1282,9 @@ def variable_call_suggestion(client: str, names: list[str]) -> str:
     fixes = {
         "sdk_openai_client": "w.serving_endpoints.get_open_ai_client() is bound to /serving-endpoints. Use "
                              "DatabricksOpenAI(use_ai_gateway=True) from databricks-openai, or "
-                             "OpenAI(base_url='<workspace>/ai-gateway/mlflow/v1') with an ai-gateway scoped token",
+                             "OpenAI(base_url='<workspace>/ai-gateway/mlflow/v1') with service principal OAuth (M2M), or an ai-gateway scoped PAT kept in a secret scope",
         "sdk_serving_query": "Databricks SDK serving_endpoints.query only calls serving endpoints; use the OpenAI "
-                             "client on <workspace>/ai-gateway/mlflow/v1 with an ai-gateway scoped token",
+                             "client on <workspace>/ai-gateway/mlflow/v1 with service principal OAuth (M2M), or an ai-gateway scoped PAT kept in a secret scope",
         "mlflow_deployments_predict": "the MLflow deployments client only calls /serving-endpoints/<name>/invocations; "
                                       "use the OpenAI client on <workspace>/ai-gateway/mlflow/v1",
         "ChatDatabricks": "ChatDatabricks needs model='<model service>' and use_ai_gateway=True "

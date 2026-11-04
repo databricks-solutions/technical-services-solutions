@@ -1392,3 +1392,22 @@ def test_variable_sdk_query_with_tabular_input_is_a_warning():
     # Nothing retires (only custom endpoints): an unnamed call can't reach a legacy endpoint, so no finding.
     custom_only = [x for x in rows if x.kind == "custom_model"]
     assert not [w for w in m.readiness(custom_only, s.refs, True, 30, eps)["warnings"] if w["type"] == "tabular_endpoint_call"]
+
+
+
+def test_model_class_regex_stays_linear_on_unclosed_class_lines():
+    """Security review (Nov 4): the class header can't span lines, so unclosed "class X(" lines stay cheap."""
+    import time
+    text = "class X(\n" * 40000 + "class Ok(mlflow.pyfunc.PythonModel):\n    x = 1\n"
+    start = time.time()
+    found = m.model_classes(text)
+    assert time.time() - start < 0.5 and list(found) == ["Ok"]
+
+
+def test_credentials_advice_never_suggests_a_literal_secret():
+    note = m.model_code_note("Agent", ["agent-ep"])
+    assert "service principal OAuth (M2M) first" in note and "{{secrets/<scope>/<key>}}" in note
+    assert "never as a literal value" in note and "service principal secret in environment_vars" not in note
+    s = m.Scanner(["databricks-claude-haiku-4-5"], SIM_SYS, [])
+    s.scan_text("notebook", "/n", "c = w.serving_endpoints.get_open_ai_client()")
+    assert "service principal OAuth (M2M)" in s.refs[0].suggestion

@@ -605,6 +605,18 @@ def _split_names(value) -> list[str]:
 now = _now
 
 
+def plan_kinds(spark, schema: str, scan_run_id: str) -> dict[str, str]:
+    """Legacy endpoint -> kind, from a scan's plan (the job's tracking check; the app applies the same rule)."""
+    if not re.fullmatch(r"[0-9a-f-]{36}", scan_run_id or ""):
+        raise ValueError(f"bad scan id {scan_run_id!r}")
+    out: dict[str, str] = {}
+    for r in spark.sql(f"SELECT get_json_object(payload, '$.legacy_endpoint') AS e, get_json_object(payload, '$.kind') AS k "
+                       f"FROM {q(schema)}.ug_migration_scan_items WHERE run_id = '{scan_run_id}' AND item_type = 'plan'").collect():
+        if r["e"]:
+            out.setdefault(str(r["e"]), str(r["k"] or ""))
+    return out
+
+
 def test_call_candidates(spark, schema: str, scan_run_id: str) -> tuple[set[str], dict[str, str]]:
     """What a test call may target (the job's check; the app applies the same rule): the target services of the
     scan's plan, and model services that apply executes created or found, minus those a rollback deleted since,

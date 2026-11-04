@@ -154,7 +154,7 @@ Scan again: 0.10.1 finds more calls and fewer false ones. Tables and jobs don't 
 - **Calls with a variable endpoint name.** `get_open_ai_client()`, `serving_endpoints.query(name=<variable>)`, the MLflow deployments client, `ChatDatabricks(endpoint=<variable>)` and `endpoints:/{...}` URIs are now `unresolved_endpoint_call` blockers. These clients are bound to `/serving-endpoints`, so changing only the name gives a 404.
 - **Calls to custom model endpoints** are now `custom_endpoint_call` (no change) instead of a move, and are no longer warnings. A `serving_endpoints.query` call with a variable name and tabular input (`dataframe_records`, `dataframe_split`, `instances` or `inputs`) is a `tabular_endpoint_call` warning: usually a custom model, but the scan can't name it.
 - **External models that forward to a `databricks-*` endpoint** (provider `databricks-model-serving`) are now an `external_model_on_ppt` blocker: Enforce stops the endpoint they forward to.
-- **Custom agents.** Calls inside MLflow model code (a `PythonModel` class) name the custom endpoint that serves the model and say how to re-log it. `System Service Principal` callers of a pay-per-token endpoint get a `custom_endpoint_inner_call` warning. Usage tracking can now be turned on for custom model endpoints (never paused).
+- **Custom agents.** Calls inside MLflow model code (a `PythonModel` class) name the custom endpoint that serves the model and say how to re-log it. `System Service Principal` callers of a pay-per-token endpoint get a `custom_endpoint_inner_call` warning. Usage tracking can now be turned on for custom model endpoints (never paused), only for endpoints the scan lists as trackable.
 - **Enforce status.** READINESS.md and `readiness.json` (`enforce`) show whether Enforce Unity Gateway is on.
 - **Fewer warnings.** Pay-per-token endpoints with no traffic and no known callers are one `confirm_infrequent_callers` warning instead of one each.
 
@@ -281,7 +281,8 @@ Caveats that matter:
 - Never move a Responses client to Chat Completions. A change of API type needs application-level testing first.
 - Some clients only call `/serving-endpoints`, so changing only the endpoint name gives a 404: `w.serving_endpoints.get_open_ai_client()`, `w.serving_endpoints.query`, the MLflow deployments client, and `ChatDatabricks` without `use_ai_gateway=True`. Change the client, as each finding says.
 - Calls to custom model endpoints (your own ML models) need no change. They stay on `/serving-endpoints`, and Enforce doesn't affect them.
-- A custom agent that calls an LLM from its model code fails on Unity Gateway with automatic authentication (a misleading `NotFound`). Re-log it with explicit credentials, an `ai-gateway` scoped token or a service principal secret in `environment_vars`, or move it to a Databricks App. Then turn on its usage tracking.
+- A custom agent that calls an LLM from its model code fails on Unity Gateway with automatic authentication (a misleading `NotFound`). Re-log it with explicit credentials, or move it to a Databricks App. Then turn on its usage tracking.
+- **Credentials for `/ai-gateway/`:** use service principal OAuth (M2M) first, and a PAT with the `ai-gateway` scope only as a fallback. Keep either one in a secret scope and pass it as a `{{secrets/<scope>/<key>}}` reference (for example in a serving endpoint's `environment_vars`). Never paste a literal secret value.
 
 **Workspace-bound v2 endpoints.** Keep the route and change only the model name, from the flat name to the three-part `system.ai` name in the plan (the `target` in CODE_FIXES.md):
 
@@ -384,6 +385,7 @@ Tracking records each call in the system tables, so step 1 can see the traffic. 
 
 - Not offered: `databricks-*` endpoints (Databricks sets their tracking), v2 workspace endpoints, and agent endpoints (`agent/v1` tasks such as Agent Bricks, which don't support it).
 - Custom model endpoints are offered for tracking only, never for pause. Turn it on for a custom agent that calls an LLM: without it, the agent's callers are missing from usage.
+- Only endpoints the chosen scan lists as trackable are accepted, by the app and by the job. For an endpoint created after the scan, scan again first.
 - An endpoint that already has tracking on is left alone. The app has no undo: tracking stays on.
 
 ### Step 3: Pause one legacy endpoint

@@ -1382,6 +1382,19 @@ def parse_services(value) -> list[str]:
     return names
 
 
+# Plan kinds usage tracking is never turned on for: databricks-* endpoints (Databricks sets their tracking), agents
+# (not supported), v2 workspace endpoints (no serving endpoint) and anything the scan couldn't classify.
+UNTRACKABLE_KINDS = ("system_ppt", "agent", "v2_workspace_endpoint", "unknown", "out_of_scope", "deleted_or_unknown")
+UNTRACKABLE = ("{names}: usage tracking is only turned on for endpoints the scan's plan lists as trackable (external "
+               "model, provisioned throughput and custom model endpoints). Scan again if the endpoint is new")
+
+
+def untrackable_endpoints(names, plan_kinds: dict[str, str]) -> list[str]:
+    """Names that aren't trackable endpoints of the scan's plan (plan_kinds: legacy endpoint -> kind)."""
+    return sorted(n for n in names if plan_kinds.get(n) is None or plan_kinds[n] in UNTRACKABLE_KINDS
+                  or str(plan_kinds[n]).startswith("mixed:"))
+
+
 def untestable_services(services, plan_targets, created) -> list[str]:
     """Services a test call must refuse: test calls go only to system.ai services, the scan plan's target services,
     and model services that toolkit apply runs created (and no rollback deleted). Any other service would make the
@@ -1895,8 +1908,10 @@ def enable_tracking(w: WorkspaceClient, names: list[str], execute: bool, log_pat
                   reason="custom model endpoint: name it to turn its usage tracking on")
             continue
         if is_custom_kind(kind) and kind != "custom_model":
+            why = ("agent endpoints don't support usage tracking" if kind == "agent" else
+                   "the toolkit can't tell what this endpoint serves, so it doesn't change it")
             a.log(type=typ, name=name, action="refused" if explicit else "skipped", kind=kind,
-                  reason=f"{kind} endpoint: agent endpoints don't support usage tracking")
+                  reason=f"{kind} endpoint: {why}")
             continue
         if not explicit and kind == "system_ppt":
             a.log(type=typ, name=name, action="skipped", kind=kind,

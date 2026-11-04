@@ -905,8 +905,10 @@ def test_apply_rollback_refuses_a_pause_run(env):
 
 
 def test_cutover_conflict_names_the_running_job(env):
+    env.store["items"] = [{"item_type": "plan", "seq": 1,
+                           "payload": json.dumps({"legacy_endpoint": "ep-a", "kind": "external_model"})}]
     env.sdk.jobs.list_runs.side_effect = lambda **kw: iter([SimpleNamespace(run_id=42, run_page_url="https://ws/job/42")])
-    r = _post(env, operation="enable_tracking", endpoints=["ep-a"])
+    r = _post(env, operation="enable_tracking", endpoints=["ep-a"], scan_run_id=env.store["scans"][0]["run_id"])
     assert r.status_code == 409 and r.json()["job_run_id"] == "42" and r.json()["url"] == "https://ws/job/42"
     assert env.sdk.jobs.run_now.call_count == 0
 
@@ -1087,3 +1089,18 @@ def test_test_call_refuses_a_service_the_toolkit_neither_planned_nor_created(env
         r = env.client.post("/api/cutover", json={"operation": "test_call", "mode": "dry_run", "scan_run_id": SCAN,
                                                   "services": [ok]}, headers=OP)
         assert r.status_code == 200, r.text
+
+
+
+def test_tracking_is_refused_for_endpoints_the_scan_doesnt_mark_trackable(env):
+    """Security review (Nov 4): a named endpoint must be a trackable endpoint of the scan's plan, not just a valid name."""
+    env.store["items"] = [
+        {"item_type": "plan", "seq": 1, "payload": json.dumps({"legacy_endpoint": "my-agent", "kind": "custom_model"})},
+        {"item_type": "plan", "seq": 2, "payload": json.dumps({"legacy_endpoint": "databricks-llm", "kind": "system_ppt"})},
+    ]
+    for names in (["databricks-llm"], ["not-in-the-plan"], ["my-agent", "not-in-the-plan"]):
+        r = _post(env, operation="enable_tracking", endpoints=names, scan_run_id=env.store["scans"][0]["run_id"])
+        assert r.status_code == 400 and "only turned on for endpoints the scan's plan lists" in r.json()["detail"], names
+    r = _post(env, operation="enable_tracking", endpoints=["my-agent"])
+    assert r.status_code == 400 and "Choose the scan" in r.json()["detail"]
+    assert env.sdk.jobs.run_now.call_count == 0

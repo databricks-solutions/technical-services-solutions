@@ -1428,6 +1428,20 @@ def start_cutover(body: CutoverRequest, request: Request) -> dict:
         check_id(body.scan_run_id, "scan id")
     params = _cutover_params(body)
     params["target_workspace_id"] = scan_workspace(request, body.scan_run_id)  # the scan's workspace
+    if op == "enable_tracking":  # only endpoints the scan's plan marks trackable; the job checks this too
+        if not body.scan_run_id:
+            raise HTTPException(400, "Choose the scan whose plan lists the endpoints")
+        scan = _scan_meta(request, body.scan_run_id)
+        if not scan:
+            raise HTTPException(409, "That scan wasn't found. Scan again.")
+        plan, _ = _scan_items(request, scan)
+        kinds = {}
+        for p in plan:
+            if p.get("legacy_endpoint"):
+                kinds.setdefault(p["legacy_endpoint"], p.get("kind") or "")
+        bad = apply_rules.untrackable_endpoints(_unique(body.endpoints), kinds)
+        if bad:
+            raise HTTPException(400, apply_rules.UNTRACKABLE.format(names=", ".join(bad)))
     if op == "test_call":  # the job checks this too
         listed = [x["name"] for x in cutover_services(request, body.scan_run_id).get("services", [])]
         bad = apply_rules.untestable_services(params["services"].split(","), listed, [])

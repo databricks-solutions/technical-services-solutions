@@ -1201,8 +1201,13 @@ def _dry_row(calls, apply_id, **override):
 
 
 def _notebook(monkeypatch, params, fake_w, apply_rows=None, legacy_entries=None, dry_rows=None, traffic=None,
-              candidates=None):
+              candidates=None, kinds=None):
     import ug_migration_store as st
+
+    # Usage tracking goes only to trackable endpoints of the scan's plan: by default the endpoints asked for are listed.
+    if kinds is None:
+        kinds = {x.strip(): "external_model" for x in str(params.get("endpoints") or "").split(",") if x.strip()}
+    monkeypatch.setattr(st, "plan_kinds", lambda spark, schema, scan_run_id: kinds)
 
     # Test calls go only to planned or created services: by default the services asked for are the scan's targets.
     if candidates is None:
@@ -1351,8 +1356,12 @@ def test_other_listing_errors_do_not_stop_the_apply(tmp_path, monkeypatch):
     assert res and not any("isn't available" in str(r) for r in res)  # the run went on past the listing
 
 
+TRACK_SCAN = "33333333-3333-3333-3333-333333333333"  # the scan whose plan lists the endpoints (tracking needs one)
+
+
 def _gate_case(monkeypatch, w, dry_override=None, execute_params=None, traffic=None):
-    base = {"results_schema": "c.s", "operation": "enable_tracking", "endpoints": "ext", "requested_by": "me@x.com"}
+    base = {"results_schema": "c.s", "operation": "enable_tracking", "endpoints": "ext", "requested_by": "me@x.com",
+            "scan_run_id": TRACK_SCAN}
     dry = _notebook(monkeypatch, {**base, "apply_id": DRY, "mode": "dry_run", "job_run_id": "6"}, w, traffic=traffic)
     params = {**base, "apply_id": APPLY, "mode": "execute", "job_run_id": "7", "dry_run_id": DRY, **(execute_params or {})}
     return _notebook(monkeypatch, params, w, dry_rows={DRY: _dry_row(dry, DRY, **(dry_override or {}))}, traffic=traffic)
@@ -1360,7 +1369,7 @@ def _gate_case(monkeypatch, w, dry_override=None, execute_params=None, traffic=N
 
 def test_notebook_execute_without_a_dry_run_is_refused_before_any_write(monkeypatch):
     w = CutoverW([_endpoint("ext", GW_FULL)])
-    for op, extra in (("enable_tracking", {"endpoints": "ext"}), ("pause_legacy", {"endpoints": "ext"}),
+    for op, extra in (("enable_tracking", {"endpoints": "ext", "scan_run_id": TRACK_SCAN}), ("pause_legacy", {"endpoints": "ext"}),
                       ("test_call", {"services": SVC})):
         with pytest.raises(ValueError, match="needs dry_run_id"):
             _notebook(monkeypatch, {"apply_id": APPLY, "results_schema": "c.s", "operation": op,
@@ -1489,7 +1498,8 @@ def test_notebook_gate_wiring_every_gated_operation_and_single_use(monkeypatch):
     # Which operations need a dry run, and that the job looks it up and checks it hasn't been used.
     assert set(a.DRY_RUN_GATED) == {"apply", "test_call", "pause_legacy", "enable_tracking", "guardrail_check"}
     w = CutoverW([_endpoint("ext", GW_FULL)])
-    base = {"results_schema": "c.s", "operation": "enable_tracking", "endpoints": "ext", "requested_by": "me@x.com"}
+    base = {"results_schema": "c.s", "operation": "enable_tracking", "endpoints": "ext", "requested_by": "me@x.com",
+            "scan_run_id": TRACK_SCAN}
     dry = _notebook(monkeypatch, {**base, "apply_id": DRY, "mode": "dry_run", "job_run_id": "6"}, w)
     row = _dry_row(dry, DRY)
     spark = UsedDryRunSpark({DRY: row}, used={DRY: OTHER})
@@ -1743,3 +1753,38 @@ def test_guardrail_pairs_are_parsed_and_capped():
         a.parse_guardrail_pairs("a=notaservice")
     with pytest.raises(ValueError):
         a.parse_guardrail_pairs(",".join(f"e{i}=c.s.x{i}" for i in range(11)))
+
+
+# -- Security review of 0.10.1 (Nov 4) ------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("kinds, params, match", [
+    ({"ext": "system_ppt"}, {"scan_run_id": TRACK_SCAN}, "only turned on for endpoints the scan's plan lists"),
+    ({}, {"scan_run_id": TRACK_SCAN}, "only turned on for endpoints the scan's plan lists"),  # not in the plan at all
+    ({"ext": "external_model"}, {}, "needs the scan"),
+])
+def test_notebook_tracking_only_on_trackable_endpoints_of_the_scan(monkeypatch, kinds, params, match):
+    w = CutoverW([_endpoint("ext", GW_FULL)])
+    with pytest.raises(ValueError, match=match):
+        _notebook(monkeypatch, {"apply_id": DRY, "results_schema": "c.s", "operation": "enable_tracking",
+                                "mode": "dry_run", "endpoints": "ext", "job_run_id": "6", **params}, w, kinds=kinds)
+    assert w.api_client.puts == []
+
+
+def test_untrackable_endpoints_rule():
+    kinds = {"ext": "external_model", "pt": "provisioned_throughput", "agent-x": "custom_model",
+             "databricks-llm": "system_ppt", "ka-1": "agent", "v2": "v2_workspace_endpoint", "odd": "unknown",
+             "both": "mixed:custom_model+external_model"}
+    assert a.untrackable_endpoints(["ext", "pt", "agent-x"], kinds) == []
+    assert a.untrackable_endpoints(list(kinds) + ["missing"], kinds) == [
+        "both", "databricks-llm", "ka-1", "missing", "odd", "v2"]
+
+
+def test_enable_tracking_gives_the_right_reason_per_kind(tmp_path):
+    unknown = _endpoint("odd", GW_FULL, served=[])  # no served entities, not databricks-*: kind unknown
+    agent = _endpoint("ka-1", {}, served=[], task="agent/v1/responses")
+    w = CutoverW([unknown, agent])
+    res = {r["name"]: r for r in a.enable_tracking(w, ["odd", "ka-1"], True, str(tmp_path / "t.jsonl"), APPLY)}
+    assert res["odd"]["action"] == "refused" and "can't tell what this endpoint serves" in res["odd"]["reason"]
+    assert "agent endpoints don't support" not in res["odd"]["reason"]
+    assert "agent endpoints don't support usage tracking" in res["ka-1"]["reason"]
+    assert w.api_client.puts == []

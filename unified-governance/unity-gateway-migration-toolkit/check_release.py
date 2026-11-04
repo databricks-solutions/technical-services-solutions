@@ -5,8 +5,8 @@
   INSTALL_unity_gateway_migration_toolkit_<version>.py in this folder
 - checks that __version__ (ug_migration_planner.py), version (app/frontend/package.json) and toolkit_version
   (databricks.yml) are the same
-- checks that every installer or zip file name the guides mention (*.md) carries that version, so a guide never tells
-  people to import a file the release doesn't ship
+- checks that every installer or zip file name the shipped guides mention (GUIDES) carries that version, so a guide
+  never tells people to import a file the release doesn't ship
 
 Exit 0 when everything matches, 1 with a message per problem otherwise. Stdlib only.
 """
@@ -47,11 +47,15 @@ VERSIONED_NAME_RE = re.compile(r"INSTALL_unity_gateway_migration_toolkit_(\d+_\d
                                r"|unity-gateway-migration-toolkit-(\d+\.\d+\.\d+)\.zip")
 
 
+# The guides that ship with the toolkit. Dev notes (NOTES_*.md) keep old file names on purpose, so they aren't checked.
+GUIDES = ("README.md", "USER_GUIDE.md", "HOW_TO_READ.md", "DEVELOPING.md")
+
+
 def stale_doc_names(version: str) -> list[str]:
     """Versioned installer or zip names in the guides that don't match version (file:line: name)."""
     out = []
-    for name in sorted(os.listdir(HERE)):
-        if not name.endswith(".md"):
+    for name in GUIDES:
+        if not os.path.exists(os.path.join(HERE, name)):
             continue
         with open(os.path.join(HERE, name)) as f:
             for i, line in enumerate(f, 1):

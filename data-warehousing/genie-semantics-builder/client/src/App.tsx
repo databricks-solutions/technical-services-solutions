@@ -7,6 +7,7 @@ import {
   BeakerIcon,
   CatalogIcon,
   ChartLineIcon,
+  LightningIcon,
   FolderIcon,
   HomeIcon,
   NavList,
@@ -20,6 +21,7 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { ThemeProvider, useThemePreference } from './theme';
 import type { ThemePreference } from './theme';
 import { DesignerPage } from './pages/DesignerPage';
+import { OptimizePage } from './pages/OptimizePage';
 import { IntakePage } from './pages/IntakePage';
 import { PlaygroundPage } from './pages/PlaygroundPage';
 import { ProjectPage } from './pages/ProjectPage';
@@ -32,6 +34,7 @@ const projectModules = [
   { slug: 'intake', label: 'Intent & Context', icon: <SparkleIcon />, page: <IntakePage /> },
   { slug: 'patterns', label: 'Modeling patterns', icon: <BeakerIcon />, page: <PlaygroundPage /> },
   { slug: 'designer', label: 'Metric Designer', icon: <ChartLineIcon />, page: <DesignerPage /> },
+  { slug: 'optimize', label: 'Optimize', icon: <LightningIcon />, page: <OptimizePage /> },
 ];
 
 function ThemeSelect() {

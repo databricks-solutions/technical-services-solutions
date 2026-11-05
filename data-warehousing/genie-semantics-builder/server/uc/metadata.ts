@@ -1,4 +1,5 @@
 import { getExecutionContext, getWarehouseId, isInUserContext } from '@databricks/appkit';
+import type { StressAttempt } from '../../shared/optimize';
 import type { TableProfile } from '../readiness/profile';
 import type { RunAsUser } from '../sql/runner';
 
@@ -31,6 +32,8 @@ export interface UcDeps {
   me(): Promise<{ userName: string; groups: string[] }>;
   /** Resolves when the user can see the app's SQL warehouse. */
   warehouse(): Promise<void>;
+  /** Query History metrics of the user's own statements. Missing ids are not ready yet. */
+  queryMetrics(statementIds: string[]): Promise<Map<string, Omit<StressAttempt, 'wallMs'>>>;
 }
 
 const MAX_ITEMS = 5000;
@@ -95,6 +98,33 @@ export function ucDeps(runAsUser: RunAsUser): UcDeps {
     warehouse: () =>
       runAsUser(async () => {
         await client().warehouses.get({ id: await getWarehouseId() });
+      }),
+    queryMetrics: (ids) =>
+      runAsUser(async () => {
+        const out = new Map<string, Omit<StressAttempt, 'wallMs'>>();
+        for (let i = 0; i < ids.length; i += 50) {
+          const page = await client().queryHistory.list({
+            filter_by: { statement_ids: ids.slice(i, i + 50) },
+            include_metrics: true,
+            max_results: 100,
+          });
+          for (const h of page.res ?? []) {
+            const m = h.metrics;
+            // Metrics arrive a few seconds after the statement ends.
+            if (!h.query_id || m?.execution_time_ms === undefined) continue;
+            out.set(h.query_id, {
+              statementId: h.query_id,
+              execMs: m.execution_time_ms,
+              taskMs: m.task_total_time_ms,
+              readBytes: m.read_bytes,
+              prunedBytes: m.pruned_bytes,
+              rowsRead: m.rows_read_count,
+              spillBytes: m.spill_to_disk_bytes,
+              fromCache: m.result_from_cache,
+            });
+          }
+        }
+        return out;
       }),
   };
 }

@@ -3,6 +3,7 @@ import type { Request } from 'express';
 import { createApp, analytics, lakebase, server } from '@databricks/appkit';
 import { loadMigrations, migrate } from './db/migrate';
 import { registerCatalogRoutes } from './api/catalog';
+import { registerOptimizeRoutes } from './api/optimize';
 import { registerProjectRoutes } from './api/projects';
 import { registerDesignerRoutes } from './api/designer';
 import { registerPatternRoutes } from './api/patterns';
@@ -37,6 +38,7 @@ createApp({
       registerReadinessRoutes(app, pool, llmFor, runFor, ucFor);
       registerDesignerRoutes(app, pool, llmFor, runFor, ucFor, patterns);
       registerPatternRoutes(app, pool, patterns, runFor);
+      registerOptimizeRoutes(app, pool, runFor, ucFor);
     });
   },
 }).catch((err: unknown) => {

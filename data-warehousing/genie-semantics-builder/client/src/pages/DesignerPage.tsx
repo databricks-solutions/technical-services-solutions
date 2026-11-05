@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { useParams } from 'react-router';
+import { useNavigate, useParams } from 'react-router';
 import {
   Alert,
   Button,
@@ -340,7 +340,8 @@ function Designer({
   data: DesignerView & { draft: DesignDraft };
   onChange: (v: DesignerView) => void;
 }) {
-  const { projectId = '' } = useParams();
+  const { projectId = '', parentId = '' } = useParams();
+  const navigate = useNavigate();
   const { draft } = data;
   const [yaml, setYaml] = useState(draft.yaml);
   const [instruction, setInstruction] = useState('');
@@ -406,7 +407,13 @@ function Designer({
             text: `Validate the design: ${draft.tests.length} test${draft.tests.length === 1 ? '' : 's'} run in the sandbox as you.`,
             action: { label: 'Validate in sandbox', onClick: askPlan, disabled: !draft.tests.length },
           }
-        : { text: 'Validated. Refine it with the AI, or try a modeling pattern. Optimize and publish come next.' };
+        : {
+            text: 'Validated. Next, stress test it and get materialization suggestions.',
+            action: {
+              label: 'Next: Optimize',
+              onClick: () => void navigate(`/projects/${parentId}/sub/${projectId}/optimize`),
+            },
+          };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>

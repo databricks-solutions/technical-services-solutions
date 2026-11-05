@@ -4,6 +4,7 @@ import { checkStatement, StatementRejected } from './allowlist';
 export interface StatementResult {
   columns: string[];
   rows: (string | null)[][];
+  statementId?: string;
 }
 
 export interface AuditEntry {
@@ -99,5 +100,6 @@ async function executeAsUser(statement: string): Promise<StatementResult> {
   return {
     columns: res.manifest?.schema?.columns?.map((c) => c.name ?? '') ?? [],
     rows: res.result?.data_array ?? [],
+    statementId: res.statement_id,
   };
 }

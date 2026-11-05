@@ -9,8 +9,11 @@
 # default_storage_firewall_enabled + access_connector_id restrict the workspace
 # root storage account to private access (use with private endpoints in pe_dbfs.tf).
 #
-# Optional: when var.metastore_id is set, assigns an existing Unity Catalog
-# metastore to the workspace (account API). Empty = skip (attach in console).
+# Unity Catalog metastore (account API), pick at most one:
+#   - var.metastore_id         : assign an existing metastore to the workspace
+#   - var.new_metastore_name   : create a metastore (owned by a new admins group) and assign it
+# Neither set = skip (attach in console). Catalog, storage credential and external
+# location live in unity_catalog.tf.
 # =============================================================================
 
 # Access connector used with default_storage_firewall_enabled so DBFS storage can use private connectivity.
@@ -56,12 +59,101 @@ resource "azurerm_databricks_workspace" "dp_workspace" {
   ]
 }
 
+# -----------------------------------------------------------------------------
+# Unity Catalog metastore: create (optional) and assign to the workspace
+# -----------------------------------------------------------------------------
+locals {
+  create_metastore = var.new_metastore_name != ""
+  assign_metastore = var.metastore_id != "" || local.create_metastore
+  metastore_id     = local.create_metastore ? databricks_metastore.this[0].id : var.metastore_id
+}
+
+resource "databricks_group" "metastore_owner_group" {
+  count        = local.create_metastore ? 1 : 0
+  provider     = databricks.account
+  display_name = "${var.new_metastore_name}-admins"
+}
+
+data "databricks_user" "metastore_owner" {
+  count     = local.create_metastore ? 1 : 0
+  provider  = databricks.account
+  user_name = var.admin_user
+}
+
+resource "databricks_group_member" "metastore_owner" {
+  count     = local.create_metastore ? 1 : 0
+  provider  = databricks.account
+  group_id  = databricks_group.metastore_owner_group[0].id
+  member_id = data.databricks_user.metastore_owner[0].id
+}
+
+resource "databricks_metastore" "this" {
+  count         = local.create_metastore ? 1 : 0
+  provider      = databricks.account
+  name          = var.new_metastore_name
+  region        = local.dp_rg_location
+  owner         = databricks_group.metastore_owner_group[0].display_name
+  force_destroy = true # Required to destroy the metastore while it still has catalogs and workspaces attached.
+
+  lifecycle {
+    precondition {
+      condition     = var.metastore_id == ""
+      error_message = "Set at most one of metastore_id (assign existing) or new_metastore_name (create), not both."
+    }
+    precondition {
+      condition     = var.admin_user != ""
+      error_message = "admin_user is required when new_metastore_name is set (it becomes a member of the metastore admins group)."
+    }
+  }
+}
+
 resource "databricks_metastore_assignment" "dp_workspace" {
-  count = var.metastore_id != "" ? 1 : 0
+  count = local.assign_metastore ? 1 : 0
 
   provider     = databricks.account
   workspace_id = azurerm_databricks_workspace.dp_workspace.workspace_id
-  metastore_id = var.metastore_id
+  metastore_id = local.metastore_id
 
-  depends_on = [azurerm_databricks_workspace.dp_workspace]
+  depends_on = [azurerm_databricks_workspace.dp_workspace, databricks_group_member.metastore_owner]
 }
+
+# Workspace admin for var.admin_user, so the user can use the workspace (and own the optional cluster).
+data "databricks_user" "workspace_admin" {
+  count     = var.admin_user != "" ? 1 : 0
+  provider  = databricks.account
+  user_name = var.admin_user
+}
+
+resource "databricks_mws_permission_assignment" "workspace_admin" {
+  count        = var.admin_user != "" ? 1 : 0
+  provider     = databricks.account
+  workspace_id = azurerm_databricks_workspace.dp_workspace.workspace_id
+  principal_id = data.databricks_user.workspace_admin[0].id
+  permissions  = ["ADMIN"]
+
+  depends_on = [databricks_metastore_assignment.dp_workspace]
+}
+
+# -----------------------------------------------------------------------------
+# Unity Catalog only: disable direct access to the legacy Hive metastore
+# -----------------------------------------------------------------------------
+# Matches the Databricks SRA template. Created only when a metastore is assigned (without one the workspace has
+# nothing else to fall back on). Permanent after 30 days: direct Hive metastore access cannot be re-enabled.
+# With a catalog created here, set it as the default first: the default cannot stay hive_metastore.
+resource "databricks_default_namespace_setting" "this" {
+  count    = var.new_catalog ? 1 : 0
+  provider = databricks.workspace
+  namespace {
+    value = databricks_catalog.uc[0].name
+  }
+}
+
+resource "databricks_disable_legacy_access_setting" "this" {
+  count    = local.assign_metastore ? 1 : 0
+  provider = databricks.workspace
+  disable_legacy_access {
+    value = true
+  }
+  depends_on = [databricks_metastore_assignment.dp_workspace, databricks_default_namespace_setting.this]
+}
+

@@ -87,9 +87,15 @@ The code provisions:
    - **Control plane** – One private endpoint for the Databricks UI/API (`databricks_ui_api`), in the Private Link subnet, with DNS in `privatelink.azuredatabricks.net`.
    - **DBFS** – Two private endpoints for the workspace root storage account: one for `dfs` and one for `blob`, each with the corresponding private DNS zone.
 7. **Network Connectivity Config (NCC)** – Creates an account-level NCC, attaches it to the workspace, and adds private endpoint rules for the same DBFS storage (blob, then dfs with a short delay to avoid API timeouts). Databricks creates private endpoint requests for serverless compute; Terraform **auto-approves** them on the storage account so serverless (SQL warehouses, serverless jobs, etc.) can reach DBFS over Private Link without manual approval in the portal.
-8. **Unity Catalog (optional)** – If you set `metastore_id` to an existing metastore’s UUID, Terraform assigns that metastore to the workspace (account API). If you leave it empty, no assignment runs here; attach a metastore manually in the [account console](https://accounts.azuredatabricks.net/) (or rely on org defaults that auto-assign new workspaces in some regions).
+8. **Unity Catalog metastore (optional)** – Set `metastore_id` to assign an existing metastore (account API), or `new_metastore_name` (plus `admin_user`) to create one in the workspace region, owned by a new `<name>-admins` group, and assign it. If you set neither, no assignment runs here; attach a metastore manually in the [account console](https://accounts.azuredatabricks.net/) (or rely on org defaults that auto-assign new workspaces in some regions).
+9. **User-defined catalog (optional, `new_catalog = true`)** – Creates a dedicated ADLS Gen2 storage account, an access connector (system-assigned managed identity with *Storage Blob Data Contributor* on the account), a Unity Catalog storage credential, an external location, and a catalog using that location as storage root. The storage account is locked down like the rest of the deployment:
+   - **Public network access is disabled**, in two steps: the catalog’s access connector is first added as a resource instance rule (as with “enabled from selected networks”, default action Deny), then public access is switched off. The rule stays in place, so the Databricks control plane can still validate the credential and manage the catalog. Compute reaches the data only through the private endpoints below.
+   - **Classic compute** reaches it over two private endpoints (`dfs`, `blob`) in the Private Link subnet, using the same private DNS zones as DBFS.
+   - **Serverless compute** reaches it over two additional NCC private endpoint rules (`dfs`, `blob`) on the existing NCC, auto-approved on the storage account by Terraform like the DBFS ones.
+10. **Legacy Hive metastore access disabled (always, when a metastore is assigned)** – Direct access to the legacy Hive metastore is disabled for the workspace (`databricks_disable_legacy_access_setting`), so all data access goes through Unity Catalog, as in the [Databricks SRA template](https://github.com/databricks/terraform-databricks-sra). With `new_catalog = true` the default catalog is set to the new catalog first, because the default cannot remain `hive_metastore`. **Permanent after 30 days:** once disabled for 30 days the workspace is Unity Catalog only and direct Hive metastore access cannot be re-enabled. Runtimes older than 13.3 LTS stop working and anything referencing `hive_metastore` fails; restart running clusters and SQL warehouses after the setting changes.
+11. **Validation cluster (optional, `create_cluster = true`)** – A UC-compatible single-node classic cluster in standard (shared) access mode, so workspace users can attach to it (no cluster policy, latest LTS runtime).
 
-Backend and DBFS traffic from classic compute use the private endpoints in your VNet; serverless compute uses the NCC private endpoints (auto-approved). Workspace UI remains reachable via public network.
+Backend, DBFS and Unity Catalog storage traffic from classic compute use the private endpoints in your VNet; serverless compute uses the NCC private endpoints (auto-approved). Workspace UI remains reachable via public network.
 
 ### Variables
 
@@ -111,8 +117,30 @@ Copy `terraform.tfvars.example` to `terraform.tfvars` in the `tf/` directory and
 | `create_nat_gateway` | **(Optional)** When `true`, creates a NAT gateway and attaches it to the workspace subnets for outbound internet access from cluster nodes (e.g. installing packages from PyPI or Maven). Set to `false` when `Microsoft.Storage` and `Microsoft.EventHub` service endpoints cover all required Azure traffic and no general internet egress is needed — for example in fully private deployments or when a network virtual appliance handles egress. Default: `true`. |
 | `nat_gateway_zones` | **(Optional)** Availability zone(s) for the NAT gateway and its public IP. Only used when `create_nat_gateway` is `true`. `[]` (default) creates a non-zonal (regional) NAT gateway. Provide a single zone (e.g. `["1"]`) to pin the NAT gateway to that zone. An Azure NAT gateway cannot span multiple zones. Default: `[]`. |
 | `databricks_account_id` | **(Required)** Databricks account ID for serverless NCC. Find it in the account console URL: `https://accounts.azuredatabricks.net/accounts/<account_id>`. NCC is always created so serverless compute can reach DBFS over Private Link; private endpoint connections are auto-approved. |
-| `metastore_id` | **(Optional)** UUID of an **existing** Unity Catalog metastore to assign to the workspace (account API; requires account admin). Azure allows one metastore per region per account, so the regional metastore usually already exists — list them with `databricks account metastores list`. This template only *assigns* a metastore; to create catalogs/external locations with private storage use the `azure-vnet-injection-uc` template. Default `""` skips assignment (attach later in the account console if your account does not auto-assign). |
+| `metastore_id` | **(Optional)** UUID of an **existing** Unity Catalog metastore to assign to the workspace (account API; requires account admin). Azure allows one metastore per region per account, so the regional metastore usually already exists — list them with `databricks account metastores list`. Mutually exclusive with `new_metastore_name`. Default `""` (attach later in the account console if your account does not auto-assign). |
+| `new_metastore_name` | **(Optional)** Name of a **new** metastore to create in the workspace region and assign. Creates a `<name>-admins` group (owner) with `admin_user` as member. Mutually exclusive with `metastore_id`. Default `""`. |
+| `admin_user` | **(Optional)** Databricks account user (email) made workspace admin and granted `ALL PRIVILEGES` on the user-defined catalog, external location and storage credential. Required with `new_metastore_name`. Use the identity running Terraform so it can create the storage credential, external location and catalog. Default `""`. |
+| `new_catalog` | **(Optional)** Create the user-defined catalog stack (storage account, access connector, private endpoints, NCC rules, storage credential, external location, catalog). Requires a metastore (`metastore_id` or `new_metastore_name`) and Owner / User Access Administrator on the resource group (role assignment). Default `false`. |
+| `uc_storage_account_name` | **(Optional)** Catalog storage account name (3–24 chars, lowercase letters and numbers, globally unique). Default `""` derives `uc` + up to 22 alphanumeric characters of `resource_prefix`, which can collide — set it explicitly if so. |
+| `uc_container_name` | **(Optional)** Container used as catalog storage root. Default `uc-catalog`. |
+| `catalog_name` / `storage_credential_name` / `external_location_name` | **(Optional)** Unity Catalog object names. Defaults: `<resource_prefix>_catalog` (hyphens/dots become underscores), `<resource_prefix>-storage-credential`, `<resource_prefix>-external-location`. |
+| `create_cluster` | **(Optional)** Create a UC-compatible single-node classic cluster to validate the deployment. Requires a metastore. Default `false`. |
+| `node_type_id` / `cluster_autotermination_minutes` | **(Optional)** VM SKU (default `Standard_DS3_v2`) and idle minutes (default `10`, minimum `10`) for the validation cluster. |
 | `tags` | **(Optional)** Tags applied to Azure resources that support tags. Default `{}` applies no tags (no built-in `Project` or `owner`). |
+
+## Existing metastore prerequisites
+
+Skip this section if you let the template create the metastore (`new_metastore_name`): the metastore is then owned by a new `<name>-admins` group whose only member is `admin_user`, so run Terraform as `admin_user` (or add the identity running Terraform to that group).
+
+When you attach to an **existing** metastore (`metastore_id`), the identity running Terraform is usually not a metastore admin, so it cannot create the storage credential, external location and catalog. Before deploying, have a **metastore admin** run this SQL in a workspace attached to that metastore (a SQL warehouse or notebook), replacing the principal with the identity's application (client) ID or user name:
+
+```sql
+GRANT CREATE STORAGE CREDENTIAL ON METASTORE TO `<application-id-or-user>`;
+GRANT CREATE EXTERNAL LOCATION ON METASTORE TO `<application-id-or-user>`;
+GRANT CREATE CATALOG ON METASTORE TO `<application-id-or-user>`;
+```
+
+These are only needed when the user-defined catalog is created (`new_catalog = true`). Without them the apply fails with a `PERMISSION_DENIED` error on the first Unity Catalog object. The identity keeps ownership of the objects it creates and then grants `admin_user` `ALL PRIVILEGES` on the catalog, external location and storage credential.
 
 ## Deploy
 
@@ -156,7 +184,7 @@ terraform output subnet_privatelink_id
 
 Open the workspace URL and sign in with your Databricks credentials. Public network access is always enabled, so the workspace is reachable from the internet.
 
-**Important:** To confirm the setup works end-to-end, create and start a **classic (non–high-concurrency) cluster**. A classic cluster uses the VNet-injected subnets, NAT gateway, and private endpoints; if it reaches "Running" state, the deployment is validated.
+**Important:** To confirm the setup works end-to-end, create and start a **classic (non–high-concurrency) cluster** (or set `create_cluster = true` and let Terraform do it). A classic cluster uses the VNet-injected subnets, NAT gateway, and private endpoints; if it reaches "Running" state, the deployment is validated.
 
 ## Validation
 
@@ -189,7 +217,12 @@ Type `yes` when prompted. Destruction can take several minutes. The workspace is
 | DBFS or control plane timeout | NSG or routing blocking outbound 443 | Ensure NSG rules allow outbound to Azure Active Directory and Azure Front Door; ensure NAT gateway (or egress) is attached to the workspace subnets. |
 | `mws ncc private endpoint rule` request timed out after 1m5s | Account API is slow creating the Azure PE request | The code creates the blob rule first, then waits (~75s), then the dfs rule to reduce timeouts. If the dfs rule still times out, run `terraform apply` again; the rule creation often succeeds on retry. |
 | `cannot delete mws network connectivity config ... attached to one or more workspaces` | NCC cannot be deleted while attached to a workspace | The workspace is configured to be destroyed before the NCC. If you see this after a partial destroy, run `terraform destroy` again; once the workspace is gone, the NCC can be deleted. |
-| Workspace has no Unity Catalog metastore | This template does not create a metastore; auto-assignment depends on your account | Set `metastore_id` to an existing metastore UUID and re-apply, or assign the workspace to a metastore in the Databricks account console. |
+| Workspace has no Unity Catalog metastore | No metastore configured; auto-assignment depends on your account | Set `metastore_id` to an existing metastore UUID (or `new_metastore_name` + `admin_user` to create one) and re-apply, or assign the workspace to a metastore in the Databricks account console. |
+| `new_catalog = true needs a Unity Catalog metastore` | Catalog requested without a metastore | Set `metastore_id` or `new_metastore_name`. |
+| Storage credential or external location creation fails with 403 / `AuthorizationPermissionMismatch` | Role assignment not propagated yet, or the Terraform identity is not a metastore admin | Re-run `terraform apply` after a few minutes. Make sure the identity running Terraform can create storage credentials/external locations on the metastore (for a new metastore, set `admin_user` to that identity). |
+| `AuthorizationFailed` on `azurerm_role_assignment` | Identity cannot create role assignments | Grant Owner or User Access Administrator on the data plane resource group (or subscription). |
+| Storage credential, external location or catalog creation fails with a storage access error | The access connector rule did not survive disabling public access, or has not propagated yet | Check the storage account’s networking: public access disabled and the access connector listed under resource instances. Re-run `terraform apply` after a few minutes. |
+| Clusters or SQL warehouses cannot read the catalog | Private endpoint not approved / DNS not resolving, or NCC rules not approved | Check the private endpoint connections on the catalog storage account are `Approved` (Terraform approves the NCC ones) and the DNS zones are linked to the VNet. |
 
 ## File structure
 
@@ -206,11 +239,15 @@ azure-privatelink-classic/
     ├── variables.tf                 # Input variable definitions
     ├── terraform.tfvars.example     # Example variable values (copy to terraform.tfvars)
     ├── network.tf                   # Data plane VNet, NSG, subnets (CIDRs from variables)
-    ├── databricks.tf                # Access connector, workspace (VNet injection, DBFS storage firewall), optional UC assignment
+    ├── databricks.tf                # DBFS access connector, workspace (VNet injection, DBFS storage firewall), optional metastore create/assign, workspace admin
     ├── dns_zones.tf                 # Private DNS zones (control plane + DBFS) and VNet links
     ├── pe_backend.tf                # Private endpoint for control plane (databricks_ui_api)
     ├── pe_dbfs.tf                   # Private endpoints for DBFS storage (dfs and blob)
     ├── ncc.tf                       # NCC config, binding, private endpoint rules (blob/dfs), auto-approve PE connections
+    ├── unity_catalog.tf             # Optional catalog: access connector, private-only storage account (access connector allowed by resource instance rule), credential, external location, catalog
+    ├── pe_uc.tf                     # Private endpoints for the catalog storage account (dfs and blob)
+    ├── ncc_uc.tf                    # NCC private endpoint rules + auto-approval for the catalog storage account
+    ├── cluster.tf                   # Optional UC-compatible single-node cluster
     └── outputs.tf                   # workspace, resource group, vnet, subnets
 ```
 
@@ -223,12 +260,16 @@ azure-privatelink-classic/
 | **variables.tf** | Input variables (naming, Azure, network including subnet CIDRs, NCC, optional `metastore_id`, tags) with validation. |
 | **terraform.tfvars.example** | Example variable values; copy to `terraform.tfvars` and set subscription, VNet CIDR, subnet CIDRs, location, etc. |
 | **network.tf** | Data plane VNet (address_space from cidr_dp); NSG; public, private, and Private Link subnets (CIDRs from subnet_workspace_cidrs and subnet_private_endpoint_cidr). |
-| **databricks.tf** | `azurerm_databricks_access_connector` for DBFS; `azurerm_databricks_workspace` with `default_storage_firewall_enabled` and `access_connector_id` (Premium, VNet injection, named MRG, workspace UI public access enabled); optional `databricks_metastore_assignment` when `metastore_id` is set. |
+| **databricks.tf** | `azurerm_databricks_access_connector` for DBFS; `azurerm_databricks_workspace` with `default_storage_firewall_enabled` and `access_connector_id` (Premium, VNet injection, named MRG, workspace UI public access enabled); optional metastore creation (`new_metastore_name`) and `databricks_metastore_assignment`; workspace admin assignment for `admin_user`; legacy Hive metastore access disabled (and default catalog set) when a metastore is assigned. |
 | **dns_zones.tf** | Private DNS zones for control plane and DBFS (dfs/blob); VNet links. |
 | **pe_backend.tf** | Private endpoint for Databricks control plane in the Private Link subnet. |
 | **pe_dbfs.tf** | Private endpoints for DBFS storage (dfs and blob) in the Private Link subnet. |
 | **ncc.tf** | NCC config, binding to workspace, private endpoint rules (blob then dfs with delay), and azapi auto-approval of PE connections on DBFS storage. |
-| **outputs.tf** | Workspace URL/ID; resource group name/id; VNet name/id; public, private, and Private Link subnet IDs. |
+| **unity_catalog.tf** | When `new_catalog` is true: access connector, storage account (resource instance rule for the access connector, then public network access disabled via azapi), container, container, role assignment, storage credential, external location, catalog. |
+| **pe_uc.tf** | Private endpoints (dfs, blob) for the catalog storage account in the Private Link subnet, registered in the existing DBFS private DNS zones. |
+| **ncc_uc.tf** | NCC private endpoint rules (blob then dfs with delay) for the catalog storage account and azapi auto-approval of the connections. |
+| **cluster.tf** | Optional UC-compatible single-node cluster when `create_cluster` is true. |
+| **outputs.tf** | Workspace URL/ID; resource group name/id; VNet name/id; public, private, and Private Link subnet IDs; NCC ID; Unity Catalog and cluster outputs. |
 
 ## Terraform template examples and more documentation
 

@@ -14,12 +14,13 @@ terraform {
       source  = "Azure/azapi"
       version = ">= 2.0.0, < 3.0"
     }
-    # Azure RM provider for resource group, VNet, workspace, NAT, private endpoints, DNS.
+    # Azure RM provider for resource group, VNet, workspace, NAT, private endpoints, DNS, UC storage.
+    # >= 4.50 for azurerm_storage_container.storage_account_id (management-plane container creation).
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = ">= 4.0.0, < 5.0"
+      version = ">= 4.50.0, < 5.0"
     }
-    # Databricks account-level provider for NCC (serverless private endpoints).
+    # Databricks provider: account-level (NCC, metastore) and workspace-level (Unity Catalog objects).
     databricks = {
       source  = "databricks/databricks"
       version = ">= 1.84.0, < 2.0"

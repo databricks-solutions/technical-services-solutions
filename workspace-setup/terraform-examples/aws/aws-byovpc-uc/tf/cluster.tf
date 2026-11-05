@@ -17,9 +17,12 @@ resource "databricks_cluster" "uc_single_node" {
   spark_version           = data.databricks_spark_version.latest_lts.id
   node_type_id            = "r5d.large"
   autotermination_minutes = var.cluster_autotermination_minutes
-  data_security_mode      = "SINGLE_USER"
-  num_workers             = 0
-
+  # Standard (shared) access mode: UC-compatible and attachable by any user with access,
+  # rather than bound to the Terraform principal as SINGLE_USER would be.
+  data_security_mode = "USER_ISOLATION"
+  # Single node: Databricks sets num_workers and the single-node spark_conf itself.
+  is_single_node = true
+  kind           = "CLASSIC_PREVIEW"
 
   custom_tags = {
     "ResourceClass" = "SingleNode"

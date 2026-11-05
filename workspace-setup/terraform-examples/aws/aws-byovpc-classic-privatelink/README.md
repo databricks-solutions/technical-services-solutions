@@ -9,7 +9,7 @@ This configuration creates:
 - **Private Link**: VPC endpoints for Databricks REST API and SCC relay (pre-configured per region)
 - **VPC Infrastructure**: Customer-managed VPC with public/private subnets (or use existing VPC)
 - **Security**: IAM roles, workspace and Private Link security groups, S3 bucket policies
-- **Unity Catalog**: Optional metastore creation or attachment to existing metastore
+- **Unity Catalog**: Metastore creation or attachment to an existing metastore, plus an optional user-defined catalog (dedicated S3 bucket, IAM role, storage credential, external location) and an optional UC-compatible single-node cluster
 - **Additional VPC Endpoints**: STS and Kinesis (for Databricks services over Private Link)
 
 ## Prerequisites
@@ -32,6 +32,21 @@ This configuration creates:
 ### Databricks Permissions
 - Account Admin access to create workspaces and Private Access Settings
 - Ability to create credentials, storage configs, networks, and VPC endpoint configs
+- When using an existing metastore (`metastore_id` set), the identity Terraform authenticates as (typically the service principal) must be able to create storage credentials and external locations on that metastore (for example `CREATE STORAGE CREDENTIAL` and `CREATE EXTERNAL LOCATION`) and `CREATE CATALOG`. Metastores created by this template make that identity the owner. Not needed when `new_catalog = false`.
+
+## Existing metastore prerequisites
+
+Skip this section if you let the template create the metastore: the identity running Terraform then owns it and can create everything it needs.
+
+When you attach to an **existing** metastore, the identity running Terraform (typically the service principal) is usually not a metastore admin, so it cannot create the storage credential, external location and catalog. Before deploying, have a **metastore admin** run this SQL in a workspace attached to that metastore (a SQL warehouse or notebook), replacing the principal with the identity's application (client) ID:
+
+```sql
+GRANT CREATE STORAGE CREDENTIAL ON METASTORE TO `<application-id>`;
+GRANT CREATE EXTERNAL LOCATION ON METASTORE TO `<application-id>`;
+GRANT CREATE CATALOG ON METASTORE TO `<application-id>`;
+```
+
+These are only needed when the user-defined catalog is created (`new_catalog = true`). Without them the apply fails with a `PERMISSION_DENIED` error on the first Unity Catalog object. The identity keeps ownership of the objects it creates and then grants the admin user `ALL PRIVILEGES` on the catalog, external location and storage credential.
 
 ## Quick Start
 
@@ -78,7 +93,9 @@ private_subnets_cidr  = ["10.0.1.0/24", "10.0.2.0/24"]
 public_subnets_cidr   = ["10.0.101.0/24", "10.0.102.0/24"]
 
 # Unity Catalog
+aws_account_id = "123456789012"   # AWS account where the catalog IAM role and S3 bucket are created
 metastore_name = "my-metastore"
+new_catalog    = true             # user-defined catalog; set false to only assign the metastore
 ```
 
 ### 3. Deploy
@@ -178,6 +195,33 @@ metastore_id   = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 metastore_name = ""  # Not required when using existing
 ```
 
+#### User-defined Catalog (`new_catalog`)
+
+With `new_catalog = true` (default) the template also creates, after assigning the metastore:
+
+- an S3 bucket and an IAM role/policy for Unity Catalog (trust policy and permissions come from the Databricks provider data sources),
+- a storage credential, an external location on the bucket, and a catalog whose storage root is that external location.
+
+Set `workspace_admin_email` to a Databricks account user to make them workspace admin and grant them `ALL PRIVILEGES` on the catalog, external location and storage credential. The Terraform principal stays their owner (it needs that to refresh them on later runs). Without the email, no one else can see them until granted access.
+
+Names default to `{prefix}-catalog`, `{resource_prefix}-external-location` and `{resource_prefix}-storage-credential`; override them with `catalog_name`, `external_location_name` and `storage_credential_name`. Set `aws_account_id` to the AWS account that owns the role and bucket.
+
+Private Link notes:
+
+- Workspace-level Unity Catalog objects are created through the workspace URL, so Terraform needs to reach it. The workspace is created with `public_access_enabled = true` in its private access settings, so this works from outside the VPC.
+- Classic compute reaches the catalog bucket through the S3 gateway endpoint (`standard` and `fully_private`). With `network_configuration = "custom"` make sure your VPC has an S3 gateway endpoint (or equivalent egress), otherwise clusters cannot read the catalog bucket.
+
+#### Legacy Hive metastore access
+
+The template always disables direct access to the legacy Hive metastore for the workspace (`databricks_disable_legacy_access_setting`), so all data access goes through Unity Catalog, as the [Databricks SRA template](https://github.com/databricks/terraform-databricks-sra) does. Classic compute here has no network path to the Hive metastore (the workspace security group does not allow port 3306 and restricts egress to the VPC CIDR), so leaving it enabled makes clusters fail at start with `METASTORE_DOWN` or hang resolving names. When `new_catalog = true` the default catalog is also set to the new catalog first, because the default cannot remain `hive_metastore`.
+
+- **Permanent after 30 days:** once disabled for 30 days the workspace becomes Unity Catalog only and direct Hive metastore access cannot be re-enabled.
+- **Side effects:** runtimes older than 13.3 LTS stop working, and anything referencing `hive_metastore` fails. Restart running clusters and SQL warehouses after the setting changes (it can take a few minutes).
+
+#### Validation cluster (`new_cluster`)
+
+Set `new_cluster = true` to create a UC-compatible single-node cluster (standard/shared access mode, latest LTS runtime), so workspace users can attach to it. If it reaches `Running` and can read/write a table in the new catalog, classic compute, Private Link and Unity Catalog storage are working end to end.
+
 ## File Structure
 
 This project uses a flat, organized structure with purpose-specific files:
@@ -196,7 +240,9 @@ tf/
 ├── endpoints.tf             # S3/STS/Kinesis VPC endpoints (template-owned only)
 ├── root_bucket.tf           # S3 bucket for workspace root storage
 ├── workspace.tf             # Databricks workspace, MWS networks, PAS, VPC endpoint configs
-└── metastore.tf             # Unity Catalog metastore
+├── metastore.tf             # Unity Catalog metastore (create or attach), workspace assignment, legacy Hive metastore access setting
+├── unity_catalog.tf         # Catalog S3 bucket, IAM role/policy, storage credential, external location, catalog
+└── cluster.tf               # Optional UC-compatible single-node cluster
 ```
 
 Terraform loads all `.tf` files in the directory; the structure is organizational only.

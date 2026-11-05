@@ -20,9 +20,6 @@ module "vpc" {
   public_subnet_names = [for az in var.availability_zones : format("%s-public-%s", var.resource_prefix, az)]
   public_subnets      = var.public_subnets_cidr
 
-  intra_subnet_names = [for az in var.availability_zones : format("%s-intra-%s", var.resource_prefix, az)]
-  intra_subnets      = var.intra_subnet_cidr
-
   # Enable default security group management
   manage_default_security_group  = true
   default_security_group_name    = "${var.resource_prefix}-default-sg"
@@ -59,7 +56,7 @@ module "vpc_endpoints" {
     sts = {
       service             = "sts"
       private_dns_enabled = true
-      subnet_ids          = module.vpc[0].intra_subnets
+      subnet_ids          = module.vpc[0].private_subnets
       tags = {
         Name    = "${var.resource_prefix}-sts-vpc-endpoint"
         Project = var.resource_prefix
@@ -68,7 +65,7 @@ module "vpc_endpoints" {
     kinesis-streams = {
       service             = "kinesis-streams"
       private_dns_enabled = true
-      subnet_ids          = module.vpc[0].intra_subnets
+      subnet_ids          = module.vpc[0].private_subnets
       tags = {
         Name    = "${var.resource_prefix}-kinesis-vpc-endpoint"
         Project = var.resource_prefix

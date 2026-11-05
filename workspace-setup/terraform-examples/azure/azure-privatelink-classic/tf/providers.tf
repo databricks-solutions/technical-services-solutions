@@ -31,3 +31,11 @@ provider "databricks" {
   # NCC private-endpoint rule creation can sit on the account API longer than the default (~65s idle).
   http_timeout_seconds = 300
 }
+
+# Workspace-level provider for Unity Catalog objects (storage credential, external location, catalog)
+# and the optional cluster. The workspace is reachable over the public network (no front-end Private Link).
+provider "databricks" {
+  alias           = "workspace"
+  host            = "https://${azurerm_databricks_workspace.dp_workspace.workspace_url}"
+  azure_tenant_id = data.azurerm_client_config.current.tenant_id
+}

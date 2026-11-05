@@ -170,9 +170,78 @@ variable "metastore_id" {
 }
 
 variable "metastore_name" {
-  description = "Name for the Unity Catalog metastore (only used if creating new metastore)"
+  description = "Name for the Unity Catalog metastore. Required only when metastore_id is empty (new metastore)."
   type        = string
   default     = ""
+
+  validation {
+    condition     = var.metastore_id != "" || var.metastore_name != ""
+    error_message = "metastore_name is required when creating a new metastore (metastore_id is empty)."
+  }
+}
+
+variable "aws_account_id" {
+  description = "AWS account ID where resources are deployed (used to construct IAM role ARNs for Unity Catalog)"
+  type        = string
+}
+
+# =============================================================================
+# User Defined Catalog
+# =============================================================================
+
+variable "workspace_admin_email" {
+  description = "Email of a Databricks account user to make workspace admin and grant ALL PRIVILEGES on the user-defined catalog. Should be the person who will use the workspace; otherwise only the Terraform principal (the catalog owner) can see the catalog. Leave empty to skip."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.workspace_admin_email == "" || can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", var.workspace_admin_email))
+    error_message = "workspace_admin_email must be empty or a valid email address."
+  }
+}
+
+variable "new_catalog" {
+  description = "Boolean flag to create a user-defined catalog (with its storage credential, IAM role, S3 bucket, and external location). Defaults to true."
+  type        = bool
+  default     = true
+}
+
+variable "catalog_name" {
+  description = "Name for the user defined catalog"
+  type        = string
+  default     = ""
+}
+
+variable "external_location_name" {
+  description = "Name for the user defined external location"
+  type        = string
+  default     = ""
+}
+
+variable "storage_credential_name" {
+  description = "Name for the user defined storage credential (Unity Catalog). If empty, defaults to \"{resource_prefix}-storage-credential\""
+  type        = string
+  default     = ""
+}
+
+# =============================================================================
+# Cluster Configuration (Optional)
+# =============================================================================
+
+variable "new_cluster" {
+  description = "Boolean flag to create a new cluster, defaults to false"
+  type        = bool
+  default     = false
+}
+
+variable "cluster_autotermination_minutes" {
+  description = "Idle minutes before the single-node UC cluster auto-terminates."
+  type        = number
+  default     = 10
+
+  validation {
+    condition     = var.cluster_autotermination_minutes >= 10
+    error_message = "cluster_autotermination_minutes must be at least 10 (Databricks minimum for auto-termination)."
+  }
 }
 
 # =============================================================================

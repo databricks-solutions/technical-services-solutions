@@ -1,7 +1,14 @@
 import type { Application, Request } from 'express';
 import { z } from 'zod';
 import type { LakebasePool } from '@databricks/appkit';
-import { chatSchema, intakeSchema, newProjectSchema, refineSchema } from '../../shared/brief';
+import {
+  chatSchema,
+  intakeSchema,
+  MANUAL_SUMMARY,
+  newProjectSchema,
+  refineSchema,
+  semanticBriefSchema,
+} from '../../shared/brief';
 import { dictionaryContext } from '../dictionary/match';
 import { loadDictionary } from '../dictionary/store';
 import type {
@@ -427,6 +434,17 @@ export function registerProjectRoutes(
       const input = intakeSchema.parse(req.body);
       const output = await callTool(draftBriefPrompt, draftBriefRequest(input), llmFor(req));
       return repo.addDraft(actor, project.id, output, input);
+    })
+  );
+
+  /** A brief written or edited by hand. Saved as a new draft version, like a model draft, with no model call. */
+  app.post(
+    '/api/projects/:id/briefs/edit',
+    handle(async (req) => {
+      const actor = actorOf(req);
+      const project = await repo.get(actor, idParam.parse(req.params).id);
+      const { brief } = z.object({ brief: semanticBriefSchema }).parse(req.body);
+      return repo.addDraft(actor, project.id, { brief, summary: MANUAL_SUMMARY }, { edited: true });
     })
   );
 

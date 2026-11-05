@@ -29,6 +29,9 @@ export const semanticBriefSchema = z.object({
 });
 export type SemanticBrief = z.infer<typeof semanticBriefSchema>;
 
+/** The summary of a brief saved by hand, so the page does not call it AI-generated. */
+export const MANUAL_SUMMARY = 'Written or edited by hand.';
+
 export const intakeSchema = z.object({
   goal: text(4000).min(10, 'Describe the goal in at least 10 characters'),
   audience: text(1000).optional(),

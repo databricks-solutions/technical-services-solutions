@@ -1,5 +1,10 @@
+import os from 'node:os';
+import path from 'node:path';
 import { chromium } from '@playwright/test';
-import { profileDir } from './fixtures';
+
+// Same folder as fixtures.ts. Node runs this file without a bundler, so it cannot import fixtures.ts.
+const profileDir =
+  process.env.E2E_PROFILE_DIR ?? path.join(os.homedir(), '.cache', 'semantics-builder-e2e', 'chrome-profile');
 
 // Opens the scenario profile in Google Chrome. Sign in to Chrome with the work account and to the app, then close it.
 const url = process.env.E2E_BASE_URL;

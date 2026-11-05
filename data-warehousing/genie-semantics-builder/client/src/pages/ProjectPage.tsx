@@ -15,6 +15,7 @@ import {
 import type { ProjectSummary, SubProjectStage, SubProjectSummary } from '../../../shared/brief';
 import { PROJECTS_CHANGED, useResource } from '../api';
 import { DataState } from '../components/DataState';
+import { DictionaryPanel } from '../components/DictionaryPanel';
 import { DeleteProjectModal } from '../components/DeleteProjectModal';
 import { NewProjectModal, STAGE, subPath } from './ProjectsPage';
 
@@ -212,6 +213,7 @@ export function ProjectPage() {
               emptyAction={newButton}
             />
           )}
+          <DictionaryPanel projectId={project.id} />
           {deleting && (
             <DeleteProjectModal
               projectId={deleting.id}

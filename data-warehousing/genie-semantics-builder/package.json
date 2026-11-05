@@ -40,6 +40,8 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-router": "7.18.0",
+    "read-excel-file": "^9.3.14",
+    "write-excel-file": "^4.1.1",
     "yaml": "2.9.1",
     "zod": "4.3.6"
   },

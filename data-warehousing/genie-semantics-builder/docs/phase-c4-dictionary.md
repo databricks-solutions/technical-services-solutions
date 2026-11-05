@@ -50,7 +50,7 @@ Column names are matched without case and with common aliases (`description` for
 
 ### Step 2: Import
 
-- Upload on the project page. Server-side parsing only. Limits: 5 MB, 2,000 rows, 50 columns, text cells up to
+- Upload on the project page. Server-side parsing only. Limits: 700 KB (it fits the 1 MB JSON body limit of the app as base64; a 2,000-row workbook is about 200 KB), 2,000 rows, 50 columns, text cells up to
   4,000 characters. Formulas in Excel cells are read as their cached value, never run. Macros are ignored.
 - Markdown: every pipe table with a `name` column; a heading becomes the `kind` when it says Metrics,
   Dimensions or Glossary.

@@ -18,7 +18,11 @@ export const isAdditive = (m: Measure) =>
   !m.window && /^\s*(SUM|COUNT|MIN|MAX)\s*\(/i.test(m.expr) && !/^\s*COUNT\s*\(\s*DISTINCT\b/i.test(m.expr);
 
 const slug = (dims: string[]) =>
-  `mv_${dims.join('_').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')}`.slice(0, 60) || 'mv_total';
+  `mv_${dims
+    .join('_')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_|_$/g, '')}`.slice(0, 60) || 'mv_total';
 
 type Joins = MetricView['joins'];
 const countJoins = (joins: Joins): number =>

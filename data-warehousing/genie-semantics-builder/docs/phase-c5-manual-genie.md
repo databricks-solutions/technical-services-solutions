@@ -1,6 +1,6 @@
 # Phase c5: Manual paths, Unity Catalog links, Genie check
 
-Status: plan, not approved. Date: 2026-11-05.
+Status: approved 2026-11-05, after phase c4. Date: 2026-11-05.
 
 ## Goal
 
@@ -19,6 +19,7 @@ AI only today:
 | Intent & Context | Brief comes from the chat or the form, through the model | **Edit brief** form for every field (goal, audience, questions, measures, dimensions, grains, glossary, assumptions). Saved as a new brief version, origin "edited". Confirm works the same. |
 | Metric Designer | "Generate design" only | **Start from a template**: a YAML skeleton built from the sources (fact table, joins on declared or suggested keys, one COUNT measure), with no model call. Then edit. |
 | Tests | Model writes them | **Test editor**: add, edit or remove a test (name, dimensions, measures) from the view's fields. |
+| Measures and dimensions | Only in YAML or from the model | **Metric builder**: add or edit a measure or dimension in a form (name, display name, description, synonyms, expression from column pickers with SUM/COUNT/COUNT DISTINCT/AVG/MIN/MAX/ratio, format, filter). The YAML updates and is validated as you go. |
 | Readiness fixes | Model writes comment text | **Edit the text** of a proposed comment before apply. The server still builds the SQL, so the user edits text, not SQL. Also "Write a comment" for any column, without a proposal. |
 
 **AI as help**, where it is not already:
@@ -58,8 +59,11 @@ Facts to check in a spike before building:
 
 - The app scope for Genie (`dashboards.genie`) and that a space can use a **metric view** as its data source.
 - Space create and update through the API with a serialized space, as the user (OBO).
-- **Genie One** (the workspace-wide Genie in Databricks One): whether an app can call it. If not, the tab uses a
-  Genie space, and Genie One is noted as future work.
+- **Genie One** (OneChat): the CLI calls `POST /api/2.0/data-rooms/tools/onechat/responses`, which streams SSE
+  events with the answer, the SQL it ran and its results (Confluence: "OneChat in Databricks CLI", 2026-03,
+  experimental). The installed CLI (v1.21) has no `onechat` command, so the spike calls the endpoint directly with
+  the app's OBO token and checks which scope it needs. The tab offers both: a Genie space on the sandbox view, and
+  Genie One when the endpoint works for apps.
 - Cost: Genie questions run SQL on the space warehouse; they count against the Optimize budget.
 
 ## Order
@@ -67,9 +71,8 @@ Facts to check in a spike before building:
 c5.2 (links, small) first, then c5.1 (manual paths), then c5.3 (Genie, after the spike). Phase c4 (dictionary)
 can go before or after c5; see the questions.
 
-## Questions to decide
+## Decisions (2026-11-05)
 
-1. Order: c4 dictionary first, or c5 first?
-2. Ask Genie: a Genie space per sub-project in the sandbox, as described, until we know whether Genie One can be
-   called?
-3. Manual paths: is the list above complete, or is there a step you also want by hand?
+- Order: c4 (dictionary) first, then c5 in the order above.
+- Ask Genie: Genie spaces and Genie One (OneChat), whichever the spike shows works for apps.
+- Manual paths include building measures and dimensions by hand.

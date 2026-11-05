@@ -7,4 +7,4 @@ Solutions and accelerators for migrating data warehouses onto the Databricks Lak
 | Project | Description |
 |---|---|
 | [source-extracts](source-extracts) | Offline extractors that write local `.sql` files for Lakebridge Analyzer. Snowflake is first; add other engines as sibling folders. |
-| [utilities](utilities) | Tools on top of Lakebridge outputs. [sts-lb-lineage](utilities/sts-lb-lineage): lineage, process map, statistics, and impact analysis from Analyzer JSON. |
+| [STS Lakebridge Lineage](sts-lb-lineage) | Lineage, process map, statistics, and impact analysis from Lakebridge Analyzer JSON (SQL and ETL), with an offline viewer, optional AI-assisted impact analysis, and optional Unity Catalog external lineage. |

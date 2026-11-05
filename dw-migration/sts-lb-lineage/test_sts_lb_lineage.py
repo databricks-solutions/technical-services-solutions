@@ -227,3 +227,116 @@ def test_mermaid_labels_cannot_inject_statements(tmp_path):
     lin.write(tmp_path, {"mermaid"})
     mmd = (tmp_path / "lineage.mmd").read_text()
     assert not any(line.lstrip().startswith("click") for line in mmd.splitlines())
+
+
+def _ai_server(d, answers):
+    import threading
+    from http.server import ThreadingHTTPServer
+
+    import sts_lb_ai
+
+    def fake_ask(msgs):
+        answers.append(msgs)
+        return "## Summary\n- ok"
+
+    srv = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        sts_lb_ai.make_handler(b"<html>", d, fake_ask, "ep", "host", "T" * 32),
+    )
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+def _req(srv, method, path, body=None, headers=None):
+    import http.client
+
+    c = http.client.HTTPConnection("127.0.0.1", srv.server_port, timeout=5)
+    h = {"Host": f"127.0.0.1:{srv.server_port}", **(headers or {})}
+    c.request(method, path, body=body, headers=h)
+    r = c.getresponse()
+    return r.status, r.read()
+
+
+def test_ai_context_is_bounded_and_grounded():
+    import pytest
+
+    import sts_lb_ai
+
+    d = load("sql_retail", "infa_customer").to_dict()
+    ctx = sts_lb_ai.impact_context(d, "table:dw.fact_orders", "down")
+    names = {o["name"] for o in ctx["objects"]}
+    assert {"mart.sales_daily", "v_flag"} <= names and "raw.orders" not in names
+    assert ctx["target"]["name"] == "dw.fact_orders"
+    up = sts_lb_ai.impact_context(d, "proc:wf_sales", "up")
+    assert any(p["name"] == "wf_customer" for p in up["processes"])
+    with pytest.raises(ValueError):
+        sts_lb_ai.impact_context(d, "table:does_not_exist")
+
+
+def test_ai_server_guards_and_answers():
+    d = load("sql_retail").to_dict()
+    sent = []
+    srv = _ai_server(d, sent)
+    try:
+        ok = {"X-STS-Session": "T" * 32, "Content-Type": "application/json"}
+        body = json.dumps({"target": "table:dw.fact_orders", "mode": "down"})
+        assert _req(srv, "GET", "/")[0] == 200
+        assert (
+            _req(srv, "GET", "/", headers={"Host": "evil.example:80"})[0] == 403
+        )  # DNS rebinding
+        assert (
+            _req(srv, "POST", "/api/ai", body, {"Content-Type": "application/json"})[0]
+            == 403
+        )  # no session
+        assert (
+            _req(srv, "POST", "/api/ai", body, {**ok, "Content-Type": "text/plain"})[0]
+            == 415
+        )
+        assert _req(srv, "POST", "/api/ai", "x" * 9000, ok)[0] == 413
+        assert (
+            _req(srv, "POST", "/api/ai", json.dumps({"target": "table:nope"}), ok)[0]
+            == 400
+        )
+        status, raw = _req(srv, "POST", "/api/ai", body, ok)
+        assert status == 200 and json.loads(raw)["answer"].startswith("## Summary")
+        prompt = sent[-1][1][1]
+        assert (
+            "mart.sales_daily" in prompt and "raw.orders" not in prompt
+        )  # only the impact set
+        assert (
+            json.loads(
+                _req(srv, "GET", "/api/ai/status", headers={"X-STS-Session": "T" * 32})[
+                    1
+                ]
+            )["endpoint"]
+            == "ep"
+        )
+    finally:
+        srv.shutdown()
+
+
+def test_ai_server_rejects_malformed_requests():
+    d = load("sql_retail").to_dict()
+    srv = _ai_server(d, [])
+    try:
+        ok = {"X-STS-Session": "T" * 32, "Content-Type": "application/json"}
+        bad_len = _req(srv, "POST", "/api/ai", "{}", {**ok, "Content-Length": "abc"})[0]
+        assert bad_len == 400
+        path_int = json.dumps({"target": "table:raw.orders", "mode": "path", "to": 5})
+        assert _req(srv, "POST", "/api/ai", path_int, ok)[0] == 400
+        nested = "[" * 3000 + "]" * 3000
+        assert _req(srv, "POST", "/api/ai", json.dumps({"target": nested}), ok)[0] in (
+            400,
+            413,
+        )
+        assert _req(srv, "POST", "/api/ai", "[" * 2000 + "]" * 2000, ok)[0] == 400
+        headers = {}
+        import http.client
+
+        c = http.client.HTTPConnection("127.0.0.1", srv.server_port, timeout=5)
+        c.request("GET", "/", headers={"Host": f"127.0.0.1:{srv.server_port}"})
+        r = c.getresponse()
+        headers = dict(r.getheaders())
+        assert headers["X-Frame-Options"] == "DENY"
+    finally:
+        srv.shutdown()

@@ -1,4 +1,7 @@
-# sts-lb-lineage
+# STS Lakebridge Lineage
+
+Folder and command: `sts-lb-lineage`.
+
 
 Table-level lineage and migration insights from the **Lakebridge Analyzer** (BladeBridge) JSON output, for SQL and ETL estates (Informatica, DataStage, SSIS, Talend, SAS, ADF, Oracle, Teradata, and the other analyzer sources). It writes JSON, CSV, Mermaid, and one self-contained HTML viewer.
 
@@ -12,6 +15,7 @@ Run it on a **laptop or jump host**, next to the analyzer output. It does not ne
 | Writes only to `-o` | Every output goes to the output folder you give (default `lineage/`). Nothing is deleted. |
 | Offline viewer | `lineage.html` makes no network requests. Open it from `file://`. |
 | No installs | It never installs software beyond its own pinned Python dependencies, which uv fetches. |
+| AI is opt-in and local | AI-assisted impact analysis runs only with `--serve`. The viewer is served on `127.0.0.1` only, and only the selected impact result goes to the endpoint you name, in your workspace. |
 | Unity Catalog writes are opt-in | Nothing is sent to a workspace unless you pass `--uc-push <profile>` and confirm. It only creates objects; it never updates or deletes. |
 | No customer data in git | Keep analyzer output and generated files out of the repo. `fixtures/` holds synthetic data only. |
 
@@ -41,11 +45,26 @@ All options: `uv run sts_lb_lineage.py --help`.
 | Summary | Statistics | Lines of code, SQL statements, dynamic SQL, loops, parameters, programs by technology and type, analyzer complexity levels, top transformations and functions, most read and most fed tables, tables by schema. |
 | Explore | Process map | One node per top-level process; shared tables connect them. Filter by technology, search, and a coupling matrix. Self-contained processes are hidden by default. |
 | Explore | Objects | Every table and job. Group by process, technology, schema, or type. List or graph. Selector bar, for example `role:source`, `process:wf_sales`, `complexity:high`, `+dw.fact_orders+`. |
-| Analyze | Impact analysis | Downstream impact, upstream sources, or the path between two objects or processes, with a CSV report. |
+| Analyze | Impact analysis | Downstream impact, upstream sources, or the path between two objects or processes, with a CSV report. Opens with suggested starting points. With `--serve`, an AI assistant explains the impact, flags risks, and answers questions. |
 
 Use the search box at the top of every page to jump to any process, table, or job. Drawers show the details of an object (role, process, upstream, downstream, programs, suggested UC target) or a process (programs and the analyzer drivers behind their complexity, objects, shared tables, dependencies). Every view is in the URL hash, so you can share a link to it.
 
 The tool reports facts from the scan. It does not estimate effort or plan migration waves.
+
+## AI-assisted impact analysis (optional)
+
+```sh
+uv run sts_lb_lineage.py analyzer-output.json --serve --profile <profile> --endpoint <chat-endpoint>
+```
+
+This builds the lineage, then serves the viewer at `http://127.0.0.1:8765/` (`--port` to change). On the Impact analysis page, pick a target, then use **Explain impact and risks** or ask a question. The answer is a short summary, the affected processes and objects, risk flags (shared tables, dependency cycles, approximate job-level edges, dynamic SQL, loops, high analyzer complexity), and what to check first.
+
+- **Endpoint**: any chat serving endpoint in the workspace, for example a Foundation Model or external model behind Unity AI Gateway, so the gateway's permissions, rate limits, guardrails, and usage tracking apply.
+- **Auth**: the Databricks CLI profile, through the Databricks SDK. The credential stays in the Python process and never reaches the browser.
+- **What is sent**: only the selected impact result, at most 300 objects with their names, roles, processes, and the involved programs' technology, analyzer complexity, and dynamic-SQL / loop counts. No source code or SQL text.
+- **Local server protections**: binds to `127.0.0.1` only; checks the `Host` header; requires a per-run session token that only the served page has; accepts JSON only and caps the request size and question length. The answer is rendered as text, never as HTML.
+- The model is told to use only the context it receives. AI output can still be wrong; check it against the lineage.
+- Without `--serve`, the HTML file works as before, with no AI panel and no network access.
 
 ## Outputs
 

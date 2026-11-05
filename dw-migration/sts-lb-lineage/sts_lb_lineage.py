@@ -700,6 +700,20 @@ def main(argv=None):
     ap.add_argument(
         "--open", action="store_true", help="open lineage.html in the browser when done"
     )
+    ai = ap.add_argument_group("AI-assisted impact analysis (optional)")
+    ai.add_argument(
+        "--serve",
+        action="store_true",
+        help="serve the viewer on 127.0.0.1 with AI impact analysis",
+    )
+    ai.add_argument("--profile", help="Databricks CLI profile for --serve")
+    ai.add_argument(
+        "--endpoint",
+        help="chat serving endpoint (for example behind Unity AI Gateway) for --serve",
+    )
+    ai.add_argument(
+        "--port", type=int, default=8765, help="local port for --serve (default 8765)"
+    )
     uc = ap.add_argument_group("Unity Catalog")
     uc.add_argument(
         "--uc-catalog", default="", help="target catalog for suggested UC names"
@@ -767,6 +781,15 @@ def main(argv=None):
         f"{len(lin.nodes)} nodes, {len(lin.edges)} edges, {len(lin.programs)} programs -> {a.out}"
     )
     html = a.out / "lineage.html"
+    if a.serve:
+        if not (a.profile and a.endpoint):
+            ap.error("--serve needs --profile and --endpoint")
+        if not html.exists():
+            ap.error("--serve needs the html format")
+        import sts_lb_ai
+
+        sts_lb_ai.serve(html, d, a.profile, a.endpoint, a.port)
+        return
     if a.open and html.exists():
         import webbrowser
 

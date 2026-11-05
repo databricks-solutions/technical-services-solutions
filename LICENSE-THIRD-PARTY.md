@@ -142,10 +142,10 @@ bundle in `app/frontend/static` includes React):
 
 ---
 
-## dw-migration/utilities/sts-lb-lineage
+## dw-migration/sts-lb-lineage (STS Lakebridge Lineage)
 
 Python runtime dependencies (declared in the
-[`sts_lb_lineage.py`](./dw-migration/utilities/sts-lb-lineage/sts_lb_lineage.py) PEP 723 header):
+[`sts_lb_lineage.py`](./dw-migration/sts-lb-lineage/sts_lb_lineage.py) PEP 723 header):
 
 | Dependency | Purpose | License |
 |------------|---------|---------|
@@ -153,7 +153,7 @@ Python runtime dependencies (declared in the
 | [databricks-sdk](https://github.com/databricks/databricks-sdk-py) | Unity Catalog external lineage (used only with `--uc-push`) | Apache-2.0 |
 
 The prebuilt viewer (`lineage_viewer.html`) bundles these packages and their
-transitive dependencies; [`viewer/package-lock.json`](./dw-migration/utilities/sts-lb-lineage/viewer/package-lock.json)
+transitive dependencies; [`viewer/package-lock.json`](./dw-migration/sts-lb-lineage/viewer/package-lock.json)
 is the version-pinned list:
 
 | Dependency | Purpose | License |

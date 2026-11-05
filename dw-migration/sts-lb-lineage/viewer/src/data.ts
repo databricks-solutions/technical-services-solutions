@@ -258,3 +258,31 @@ export function fmtBytes(b?: number): string {
   }
   return `${v >= 10 || i === 0 ? Math.round(v) : v.toFixed(1)} ${u[i]}`;
 }
+
+// ---------- optional AI (only when served by `sts_lb_lineage.py --serve`) ----------
+
+/** Session token injected by the local server; absent (placeholder) when opened from file://. */
+export function aiSession(): string | null {
+  const v = document.querySelector('meta[name="sts-ai-session"]')?.getAttribute('content') ?? '';
+  return location.protocol.startsWith('http') && /^[A-Za-z0-9_-]{32}$/.test(v) ? v : null;
+}
+
+export async function aiStatus(): Promise<{ endpoint: string; host: string } | null> {
+  const s = aiSession();
+  if (!s) return null;
+  const r = await fetch('/api/ai/status', { headers: { 'X-STS-Session': s } });
+  return r.ok ? r.json() : null;
+}
+
+export async function aiAsk(body: { target: string; mode: string; to?: string; question?: string }) {
+  const s = aiSession();
+  if (!s) throw new Error('AI is available only when the viewer is served with --serve.');
+  const r = await fetch('/api/ai', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-STS-Session': s },
+    body: JSON.stringify(body),
+  });
+  const j = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+  if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
+  return j as { answer: string; objects: number; truncated: boolean };
+}

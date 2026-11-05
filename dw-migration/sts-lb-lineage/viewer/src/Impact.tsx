@@ -1,4 +1,5 @@
 import {
+  Alert,
   Button,
   DownloadIcon,
   Empty,
@@ -6,6 +7,7 @@ import {
   SearchIcon,
   SegmentedControlButton,
   SegmentedControlGroup,
+  SparkleIcon,
   Table,
   TableCell,
   TableHeader,
@@ -14,9 +16,10 @@ import {
   Typography,
   WorkflowsIcon,
 } from '@databricks/design-system';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
-import { type Model, SHARED, downloadCsv, pathBetween, shortName, walk } from './data';
+import { type Model, SHARED, aiAsk, aiStatus, downloadCsv, pathBetween, shortName, walk } from './data';
+import { Markdown } from './Markdown';
 import { GraphView } from './Graph';
 import type { Route } from './url';
 import { KindIcon, LevelTag, plural, roleLabel } from './ui';
@@ -281,6 +284,7 @@ export function Impact({
               {objects.length > MAX_ROWS && <Typography.Hint>{`Showing ${MAX_ROWS} of ${objects.length}. Download the CSV for all.`}</Typography.Hint>}
             </section>
           </div>
+          <AiPanel target={route.target!} mode={mode} to={route.to} />
           <GraphView model={model} scope={scope} groupBy="process" onOpenDetails={onOpen} onOpenProcess={onOpenProcess} />
         </>
       )}
@@ -327,5 +331,69 @@ function Suggestions({ model, mode, onPick }: { model: Model; mode: string; onPi
         ))}
       </div>
     </div>
+  );
+}
+
+/** Shown only when the viewer is served with --serve; the server holds the credential. */
+function AiPanel({ target, mode, to }: { target: string; mode: string; to?: string }) {
+  const [status, setStatus] = useState<{ endpoint: string; host: string } | null>(null);
+  const [question, setQuestion] = useState('');
+  const [answer, setAnswer] = useState<{ text: string; note: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    aiStatus().then(setStatus).catch(() => setStatus(null));
+  }, []);
+  useEffect(() => {
+    setAnswer(null);
+    setError(null);
+  }, [target, mode, to]);
+  if (!status) return null;
+  const run = async (q?: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await aiAsk({ target, mode, to, question: q });
+      setAnswer({ text: r.answer, note: `${r.objects} objects sent${r.truncated ? ' (truncated)' : ''}` });
+    } catch (e) {
+      setError(String((e as Error).message ?? e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="lbl-ai">
+      <div className="lbl-ai-head">
+        <Typography.Title level={4}>AI assistant</Typography.Title>
+        <Typography.Hint>{`Endpoint ${status.endpoint} on ${status.host}. Only this impact result is sent.`}</Typography.Hint>
+      </div>
+      <div className="lbl-row">
+        <Button componentId="sts-lb-lineage.ai.explain" type="primary" icon={<SparkleIcon />} loading={busy} onClick={() => run()}>
+          Explain impact and risks
+        </Button>
+        <div className="lbl-ai-ask">
+          <Input
+            componentId="sts-lb-lineage.ai.question"
+            placeholder="Ask about this result, for example: which sources feed it?"
+            aria-label="Question about this impact result"
+            value={question}
+            maxLength={1000}
+            disabled={busy}
+            onChange={(e) => setQuestion(e.target.value)}
+            onPressEnter={() => question.trim() && run(question)}
+          />
+        </div>
+        <Button componentId="sts-lb-lineage.ai.ask" disabled={busy || !question.trim()} onClick={() => run(question)}>
+          Ask
+        </Button>
+      </div>
+      {error && <Alert componentId="sts-lb-lineage.ai.error" type="error" closable={false} message="The AI request failed" description={error} />}
+      {answer && (
+        <div className="lbl-ai-answer">
+          <Markdown text={answer.text} />
+          <Typography.Hint>{`${answer.note}. AI output can be wrong; check it against the lineage above.`}</Typography.Hint>
+        </div>
+      )}
+    </section>
   );
 }

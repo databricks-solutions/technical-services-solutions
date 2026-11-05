@@ -96,10 +96,10 @@ function Shell({ model, dark, onToggleDark }: { model: Model; dark: boolean; onT
     <div className="lbl-shell">
       <NavListSidebar componentId="sts-lb-lineage.nav" expandedWidth={232} className="lbl-nav">
         {({ showExpandedContent }) => (
-          <NavList.Root aria-label="Migration lineage">
+          <NavList.Root aria-label="STS Lakebridge Lineage">
             {showExpandedContent && (
               <div className="lbl-nav-title">
-                <Typography.Text bold>Migration lineage</Typography.Text>
+                <Typography.Text bold>STS Lakebridge Lineage</Typography.Text>
                 <Typography.Hint>{`${plural(s.processes, 'process', 'processes')} · ${plural(s.tables, 'table')}`}</Typography.Hint>
               </div>
             )}

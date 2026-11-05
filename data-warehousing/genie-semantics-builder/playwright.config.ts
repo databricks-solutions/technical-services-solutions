@@ -1,8 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
 /**
- * End-to-end scenarios against a deployed app. Sign in once with `pnpm e2e:login`, which saves the
- * session to tests/e2e/.auth/user.json (git-ignored). The scenarios use real data, the real model
+ * End-to-end scenarios against a deployed app, in installed Google Chrome on a persistent profile (see
+ * tests/e2e/fixtures.ts). Set it up once with `pnpm e2e:profile`. The scenarios use real data, the model
  * endpoint and the sandbox schema, so they are slow: run them on demand, not in CI.
  */
 const baseURL = process.env.E2E_BASE_URL;
@@ -18,10 +18,10 @@ export default defineConfig({
   reporter: [['list'], ['html', { open: 'never' }]],
   use: {
     baseURL,
-    storageState: 'tests/e2e/.auth/user.json',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     actionTimeout: 30_000,
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  // The installed Google Chrome, not the bundled Chrome for Testing: managed Chrome passes the sign-in policy.
+  projects: [{ name: 'chrome', use: { ...devices['Desktop Chrome'], channel: 'chrome' } }],
 });

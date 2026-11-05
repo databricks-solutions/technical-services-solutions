@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { approveSql, createProject, createSubProject, deleteProject, e2eName, openModule, pickTables } from './helpers';
 
 /**
@@ -10,8 +10,8 @@ test.describe.configure({ mode: 'serial' });
 const project = e2eName('Bakehouse');
 const sub = 'Franchise revenue';
 
-test.afterAll(async ({ browser }) => {
-  const page = await browser.newPage();
+test.afterAll(async ({ persistent }) => {
+  const page = await persistent.newPage();
   await deleteProject(page, project).catch(() => undefined);
   await page.close();
 });

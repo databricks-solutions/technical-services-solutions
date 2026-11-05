@@ -16,5 +16,3 @@ shared/appkit-types/serving.d.ts
 # Repo root ignores *conf*.json; TypeScript configs are required to build.
 !tsconfig*.json
 
-# Playwright login state for the e2e scenarios.
-tests/e2e/.auth/

@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 
 // Fast checks that need no model calls or warehouse time.
 test('the projects page loads with the shell and the theme switch', async ({ page }) => {

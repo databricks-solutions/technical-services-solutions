@@ -24,7 +24,7 @@
     "typegen": "appkit generate-types",
     "setup": "appkit setup --write",
     "e2e": "playwright test",
-    "e2e:login": "playwright codegen --save-storage=tests/e2e/.auth/user.json \"$E2E_BASE_URL\""
+    "e2e:profile": "node --experimental-strip-types tests/e2e/profile.ts"
   },
   "keywords": [],
   "author": "",

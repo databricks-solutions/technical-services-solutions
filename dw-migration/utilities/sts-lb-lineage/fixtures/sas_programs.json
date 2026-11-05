@@ -1,0 +1,68 @@
+{
+  "runInfo": {
+    "inputFolder": "synthetic/sas",
+    "reportName": "synthetic.xlsx",
+    "startTime": "2026-01-01T00:00:00Z",
+    "runDurationSeconds": 1,
+    "sourceTechnology": "SAS"
+  },
+  "inventory": [
+    {
+      "name": "monthly_report.sas",
+      "type": "SAS",
+      "complexityLevel": "COMPLEX",
+      "folder": "programs",
+      "sourceFile": "programs/monthly_report.sas",
+      "nodes": {
+        "PROC SQL": 2,
+        "DATA STEP": 1
+      },
+      "sqlStatements": [
+        {
+          "nodeName": "SQL_STMT_1",
+          "sql": "SELECT 1",
+          "complexityLevel": "LOW",
+          "lineCount": 5,
+          "functionCalls": null,
+          "objectRel": [
+            {
+              "action": "read",
+              "object": "work.sales",
+              "count": 1
+            },
+            {
+              "action": "read",
+              "object": "work.regions",
+              "count": 1
+            },
+            {
+              "action": "create",
+              "object": "work.summary",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "nodeName": "SQL_STMT_2",
+          "sql": "SELECT 1",
+          "complexityLevel": "LOW",
+          "lineCount": 5,
+          "functionCalls": null,
+          "objectRel": [
+            {
+              "action": "read",
+              "object": "work.summary",
+              "count": 1
+            },
+            {
+              "action": "create",
+              "object": "out.monthly_report",
+              "count": 1
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "subJobInfo": []
+}

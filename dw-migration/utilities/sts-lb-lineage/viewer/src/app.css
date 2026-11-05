@@ -1,0 +1,473 @@
+body {
+  font-family: var(--db-font-family);
+  margin: 0;
+}
+
+.lbl-shell {
+  display: flex;
+  min-height: 100vh;
+}
+
+.lbl-nav {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  flex: 0 0 auto;
+  border-right: 1px solid var(--db-border-base);
+  background: var(--db-surface-subtle);
+}
+
+.lbl-nav-title {
+  display: flex;
+  flex-direction: column;
+  padding: var(--db-space-4) var(--db-space-3) var(--db-space-2);
+}
+
+.lbl-main {
+  flex: 1;
+  min-width: 0;
+  padding: var(--db-space-4) var(--db-space-6);
+  box-sizing: border-box;
+}
+
+.lbl-bar-cell {
+  display: flex;
+  align-items: center;
+  gap: var(--db-space-2);
+  width: 100%;
+}
+
+.lbl-bar {
+  height: 8px;
+  border-radius: var(--db-radius-sm);
+  background: var(--db-accent-surface-strong);
+  flex: 0 0 auto;
+  max-width: 70%;
+}
+
+.lbl-bar-num {
+  font-variant-numeric: tabular-nums;
+}
+
+.lbl-filters {
+  display: flex;
+  flex-direction: column;
+  gap: var(--db-space-2);
+  padding-right: var(--db-space-4);
+  min-width: 200px;
+}
+
+.lbl-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--db-space-4);
+}
+
+.lbl-search {
+  flex: 0 1 280px;
+}
+
+.lbl-nowrap {
+  white-space: nowrap;
+}
+
+.lbl-name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--db-space-2);
+  min-width: 0;
+}
+
+.lbl-details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--db-space-4);
+}
+
+.lbl-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--db-space-2);
+}
+
+/* graph */
+.lbl-canvas {
+  height: calc(100vh - 200px);
+  border: 1px solid var(--db-border-base);
+  border-radius: var(--db-radius-md);
+  background: var(--db-surface-subtle);
+}
+
+.lbl-canvas.is-page {
+  height: calc(100vh - 180px);
+}
+
+.lbl-canvas .react-flow {
+  --xy-background-pattern-dots-color-default: var(--db-border-base);
+  --xy-background-color-default: var(--db-surface-subtle);
+}
+
+.lbl-card {
+  box-sizing: border-box;
+  width: 260px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  gap: var(--db-space-2);
+  padding: 0 var(--db-space-3);
+  background: var(--db-surface-base);
+  color: var(--db-text-base);
+  border: 1px solid var(--db-border-base);
+  border-radius: var(--db-radius-md);
+  box-shadow: var(--db-card-shadow);
+  font-size: var(--db-font-size-sm);
+  position: relative;
+}
+
+.lbl-card:hover {
+  border-color: var(--db-border-hover);
+}
+
+.lbl-card.is-focal {
+  border: 2px solid var(--db-accent-border);
+}
+
+.lbl-card.is-selected {
+  background: var(--db-surface-selected);
+}
+
+.lbl-card-icon {
+  display: inline-flex;
+  color: var(--db-text-subtle);
+}
+
+.lbl-card-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.lbl-card-name {
+  font-weight: var(--db-font-weight-semibold);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lbl-card-sub {
+  color: var(--db-text-subtle);
+  font-size: var(--db-font-size-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lbl-expand {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.lbl-expand.left {
+  left: -16px;
+}
+
+.lbl-expand.right {
+  right: -16px;
+}
+
+.lbl-card .react-flow__handle {
+  opacity: 0;
+}
+
+.lbl-edge .react-flow__edge-path {
+  stroke: var(--db-border-strong);
+  stroke-width: 1.5;
+}
+
+.lbl-edge.is-orch .react-flow__edge-path {
+  stroke-dasharray: 6 4;
+}
+
+.lbl-edge.is-active .react-flow__edge-path {
+  stroke: var(--db-accent-border);
+  stroke-width: 2;
+}
+
+.lbl-graph-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--db-space-2);
+}
+
+.lbl-panel {
+  width: 320px;
+  max-height: calc(100% - var(--db-space-8));
+  overflow: auto;
+  background: var(--db-surface-base);
+  border: 1px solid var(--db-border-base);
+  border-radius: var(--db-radius-md);
+  box-shadow: var(--db-popover-shadow);
+  padding: var(--db-space-4);
+}
+
+.lbl-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--db-space-2);
+  word-break: break-all;
+}
+
+.lbl-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--db-space-3);
+}
+
+.lbl-via {
+  display: flex;
+  gap: var(--db-space-2);
+  align-items: flex-start;
+  word-break: break-all;
+}
+
+.lbl-via > span {
+  display: flex;
+  flex-direction: column;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lbl-canvas * {
+    transition: none !important;
+  }
+}
+
+.lbl-group-filter {
+  display: flex;
+  flex-direction: column;
+  gap: var(--db-space-2);
+  max-height: 280px;
+  overflow: auto;
+}
+
+.lbl-indent {
+  padding-left: var(--db-space-6);
+}
+
+.lbl-group {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  border: 1px dashed var(--db-border-strong);
+  border-radius: var(--db-radius-lg);
+  background: var(--db-surface-base);
+}
+
+.lbl-group-head {
+  display: flex;
+  align-items: center;
+  gap: var(--db-space-2);
+  height: 40px;
+  padding: 0 var(--db-space-4);
+  color: var(--db-text-base);
+  font-size: var(--db-font-size-sm);
+  border-bottom: 1px solid var(--db-border-base);
+}
+
+.lbl-canvas .react-flow__node-group {
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+.lbl-ellipsis {
+  display: inline-block;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+/* tabs and pages */
+.lbl-tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--db-space-4);
+  padding-top: var(--db-space-4);
+}
+
+.lbl-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: var(--db-space-4);
+}
+
+.lbl-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(520px, 1fr));
+  gap: var(--db-space-6);
+}
+
+.lbl-grid > section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--db-space-2);
+  min-width: 0;
+}
+
+.lbl-objects {
+  display: flex;
+  gap: var(--db-space-6);
+  padding-top: var(--db-space-4);
+}
+
+.lbl-objects-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--db-space-2);
+}
+
+.lbl-toolbar {
+  flex-wrap: wrap;
+}
+
+.lbl-selector {
+  flex: 1 1 420px;
+  min-width: 280px;
+}
+
+.lbl-pickers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--db-space-4);
+}
+
+.lbl-picker {
+  position: relative;
+  width: 420px;
+  max-width: 100%;
+}
+
+.lbl-hits {
+  list-style: none;
+  margin: var(--db-space-1) 0 0;
+  padding: var(--db-space-2);
+  border: 1px solid var(--db-border-base);
+  border-radius: var(--db-radius-md);
+  background: var(--db-surface-base);
+  box-shadow: var(--db-popover-shadow);
+  display: flex;
+  flex-direction: column;
+  gap: var(--db-space-1);
+}
+
+.lbl-hits li {
+  display: flex;
+  align-items: center;
+  gap: var(--db-space-2);
+}
+
+.lbl-matrix {
+  overflow: auto;
+}
+
+.lbl-heat-0 {
+  color: var(--db-text-subtle);
+}
+
+.lbl-heat-1,
+.lbl-heat-2 {
+  display: inline-block;
+  min-width: 28px;
+  padding: 0 var(--db-space-1);
+  border-radius: var(--db-radius-sm);
+  text-align: center;
+}
+
+.lbl-heat-1 {
+  background: var(--db-accent-surface-subtle);
+}
+
+.lbl-heat-2 {
+  background: var(--db-accent-surface-strong);
+  color: var(--db-text-on-accent-surface);
+  font-weight: var(--db-font-weight-semibold);
+}
+
+/* node variants */
+.lbl-card.is-process {
+  width: 320px;
+  height: 64px;
+}
+
+.lbl-card.is-hub {
+  width: 320px;
+  height: 64px;
+  border-style: dashed;
+  background: var(--db-surface-subtle);
+}
+
+.lbl-card.is-stub {
+  border-style: dashed;
+  color: var(--db-text-subtle);
+  cursor: pointer;
+}
+
+.lbl-card.is-dim {
+  opacity: 0.35;
+}
+
+.lbl-edge.is-dim .react-flow__edge-path {
+  opacity: 0.25;
+}
+
+.lbl-edge.is-stub .react-flow__edge-path {
+  stroke-dasharray: 2 4;
+}
+
+.lbl-card.is-more {
+  cursor: pointer;
+  color: var(--db-text-base);
+}
+
+.lbl-quickfind {
+  width: 320px;
+}
+
+.lbl-hits-float {
+  position: absolute;
+  z-index: 20;
+  left: 0;
+  right: 0;
+}
+
+.lbl-examples {
+  align-items: center;
+}
+
+.lbl-legend {
+  display: flex;
+  flex-direction: column;
+  gap: var(--db-space-1);
+  padding: var(--db-space-2) var(--db-space-3);
+  background: var(--db-surface-base);
+  border: 1px solid var(--db-border-base);
+  border-radius: var(--db-radius-md);
+  font-size: var(--db-font-size-xs);
+  color: var(--db-text-subtle);
+}
+
+.lbl-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--db-space-2);
+}
+
+.lbl-filters {
+  flex: 0 0 210px;
+}

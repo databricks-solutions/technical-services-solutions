@@ -1,0 +1,181 @@
+{
+  "runInfo": {
+    "inputFolder": "synthetic/infa",
+    "reportName": "synthetic.xlsx",
+    "startTime": "2026-01-01T00:00:00Z",
+    "runDurationSeconds": 1,
+    "sourceTechnology": "INFA"
+  },
+  "inventory": [
+    {
+      "name": "m_load_customer",
+      "type": "Mapping",
+      "complexityLevel": "MEDIUM",
+      "folder": "synthetic_folder",
+      "fullyQualifiedName": "synthetic_folder.m_load_customer",
+      "sourceFile": "synthetic_folder/m_load_customer.xml",
+      "nodes": {
+        "Source Qualifier": 1,
+        "Lookup": 1,
+        "Expression": 2,
+        "Target Definition": 1
+      },
+      "functionCall": {
+        "IIF": 3,
+        "LTRIM": 1
+      },
+      "objectRel": [
+        {
+          "action": "source",
+          "object": "SRC_CUSTOMER",
+          "count": 1
+        },
+        {
+          "action": "lookup",
+          "object": "LKP_REGION",
+          "count": 1
+        },
+        {
+          "action": "source",
+          "object": "CUSTOMER_SCORE",
+          "count": 1
+        },
+        {
+          "action": "target",
+          "object": "DIM_CUSTOMER",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "m_load_sales",
+      "type": "Mapping",
+      "complexityLevel": "HIGH",
+      "folder": "synthetic_folder",
+      "fullyQualifiedName": "synthetic_folder.m_load_sales",
+      "sourceFile": "synthetic_folder/m_load_sales.xml",
+      "nodes": {
+        "Source Qualifier": 2,
+        "Joiner": 1,
+        "Aggregator": 1,
+        "Target Definition": 1
+      },
+      "functionCall": {
+        "SUM": 2,
+        "TO_DATE": 1
+      },
+      "objectRel": [
+        {
+          "action": "source",
+          "object": "SRC_SALES",
+          "count": 1
+        },
+        {
+          "action": "source",
+          "object": "DIM_CUSTOMER",
+          "count": 1
+        },
+        {
+          "action": "target",
+          "object": "FACT_SALES",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "m_score_customer",
+      "type": "Mapping",
+      "complexityLevel": "LOW",
+      "folder": "synthetic_folder",
+      "fullyQualifiedName": "synthetic_folder.m_score_customer",
+      "sourceFile": "synthetic_folder/m_score_customer.xml",
+      "nodes": {
+        "Expression": 1,
+        "Target Definition": 1
+      },
+      "functionCall": {},
+      "objectRel": [
+        {
+          "action": "source",
+          "object": "FACT_SALES",
+          "count": 1
+        },
+        {
+          "action": "target",
+          "object": "CUSTOMER_SCORE",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "wf_customer",
+      "type": "Workflow",
+      "complexityLevel": "LOW",
+      "folder": "synthetic_folder",
+      "fullyQualifiedName": "synthetic_folder.wf_customer",
+      "sourceFile": "synthetic_folder/wf_customer.xml",
+      "nodes": {
+        "Session": 1,
+        "Start": 1
+      },
+      "functionCall": {}
+    },
+    {
+      "name": "wf_sales",
+      "type": "Workflow",
+      "complexityLevel": "LOW",
+      "folder": "synthetic_folder",
+      "fullyQualifiedName": "synthetic_folder.wf_sales",
+      "sourceFile": "synthetic_folder/wf_sales.xml",
+      "nodes": {
+        "Session": 2,
+        "Start": 1
+      },
+      "functionCall": {}
+    }
+  ],
+  "subJobInfo": [
+    {
+      "parent": "wf_customer",
+      "parentType": "Workflow",
+      "child": "s_load_customer",
+      "childType": "Session",
+      "count": 1
+    },
+    {
+      "parent": "s_load_customer",
+      "parentType": "Session",
+      "child": "m_load_customer",
+      "childType": "Mapping",
+      "count": 1
+    },
+    {
+      "parent": "wf_sales",
+      "parentType": "Workflow",
+      "child": "s_load_sales",
+      "childType": "Session",
+      "count": 1
+    },
+    {
+      "parent": "s_load_sales",
+      "parentType": "Session",
+      "child": "m_load_sales",
+      "childType": "Mapping",
+      "count": 1
+    },
+    {
+      "parent": "wf_sales",
+      "parentType": "Workflow",
+      "child": "s_score_customer",
+      "childType": "Session",
+      "count": 1
+    },
+    {
+      "parent": "s_score_customer",
+      "parentType": "Session",
+      "child": "m_score_customer",
+      "childType": "Mapping",
+      "count": 1
+    }
+  ]
+}

@@ -11,7 +11,7 @@ Run it on a **laptop or jump host**, next to the analyzer output. It does not ne
 | Read-only on the source | It reads analyzer JSON (and, with `--run`, the source folder you point the analyzer at). It never changes source code. |
 | Writes only to `-o` | Every output goes to the output folder you give (default `lineage/`). Nothing is deleted. |
 | Offline viewer | `lineage.html` makes no network requests. Open it from `file://`. |
-| No installs | The wrapper never installs software. It stops and tells you what is missing. |
+| No installs | It never installs software beyond its own pinned Python dependencies, which uv fetches. |
 | Unity Catalog writes are opt-in | Nothing is sent to a workspace unless you pass `--uc-push <profile>` and confirm. It only creates objects; it never updates or deletes. |
 | No customer data in git | Keep analyzer output and generated files out of the repo. `fixtures/` holds synthetic data only. |
 
@@ -24,13 +24,12 @@ Run it on a **laptop or jump host**, next to the analyzer output. It does not ne
 ## Quick start
 
 ```sh
-./sts-lb-lineage analyzer-output.json                       # build and open lineage/lineage.html
-./sts-lb-lineage sql.json etl.json -o out/                  # several reports at once (SQL and ETL can mix)
-./sts-lb-lineage --run ./exports --platform "Informatica - PC"   # run the analyzer first
-NO_OPEN=1 ./sts-lb-lineage analyzer-output.json             # generate without opening a browser
+uv run sts_lb_lineage.py analyzer-output.json --open                 # build lineage/ and open the viewer
+uv run sts_lb_lineage.py sql.json etl.json -o out/                    # several reports at once (SQL and ETL can mix)
+uv run sts_lb_lineage.py --run ./exports --platform "Informatica - PC" --open   # run the analyzer first
 ```
 
-Every flag passes through to `sts_lb_lineage.py` (`uv run sts_lb_lineage.py --help`).
+All options: `uv run sts_lb_lineage.py --help`.
 
 ## Viewer
 
@@ -80,13 +79,13 @@ CSV cells that start with `=`, `+`, `-`, or `@` get a leading `'` so spreadsheet
 
 ```sh
 # suggested targets: layer from the role (source -> bronze, intermediate -> silver, terminal -> gold)
-./sts-lb-lineage report.json --uc-catalog main --uc-pattern "{catalog}.{layer}_{schema}.{table}"
+uv run sts_lb_lineage.py report.json --uc-catalog main --uc-pattern "{catalog}.{layer}_{schema}.{table}"
 
 # table volumes (CSV columns: table, rows, bytes), for example exported from a Lakebridge Profiler extract
-./sts-lb-lineage report.json --volumes volumes.csv
+uv run sts_lb_lineage.py report.json --volumes volumes.csv
 
 # push the legacy lineage as Unity Catalog external lineage
-./sts-lb-lineage report.json --source-system TERADATA --uc-prefix legacy --uc-push <profile>
+uv run sts_lb_lineage.py report.json --source-system TERADATA --uc-prefix legacy --uc-push <profile>
 ```
 
 - **Mapping**: a suggestion only. Temp tables and orphans get no target.
@@ -109,7 +108,7 @@ CSV cells that start with `=`, `+`, `-`, or `@` get a leading `'` so spreadsheet
 
 ```sh
 uv run --with pytest pytest -q                       # tests (synthetic fixtures)
-cd viewer && npm ci --legacy-peer-deps && npm run build   # rebuild lineage_viewer.html (or ./sts-lb-lineage --rebuild-viewer)
+cd viewer && npm ci --legacy-peer-deps && npm run build   # rebuild lineage_viewer.html
 cp ../path/to/lineage.json public/sample.json && npm run dev   # live preview
 ```
 

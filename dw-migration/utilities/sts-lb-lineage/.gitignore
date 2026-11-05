@@ -3,3 +3,6 @@ __pycache__/
 .ruff_cache/
 lineage/
 *.xlsx
+viewer/node_modules/
+viewer/dist/
+viewer/public/sample.json

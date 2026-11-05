@@ -5,7 +5,7 @@
 # ///
 """Build table-level lineage from BladeBridge analyzer (bladespector) JSON output.
 
-uv run sts_lb_lineage.py report.json [more.json ...] -o lineage/
+uv run sts_lb_lineage.py report.json [more.json ...] -o lineage/ --open
 uv run sts_lb_lineage.py --run ./src --platform Oracle -o lineage/
 uv run sts_lb_lineage.py report.json --focus dw.fact_orders -o lineage/
 """
@@ -697,6 +697,9 @@ def main(argv=None):
     ap.add_argument(
         "--focus", help="keep only upstream + downstream of this table or job"
     )
+    ap.add_argument(
+        "--open", action="store_true", help="open lineage.html in the browser when done"
+    )
     uc = ap.add_argument_group("Unity Catalog")
     uc.add_argument(
         "--uc-catalog", default="", help="target catalog for suggested UC names"
@@ -763,6 +766,11 @@ def main(argv=None):
     print(
         f"{len(lin.nodes)} nodes, {len(lin.edges)} edges, {len(lin.programs)} programs -> {a.out}"
     )
+    html = a.out / "lineage.html"
+    if a.open and html.exists():
+        import webbrowser
+
+        webbrowser.open(html.resolve().as_uri())
 
 
 if __name__ == "__main__":

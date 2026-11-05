@@ -45,7 +45,10 @@ describe('templateDesign', () => {
     expect(out.dimensions.find((d) => d.name === 'Nation Name')?.expr).toBe('dim_customer.dim_nation.n_name');
     expect(out.tests.length).toBeGreaterThan(0);
 
-    const design = buildDesign(out, [orders, customer, nation].map((p) => p.fullName));
+    const design = buildDesign(
+      out,
+      [orders, customer, nation].map((p) => p.fullName)
+    );
     const { issues } = validateMetricView(renderMetricView(design.view));
     expect(issues.filter((i) => i.severity === 'error')).toEqual([]);
   });
@@ -55,6 +58,7 @@ describe('templateDesign', () => {
       ['transactionID', 'bigint'],
       ['customerID', 'bigint'],
       ['totalPrice', 'bigint'],
+      ['unitPrice', 'bigint'],
       ['dateTime', 'timestamp'],
     ]);
     const cust = t('c.bake.sales_customers', [
@@ -64,6 +68,6 @@ describe('templateDesign', () => {
     const out = templateDesign([cust, tx]);
     expect(out.source).toBe('c.bake.sales_transactions');
     expect(out.joins.map((j) => j.keys)).toEqual([[{ parentColumn: 'customerID', column: 'customerID' }]]);
-    expect(out.measures.map((m) => m.name)).toContain('Total Total Price');
+    expect(out.measures.map((m) => m.name)).toEqual(['Row Count', 'Total Price', 'Average Unit Price']);
   });
 });

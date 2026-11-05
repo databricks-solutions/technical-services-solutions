@@ -361,9 +361,14 @@ function ValidationResults({ run }: { run: ValidationRun }) {
 function Designer({
   data,
   onChange,
+  tab,
+  setTab,
 }: {
   data: DesignerView & { draft: DesignDraft };
   onChange: (v: DesignerView) => void;
+  /** Kept by the page, so a new version (which remounts the designer) stays on the same tab. */
+  tab: DesignerTab;
+  setTab: (t: DesignerTab) => void;
 }) {
   const { projectId = '', parentId = '' } = useParams();
   const navigate = useNavigate();
@@ -373,7 +378,6 @@ function Designer({
   const [busy, setBusy] = useState<'save' | 'refine' | 'generate' | 'plan' | 'validate'>();
   const [plan, setPlan] = useState<ValidationPlan>();
   const [error, setError] = useState<string>();
-  const [tab, setTab] = useState<DesignerTab>('model');
   const [editingTests, setEditingTests] = useState(false);
   const dirty = yaml !== draft.yaml;
 
@@ -851,6 +855,7 @@ function History({
 export function DesignerPage() {
   const { projectId = '' } = useParams();
   const view = useResource<DesignerView>(`/api/projects/${projectId}/designs`);
+  const [tab, setTab] = useState<DesignerTab>('model');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const data = view.data;
@@ -873,7 +878,13 @@ export function DesignerPage() {
   return (
     <DataState status={view.status} message={view.error} onRetry={view.reload}>
       {data?.draft ? (
-        <Designer key={data.draft.version} data={{ ...data, draft: data.draft }} onChange={view.setData} />
+        <Designer
+          key={data.draft.version}
+          data={{ ...data, draft: data.draft }}
+          onChange={view.setData}
+          tab={tab}
+          setTab={setTab}
+        />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center' }}>
           <Empty

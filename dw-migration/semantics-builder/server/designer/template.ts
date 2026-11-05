@@ -6,6 +6,7 @@ const NUMERIC = /^(tinyint|smallint|int|integer|bigint|long|float|double|decimal
 const TEMPORAL = /^(date|timestamp)/i;
 const STRING = /^(string|varchar|char)/i;
 const AMOUNT = /(price|amount|amt|cost|revenue|sales|qty|quantity|discount|tax|total|balance)/i;
+const UNIT = /(unit_?price|rate|pct|percent|ratio)/i;
 const KEYLIKE = /(_id|_sk|_key|key|id)$/i;
 
 const short = (fullName: string) => fullName.split('.').pop()!.toLowerCase();
@@ -88,15 +89,29 @@ export function templateDesign(profiles: TableProfile[], fact?: string): DesignO
     },
     ...source.columns
       .filter((c) => NUMERIC.test(c.type) && AMOUNT.test(c.name) && !KEYLIKE.test(c.name))
-      .map((c) => ({
-        ...field(
-          `Total ${title(c.name)}`,
-          `SUM(source.${column(c.name)})`,
-          c.comment || `Sum of ${c.name}.`,
-          `Adds up ${c.name} across the rows.`
-        ),
-        additivity: 'additive' as const,
-      })),
+      .map((c) => {
+        const t = title(c.name);
+        // A unit price or a rate does not add up across rows; its average does mean something.
+        return UNIT.test(c.name)
+          ? {
+              ...field(
+                `Average ${t}`,
+                `AVG(source.${column(c.name)})`,
+                c.comment || `Average of ${c.name}.`,
+                `The average ${c.name} across the rows.`
+              ),
+              additivity: 'non_additive' as const,
+            }
+          : {
+              ...field(
+                /^total\b/i.test(t) ? t : `Total ${t}`,
+                `SUM(source.${column(c.name)})`,
+                c.comment || `Sum of ${c.name}.`,
+                `Adds up ${c.name} across the rows.`
+              ),
+              additivity: 'additive' as const,
+            };
+      }),
   ];
 
   const dates = source.columns.filter((c) => TEMPORAL.test(c.type));
@@ -113,7 +128,11 @@ export function templateDesign(profiles: TableProfile[], fact?: string): DesignO
     ...joins.flatMap((j) => {
       const c = byName.get(j.source.toLowerCase())!.columns.find((x) => STRING.test(x.type) && /name/i.test(x.name));
       if (!c) return [];
-      const table = title(short(j.source).replace(/^[a-z]+_(?=[a-z]{3,})/, ''));
+      const table = title(
+        short(j.source)
+          .replace(/^[a-z]+_(?=[a-z]{3,})/, '')
+          .replace(/([^s])s$/, '$1')
+      );
       const col = title(c.name);
       const name = col.includes(table) ? col : `${table} ${col}`;
       return [

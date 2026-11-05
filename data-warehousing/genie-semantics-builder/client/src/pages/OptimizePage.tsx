@@ -11,6 +11,7 @@ import {
   TableCell,
   TableHeader,
   TableRow,
+  Tabs,
   Tag,
   Typography,
 } from '@databricks/design-system';
@@ -19,6 +20,7 @@ import { api, useResource } from '../api';
 import { DataState } from '../components/DataState';
 import { MaterializePanel } from '../components/MaterializePanel';
 import { PracticesPanel } from '../components/PracticesPanel';
+import { CostPanel } from '../components/CostPanel';
 import { SqlBlock } from '../components/SqlBlock';
 
 const FLAG: Record<StressFlag, { color: 'coral' | 'lemon'; label: string }> = {
@@ -230,7 +232,9 @@ export function OptimizePage() {
   const [busy, setBusy] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<string>();
+  const [tab, setTab] = useState('stress');
   const data = view.data;
+  const blocking = data?.practices.filter((c) => c.severity === 'fix' && c.fields.length).length ?? 0;
   const latest = data?.latest;
   const active = latest?.status === 'running' || latest?.status === 'stopping';
   const tryActive = ['running', 'refreshing', 'stopping'].includes(data?.latestTry?.status ?? '');
@@ -309,123 +313,154 @@ export function OptimizePage() {
               you, on the app&apos;s SQL warehouse. Nothing runs until you approve the plan.
             </Typography.Text>
 
-            <PracticesPanel checks={data.practices} />
-            {latest && <Results run={latest} onStop={() => stop()} stopping={stopping && active} />}
-            <MaterializePanel data={data} projectId={projectId} onChange={refresh} onStop={(id) => stop(id)} />
-
-            <Typography.Title level={4} withoutMargins>
-              Workload ({chosen.length} of {all.length})
-            </Typography.Title>
-            <Typography.Text color="secondary">
-              The validation tests, then each dimension with every measure it can show. Untick the queries you do not
-              need.
-            </Typography.Text>
-            <Table aria-label="Workload">
-              <TableRow isHeader>
-                <TableHeader componentId="gsb.optimize.w_run">Run</TableHeader>
-                <TableHeader componentId="gsb.optimize.w_query">Query</TableHeader>
-                <TableHeader componentId="gsb.optimize.w_dims">Group by</TableHeader>
-                <TableHeader componentId="gsb.optimize.w_from">From</TableHeader>
-              </TableRow>
-              {all.map((q) => (
-                <TableRow key={`${q.origin}:${q.label}`}>
-                  <TableCell>
-                    <Checkbox
-                      componentId="gsb.optimize.include"
-                      aria-label={`Run ${q.label}`}
-                      isChecked={!excluded.some((e) => sameQuery(e, q))}
-                      onChange={(on) => setExcluded(on ? excluded.filter((e) => !sameQuery(e, q)) : [...excluded, q])}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <div style={WRAP}>
-                      <div>{q.label}</div>
-                      <Typography.Text color="secondary">{q.measures.join(', ')}</Typography.Text>
-                    </div>
-                  </TableCell>
-                  <TableCell>{q.dimensions.join(', ') || 'Total'}</TableCell>
-                  <TableCell>{q.origin === 'test' ? 'Test' : q.origin === 'custom' ? 'You' : 'Generated'}</TableCell>
-                </TableRow>
-              ))}
-            </Table>
-            {data.view && (
-              <AddQuery
-                dimensions={data.view.dimensions}
-                measures={data.view.measures}
-                onAdd={(q) => !all.some((x) => sameQuery(x, q)) && setWorkload([...all, q])}
-              />
-            )}
-
-            <div style={{ display: 'flex', gap: 16, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-              <div>
-                <FormUI.Label htmlFor="gsb-optimize-repeats">Runs per query</FormUI.Label>
-                <Input
-                  componentId="gsb.optimize.repeats"
-                  id="gsb-optimize-repeats"
-                  type="number"
-                  min={1}
-                  max={data.limits.maxRepeats}
-                  value={repeats}
-                  onChange={(e) => setRepeats(e.target.value)}
-                  style={{ width: 120 }}
-                />
-              </div>
-              <div>
-                <FormUI.Label htmlFor="gsb-optimize-target">Target (seconds)</FormUI.Label>
-                <Input
-                  componentId="gsb.optimize.target"
-                  id="gsb-optimize-target"
-                  type="number"
-                  min={0.5}
-                  step={0.5}
-                  value={target}
-                  onChange={(e) => setTarget(e.target.value)}
-                  style={{ width: 120 }}
-                />
-              </div>
-              <Button
-                componentId="gsb.optimize.review"
-                type="primary"
-                disabled={!chosen.length || tooMany || active || tryActive || !data.setup}
-                onClick={() => setApprove(true)}
-              >
-                Review and run
-              </Button>
-              <Typography.Text color="secondary">
-                {chosen.length} queries x {runs} runs = {chosen.length * runs} statements. Each stops after{' '}
-                {data.limits.timeoutSeconds} s.
-              </Typography.Text>
-            </div>
-            {tooMany && (
-              <FormUI.Message type="error" message={`Run at most ${data.limits.maxQueries} queries at a time.`} />
-            )}
-            {!data.setup && (
-              <FormUI.Message type="error" message="The sandbox schema is not configured. Ask the app admin." />
-            )}
-            {error && <Alert componentId="gsb.optimize.error" type="error" closable={false} message={error} />}
-
-            {approve && data.setup && (
-              <Modal
-                componentId="gsb.optimize.approve"
-                title="Run the stress test"
-                visible
-                okText="Run"
-                cancelText="Cancel"
-                confirmLoading={busy}
-                onOk={start}
-                onCancel={() => setApprove(false)}
-                size="wide"
-              >
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <Typography.Text>
-                    The app creates the sandbox view, then runs {chosen.length} queries {runs} times each, one at a
-                    time, as you on the app&apos;s SQL warehouse. It reads only aggregates, at most 1,000 rows per
-                    query. You can stop it at any time.
-                  </Typography.Text>
-                  <SqlBlock label="SQL to run first" sql={data.setup.statements.join('\n\n')} />
+            <Tabs.Root componentId="gsb.optimize.tabs" value={tab} onValueChange={setTab}>
+              <Tabs.List>
+                <Tabs.Trigger value="practices">Best practices{blocking ? ` (${blocking} to fix)` : ''}</Tabs.Trigger>
+                <Tabs.Trigger value="stress">Stress test</Tabs.Trigger>
+                <Tabs.Trigger value="materialize">
+                  Materialization{data.suggestion?.views.length ? ` (${data.suggestion.views.length})` : ''}
+                </Tabs.Trigger>
+                <Tabs.Trigger value="cost">Cost</Tabs.Trigger>
+              </Tabs.List>
+              <Tabs.Content value="practices">
+                <div style={{ paddingTop: 16 }}>
+                  <PracticesPanel checks={data.practices} />
                 </div>
-              </Modal>
-            )}
+              </Tabs.Content>
+              <Tabs.Content value="materialize">
+                <div style={{ paddingTop: 16 }}>
+                  <MaterializePanel data={data} projectId={projectId} onChange={refresh} onStop={(id) => stop(id)} />
+                </div>
+              </Tabs.Content>
+              <Tabs.Content value="cost">
+                <div style={{ paddingTop: 16 }}>
+                  <CostPanel key={`${latest?.id}:${latest?.status}:${data.latestTry?.status}`} projectId={projectId} />
+                </div>
+              </Tabs.Content>
+              <Tabs.Content value="stress">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingTop: 16 }}>
+                  {latest && <Results run={latest} onStop={() => stop()} stopping={stopping && active} />}
+
+                  <Typography.Title level={4} withoutMargins>
+                    Workload ({chosen.length} of {all.length})
+                  </Typography.Title>
+                  <Typography.Text color="secondary">
+                    The validation tests, then each dimension with every measure it can show. Untick the queries you do
+                    not need.
+                  </Typography.Text>
+                  <Table aria-label="Workload">
+                    <TableRow isHeader>
+                      <TableHeader componentId="gsb.optimize.w_run">Run</TableHeader>
+                      <TableHeader componentId="gsb.optimize.w_query">Query</TableHeader>
+                      <TableHeader componentId="gsb.optimize.w_dims">Group by</TableHeader>
+                      <TableHeader componentId="gsb.optimize.w_from">From</TableHeader>
+                    </TableRow>
+                    {all.map((q) => (
+                      <TableRow key={`${q.origin}:${q.label}`}>
+                        <TableCell>
+                          <Checkbox
+                            componentId="gsb.optimize.include"
+                            aria-label={`Run ${q.label}`}
+                            isChecked={!excluded.some((e) => sameQuery(e, q))}
+                            onChange={(on) =>
+                              setExcluded(on ? excluded.filter((e) => !sameQuery(e, q)) : [...excluded, q])
+                            }
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <div style={WRAP}>
+                            <div>{q.label}</div>
+                            <Typography.Text color="secondary">{q.measures.join(', ')}</Typography.Text>
+                          </div>
+                        </TableCell>
+                        <TableCell>{q.dimensions.join(', ') || 'Total'}</TableCell>
+                        <TableCell>
+                          {q.origin === 'test' ? 'Test' : q.origin === 'custom' ? 'You' : 'Generated'}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </Table>
+                  {data.view && (
+                    <AddQuery
+                      dimensions={data.view.dimensions}
+                      measures={data.view.measures}
+                      onAdd={(q) => !all.some((x) => sameQuery(x, q)) && setWorkload([...all, q])}
+                    />
+                  )}
+
+                  <div style={{ display: 'flex', gap: 16, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                    <div>
+                      <FormUI.Label htmlFor="gsb-optimize-repeats">Runs per query</FormUI.Label>
+                      <Input
+                        componentId="gsb.optimize.repeats"
+                        id="gsb-optimize-repeats"
+                        type="number"
+                        min={1}
+                        max={data.limits.maxRepeats}
+                        value={repeats}
+                        onChange={(e) => setRepeats(e.target.value)}
+                        style={{ width: 120 }}
+                      />
+                    </div>
+                    <div>
+                      <FormUI.Label htmlFor="gsb-optimize-target">Target (seconds)</FormUI.Label>
+                      <Input
+                        componentId="gsb.optimize.target"
+                        id="gsb-optimize-target"
+                        type="number"
+                        min={0.5}
+                        step={0.5}
+                        value={target}
+                        onChange={(e) => setTarget(e.target.value)}
+                        style={{ width: 120 }}
+                      />
+                    </div>
+                    <Button
+                      componentId="gsb.optimize.review"
+                      type="primary"
+                      disabled={!chosen.length || tooMany || active || tryActive || !data.setup}
+                      onClick={() => setApprove(true)}
+                    >
+                      Review and run
+                    </Button>
+                    <Typography.Text color="secondary">
+                      {chosen.length} queries x {runs} runs = {chosen.length * runs} statements. Each stops after{' '}
+                      {data.limits.timeoutSeconds} s.
+                    </Typography.Text>
+                  </div>
+                  {tooMany && (
+                    <FormUI.Message type="error" message={`Run at most ${data.limits.maxQueries} queries at a time.`} />
+                  )}
+                  {!data.setup && (
+                    <FormUI.Message type="error" message="The sandbox schema is not configured. Ask the app admin." />
+                  )}
+                  {error && <Alert componentId="gsb.optimize.error" type="error" closable={false} message={error} />}
+
+                  {approve && data.setup && (
+                    <Modal
+                      componentId="gsb.optimize.approve"
+                      title="Run the stress test"
+                      visible
+                      okText="Run"
+                      cancelText="Cancel"
+                      confirmLoading={busy}
+                      onOk={start}
+                      onCancel={() => setApprove(false)}
+                      size="wide"
+                    >
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <Typography.Text>
+                          The app creates the sandbox view, then runs {chosen.length} queries {runs} times each, one at
+                          a time, as you on the app&apos;s SQL warehouse. It reads only aggregates, at most 1,000 rows
+                          per query. You can stop it at any time.
+                        </Typography.Text>
+                        <SqlBlock label="SQL to run first" sql={data.setup.statements.join('\n\n')} />
+                      </div>
+                    </Modal>
+                  )}
+                </div>
+              </Tabs.Content>
+            </Tabs.Root>
           </>
         ) : null}
       </DataState>

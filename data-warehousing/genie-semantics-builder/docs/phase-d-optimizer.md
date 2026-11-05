@@ -1,6 +1,6 @@
 # Phase d: Optimizer and Materialization
 
-Status: approved 2026-11-05. Step 0 done.
+Status: approved 2026-11-05. Steps 0-5 done 2026-11-05.
 
 ## Goal
 

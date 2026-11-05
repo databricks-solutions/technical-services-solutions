@@ -124,3 +124,42 @@ export interface PracticeCheck {
   /** The instruction "Fix with AI" sends to the designer. Null when the rule is advice only. */
   instruction: string | null;
 }
+
+/** One app-run stress test or materialization try, in warehouse terms. */
+export interface CostRun {
+  id: string;
+  kind: 'stress' | 'try';
+  version: number;
+  status: StressStatus;
+  createdBy: string;
+  createdAt: string;
+  statements: number;
+  /** Execution time from the Query History, or the time the app waited when it is missing. */
+  execMs: number;
+  taskMs: number;
+  readBytes: number;
+  cachedRuns: number;
+  medianMs: number | null;
+  /** Tries only. */
+  views?: string[];
+  schedule?: Schedule;
+  refreshMs?: number;
+  pipelineId?: string;
+  matched?: number;
+  /** Tries only: warm time saved per run of each matched query, against the base run. */
+  savedMsPerRun?: number;
+}
+
+export interface CostView {
+  /** Monthly limit on app-run warehouse time for this sub-project. Null: no limit. */
+  budgetMs: number | null;
+  usedMs: number;
+  monthStart: string;
+  canEdit: boolean;
+  runs: CostRun[];
+}
+
+export interface BilledDbus {
+  pipelines: { pipelineId: string; dbus: number }[];
+  error: string | null;
+}

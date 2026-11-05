@@ -5,6 +5,8 @@ import { renderMetricView, validateMetricView } from '../../shared/metricView';
 import type { MetricView } from '../../shared/metricView';
 import { SCHEDULES } from '../../shared/optimize';
 import type {
+  BilledDbus,
+  CostView,
   MaterializationTry,
   OptimizeView,
   StressAttempt,
@@ -18,6 +20,7 @@ import type {
 import { createStatement, dropStatement, sandboxSchema, sandboxViewName } from '../designer/validate';
 import { matchedName, suggestMaterializations, withMaterialization } from '../optimize/materialize';
 import { bestPractices } from '../optimize/practices';
+import { budgetCheck, costOf, monthStart, usedThisMonth } from '../optimize/cost';
 import { quoteName } from '../readiness/profile';
 import { buildWorkload, MAX_QUERIES, MAX_REPEATS, stressSql, summarize } from '../optimize/workload';
 import { runStatement } from '../sql/runner';
@@ -92,18 +95,7 @@ function checkFields(view: MetricView, q: WorkloadQuery) {
 
 export function stressRepo(db: Db) {
   return {
-    /** The newest base run, or with tries, the newest materialization try. Empty stopped runs are skipped. */
-    async latest(projectId: string, tries = false): Promise<StressRun | null> {
-      const { rows } = await db.query<RunRow>(
-        `SELECT id, version, sandbox_view, settings, status, error, created_by, created_at, finished_at, materialization
-         FROM gsb.stress_run r WHERE project_id = $1 AND (materialization IS NOT NULL) = $2
-           AND (status IN ('running', 'refreshing', 'stopping', 'failed')
-             OR EXISTS (SELECT 1 FROM gsb.stress_query q WHERE q.run_id = r.id AND q.attempts <> '[]'::jsonb))
-         ORDER BY created_at DESC LIMIT 1`,
-        [projectId, tries]
-      );
-      const run = rows[0];
-      if (!run) return null;
+    async load(run: RunRow): Promise<StressRun> {
       const queries = await db.query<{
         query: WorkloadQuery;
         sql: string;
@@ -127,6 +119,40 @@ export function stressRepo(db: Db) {
         materialization: run.materialization,
       };
     },
+
+    /** The newest base run, or with tries, the newest materialization try. Empty stopped runs are skipped. */
+    async latest(projectId: string, tries = false): Promise<StressRun | null> {
+      const { rows } = await db.query<RunRow>(
+        `SELECT id, version, sandbox_view, settings, status, error, created_by, created_at, finished_at, materialization
+         FROM gsb.stress_run r WHERE project_id = $1 AND (materialization IS NOT NULL) = $2
+           AND (status IN ('running', 'refreshing', 'stopping', 'failed')
+             OR EXISTS (SELECT 1 FROM gsb.stress_query q WHERE q.run_id = r.id AND q.attempts <> '[]'::jsonb))
+         ORDER BY created_at DESC LIMIT 1`,
+        [projectId, tries]
+      );
+      return rows[0] ? this.load(rows[0]) : null;
+    },
+
+    /** The last 100 runs and tries, newest first, for the cost view and the budget. */
+    async history(projectId: string): Promise<StressRun[]> {
+      const { rows } = await db.query<RunRow>(
+        `SELECT id, version, sandbox_view, settings, status, error, created_by, created_at, finished_at, materialization
+         FROM gsb.stress_run WHERE project_id = $1 ORDER BY created_at DESC LIMIT 100`,
+        [projectId]
+      );
+      return Promise.all(rows.map((r) => this.load(r)));
+    },
+
+    async budget(projectId: string): Promise<number | null> {
+      const { rows } = await db.query<{ stress_budget_ms: string | null }>(
+        'SELECT stress_budget_ms FROM gsb.project WHERE id = $1',
+        [projectId]
+      );
+      return rows[0]?.stress_budget_ms ? Number(rows[0].stress_budget_ms) : null;
+    },
+
+    setBudget: (projectId: string, ms: number | null) =>
+      db.query('UPDATE gsb.project SET stress_budget_ms = $2 WHERE id = $1', [projectId, ms]),
 
     async start(
       actor: string,
@@ -281,10 +307,23 @@ interface ExecuteOptions {
   uc: UcDeps;
   /** For a materialization try: the view to wait on and the materialization names to look for. */
   materialization?: { matView: string; names: string[] };
+  /** Warehouse time left in the monthly budget. The run stops when it is spent. */
+  budgetLeftMs?: number | null;
 }
 
 /** Runs the queries one by one, then reads their metrics. Stops between statements when asked. */
-async function execute({ repo, runId, ctx, setup, queries, settings, run, uc, materialization }: ExecuteOptions) {
+async function execute({
+  repo,
+  runId,
+  ctx,
+  setup,
+  queries,
+  settings,
+  run,
+  uc,
+  materialization,
+  budgetLeftMs,
+}: ExecuteOptions) {
   const read = (sql: string) => runStatement(sql, { ...ctx, approved: false }, run);
   try {
     for (const s of setup) {
@@ -313,6 +352,8 @@ async function execute({ repo, runId, ctx, setup, queries, settings, run, uc, ma
 
   const all: StressAttempt[][] = queries.map(() => []);
   let stopped = false;
+  let spent = 0;
+  let overBudget = false;
   let tag = Date.now();
   outer: for (const [i, q] of queries.entries()) {
     if (materialization) {
@@ -336,6 +377,11 @@ async function execute({ repo, runId, ctx, setup, queries, settings, run, uc, ma
         all[i].push({ wallMs: Date.now() - start, error: (err as Error).message.slice(0, 500) });
       }
       await repo.saveAttempts(runId, i, all[i]);
+      spent += all[i][all[i].length - 1].wallMs;
+      if (budgetLeftMs != null && spent >= budgetLeftMs) {
+        overBudget = stopped = true;
+        break outer;
+      }
     }
   }
 
@@ -354,7 +400,11 @@ async function execute({ repo, runId, ctx, setup, queries, settings, run, uc, ma
     const merged = attempts.map((a) => ({ ...a, ...(a.statementId ? metrics.get(a.statementId) : {}) }));
     await repo.saveAttempts(runId, i, merged);
   }
-  await repo.finish(runId, stopped ? 'stopped' : 'finished');
+  await repo.finish(
+    runId,
+    stopped ? 'stopped' : 'finished',
+    overBudget ? 'The monthly budget was reached.' : undefined
+  );
 }
 
 const background = (repo: ReturnType<typeof stressRepo>, runId: string, job: Promise<void>) =>
@@ -372,6 +422,29 @@ export function registerOptimizeRoutes(
   const projects = projectRepo(db);
   const designs = designerRepo(db);
   const repo = stressRepo(db);
+
+  async function costView(projectId: string, canEdit: boolean): Promise<CostView> {
+    const runs = await repo.history(projectId);
+    const byId = new Map(runs.map((r) => [r.id, r]));
+    const costs = runs.map((r) => costOf(r, r.materialization ? byId.get(r.materialization.baseRun) : null));
+    return {
+      budgetMs: await repo.budget(projectId),
+      usedMs: usedThisMonth(costs),
+      monthStart: monthStart(new Date()).toISOString(),
+      canEdit,
+      runs: costs,
+    };
+  }
+
+  /** Refuses a run that would pass the budget; returns the time left for the run to stop at. */
+  async function budgetFor(projectId: string, statements: number) {
+    const cost = await costView(projectId, false);
+    const done = cost.runs.filter((r) => r.statements);
+    const avgMs = done.length ? done.reduce((n, r) => n + r.execMs, 0) / done.reduce((n, r) => n + r.statements, 0) : 0;
+    const problem = budgetCheck(cost.budgetMs, cost.usedMs, statements, avgMs);
+    if (problem) throw new HttpError(409, problem);
+    return cost.budgetMs === null ? null : cost.budgetMs - cost.usedMs;
+  }
 
   async function context(req: Request) {
     const actor = actorOf(req);
@@ -424,6 +497,7 @@ export function registerOptimizeRoutes(
         query,
         sql: (tag: number) => stressSql(sandboxView, query, tag),
       }));
+      const budgetLeftMs = await budgetFor(project.id, queries.length * body.settings.repeats);
       const runId = await repo.start(
         actor,
         project.id,
@@ -445,6 +519,7 @@ export function registerOptimizeRoutes(
           settings: body.settings,
           run: runFor(req),
           uc: ucFor(req),
+          budgetLeftMs,
         })
       );
       return { runId };
@@ -503,6 +578,7 @@ export function registerOptimizeRoutes(
         return { query, sql: (tag: number) => stressSql(plan.matView, query, tag) };
       });
       const materialization: MaterializationTry = { schedule: body.schedule, views, yaml: plan.yaml, baseRun: base.id };
+      const budgetLeftMs = await budgetFor(project.id, queries.length * base.settings.repeats);
       const runId = await repo.start(
         actor,
         project.id,
@@ -525,6 +601,7 @@ export function registerOptimizeRoutes(
           run: runFor(req),
           uc: ucFor(req),
           materialization: { matView: plan.matView, names: views.map((v) => v.name) },
+          budgetLeftMs,
         })
       );
       return { runId };
@@ -568,6 +645,56 @@ export function registerOptimizeRoutes(
       for (const s of expected) await runStatement(s, { actor, projectId: project.id, approved: true }, runFor(req));
       await repo.patchMaterialization(run.id, { removed: true });
       return { removed: true, pipelineUrl: run.materialization?.pipelineUrl ?? null };
+    })
+  );
+
+  app.get(
+    '/api/projects/:id/optimize/cost',
+    handle(async (req): Promise<CostView> => {
+      const actor = actorOf(req);
+      const project = await projects.get(actor, idParam.parse(req.params).id);
+      return costView(project.id, project.createdBy === actor);
+    })
+  );
+
+  app.post(
+    '/api/projects/:id/optimize/budget',
+    handle(async (req) => {
+      const actor = actorOf(req);
+      const project = await projects.get(actor, idParam.parse(req.params).id);
+      if (project.createdBy !== actor) throw new HttpError(403, 'Only the owner of the sub-project sets its budget.');
+      const { minutes } = z.strictObject({ minutes: z.number().positive().max(100_000).nullable() }).parse(req.body);
+      await repo.setBudget(project.id, minutes === null ? null : Math.round(minutes * 60_000));
+      return costView(project.id, true);
+    })
+  );
+
+  /** DBUs billed to the try pipelines, from system.billing.usage. Needs read access to it. */
+  app.post(
+    '/api/projects/:id/optimize/cost/dbus',
+    handle(async (req): Promise<BilledDbus> => {
+      const actor = actorOf(req);
+      const project = await projects.get(actor, idParam.parse(req.params).id);
+      const ids = [
+        ...new Set((await costView(project.id, false)).runs.flatMap((r) => (r.pipelineId ? [r.pipelineId] : []))),
+      ].filter((id) => /^[0-9a-f-]{36}$/.test(id));
+      if (!ids.length) return { pipelines: [], error: null };
+      try {
+        const res = await runStatement(
+          `SELECT usage_metadata.dlt_pipeline_id AS pipeline_id, SUM(usage_quantity) AS dbus
+           FROM system.billing.usage
+           WHERE usage_metadata.dlt_pipeline_id IN (${ids.map((id) => `'${id}'`).join(', ')})
+           GROUP BY ALL`,
+          { actor, projectId: project.id, approved: false },
+          runFor(req)
+        );
+        return { pipelines: res.rows.map((r) => ({ pipelineId: r[0] ?? '', dbus: Number(r[1] ?? 0) })), error: null };
+      } catch (err) {
+        return {
+          pipelines: [],
+          error: `Billing data is not available to you: ${(err as Error).message.slice(0, 200)}. An account or workspace admin can read system.billing.usage.`,
+        };
+      }
     })
   );
 }

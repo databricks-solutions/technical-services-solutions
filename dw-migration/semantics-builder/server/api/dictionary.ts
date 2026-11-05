@@ -1,4 +1,4 @@
-import type { Application } from 'express';
+import type { Application, Request } from 'express';
 import { z } from 'zod';
 import type { LakebasePool } from '@databricks/appkit';
 import { DICTIONARY_AGGREGATIONS, DICTIONARY_KINDS, DICTIONARY_STATUSES } from '../../shared/dictionary';
@@ -7,6 +7,9 @@ import type { TableProfile } from '../readiness/profile';
 import { matchEntries } from '../dictionary/match';
 import { loadDictionary } from '../dictionary/store';
 import { MAX_CELL, MAX_ROWS, parseCsv, entriesFromTable, parseMarkdown, parseXlsx } from '../dictionary/parse';
+import { sqlString } from '../readiness/profile';
+import { runStatement } from '../sql/runner';
+import type { RunDeps } from '../sql/runner';
 import { actorOf, handle, HttpError } from './http';
 import { projectRepo } from './projects';
 
@@ -37,8 +40,23 @@ const fileName = z
   .min(1)
   .max(255)
   .regex(/\.(xlsx|csv|md|markdown)$/i, 'Use an .xlsx, .csv or .md file.');
-const previewSchema = z.strictObject({ fileName, content: z.string().max(Math.ceil(MAX_FILE_BYTES / 3) * 4 + 8) });
-const importSchema = z.strictObject({ fileName, entries: z.array(entrySchema).max(MAX_ROWS) });
+/** A file in a Unity Catalog volume. Plain path parts only, no "..". */
+const VOLUME_PATH = /^\/Volumes\/[\w-]+\/[\w-]+\/[\w-]+(\/[\w .-]+)+\.(xlsx|csv|md|markdown)$/i;
+const previewSchema = z.union([
+  z.strictObject({ fileName, content: z.string().max(Math.ceil(MAX_FILE_BYTES / 3) * 4 + 8) }),
+  z.strictObject({
+    volumePath: z
+      .string()
+      .trim()
+      .max(1000)
+      .regex(VOLUME_PATH, 'Use a path like /Volumes/catalog/schema/volume/file.xlsx.')
+      .refine((p) => !p.split('/').includes('..'), 'The path cannot contain "..".'),
+  }),
+]);
+const importSchema = z.strictObject({
+  fileName: z.union([fileName, z.string().regex(VOLUME_PATH)]),
+  entries: z.array(entrySchema).max(MAX_ROWS),
+});
 const idParam = z.object({ id: z.uuid() });
 
 const key = (e: Pick<DictionaryEntry, 'kind' | 'name'>) => `${e.kind}:${e.name.toLowerCase()}`;
@@ -57,7 +75,21 @@ export async function parseFile(name: string, buffer: Buffer) {
 }
 
 /** The dictionary lives on the top-level project; a sub-project reads and writes its parent's. */
-export function registerDictionaryRoutes(app: Application, db: Db) {
+/** Reads a volume file as the user with the sql scope; the Files API would need another app scope. */
+async function readVolumeFile(path: string, ctx: { actor: string; projectId: string }, run: RunDeps) {
+  const res = await runStatement(
+    `SELECT length, CASE WHEN length <= ${MAX_FILE_BYTES} THEN content END AS content
+     FROM read_files(${sqlString(path)}, format => 'binaryFile')`,
+    { ...ctx, approved: false },
+    run
+  );
+  const [row] = res.rows;
+  if (!row) throw new HttpError(404, 'No file at that path, or you cannot read it.');
+  if (!row[1]) throw new HttpError(413, `The file is larger than ${MAX_FILE_BYTES / 1024} KB.`);
+  return Buffer.from(row[1], 'base64');
+}
+
+export function registerDictionaryRoutes(app: Application, db: Db, runFor: (req: Request) => RunDeps) {
   const projects = projectRepo(db);
 
   async function owner(actor: string, id: string) {
@@ -98,18 +130,32 @@ export function registerDictionaryRoutes(app: Application, db: Db) {
   app.post(
     '/api/projects/:id/dictionary/preview',
     handle(async (req): Promise<DictionaryPreview> => {
-      const project = await owner(actorOf(req), idParam.parse(req.params).id);
+      const actor = actorOf(req);
+      const project = await owner(actor, idParam.parse(req.params).id);
       const body = previewSchema.parse(req.body);
-      const { entries, problems } = await parseFile(body.fileName, Buffer.from(body.content, 'base64')).catch(
-        (err: unknown) => {
-          if (err instanceof HttpError) throw err;
-          throw new HttpError(400, `The file could not be read: ${(err as Error).message.slice(0, 200)}`);
-        }
-      );
+      const file =
+        'volumePath' in body
+          ? {
+              name: body.volumePath,
+              buffer: await readVolumeFile(body.volumePath, { actor, projectId: project.id }, runFor(req)).catch(
+                (err: unknown) => {
+                  if (err instanceof HttpError) throw err;
+                  throw new HttpError(
+                    400,
+                    `The volume file could not be read: ${(err as Error).message.slice(0, 300)}`
+                  );
+                }
+              ),
+            }
+          : { name: body.fileName, buffer: Buffer.from(body.content, 'base64') };
+      const { entries, problems } = await parseFile(file.name, file.buffer).catch((err: unknown) => {
+        if (err instanceof HttpError) throw err;
+        throw new HttpError(400, `The file could not be read: ${(err as Error).message.slice(0, 200)}`);
+      });
       const before = new Map((await stored(project.id)).map((r) => [key(r.entry), r.entry]));
       const after = new Map(entries.map((e) => [key(e), e]));
       return {
-        fileName: body.fileName,
+        fileName: file.name,
         entries,
         problems,
         added: entries.filter((e) => !before.has(key(e))).map(label),

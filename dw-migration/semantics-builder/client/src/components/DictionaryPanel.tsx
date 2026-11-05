@@ -3,6 +3,7 @@ import {
   Alert,
   Button,
   DownloadIcon,
+  Input,
   Modal,
   Table,
   TableCell,
@@ -80,6 +81,7 @@ export function DictionaryPanel({ projectId }: { projectId: string }) {
   const [clearing, setClearing] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [error, setError] = useState<string>();
+  const [volumePath, setVolumePath] = useState('');
   const data = stored.data;
   const count = (k: DictionaryEntry['kind']) => data?.entries.filter((e) => e.kind === k).length ?? 0;
 
@@ -99,6 +101,20 @@ export function DictionaryPanel({ projectId }: { projectId: string }) {
     } finally {
       setBusy(undefined);
       if (input.current) input.current.value = '';
+    }
+  };
+
+  const readVolume = async () => {
+    setError(undefined);
+    setBusy('read');
+    try {
+      setPreview(
+        await api<DictionaryPreview>(`/api/projects/${projectId}/dictionary/preview`, { volumePath: volumePath.trim() })
+      );
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(undefined);
     }
   };
 
@@ -186,6 +202,25 @@ export function DictionaryPanel({ projectId }: { projectId: string }) {
           Markdown template
         </Button>
         <Typography.Text color="secondary">Up to {MAX_KB} KB and 2,000 rows.</Typography.Text>
+      </div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <Input
+          componentId="gsb.dictionary.volume_path"
+          aria-label="Unity Catalog volume path"
+          placeholder="Or a file in a volume: /Volumes/catalog/schema/volume/dictionary.xlsx"
+          value={volumePath}
+          onChange={(e) => setVolumePath(e.target.value)}
+          style={{ maxWidth: 520 }}
+        />
+        <Button
+          componentId="gsb.dictionary.volume_read"
+          disabled={!volumePath.trim().startsWith('/Volumes/') || !!busy}
+          loading={busy === 'read' && !!volumePath}
+          onClick={() => void readVolume()}
+        >
+          Read from volume
+        </Button>
+        <Typography.Text color="secondary">Read as you, with your permissions on the volume.</Typography.Text>
       </div>
       {error && <Alert componentId="gsb.dictionary.error" type="error" closable={false} message={error} />}
 

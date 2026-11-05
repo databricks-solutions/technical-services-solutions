@@ -141,3 +141,20 @@ export function dictionaryContext(entries: DictionaryEntry[], profiles: Profile[
     ...terms.sort((a, b) => rank(a) - rank(b)).map((e) => pick(e)),
   ].slice(0, max);
 }
+
+/**
+ * Dictionary definitions that describe one column: by table, then lowercase column. Only dimensions: a metric's
+ * source column is where its value comes from, not what the column means. Formula matches are skipped too.
+ */
+export function columnDefinitions(entries: DictionaryEntry[], profiles: Profile[]) {
+  const out = new Map<string, Map<string, { text: string; entry: string }>>();
+  for (const m of matchEntries(entries, profiles).matched) {
+    if (m.entry.kind !== 'dimension' || m.via === 'formula' || m.columns.length !== 1) continue;
+    const [{ table, column }] = m.columns;
+    const byColumn = out.get(table.toLowerCase()) ?? new Map<string, { text: string; entry: string }>();
+    if (!byColumn.has(column.toLowerCase()))
+      byColumn.set(column.toLowerCase(), { text: m.entry.definition, entry: m.entry.name });
+    out.set(table.toLowerCase(), byColumn);
+  }
+  return out;
+}

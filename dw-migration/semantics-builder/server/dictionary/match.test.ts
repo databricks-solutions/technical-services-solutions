@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { DictionaryEntry } from '../../shared/dictionary';
 import { validateMetricView } from '../../shared/metricView';
-import { certifiedIssues, matchEntries } from './match';
+import { certifiedIssues, columnDefinitions, matchEntries } from './match';
 
 const entry = (over: Partial<DictionaryEntry>): DictionaryEntry => ({
   kind: 'metric',
@@ -96,5 +96,28 @@ describe('certifiedIssues', () => {
     expect(issues.map((i) => i.severity)).toEqual(['error', 'error']);
     expect(issues[0].message).toMatch(/certified name exactly: "Net Revenue"/);
     expect(issues[1].message).toMatch(/certified formula/);
+  });
+});
+
+describe('columnDefinitions', () => {
+  it('keeps one-column dimension matches, not metrics or formulas', () => {
+    const defs = columnDefinitions(
+      [
+        entry({
+          name: 'Customer Region',
+          kind: 'dimension',
+          definition: 'Region of the customer.',
+          source: 'x.tpch.region.r_name',
+        }),
+        entry({ name: 'Net Revenue', definition: 'After discounts.', formula: 'SUM(l_extendedprice)' }),
+        entry({ name: 'Gross', definition: 'Before discounts.', source: 'x.tpch.lineitem.l_extendedprice' }),
+      ],
+      [lineitem, region]
+    );
+    expect([...defs.keys()]).toEqual(['c.tpch.region']);
+    expect(defs.get('c.tpch.region')?.get('r_name')).toEqual({
+      text: 'Region of the customer.',
+      entry: 'Customer Region',
+    });
   });
 });

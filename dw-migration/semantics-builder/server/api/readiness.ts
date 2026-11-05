@@ -30,6 +30,8 @@ import { runStatement } from '../sql/runner';
 import type { RunDeps } from '../sql/runner';
 import { projectRepo } from './projects';
 import { actorOf, handle, HttpError } from './http';
+import { columnDefinitions } from '../dictionary/match';
+import { loadDictionary } from '../dictionary/store';
 
 type Db = Pick<LakebasePool, 'query' | 'connect'>;
 
@@ -389,6 +391,7 @@ export function registerReadinessRoutes(
 
       const described = await describeSources(sources, ucFor(req));
       const profiles = described.flatMap((d) => (d.profile ? [d.profile] : []));
+      const definitions = columnDefinitions(await loadDictionary(db, project.id), profiles);
 
       const items = briefItems(brief?.brief ?? null);
       const llm = llmFor(req);
@@ -430,7 +433,12 @@ export function registerReadinessRoutes(
             profile,
             score: tableScore(tableAreas(profile, profiles)),
             model: llm.endpoint ?? null,
-            recommendations: buildRecommendations(profile, out, byName),
+            recommendations: buildRecommendations(
+              profile,
+              out,
+              byName,
+              definitions.get(profile.fullName.toLowerCase())
+            ),
           };
         })
       );

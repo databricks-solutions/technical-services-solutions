@@ -43,3 +43,12 @@ describe('parseFile', () => {
     expect(entries).toMatchObject([{ kind: 'dimension', name: 'Region' }]);
   });
 });
+
+describe('volume import', () => {
+  it('reads with a query the allowlist accepts as a read', async () => {
+    const { checkStatement } = await import('../sql/allowlist');
+    const sql = `SELECT length, CASE WHEN length <= 716800 THEN content END AS content
+     FROM read_files('/Volumes/c/s/v/d.xlsx', format => 'binaryFile')`;
+    expect(checkStatement(sql).kind).toBe('read');
+  });
+});

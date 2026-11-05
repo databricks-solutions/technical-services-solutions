@@ -120,7 +120,9 @@ export type NewRecommendation = Pick<Recommendation, 'kind' | 'title' | 'rationa
 export function buildRecommendations(
   p: TableProfile,
   proposal: Proposal,
-  others: Map<string, TableProfile>
+  others: Map<string, TableProfile>,
+  /** Definitions from the project dictionary, by lowercase column name. They win over the model's text. */
+  dictionary: Map<string, { text: string; entry: string }> = new Map()
 ): NewRecommendation[] {
   const table = quoteName(p.fullName);
   const colIndex = (t: TableProfile) => new Map(t.columns.map((c) => [c.name.toLowerCase(), c]));
@@ -143,6 +145,25 @@ export function buildRecommendations(
   }
 
   const seen = new Set<string>();
+  const fromDictionary: string[] = [];
+  const entries: string[] = [];
+  for (const c of p.columns) {
+    const d = dictionary.get(c.name.toLowerCase());
+    if (!d || c.comment || !d.text.trim()) continue;
+    seen.add(c.name);
+    entries.push(d.entry);
+    fromDictionary.push(`COMMENT ON COLUMN ${table}.${quoteId(c.name)} IS ${sqlString(d.text.trim())}`);
+  }
+  if (fromDictionary.length) {
+    out.push({
+      kind: 'column_comments',
+      title: `Describe ${fromDictionary.length} column${fromDictionary.length === 1 ? '' : 's'} of ${p.fullName} from the dictionary`,
+      rationale: `From the project's metric dictionary: ${entries.join(', ')}. The team's own definitions become the column descriptions.`,
+      statements: fromDictionary,
+      effect: { columns: [...seen] },
+    });
+  }
+
   const columnStatements = proposal.columnComments.flatMap(({ column, comment }) => {
     const c = cols.get(column.trim().toLowerCase());
     const text = comment.trim();
@@ -156,7 +177,7 @@ export function buildRecommendations(
       title: `Describe ${columnStatements.length} columns of ${p.fullName}`,
       rationale: 'Column descriptions become the default descriptions of dimensions and measures.',
       statements: columnStatements,
-      effect: { columns: [...seen] },
+      effect: { columns: [...seen].filter((c) => !fromDictionary.some((s) => s.includes(quoteId(c)))) },
     });
   }
 

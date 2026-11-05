@@ -25,6 +25,7 @@ import type {
 } from '../../../shared/designer';
 import { validateMetricView } from '../../../shared/metricView';
 import type { MetricViewIssue } from '../../../shared/metricView';
+import type { DictionaryEntry } from '../../../shared/dictionary';
 import { api, useResource } from '../api';
 import { DataState } from '../components/DataState';
 import { JoinDiagram } from '../components/JoinDiagram';
@@ -145,12 +146,15 @@ function FieldCard({
   tag,
   explanation,
   expr,
+  dictionary,
 }: {
   title: string;
   name: string;
   tag?: string;
   explanation: string;
   expr: string;
+  /** Set when the field is defined in the project dictionary. */
+  dictionary?: 'certified' | 'listed';
 }) {
   return (
     <article
@@ -168,6 +172,11 @@ function FieldCard({
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <Typography.Text bold>{title}</Typography.Text>
         {tag && <Tag componentId="gsb.designer.field_tag">{tag}</Tag>}
+        {dictionary && (
+          <Tag componentId="gsb.designer.field_dictionary" color={dictionary === 'certified' ? 'teal' : 'indigo'}>
+            {dictionary === 'certified' ? 'Certified' : 'Dictionary'}
+          </Tag>
+        )}
       </div>
       {name !== title && (
         <code style={{ ...MONO, color: 'var(--db-text-subtle)', overflowWrap: 'anywhere' }}>{name}</code>
@@ -191,6 +200,15 @@ function Fields({
   view: NonNullable<ReturnType<typeof validateMetricView>['view']>;
 }) {
   const explain = draft.explanations;
+  const { projectId = '' } = useParams();
+  const dict = useResource<{ entries: DictionaryEntry[] }>(`/api/projects/${projectId}/dictionary`).data?.entries ?? [];
+  const flat = (x: string) => x.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const inDictionary = (f: { name: string; display_name?: string }) => {
+    const e = dict.find(
+      (d) => d.kind !== 'term' && [f.name, f.display_name ?? ''].some((n) => n && flat(n) === flat(d.name))
+    );
+    return e ? (e.status === 'certified' ? ('certified' as const) : ('listed' as const)) : undefined;
+  };
   return (
     <>
       <Typography.Title level={4} withoutMargins>
@@ -204,6 +222,7 @@ function Fields({
               key={m.name}
               title={m.display_name ?? m.name}
               name={m.name}
+              dictionary={inDictionary(m)}
               tag={e ? ADDITIVITY[e.additivity] : m.window ? 'Window' : undefined}
               explanation={e?.explanation ?? m.comment ?? 'No explanation yet.'}
               expr={[
@@ -225,6 +244,7 @@ function Fields({
             key={d.name}
             title={d.display_name ?? d.name}
             name={d.name}
+            dictionary={inDictionary(d)}
             explanation={explain.dimensions[d.name]?.explanation ?? d.comment ?? 'No explanation yet.'}
             expr={d.expr}
           />

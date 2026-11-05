@@ -1,6 +1,6 @@
 # Phase c4: Metric dictionary import and template
 
-Status: plan, not approved. Date: 2026-11-05.
+Status: done 2026-11-05 (steps 1-4). Volume import reads with read_files and the sql scope, no Files API scope. Column comments come from dimension entries only.
 
 ## Goal
 

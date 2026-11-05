@@ -40,7 +40,7 @@ createApp({
       registerDesignerRoutes(app, pool, llmFor, runFor, ucFor, patterns);
       registerPatternRoutes(app, pool, patterns, runFor);
       registerOptimizeRoutes(app, pool, runFor, ucFor);
-      registerDictionaryRoutes(app, pool);
+      registerDictionaryRoutes(app, pool, runFor);
     });
   },
 }).catch((err: unknown) => {

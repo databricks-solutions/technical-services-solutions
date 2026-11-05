@@ -113,3 +113,30 @@ describe('buildRecommendations', () => {
     expect(again).toEqual([]);
   });
 });
+
+describe('buildRecommendations with the dictionary', () => {
+  it('describes columns from the dictionary first, and leaves only the rest to the model', () => {
+    const recs = buildRecommendations(
+      customer,
+      {
+        tableComment: '',
+        columnComments: [
+          { column: 'c_custkey', comment: 'Model text for the key.' },
+          { column: 'c_nationkey', comment: 'Model text for the nation.' },
+        ],
+        primaryKey: null,
+        foreignKeys: [],
+      },
+      new Map(),
+      new Map([['c_custkey', { text: "Customer's unique number.", entry: 'Customer Key' }]])
+    );
+    const fromDictionary = recs.find((r) => r.title.includes('from the dictionary'))!;
+    expect(fromDictionary.statements).toEqual([
+      "COMMENT ON COLUMN `sandbox`.`gsb`.`customer`.`c_custkey` IS 'Customer\\'s unique number.'",
+    ]);
+    expect(fromDictionary.rationale).toMatch(/Customer Key/);
+    const fromModel = recs.find((r) => r.kind === 'column_comments' && r !== fromDictionary)!;
+    expect(fromModel.statements).toHaveLength(1);
+    expect(fromModel.statements[0]).toContain('c_nationkey');
+  });
+});

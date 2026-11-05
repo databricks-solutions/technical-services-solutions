@@ -41,6 +41,10 @@ createApp({
       registerPatternRoutes(app, pool, patterns, runFor);
       registerOptimizeRoutes(app, pool, runFor, ucFor);
       registerDictionaryRoutes(app, pool, runFor);
+      // The workspace URL for Catalog Explorer links. Apps set DATABRICKS_HOST; nothing is hardcoded.
+      const host = process.env.DATABRICKS_HOST?.trim().replace(/\/+$/, '') ?? '';
+      const workspaceUrl = host ? (host.startsWith('http') ? host : `https://${host}`) : null;
+      app.get('/api/config', (_req, res) => res.json({ workspaceUrl }));
     });
   },
 }).catch((err: unknown) => {

@@ -89,12 +89,12 @@ test('stress test two queries', async ({ page }) => {
   await page.getByRole('button', { name: 'Review and run' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Run' }).click();
   await expect(page.getByText('Finished', { exact: true })).toBeVisible({ timeout: 600_000 });
-  // Du Bois table rows have no row role, so the check reads the measured times instead.
-  await expect(page.getByRole('table', { name: 'Stress test results' })).toContainText(/\d+(\.\d)? (s|ms)/);
+  // Scrollable Du Bois tables carry the label on a wrapper, so they are found by label; the check reads the times.
+  await expect(page.getByLabel('Stress test results')).toContainText(/\d+(\.\d)? (s|ms)/);
   await page.getByRole('tab', { name: /^Materialization/ }).click();
   await expect(page.getByRole('heading', { name: 'Materialization suggestions' })).toBeVisible();
   await page.getByRole('tab', { name: 'Cost' }).click();
-  await expect(page.getByRole('table', { name: 'Runs and their cost' })).toContainText('Stress test');
+  await expect(page.getByLabel('Runs and their cost')).toContainText('Stress test');
 });
 
 test('delete the project from its page, with the sandbox cleanup', async ({ page }) => {

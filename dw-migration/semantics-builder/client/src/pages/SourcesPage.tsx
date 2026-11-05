@@ -28,6 +28,7 @@ import type {
   SourceReadiness,
 } from '../../../shared/readiness';
 import { api, useResource } from '../api';
+import { OpenInCatalog } from '../components/OpenInCatalog';
 import { DictionaryCoverage } from '../components/DictionaryCoverage';
 import { DataState } from '../components/DataState';
 import { LineageGraph } from '../components/LineageGraph';
@@ -247,6 +248,7 @@ function SourceDetail({ source, busy, onRemove }: { source: SourceReadiness; bus
           {report?.assessment?.entity ?? source.fullName.split('.').pop()}
         </Typography.Title>
         <Typography.Text color="secondary">{source.fullName}</Typography.Text>
+        <OpenInCatalog fullName={source.fullName} />
         <Tag componentId="gsb.sources.role">
           {source.role === 'unknown' ? 'Role not known' : source.role === 'fact' ? 'Fact' : 'Dimension'}
         </Tag>

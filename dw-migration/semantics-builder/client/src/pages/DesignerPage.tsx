@@ -27,6 +27,7 @@ import { validateMetricView } from '../../../shared/metricView';
 import type { MetricViewIssue } from '../../../shared/metricView';
 import type { DictionaryEntry } from '../../../shared/dictionary';
 import { api, useResource } from '../api';
+import { OpenInCatalog } from '../components/OpenInCatalog';
 import { DataState } from '../components/DataState';
 import { JoinDiagram } from '../components/JoinDiagram';
 import { MONO, SqlBlock } from '../components/SqlBlock';
@@ -290,7 +291,8 @@ function ValidationResults({ run }: { run: ValidationRun }) {
           {run.status === 'passed' ? 'All tests passed' : run.status === 'failed' ? 'Failed' : 'Running'}
         </Tag>
         <Typography.Text color="secondary">
-          {run.sandboxView}, by {run.createdBy}, {new Date(run.createdAt).toLocaleString()}
+          {run.sandboxView}, by {run.createdBy}, {new Date(run.createdAt).toLocaleString()}{' '}
+          <OpenInCatalog fullName={run.sandboxView} label="Open the sandbox view" />
         </Typography.Text>
       </div>
       {run.error && <Alert componentId="gsb.designer.run_error" type="error" closable={false} message={run.error} />}

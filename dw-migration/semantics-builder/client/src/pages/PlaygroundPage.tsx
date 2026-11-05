@@ -15,6 +15,7 @@ import {
 } from '@databricks/design-system';
 import type { Pattern, PatternFit, PatternPlan, PatternRun } from '../../../shared/patterns';
 import { api, useResource } from '../api';
+import { OpenInCatalog } from '../components/OpenInCatalog';
 import { DataState } from '../components/DataState';
 import { SqlBlock } from '../components/SqlBlock';
 
@@ -277,7 +278,8 @@ function PatternDetail({
               {RUN_TAG[run.status].label}
             </Tag>
             <Typography.Text color="secondary">
-              {run.sandboxView}, by {run.createdBy}, {new Date(run.createdAt).toLocaleString()}
+              {run.sandboxView}, by {run.createdBy}, {new Date(run.createdAt).toLocaleString()}{' '}
+              <OpenInCatalog fullName={run.sandboxView} label="Open the sandbox view" />
             </Typography.Text>
           </div>
           {run.detail && <Typography.Text>{run.detail}</Typography.Text>}

@@ -1,6 +1,6 @@
 # Phase d: Optimizer and Materialization
 
-Status: plan, not approved. Date: 2026-11-05.
+Status: approved 2026-11-05. Step 0 done.
 
 ## Goal
 
@@ -48,6 +48,27 @@ Test with the user's OBO token, as we learned with `grants.getEffective`:
 - One sandbox materialization on the TPC-H view: time to first refresh, and the DBUs in the pipeline run.
 
 Output: a short note with the results. The rest of the plan changes if a test fails.
+
+**Results (2026-11-05, workspace ag_dev):**
+
+- **Query History works with the OBO token and the `sql` scope.** No new scope. `queryHistory.list` with
+  `statement_ids` and `include_metrics` returned execution and task time, bytes read, pruned bytes, rows read, spill
+  and `result_from_cache` within a few seconds of the statement end.
+- **Result cache:** the same SQL text returns from the cache (0 bytes read). A SQL comment does not bypass it. A
+  no-op filter with a unique value (`WHERE <run tag> > 0`) or a unique literal column does. The app uses the no-op
+  filter, so the result columns do not change.
+- **Materialization works here.** `CREATE VIEW ... WITH METRICS` with a `materialization` block, sent through the
+  Statement Execution API, created a managed pipeline. The first refresh took about 37 seconds on serverless (cause
+  `DBSQL_REQUEST`). `DESCRIBE EXTENDED` shows the pipeline id and the latest refresh status.
+- **Match detection works.** `EXPLAIN EXTENDED` contains `__materialization_mat_<pipeline id>___metric_view_mat_`
+  for an exact match, a rollup (fewer dimensions, additive measures) and a filtered query. A plain query on the
+  source has no such marker.
+- **Billing:** `system.billing.usage` was readable for this user (an admin), but the pipeline had no rows yet.
+  Billing data arrives hours later, so the Cost tab shows the refresh time at once and the DBUs later.
+- **Clean-up:** `DROP VIEW` on the metric view leaves its pipeline (state `IDLE`). The app must delete the pipeline
+  itself when it removes a sandbox materialization.
+- **CLI note:** `databricks experimental aitools tools query` strips the YAML indentation. Use the Statement
+  Execution API for metric view DDL.
 
 ### Step 1: Workload
 

@@ -18,7 +18,14 @@ import { callTool } from '../llm/llm';
 import type { LlmDeps } from '../llm/llm';
 import { assessSourcePrompt, assessSourceRequest } from '../llm/prompts/readiness';
 import { relatePrompt, relateRequest } from '../llm/prompts/relate';
-import { buildRecommendations, checksFor, inaccessibleChecks } from '../readiness/profile';
+import {
+  buildRecommendations,
+  checksFor,
+  inaccessibleChecks,
+  quoteId,
+  quoteName,
+  withComment,
+} from '../readiness/profile';
 import { sandboxSchema } from '../designer/validate';
 import { fixCheck, owns, readCheck, sandboxCheck } from '../permissions/check';
 import { profileFromTable } from '../uc/metadata';
@@ -261,12 +268,14 @@ export function readinessRepo(db: Db) {
      * Moves an open fix to approved only if the statements match what the user saw.
      * The status check makes a double click or a second tab a no-op.
      */
-    async claim(actor: string, projectId: string, id: string, statements: string[]): Promise<void> {
+    /** Approves the fix when the shown statements still match, and stores the statements that will run. */
+    async claim(actor: string, projectId: string, id: string, statements: string[], final = statements): Promise<void> {
       const { rows } = await db.query(
-        `UPDATE gsb.recommendation SET status = 'approved', decided_by = $3, decided_at = now(), error = NULL
+        `UPDATE gsb.recommendation SET status = 'approved', decided_by = $3, decided_at = now(), error = NULL,
+           statements = $5::text[]
          WHERE id = $1 AND project_id = $2 AND status IN ('proposed', 'failed') AND statements = $4::text[]
          RETURNING id`,
-        [id, projectId, actor, statements]
+        [id, projectId, actor, statements, final]
       );
       if (!rows[0]) throw new HttpError(409, 'This fix changed or was already handled. Reload the page.');
     },
@@ -353,12 +362,17 @@ export function joinGroups(tables: string[], links: Link[]): string[][] {
 const idParam = z.object({ id: z.uuid() });
 const recParam = idParam.extend({ recId: z.uuid() });
 const sourceParam = idParam.extend({ sourceId: z.uuid() });
+const commentBody = z.object({ column: z.string().min(1).max(255).nullable(), text: z.string().max(1000) });
 const checkBody = z.object({ tables: z.array(z.string().trim().regex(UC_TABLE_NAME)).min(1).max(MAX_SOURCES) });
 const addBody = z.object({ tables: z.array(z.string().trim().regex(UC_TABLE_NAME)).min(1).max(MAX_SOURCES) });
 const MAX_RELATED_SCHEMAS = 5;
 const short = (t: string) => t.split('.').pop()!;
 
-const applyBody = z.object({ statements: z.array(z.string().min(1).max(200_000)).min(1).max(200) });
+const applyBody = z.object({
+  statements: z.array(z.string().min(1).max(200_000)).min(1).max(200),
+  /** Edited text for each comment statement, by index. null keeps the proposed text. */
+  comments: z.array(z.string().max(1000).nullable()).max(200).optional(),
+});
 
 export function registerReadinessRoutes(
   app: Application,
@@ -453,8 +467,17 @@ export function registerReadinessRoutes(
       const actor = actorOf(req);
       const { id, recId } = recParam.parse(req.params);
       const project = await projects.get(actor, id);
-      const { statements } = applyBody.parse(req.body);
-      await repo.claim(actor, project.id, recId, statements);
+      const body = applyBody.parse(req.body);
+      let statements = body.statements;
+      try {
+        statements = statements.map((s, i) => {
+          const text = body.comments?.[i];
+          return text == null ? s : withComment(s, text);
+        });
+      } catch (err) {
+        throw new HttpError(400, (err as Error).message);
+      }
+      await repo.claim(actor, project.id, recId, body.statements, statements);
 
       const run = runFor(req);
       for (const [i, statement] of statements.entries()) {
@@ -521,6 +544,52 @@ export function registerReadinessRoutes(
       );
       if (!rows[0]) throw new HttpError(404, 'Source not found.');
       return repo.view(project.id);
+    })
+  );
+
+  /** One source, described live as the user. */
+  async function sourceProfile(req: Request) {
+    const actor = actorOf(req);
+    const { id, sourceId } = sourceParam.parse(req.params);
+    const project = await projects.get(actor, id);
+    const { rows } = await db.query<{ full_name: string }>(
+      'SELECT full_name FROM gsb.source WHERE id = $1 AND project_id = $2',
+      [sourceId, project.id]
+    );
+    if (!rows[0]) throw new HttpError(404, 'Source not found.');
+    const [d] = await describeSources([{ fullName: rows[0].full_name }], ucFor(req));
+    if (!d?.profile) throw new HttpError(403, d?.error ?? 'You cannot read this source.');
+    return { actor, project, profile: d.profile };
+  }
+
+  app.get(
+    '/api/projects/:id/sources/:sourceId/columns',
+    handle(async (req) => {
+      const { profile } = await sourceProfile(req);
+      return { comment: profile.comment, columns: profile.columns };
+    })
+  );
+
+  /** A comment the user wrote, for the table or one of its columns. Runs as the user. */
+  app.post(
+    '/api/projects/:id/sources/:sourceId/comment',
+    handle(async (req) => {
+      const { column, text } = commentBody.parse(req.body);
+      const { actor, project, profile } = await sourceProfile(req);
+      const table = quoteName(profile.fullName);
+      const col = column === null ? null : profile.columns.find((c) => c.name === column);
+      if (column !== null && !col) throw new HttpError(400, `${column} is not a column of ${profile.fullName}.`);
+      let statement: string;
+      try {
+        statement = withComment(
+          col ? `COMMENT ON COLUMN ${table}.${quoteId(col.name)} IS ''` : `COMMENT ON TABLE ${table} IS ''`,
+          text
+        );
+      } catch (err) {
+        throw new HttpError(400, (err as Error).message);
+      }
+      await runStatement(statement, { actor, projectId: project.id, approved: true }, runFor(req));
+      return { statement };
     })
   );
 

@@ -216,3 +216,18 @@ export function buildRecommendations(
   }
   return out;
 }
+
+const ID_PART = '`(?:[^`]|``)*`';
+const COMMENT_ON = new RegExp(
+  `^(COMMENT ON (?:TABLE ${ID_PART}(?:\\.${ID_PART}){2}|COLUMN ${ID_PART}(?:\\.${ID_PART}){3}) IS )'(?:[^'\\\\]|\\\\.)*'$`,
+  's'
+);
+
+/** A generated COMMENT ON statement with the user's text instead. Throws for any other statement. */
+export function withComment(statement: string, text: string): string {
+  const prefix = COMMENT_ON.exec(statement)?.[1];
+  if (!prefix) throw new Error('Only a comment statement can take edited text.');
+  const t = text.trim();
+  if (!t || t.length > 1000) throw new Error('A comment needs 1 to 1000 characters.');
+  return `${prefix}${sqlString(t)}`;
+}

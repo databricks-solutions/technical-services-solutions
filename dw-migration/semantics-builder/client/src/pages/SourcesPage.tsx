@@ -28,6 +28,8 @@ import type {
   SourceReadiness,
 } from '../../../shared/readiness';
 import { api, useResource } from '../api';
+import { CommentEdits, commentsOf, previewOf } from '../components/CommentEdits';
+import { WriteComment } from '../components/WriteComment';
 import { OpenInCatalog } from '../components/OpenInCatalog';
 import { DictionaryCoverage } from '../components/DictionaryCoverage';
 import { DataState } from '../components/DataState';
@@ -231,6 +233,9 @@ function FixCard({
 
 function SourceDetail({ source, busy, onRemove }: { source: SourceReadiness; busy: boolean; onRemove: () => void }) {
   const report = source.report;
+  const { projectId = '' } = useParams();
+  const [writing, setWriting] = useState(false);
+  const [wrote, setWrote] = useState(false);
   return (
     <section
       aria-label={source.fullName}
@@ -253,7 +258,15 @@ function SourceDetail({ source, busy, onRemove }: { source: SourceReadiness; bus
           {source.role === 'unknown' ? 'Role not known' : source.role === 'fact' ? 'Fact' : 'Dimension'}
         </Tag>
         {report ? <ScoreTag score={report.score} /> : <Tag componentId="gsb.sources.score">Not assessed</Tag>}
-        <div style={{ marginLeft: 'auto' }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <Button
+            componentId="gsb.sources.write_comment_open"
+            size="small"
+            disabled={busy}
+            onClick={() => setWriting(true)}
+          >
+            Write a comment
+          </Button>
           <Button
             componentId="gsb.sources.remove"
             size="small"
@@ -266,6 +279,26 @@ function SourceDetail({ source, busy, onRemove }: { source: SourceReadiness; bus
           </Button>
         </div>
       </div>
+      {writing && (
+        <WriteComment
+          projectId={projectId}
+          sourceId={source.sourceId}
+          fullName={source.fullName}
+          onClose={(saved) => {
+            setWriting(false);
+            if (saved) setWrote(true);
+          }}
+        />
+      )}
+      {wrote && (
+        <Alert
+          componentId="gsb.sources.write_comment_done"
+          type="success"
+          closable
+          onClose={() => setWrote(false)}
+          message="The comment is saved in Unity Catalog. Run the assessment again to update the score."
+        />
+      )}
       {report && report.areas.length > 0 && <Areas areas={report.areas} />}
       {report?.assessment && (
         <Alert
@@ -399,6 +432,7 @@ export function SourcesPage() {
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState<string>();
   const [reviewing, setReviewing] = useState<Recommendation>();
+  const [edits, setEdits] = useState<(string | null)[]>([]);
   const [adding, setAdding] = useState<'pick' | 'related'>();
 
   const post = (key: string, path: string, body: unknown = {}) => {
@@ -555,7 +589,10 @@ export function SourcesPage() {
                       key={r.id}
                       fix={r}
                       busy={!!busy}
-                      onApply={() => setReviewing(r)}
+                      onApply={() => {
+                        setEdits([]);
+                        setReviewing(r);
+                      }}
                       onReject={() => void post(r.id, `/api/projects/${projectId}/recommendations/${r.id}/reject`)}
                     />
                   ))}
@@ -625,6 +662,9 @@ export function SourcesPage() {
                 if (!reviewing) return;
                 void post(reviewing.id, `/api/projects/${projectId}/recommendations/${reviewing.id}/apply`, {
                   statements: reviewing.statements,
+                  ...(edits.some((e) => e != null)
+                    ? { comments: reviewing.statements.map((_, i) => edits[i] ?? null) }
+                    : {}),
                 }).then(() => setReviewing(undefined));
               }}
             >
@@ -637,7 +677,10 @@ export function SourcesPage() {
                     message="This SQL runs as you on the SQL warehouse and changes Unity Catalog metadata. It does not change table data."
                   />
                   {reviewing.sourceName && <FixPermission projectId={projectId} table={reviewing.sourceName} />}
-                  <Sql statements={reviewing.statements} />
+                  {commentsOf(reviewing.statements).some(Boolean) && (
+                    <CommentEdits statements={reviewing.statements} edits={edits} onChange={setEdits} />
+                  )}
+                  <Sql statements={previewOf(reviewing.statements, edits)} />
                 </div>
               )}
             </Modal>

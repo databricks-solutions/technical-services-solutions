@@ -17,6 +17,7 @@ import {
 import type { OptimizeView, StressFlag, StressRun, WorkloadQuery } from '../../../shared/optimize';
 import { api, useResource } from '../api';
 import { DataState } from '../components/DataState';
+import { MaterializePanel } from '../components/MaterializePanel';
 import { SqlBlock } from '../components/SqlBlock';
 
 const FLAG: Record<StressFlag, { color: 'coral' | 'lemon'; label: string }> = {
@@ -28,6 +29,7 @@ const FLAG: Record<StressFlag, { color: 'coral' | 'lemon'; label: string }> = {
 
 const STATUS: Record<StressRun['status'], { color: 'indigo' | 'teal' | 'coral' | 'lemon'; label: string }> = {
   running: { color: 'indigo', label: 'Running' },
+  refreshing: { color: 'indigo', label: 'Refreshing' },
   stopping: { color: 'lemon', label: 'Stopping' },
   stopped: { color: 'lemon', label: 'Stopped' },
   finished: { color: 'teal', label: 'Finished' },
@@ -230,13 +232,14 @@ export function OptimizePage() {
   const data = view.data;
   const latest = data?.latest;
   const active = latest?.status === 'running' || latest?.status === 'stopping';
+  const tryActive = ['running', 'refreshing', 'stopping'].includes(data?.latestTry?.status ?? '');
   const { refresh } = view;
 
   useEffect(() => {
-    if (!active) return;
+    if (!active && !tryActive) return;
     const t = setInterval(refresh, 3000);
     return () => clearInterval(t);
-  }, [active, refresh]);
+  }, [active, tryActive, refresh]);
 
   const all = workload ?? data?.workload ?? [];
   const chosen = all.filter((q) => !excluded.some((e) => sameQuery(e, q)));
@@ -267,10 +270,10 @@ export function OptimizePage() {
     );
   };
 
-  const stop = () => {
-    if (!latest) return;
+  const stop = (runId = latest?.id) => {
+    if (!runId) return;
     setStopping(true);
-    api(`/api/projects/${projectId}/optimize/runs/${latest.id}/stop`, {}).then(refresh, (err: unknown) => {
+    api(`/api/projects/${projectId}/optimize/runs/${runId}/stop`, {}).then(refresh, (err: unknown) => {
       setStopping(false);
       setError((err as Error).message);
     });
@@ -302,7 +305,8 @@ export function OptimizePage() {
               you, on the app&apos;s SQL warehouse. Nothing runs until you approve the plan.
             </Typography.Text>
 
-            {latest && <Results run={latest} onStop={stop} stopping={stopping && active} />}
+            {latest && <Results run={latest} onStop={() => stop()} stopping={stopping && active} />}
+            <MaterializePanel data={data} projectId={projectId} onChange={refresh} onStop={(id) => stop(id)} />
 
             <Typography.Title level={4} withoutMargins>
               Workload ({chosen.length} of {all.length})
@@ -377,7 +381,7 @@ export function OptimizePage() {
               <Button
                 componentId="gsb.optimize.review"
                 type="primary"
-                disabled={!chosen.length || tooMany || active || !data.setup}
+                disabled={!chosen.length || tooMany || active || tryActive || !data.setup}
                 onClick={() => setApprove(true)}
               >
                 Review and run

@@ -215,7 +215,10 @@ export function projectRepo(db: Db) {
          UNION ALL
          SELECT NULL, v.sandbox_view FROM gsb.validation_run v
            JOIN gsb.metric_view_draft d ON d.id = v.draft_id JOIN p ON p.id = d.project_id
-           WHERE v.status IN ('running', 'passed', 'failed')`,
+           WHERE v.status IN ('running', 'passed', 'failed')
+         UNION ALL
+         SELECT NULL, s.sandbox_view FROM gsb.stress_run s JOIN p ON p.id = s.project_id
+           WHERE NOT coalesce((s.materialization->>'removed')::boolean, false)`,
         [project.id]
       );
       const views = [...new Set(rows.flatMap((r) => (r.view ? [r.view] : [])))].sort();

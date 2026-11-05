@@ -37,9 +37,11 @@ export interface StressQueryResult extends WorkloadQuery {
   readBytes: number | null;
   rowsRead: number | null;
   flags: StressFlag[];
+  /** Materialization tries only: the materialization the query read, or null for the sources. */
+  matched?: string | null;
 }
 
-export type StressStatus = 'running' | 'stopping' | 'stopped' | 'finished' | 'failed';
+export type StressStatus = 'running' | 'refreshing' | 'stopping' | 'stopped' | 'finished' | 'failed';
 
 export interface StressRun {
   id: string;
@@ -52,6 +54,8 @@ export interface StressRun {
   createdAt: string;
   finishedAt: string | null;
   queries: StressQueryResult[];
+  /** Set for a materialization try. */
+  materialization: MaterializationTry | null;
 }
 
 export interface OptimizeView {
@@ -63,4 +67,45 @@ export interface OptimizeView {
   setup: { sandboxView: string; statements: string[] } | null;
   limits: { maxQueries: number; maxRepeats: number; timeoutSeconds: number };
   latest: StressRun | null;
+  /** From the latest finished stress test of the current version. */
+  suggestion: MaterializationSuggestion | null;
+  latestTry: StressRun | null;
+}
+
+export const SCHEDULES = ['every 1 hour', 'every 6 hours', 'every 24 hours'] as const;
+export type Schedule = (typeof SCHEDULES)[number];
+
+export interface SuggestedMaterialization {
+  name: string;
+  type: 'aggregated' | 'unaggregated';
+  dimensions: string[];
+  measures: string[];
+  /** Workload queries this one is meant to serve. */
+  queries: string[];
+  reason: string;
+}
+
+export interface MaterializationSuggestion {
+  basedOnRun: string;
+  views: SuggestedMaterialization[];
+  /** Queries left out, with why. */
+  skipped: { label: string; reason: string }[];
+  notes: string[];
+}
+
+export interface MaterializationTry {
+  schedule: Schedule;
+  views: SuggestedMaterialization[];
+  yaml: string;
+  /** The stress run this try compares with. */
+  baseRun: string;
+  pipelineUrl?: string;
+  refreshMs?: number;
+  removed?: boolean;
+}
+
+export interface TryPlan {
+  matView: string;
+  yaml: string;
+  statements: string[];
 }

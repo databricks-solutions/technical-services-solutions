@@ -327,6 +327,13 @@ def remove(profile: str, prefix: str, assume_yes: bool = False) -> int:
     )
     if not names:
         return 0
+    for n in names[:20]:
+        print(f"  {n}")
+    if len(names) > 20:
+        print(f"  ... and {len(names) - 20} more")
+    print(
+        "  Objects with this prefix created by other users or tools are included. Use a unique --uc-prefix."
+    )
     if (
         not assume_yes
         and input("Delete them and their relationships? Type 'yes': ").strip().lower()

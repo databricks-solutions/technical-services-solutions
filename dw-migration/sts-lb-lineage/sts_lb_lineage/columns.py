@@ -4,6 +4,10 @@ Handles INSERT INTO t [(cols)] SELECT ... and CREATE TABLE t AS SELECT ...; tabl
 resolved. Statements that do not parse, or other statement types, are skipped and counted.
 """
 
+MAX_SQL = (
+    100_000  # characters; longer statements are skipped to bound parse time and memory
+)
+
 DIALECT = {
     "ORACLE": "oracle",
     "TERADATA": "teradata",
@@ -34,6 +38,9 @@ def column_edges(statements: list[dict]) -> tuple[list[dict], dict]:
     edges: dict[tuple, dict] = {}
     stats = {"statements": len(statements), "parsed": 0, "skipped": 0}
     for st in statements:
+        if len(st["sql"]) > MAX_SQL:
+            stats["skipped"] += 1
+            continue
         try:
             tree = sqlglot.parse_one(st["sql"], read=DIALECT.get(st.get("tech")))
         except Exception:  # noqa: BLE001 - analyzer SQL is often vendor-specific; skip it

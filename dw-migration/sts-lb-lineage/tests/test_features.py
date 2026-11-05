@@ -93,7 +93,7 @@ def test_export_rows_and_identifier_validation():
     r = export.rows(d)
     assert len(r["nodes"]) == len(d["nodes"]) and r["processes"]
     assert json.loads(r["summary"][0]["insights_json"])["trust"]
-    for bad in ("main", "a.b.c", "main.x;drop", "main.`x`", "1a.b"):
+    for bad in ("main", "a.b.c", "main.x;drop", "main.`x`", "1a.b", "main.x\n"):
         with pytest.raises(SystemExit):
             export.export(d, bad, "unused", "wh", assume_yes=True)
 
@@ -198,3 +198,11 @@ def test_ai_history_is_validated_and_capped():
     msgs = ai.messages_for({"objects": []}, "and then?", hist)
     assert [r for r, _ in msgs] == ["system"] + ["user", "assistant"] * 3 + ["user"]
     assert "Context (JSON)" in msgs[1][1] and msgs[-1][1].endswith("and then?")
+
+
+def test_column_lineage_skips_oversized_sql():
+    pytest.importorskip("sqlglot")
+    from sts_lb_lineage.columns import MAX_SQL, column_edges
+
+    huge = "INSERT INTO t SELECT a FROM s WHERE a IN (" + "1," * MAX_SQL + "1)"
+    assert column_edges([{"job": "j", "sql": huge}])[1]["skipped"] == 1

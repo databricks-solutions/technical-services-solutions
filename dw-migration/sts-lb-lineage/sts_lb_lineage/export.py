@@ -122,7 +122,7 @@ def export(
     d: dict, target: str, profile: str, warehouse: str, assume_yes: bool = False
 ) -> list[str]:
     parts = target.split(".")
-    if len(parts) != 2 or not all(IDENT.match(p) for p in parts):
+    if len(parts) != 2 or not all(IDENT.fullmatch(p) for p in parts):
         raise SystemExit(
             "--uc-export needs CATALOG.SCHEMA with letters, digits, and underscores only"
         )

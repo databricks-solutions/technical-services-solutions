@@ -290,9 +290,7 @@ def make_handler(html: bytes, d: dict, ask, endpoint: str, host: str, token: str
                 return
             if self.path != "/api/ai":
                 return self._json(404, {"error": "not found"})
-            if (
-                self.headers.get("X-STS-Session") != token
-            ):  # custom header: cross-site pages cannot send it
+            if not has_token(self):  # custom header: cross-site pages cannot send it
                 return self._json(403, {"error": "missing session"})
             if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
                 return self._json(415, {"error": "json only"})

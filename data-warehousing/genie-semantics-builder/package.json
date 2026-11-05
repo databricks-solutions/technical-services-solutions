@@ -1,5 +1,5 @@
 {
-  "name": "genie-semantics-builder",
+  "name": "semantics-builder",
   "version": "1.0.0",
   "main": "dist/server.js",
   "type": "module",
@@ -22,7 +22,9 @@
     "predev": "pnpm run sync && pnpm run typegen",
     "sync": "appkit plugin sync --write --silent",
     "typegen": "appkit generate-types",
-    "setup": "appkit setup --write"
+    "setup": "appkit setup --write",
+    "e2e": "playwright test",
+    "e2e:login": "playwright codegen --save-storage=tests/e2e/.auth/user.json \"$E2E_BASE_URL\""
   },
   "keywords": [],
   "author": "",
@@ -45,6 +47,7 @@
     "@ast-grep/napi": "0.37.0",
     "@eslint/compat": "2.0.0",
     "@eslint/js": "9.39.1",
+    "@playwright/test": "^1.64.1",
     "@types/express": "5.0.5",
     "@types/node": "24.6.0",
     "@types/pg": "^8.23.1",

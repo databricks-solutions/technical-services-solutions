@@ -1,5 +1,5 @@
 bundle:
-  name: genie-semantics-builder
+  name: semantics-builder
 
 variables:
   sql_warehouse_id:
@@ -21,7 +21,7 @@ sync:
 resources:
   apps:
     app:
-      name: "genie-semantics-builder"
+      name: "semantics-builder"
       description: "Design, validate, optimize and govern UC metric views with an LLM advisor"
       source_code_path: ./
       # The app config lives here, not in app.yaml: a bundle config replaces app.yaml entirely.
@@ -73,7 +73,7 @@ resources:
 
   experiments:
     traces:
-      name: ${workspace.root_path}/genie-semantics-builder-traces
+      name: ${workspace.root_path}/semantics-builder-traces
 
 # Workspace host comes from the CLI profile: databricks bundle deploy -t dev --profile <PROFILE>
 # Set per-target values with --var or BUNDLE_VAR_<name> environment variables.
@@ -83,10 +83,10 @@ targets:
     default: true
     variables:
       sql_warehouse_id: <your-serverless-sql-warehouse-id>
-      postgres_branch: projects/genie-semantics-builder/branches/production
-      postgres_database: projects/genie-semantics-builder/branches/production/databases/databricks-postgres
+      postgres_branch: projects/semantics-builder/branches/production
+      postgres_database: projects/semantics-builder/branches/production/databases/databricks-postgres
       serving_endpoint_name: databricks-claude-sonnet-5-5
-      sandbox_schema: sandbox.genie_semantics_builder
+      sandbox_schema: sandbox.semantics_builder
 
   prod:
     mode: production

@@ -7,6 +7,6 @@
     "noEmit": true,
     "rootDir": "./"
   },
-  "include": ["server/**/*", "shared/**/*", "config/**/*", "scripts/**/*"],
+  "include": ["server/**/*", "shared/**/*", "config/**/*", "scripts/**/*", "tests/**/*", "playwright.config.ts"],
   "exclude": ["node_modules", "dist", "client"]
 }

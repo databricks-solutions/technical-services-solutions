@@ -471,3 +471,11 @@ body {
 .lbl-filters {
   flex: 0 0 210px;
 }
+
+.lbl-suggest {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.lbl-hits-static {
+  box-shadow: none;
+}

@@ -44,12 +44,12 @@ export function Overview({ model, go }: { model: Model; go: (r: Partial<Route>) 
   return (
     <div className="lbl-tab lbl-overview">
       <div className="lbl-metrics">
-        <MetricCard componentId="sts-lb-lineage.ov.processes" label="Processes" metric={fmt(s.processes)} comparison="Top-level workflows, sequences, and scripts" buttonText="Process map" onButtonClick={() => go({ tab: 'processes' })} />
-        <MetricCard componentId="sts-lb-lineage.ov.programs" label="Programs" metric={fmt(s.programs)} comparison={Object.entries(s.technologies).map(([t, n]) => `${t} ${n}`).join(' · ')} buttonText="Statistics" onButtonClick={() => go({ tab: 'statistics' })} />
-        <MetricCard componentId="sts-lb-lineage.ov.tables" label="Tables" metric={fmt(s.tables)} comparison={`${fmt(s.roles.source)} sources · ${fmt(s.roles.terminal)} outputs`} buttonText="Objects" onButtonClick={() => go({ tab: 'objects', q: undefined })} />
-        <MetricCard componentId="sts-lb-lineage.ov.hubs" label="Shared tables" metric={fmt(s.hubs)} comparison="Read or written by more than one process" buttonText="Show them" onButtonClick={() => go({ tab: 'objects', q: 'role:shared' })} />
-        <MetricCard componentId="sts-lb-lineage.ov.links" label="Process dependencies" metric={fmt(st.crossProcessLinks)} comparison={`${plural(st.selfContainedProcesses, 'process', 'processes')} share no tables`} />
-        <MetricCard componentId="sts-lb-lineage.ov.cycles" label="Dependency cycles" metric={fmt(s.cycles)} comparison={s.cycles ? 'Processes that feed each other' : 'No process feeds itself'} />
+        <MetricCard fullHeight pinButtonToBottom componentId="sts-lb-lineage.ov.processes" label="Processes" metric={fmt(s.processes)} comparison="Top-level workflows, sequences, and scripts" buttonText="Process map" onButtonClick={() => go({ tab: 'processes' })} />
+        <MetricCard fullHeight pinButtonToBottom componentId="sts-lb-lineage.ov.programs" label="Programs" metric={fmt(s.programs)} comparison={Object.entries(s.technologies).map(([t, n]) => `${t} ${n}`).join(' · ')} buttonText="Statistics" onButtonClick={() => go({ tab: 'statistics' })} />
+        <MetricCard fullHeight pinButtonToBottom componentId="sts-lb-lineage.ov.tables" label="Tables" metric={fmt(s.tables)} comparison={`${fmt(s.roles.source)} sources · ${fmt(s.roles.terminal)} outputs`} buttonText="Objects" onButtonClick={() => go({ tab: 'objects', q: undefined })} />
+        <MetricCard fullHeight pinButtonToBottom componentId="sts-lb-lineage.ov.hubs" label="Shared tables" metric={fmt(s.hubs)} comparison="Read or written by more than one process" buttonText="Show them" onButtonClick={() => go({ tab: 'objects', q: 'role:shared' })} />
+        <MetricCard fullHeight pinButtonToBottom componentId="sts-lb-lineage.ov.links" label="Process dependencies" metric={fmt(st.crossProcessLinks)} comparison={`${plural(st.selfContainedProcesses, 'process', 'processes')} share no tables`} />
+        <MetricCard fullHeight pinButtonToBottom componentId="sts-lb-lineage.ov.cycles" label="Dependency cycles" metric={fmt(s.cycles)} comparison={s.cycles ? 'Processes that feed each other' : 'No process feeds itself'} />
       </div>
 
       <div className="lbl-grid">

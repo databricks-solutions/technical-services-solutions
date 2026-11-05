@@ -76,12 +76,12 @@ export function Statistics({ model, go }: { model: Model; go: (r: Partial<Route>
   return (
     <div className="lbl-tab">
       <div className="lbl-metrics">
-        <MetricCard componentId="sts-lb-lineage.st.lines" label="Lines of code" metric={c.lines ? fmt(c.lines) : '-'} comparison="SQL scripts with a line count" />
-        <MetricCard componentId="sts-lb-lineage.st.statements" label="SQL statements" metric={fmt((c.statements ?? 0) + (c.embeddedSql ?? 0))} comparison={`${fmt(c.embeddedSql ?? 0)} embedded in ETL jobs`} />
-        <MetricCard componentId="sts-lb-lineage.st.dynamic" label="Dynamic SQL" metric={fmt(c.dynamicSql ?? 0)} comparison="Statements built at run time" />
-        <MetricCard componentId="sts-lb-lineage.st.loops" label="Loops and cursors" metric={fmt(c.loops ?? 0)} comparison={`${fmt(c.conditionals ?? 0)} conditional blocks`} />
-        <MetricCard componentId="sts-lb-lineage.st.params" label="Job parameters" metric={fmt(c.parameters ?? 0)} comparison="Declared on ETL jobs" />
-        <MetricCard componentId="sts-lb-lineage.st.size" label="Objects per process" metric={`${st.processSize.median}`} comparison={`Median · min ${st.processSize.min} · max ${st.processSize.max}`} />
+        <MetricCard fullHeight pinButtonToBottom componentId="sts-lb-lineage.st.lines" label="Lines of code" metric={c.lines ? fmt(c.lines) : '-'} comparison="SQL scripts with a line count" />
+        <MetricCard fullHeight pinButtonToBottom componentId="sts-lb-lineage.st.statements" label="SQL statements" metric={fmt((c.statements ?? 0) + (c.embeddedSql ?? 0))} comparison={`${fmt(c.embeddedSql ?? 0)} embedded in ETL jobs`} />
+        <MetricCard fullHeight pinButtonToBottom componentId="sts-lb-lineage.st.dynamic" label="Dynamic SQL" metric={fmt(c.dynamicSql ?? 0)} comparison="Statements built at run time" />
+        <MetricCard fullHeight pinButtonToBottom componentId="sts-lb-lineage.st.loops" label="Loops and cursors" metric={fmt(c.loops ?? 0)} comparison={`${fmt(c.conditionals ?? 0)} conditional blocks`} />
+        <MetricCard fullHeight pinButtonToBottom componentId="sts-lb-lineage.st.params" label="Job parameters" metric={fmt(c.parameters ?? 0)} comparison="Declared on ETL jobs" />
+        <MetricCard fullHeight pinButtonToBottom componentId="sts-lb-lineage.st.size" label="Objects per process" metric={`${st.processSize.median}`} comparison={`Median · min ${st.processSize.min} · max ${st.processSize.max}`} />
       </div>
 
       <div className="lbl-grid">

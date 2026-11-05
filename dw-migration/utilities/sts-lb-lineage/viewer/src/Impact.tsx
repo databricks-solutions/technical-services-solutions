@@ -203,7 +203,7 @@ export function Impact({
       </div>
 
       {!result ? (
-        <Empty title="Pick a target" description="Search for a table, job, or process to analyze." />
+        <Suggestions model={model} mode={mode} onPick={(t) => go({ target: t })} />
       ) : scope.length === 0 || (mode !== 'path' && objects.length === 0) ? (
         <Empty title="Nothing found" description={mode === 'path' ? 'No path connects these two.' : 'No lineage in this direction.'} />
       ) : (
@@ -284,6 +284,48 @@ export function Impact({
           <GraphView model={model} scope={scope} groupBy="process" onOpenDetails={onOpen} onOpenProcess={onOpenProcess} />
         </>
       )}
+    </div>
+  );
+}
+
+/** Starting points so the page is useful before anything is picked. */
+function Suggestions({ model, mode, onPick }: { model: Model; mode: string; onPick: (target: string) => void }) {
+  const hubs = model.ins.hubs.slice(0, 6).map((h) => ({ t: h.id, label: model.byId.get(h.id)?.name ?? h.id, hint: `${h.processCount} processes` }));
+  const read = model.ins.statistics.fanOut.slice(0, 6).map((f) => ({ t: f.id, label: model.byId.get(f.id)?.name ?? f.id, hint: `feeds ${f.count}` }));
+  const procs = [...model.ins.processes]
+    .filter((p) => p.upstream.length + p.downstream.length > 0)
+    .sort((a, b) => b.upstream.length + b.downstream.length - (a.upstream.length + a.downstream.length))
+    .slice(0, 6)
+    .map((p) => ({ t: `proc:${p.name}`, label: shortName(p.name), hint: `${p.upstream.length} in · ${p.downstream.length} out` }));
+  const groups = [
+    { title: 'Most shared tables', items: hubs },
+    { title: 'Most read tables', items: read },
+    { title: 'Most connected processes', items: procs },
+  ].filter((g) => g.items.length);
+  if (!groups.length) return <Empty title="Pick a target" description="Search for a table, job, or process to analyze." />;
+  return (
+    <div className="lbl-tab">
+      <Typography.Paragraph>
+        {mode === 'path' ? 'Pick a start point, then an end point. Good start points:' : 'Search above, or start from one of these:'}
+      </Typography.Paragraph>
+      <div className="lbl-grid lbl-suggest">
+        {groups.map((g) => (
+          <section key={g.title}>
+            <Typography.Title level={4}>{g.title}</Typography.Title>
+            <ul className="lbl-hits lbl-hits-static">
+              {g.items.map((it) => (
+                <li key={it.t}>
+                  {it.t.startsWith('proc:') ? <WorkflowsIcon aria-hidden /> : <KindIcon kind={model.byId.get(it.t)!.kind} />}
+                  <Typography.Link componentId="sts-lb-lineage.impact.suggest" onClick={() => onPick(it.t)}>
+                    {it.label}
+                  </Typography.Link>
+                  <Typography.Hint>{it.hint}</Typography.Hint>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))}
+      </div>
     </div>
   );
 }

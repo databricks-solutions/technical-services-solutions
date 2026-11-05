@@ -10,6 +10,7 @@ Runs in two steps so every zip is attested before it is published:
 
 `build` only reads from GitHub, so running it locally is a dry run.
 Both steps need GH_TOKEN (or a logged-in gh) and use GITHUB_REPOSITORY when set.
+The manifest is parsed with the stdlib so the job never installs from PyPI.
 """
 
 import argparse
@@ -20,11 +21,10 @@ import subprocess
 import sys
 from pathlib import PurePosixPath
 
-import yaml
-
 MANIFEST = ".github/releases.yml"
 OUT_DIR = "dist"
 PLAN = os.path.join(OUT_DIR, "plan.json")
+ENTRY_KEYS = ("slug", "name", "kind", "path")
 
 BODY = """Current release of **{name}** ({kind}).
 
@@ -34,6 +34,67 @@ Download `{slug}.zip` below. It contains only this asset. The auto-generated "So
 archives contain the entire repository.
 
 This release and its zip are updated in place whenever the asset changes on `main`."""
+
+
+def _unquote(value):
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        return value[1:-1]
+    return value
+
+
+def load_manifest(path=MANIFEST):
+    """Parse the flat list-of-maps in releases.yml without PyYAML.
+
+    Each item is `- slug:` plus `name`/`kind`/`path`. Comments and blank lines
+    are ignored. Anything nested or extra is a hard error so the format cannot
+    silently drift.
+    """
+    entries = []
+    current = None
+    current_start = 0
+    with open(path) as f:
+        lines = f.readlines()
+
+    def finish():
+        missing = [k for k in ENTRY_KEYS if k not in current]
+        if missing:
+            sys.exit(f"{path}:{current_start}: missing {', '.join(missing)}")
+        extra = [k for k in current if k not in ENTRY_KEYS]
+        if extra:
+            sys.exit(f"{path}:{current_start}: unknown keys {', '.join(extra)}")
+        entries.append(current)
+
+    for i, raw in enumerate(lines, 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("- "):
+            if current is not None:
+                finish()
+            rest = line[2:].strip()
+            key, sep, val = rest.partition(":")
+            if not sep or key.strip() != "slug":
+                sys.exit(f"{path}:{i}: expected '- slug: ...', got {line!r}")
+            current = {"slug": _unquote(val)}
+            current_start = i
+            continue
+        if current is None:
+            sys.exit(f"{path}:{i}: unexpected {line!r}")
+        key, sep, val = line.partition(":")
+        if not sep:
+            sys.exit(f"{path}:{i}: expected 'key: value', got {line!r}")
+        key = key.strip()
+        if key not in ENTRY_KEYS:
+            sys.exit(f"{path}:{i}: unknown key {key!r}")
+        if key in current:
+            sys.exit(f"{path}:{i}: duplicate key {key!r}")
+        current[key] = _unquote(val)
+    if current is not None:
+        finish()
+    if not entries:
+        sys.exit(f"{path}: no assets listed")
+    return entries
 
 
 def git(*args, check=True):
@@ -71,8 +132,7 @@ def set_tag(repo, tag, target, exists):
 
 
 def build(repo, target):
-    with open(MANIFEST) as f:
-        entries = yaml.safe_load(f)
+    entries = load_manifest()
     slugs = [e["slug"] for e in entries]
     if len(set(slugs)) != len(slugs):
         sys.exit(f"{MANIFEST}: duplicate slugs are not allowed")

@@ -1,6 +1,7 @@
 # Assets released by .github/workflows/release-assets.yml.
 # Each entry has one <slug>-latest GitHub Release. On every push to main,
 # its zip and tag are updated in place only when that asset's folder changed.
+# Keep this a flat list of slug/name/kind/path maps; the loader is stdlib-only.
 
 - slug: customer-360-lakehouse-genie
   name: "Customer 360 Lakehouse Genie"
@@ -141,7 +142,18 @@
   name: "MLOps Readiness Scorecard"
   kind: "Databricks notebook"
   path: "production-readiness/mlops-readiness-scorecard"
+
 - slug: unity-gateway-migration-toolkit
   name: "Unity Gateway Migration Toolkit"
   kind: "Installer notebook + Databricks App + Declarative Automation Bundle"
   path: "unified-governance/unity-gateway-migration-toolkit"
+
+- slug: genie-agent-scanner
+  name: "Genie Agent Scanner"
+  kind: "Agent skill"
+  path: "genie/genie-agent-scanner"
+
+- slug: snowflake-source-extract
+  name: "Snowflake Source Extract"
+  kind: "Python script"
+  path: "dw-migration/source-extracts/snowflake"

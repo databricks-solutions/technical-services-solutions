@@ -84,7 +84,7 @@ export function LineageGraph({ ontology }: { ontology: Ontology }) {
       >
         <svg
           role="img"
-          aria-label={`Lineage of ${ontology.entities.length} tables and ${ontology.links.length} joins`}
+          aria-label={`Lineage of ${ontology.entities.length} table${ontology.entities.length === 1 ? '' : 's'} and ${ontology.links.length} join${ontology.links.length === 1 ? '' : 's'}`}
           width={width}
           height={height}
           viewBox={`-1 -1 ${width} ${height}`}

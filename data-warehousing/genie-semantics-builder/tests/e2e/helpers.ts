@@ -24,7 +24,7 @@ export async function createProject(page: Page, name: string, goal: string) {
 }
 
 export async function createSubProject(page: Page, name: string) {
-  await page.getByRole('button', { name: 'New sub-project' }).click();
+  await page.getByRole('button', { name: 'New sub-project' }).first().click();
   const dialog = page.getByRole('dialog');
   await dialog.getByLabel(/Name/).fill(name);
   await dialog.getByRole('button', { name: 'Create sub-project' }).click();
@@ -57,4 +57,16 @@ export async function deleteProject(page: Page, name: string) {
   if (await cleanup.count()) await cleanup.first().check();
   await dialog.getByRole('button', { name: /Delete project/ }).click();
   await expect(page.getByRole('heading', { name })).toBeHidden();
+}
+
+/** Deletes every project with this name through the API, with the sandbox cleanup. Safe to run twice. */
+export async function deleteProjectByApi(page: Page, name: string) {
+  const base = process.env.E2E_BASE_URL ?? '';
+  const list = (await (await page.request.get(`${base}/api/projects`)).json()) as { id: string; name: string }[];
+  for (const p of list.filter((x) => x.name === name)) {
+    const plan = (await (await page.request.get(`${base}/api/projects/${p.id}/delete`)).json()) as {
+      cleanup: string[];
+    };
+    await page.request.post(`${base}/api/projects/${p.id}/delete`, { data: { cleanup: plan.cleanup } });
+  }
 }

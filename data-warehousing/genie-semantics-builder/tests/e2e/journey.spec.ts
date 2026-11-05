@@ -1,5 +1,14 @@
 import { expect, test } from './fixtures';
-import { approveSql, createProject, createSubProject, deleteProject, e2eName, openModule, pickTables } from './helpers';
+import {
+  approveSql,
+  createProject,
+  createSubProject,
+  deleteProject,
+  deleteProjectByApi,
+  e2eName,
+  openModule,
+  pickTables,
+} from './helpers';
 
 /**
  * The whole journey on bakehouse, the smallest real dataset: sources, readiness, discovery, brief,
@@ -10,10 +19,10 @@ test.describe.configure({ mode: 'serial' });
 const project = e2eName('Bakehouse');
 const sub = 'Franchise revenue';
 
+// Cleanup through the API, so a failed step never leaves the project behind.
 test.afterAll(async ({ attached }) => {
   const page = await attached.context.newPage();
-  await page.goto(new URL('/', process.env.E2E_BASE_URL).toString());
-  await deleteProject(page, project).catch(() => undefined);
+  await deleteProjectByApi(page, project);
   await page.close();
 });
 
@@ -28,7 +37,11 @@ test('pick sources, check how they relate, and assess them', async ({ page }) =>
   await page.getByRole('link', { name: sub }).first().click();
   await pickTables(page, 'sandbox_source', 'bakehouse', ['sales_transactions', 'sales_franchises', 'sales_customers']);
   await page.getByRole('button', { name: 'Check how they relate' }).click();
-  await page.getByRole('button', { name: /^Add/ }).first().click();
+  // Wait for the check result, then keep all three even if a rule does not join one of them.
+  const add = page.getByRole('button', { name: /^Add (all \d+ anyway|\d+ tables?)/ }).first();
+  await add.waitFor({ timeout: 120_000 });
+  const addAll = page.getByRole('button', { name: /^Add all \d+ anyway/ });
+  await ((await addAll.count()) ? addAll : add).click();
   // The assessment runs on add and ends with a score.
   await expect(page.getByRole('region', { name: 'Semantic readiness' })).toBeVisible({ timeout: 180_000 });
   await expect(page.getByRole('tab', { name: /Improvement plan/ })).toBeVisible();
@@ -76,4 +89,8 @@ test('stress test two queries', async ({ page }) => {
   await expect(page.getByText('Finished', { exact: true })).toBeVisible({ timeout: 600_000 });
   await expect(page.getByRole('table', { name: 'Stress test results' }).getByRole('row')).toHaveCount(3);
   await expect(page.getByRole('heading', { name: 'Materialization suggestions' })).toBeVisible();
+});
+
+test('delete the project from its page, with the sandbox cleanup', async ({ page }) => {
+  await deleteProject(page, project);
 });

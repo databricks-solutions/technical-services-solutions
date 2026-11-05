@@ -35,6 +35,19 @@ const users = t('c.s.users', [['id', 'bigint']]);
 const events = t('c.s.events', [['user_id', 'bigint']]);
 
 describe('inferLinks', () => {
+  it('reads camelCase keys and table names with a domain prefix', () => {
+    const t = (fullName: string, cols: string[]) => ({ fullName, columns: cols.map((name) => ({ name, type: 'bigint', comment: '' })) });
+    const links = inferLinks([
+      t('c.bakehouse.sales_transactions', ['transactionID', 'customerID', 'franchiseID']),
+      t('c.bakehouse.sales_franchises', ['franchiseID', 'supplierID']),
+      t('c.bakehouse.sales_customers', ['customerID']),
+    ]);
+    expect(links).toEqual([
+      { from: 'c.bakehouse.sales_transactions', column: 'customerID', to: 'c.bakehouse.sales_customers', refColumn: 'customerID' },
+      { from: 'c.bakehouse.sales_transactions', column: 'franchiseID', to: 'c.bakehouse.sales_franchises', refColumn: 'franchiseID' },
+    ]);
+  });
+
   it('matches TPC-H style key names to the owning table', () => {
     const links = inferLinks([lineitem, orders, customer, part, partsupp]);
     expect(links).toContainEqual({

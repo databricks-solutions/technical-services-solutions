@@ -21,9 +21,9 @@ const TABLE_WEIGHT = WEIGHTS.documentation + WEIGHTS.keys + WEIGHTS.types + WEIG
 const short = (fullName: string) => fullName.split('.').pop()!.toLowerCase();
 const KEY = /^(.+?)(_id|_sk|_key|key)$/;
 
-/** `o_custkey` -> `custkey`: drops a short table prefix from key columns. */
+/** `o_custkey` -> `custkey`, `customerID` -> `customer_id`: drops a short table prefix, splits camelCase. */
 function stem(column: string) {
-  const name = column.toLowerCase();
+  const name = column.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
   const rest = /^[a-z]{1,3}_(.+)$/.exec(name)?.[1];
   return rest && KEY.test(rest) ? rest : name;
 }
@@ -32,6 +32,8 @@ function stem(column: string) {
 function fit(table: string, core: string) {
   const n = short(table);
   if (n === core || n.replace(/s$/, '') === core) return 2;
+  // `sales_customers` fits `customer`: a domain prefix before the entity name.
+  if (core.length >= 3 && (n.endsWith(`_${core}`) || n.endsWith(`_${core}s`))) return 1;
   return core.length >= 3 && n.startsWith(core) ? 1 : 0;
 }
 

@@ -14,8 +14,7 @@ test('a new project needs a name', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'New project' }).click();
   const dialog = page.getByRole('dialog');
-  await dialog.getByRole('button', { name: 'Create project' }).click();
-  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Create project' })).toBeDisabled();
   await dialog.getByRole('button', { name: 'Cancel' }).click();
   await expect(dialog).toBeHidden();
 });

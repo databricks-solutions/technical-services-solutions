@@ -24,6 +24,7 @@ interface Stored {
 }
 
 const MAX_KB = 700;
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const KIND = { metric: 'Metric', dimension: 'Dimension', term: 'Term' } as const;
 const STATUS_COLOR = { draft: 'default', approved: 'indigo', certified: 'teal' } as const;
 
@@ -192,8 +193,8 @@ export function DictionaryPanel({ projectId }: { projectId: string }) {
         <>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <Typography.Text>
-              {count('metric')} metrics, {count('dimension')} dimensions, {count('term')} terms, from{' '}
-              <code>{data.fileName}</code> by {data.importedBy},{' '}
+              {plural(count('metric'), 'metric')}, {plural(count('dimension'), 'dimension')},{' '}
+              {plural(count('term'), 'term')}, from <code>{data.fileName}</code> by {data.importedBy},{' '}
               {data.importedAt ? new Date(data.importedAt).toLocaleString() : ''}.
             </Typography.Text>
             <Button

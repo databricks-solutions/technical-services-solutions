@@ -10,8 +10,9 @@ test.describe.configure({ mode: 'serial' });
 const project = e2eName('Bakehouse');
 const sub = 'Franchise revenue';
 
-test.afterAll(async ({ persistent }) => {
-  const page = await persistent.newPage();
+test.afterAll(async ({ attached }) => {
+  const page = await attached.context.newPage();
+  await page.goto(new URL('/', process.env.E2E_BASE_URL).toString());
   await deleteProject(page, project).catch(() => undefined);
   await page.close();
 });

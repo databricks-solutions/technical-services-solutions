@@ -257,6 +257,20 @@ export function registerDesignerRoutes(
     })
   );
 
+  /** Columns of the project sources, for the metric builder form. */
+  app.get(
+    '/api/projects/:id/designs/columns',
+    handle(async (req) => {
+      const ctx = await context(req);
+      return {
+        tables: ctx.profiles.map((p) => ({
+          fullName: p.fullName,
+          columns: p.columns.map((c) => ({ name: c.name, type: c.type })),
+        })),
+      };
+    })
+  );
+
   app.post(
     '/api/projects/:id/designs/generate',
     handle(async (req) => {
@@ -347,7 +361,7 @@ export function registerDesignerRoutes(
   app.post(
     '/api/projects/:id/designs',
     handle(async (req) => {
-      const { baseVersion, yaml } = saveDraftSchema.parse(req.body);
+      const { baseVersion, yaml, tests } = saveDraftSchema.parse(req.body);
       const ctx = await context(req);
       const base = (await repo.view(ctx.project.id, baseVersion)).draft!;
       const checked = validateMetricView(yaml, toSourceProfiles(ctx.profiles));
@@ -369,7 +383,7 @@ export function registerDesignerRoutes(
           name: base.name,
           yaml,
           explanations,
-          tests: view ? keepValidTests(base.tests, view) : base.tests,
+          tests: view ? keepValidTests(tests ?? base.tests, view) : (tests ?? base.tests),
           issues,
           origin: 'edited',
         },

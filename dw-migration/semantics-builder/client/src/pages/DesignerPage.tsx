@@ -29,6 +29,8 @@ import type { DictionaryEntry } from '../../../shared/dictionary';
 import { api, useResource } from '../api';
 import { OpenInCatalog } from '../components/OpenInCatalog';
 import { DataState } from '../components/DataState';
+import { FieldBuilder } from '../components/FieldBuilder';
+import { TestEditor } from '../components/TestEditor';
 import { JoinDiagram } from '../components/JoinDiagram';
 import { MONO, SqlBlock } from '../components/SqlBlock';
 
@@ -372,6 +374,7 @@ function Designer({
   const [plan, setPlan] = useState<ValidationPlan>();
   const [error, setError] = useState<string>();
   const [tab, setTab] = useState<DesignerTab>('model');
+  const [editingTests, setEditingTests] = useState(false);
   const dirty = yaml !== draft.yaml;
 
   const live = useMemo(() => validateMetricView(yaml), [yaml]);
@@ -379,12 +382,13 @@ function Designer({
   const issues = dirty ? live.issues : draft.issues;
   const view = live.view ?? saved;
 
-  const run = (kind: 'save' | 'refine' | 'generate' | 'validate', path: string, body: unknown) => {
+  const run = (kind: 'save' | 'refine' | 'generate' | 'validate', path: string, body: unknown, after?: () => void) => {
     setBusy(kind);
     setError(undefined);
     api<DesignerView>(path, body).then(
       (v) => {
         setBusy(undefined);
+        after?.();
         setInstruction('');
         setPlan(undefined);
         if (v.draft) setYaml(v.draft.yaml);
@@ -515,6 +519,17 @@ function Designer({
                   <JoinDiagram view={view} issues={issues} />
                 </section>
                 <Fields draft={draft} view={view} />
+                {saved && (
+                  <FieldBuilder
+                    projectId={projectId}
+                    view={saved}
+                    busy={busy === 'save'}
+                    disabled={dirty || !!busy}
+                    onSave={(y) =>
+                      run('save', `/api/projects/${projectId}/designs`, { baseVersion: draft.version, yaml: y })
+                    }
+                  />
+                )}
               </>
             ) : (
               <Typography.Text color="secondary">Fix the YAML errors to see the model.</Typography.Text>
@@ -596,17 +611,45 @@ function Designer({
               Validation creates the metric view in the sandbox schema, runs each test as you, and compares the result
               with plain SQL derived from the YAML.
             </Typography.Text>
-            {draft.tests.length ? (
-              <ul style={{ margin: 0, paddingLeft: 20 }}>
-                {draft.tests.map((t) => (
-                  <li key={t.name}>
-                    <Typography.Text bold>{t.name}</Typography.Text>: {t.measures.join(', ')}
-                    {t.dimensions.length ? ` by ${t.dimensions.join(', ')}` : ' in total'}
-                  </li>
-                ))}
-              </ul>
+            {editingTests && saved ? (
+              <TestEditor
+                tests={draft.tests}
+                view={saved}
+                saving={busy === 'save'}
+                onCancel={() => setEditingTests(false)}
+                onSave={(tests) =>
+                  run(
+                    'save',
+                    `/api/projects/${projectId}/designs`,
+                    { baseVersion: draft.version, yaml: draft.yaml, tests },
+                    () => setEditingTests(false)
+                  )
+                }
+              />
             ) : (
-              <Typography.Text>No test cases match the current fields.</Typography.Text>
+              <>
+                {draft.tests.length ? (
+                  <ul style={{ margin: 0, paddingLeft: 20 }}>
+                    {draft.tests.map((t) => (
+                      <li key={t.name}>
+                        <Typography.Text bold>{t.name}</Typography.Text>: {t.measures.join(', ')}
+                        {t.dimensions.length ? ` by ${t.dimensions.join(', ')}` : ' in total'}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <Typography.Text>No test cases match the current fields.</Typography.Text>
+                )}
+                <div>
+                  <Button
+                    componentId="gsb.designer.edit_tests"
+                    disabled={dirty || !!busy || !saved}
+                    onClick={() => setEditingTests(true)}
+                  >
+                    Edit tests by hand
+                  </Button>
+                </div>
+              </>
             )}
             <div>
               <Button

@@ -66,6 +66,24 @@ Facts to check in a spike before building:
   Genie One when the endpoint works for apps.
 - Cost: Genie questions run SQL on the space warehouse; they count against the Optimize budget.
 
+### Spike results (2026-11-05, user token through the CLI, profile ag_dev)
+
+- **Genie space on a metric view works.** `genie create-space` with
+  `{"version":2,"data_sources":{"tables":[{"identifier":"<metric view>"}]}}` accepted the sandbox view. "Total
+  revenue by month" returned `SELECT `Order Month`, MEASURE(`Net Revenue`) ... GROUP BY ALL` and a text answer in
+  44 s. The conversation response holds the SQL (`attachments[].query.query`) and the text, so a verdict can compare
+  the measures and dimensions in Genie's SQL with the expected ones, and the result with the expected query.
+- **Genie One works too.** `POST /api/2.0/data-rooms/tools/onechat/responses` with
+  `{"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"..."}]}],"enable_viz":false,"source":"..."}`
+  streams OpenAI Responses style SSE (`response.output_item.added`). Items: `message` (THOUGHT and the final
+  `output_text`), `function_call` `execute_sql_query` with the SQL in `arguments.query`, and `function_call_output`.
+  The same question used `MEASURE(`Net Revenue`)` in 27 s. It is not scoped to one view: it also searched
+  workspace knowledge snippets that other users wrote, so its answer can mix in context the design does not own.
+- **Not yet checked: the app OBO token.** The app has no `dashboards.genie` scope today. Both paths need a scope
+  change and a new user consent before the app can call them. The OneChat scope is not documented.
+- Recommendation: build the tab on a **Genie space** first (scoped to the sandbox view, so the verdict tests the
+  design). Add Genie One as a second check later, if its scope works for apps.
+
 ## Order
 
 c5.2 (links, small) first, then c5.1 (manual paths), then c5.3 (Genie, after the spike). Phase c4 (dictionary)

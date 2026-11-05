@@ -18,6 +18,7 @@ import type { OptimizeView, StressFlag, StressRun, WorkloadQuery } from '../../.
 import { api, useResource } from '../api';
 import { DataState } from '../components/DataState';
 import { MaterializePanel } from '../components/MaterializePanel';
+import { PracticesPanel } from '../components/PracticesPanel';
 import { SqlBlock } from '../components/SqlBlock';
 
 const FLAG: Record<StressFlag, { color: 'coral' | 'lemon'; label: string }> = {
@@ -283,21 +284,24 @@ export function OptimizePage() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <DataState status={view.status} message={view.error} onRetry={view.reload}>
         {data && (!data.draft || data.draft.status !== 'validated') ? (
-          <Alert
-            componentId="gsb.optimize.not_validated"
-            type="info"
-            closable={false}
-            message="Validate the design first. The stress test runs on the validated metric view."
-            description={
-              <Button
-                componentId="gsb.optimize.to_designer"
-                size="small"
-                onClick={() => void navigate(`/projects/${parentId}/sub/${projectId}/designer`)}
-              >
-                Open Metric Designer
-              </Button>
-            }
-          />
+          <>
+            <Alert
+              componentId="gsb.optimize.not_validated"
+              type="info"
+              closable={false}
+              message="Validate the design first. The stress test runs on the validated metric view."
+              description={
+                <Button
+                  componentId="gsb.optimize.to_designer"
+                  size="small"
+                  onClick={() => void navigate(`/projects/${parentId}/sub/${projectId}/designer`)}
+                >
+                  Open Metric Designer
+                </Button>
+              }
+            />
+            {data.draft && <PracticesPanel checks={data.practices} />}
+          </>
         ) : data?.draft ? (
           <>
             <Typography.Text color="secondary">
@@ -305,6 +309,7 @@ export function OptimizePage() {
               you, on the app&apos;s SQL warehouse. Nothing runs until you approve the plan.
             </Typography.Text>
 
+            <PracticesPanel checks={data.practices} />
             {latest && <Results run={latest} onStop={() => stop()} stopping={stopping && active} />}
             <MaterializePanel data={data} projectId={projectId} onChange={refresh} onStop={(id) => stop(id)} />
 

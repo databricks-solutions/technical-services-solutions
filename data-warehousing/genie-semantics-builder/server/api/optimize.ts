@@ -17,6 +17,7 @@ import type {
 } from '../../shared/optimize';
 import { createStatement, dropStatement, sandboxSchema, sandboxViewName } from '../designer/validate';
 import { matchedName, suggestMaterializations, withMaterialization } from '../optimize/materialize';
+import { bestPractices } from '../optimize/practices';
 import { quoteName } from '../readiness/profile';
 import { buildWorkload, MAX_QUERIES, MAX_REPEATS, stressSql, summarize } from '../optimize/workload';
 import { runStatement } from '../sql/runner';
@@ -400,6 +401,7 @@ export function registerOptimizeRoutes(
         latest,
         suggestion: base && view ? suggestMaterializations(view, base.id, base.queries) : null,
         latestTry: await repo.latest(project.id, true),
+        practices: view ? bestPractices(view) : [],
       };
     })
   );

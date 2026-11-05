@@ -70,6 +70,8 @@ export interface OptimizeView {
   /** From the latest finished stress test of the current version. */
   suggestion: MaterializationSuggestion | null;
   latestTry: StressRun | null;
+  /** Rule-based review of the current version. */
+  practices: PracticeCheck[];
 }
 
 export const SCHEDULES = ['every 1 hour', 'every 6 hours', 'every 24 hours'] as const;
@@ -108,4 +110,17 @@ export interface TryPlan {
   matView: string;
   yaml: string;
   statements: string[];
+}
+
+export type PracticeSeverity = 'fix' | 'improve' | 'info';
+
+/** One best-practice rule and the fields that miss it. Passed rules have no fields. */
+export interface PracticeCheck {
+  id: string;
+  title: string;
+  why: string;
+  severity: PracticeSeverity;
+  fields: string[];
+  /** The instruction "Fix with AI" sends to the designer. Null when the rule is advice only. */
+  instruction: string | null;
 }

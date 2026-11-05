@@ -209,6 +209,8 @@ const nodeTypes = { card: Card, group: GroupBoxNode, stub: StubNode, more: MoreN
 
 /** Nodes shown per hop and side before the rest fold into a "+N more" node. */
 const LAYER_CAP = 25;
+/** Larger scoped graphs are cut to this many objects so the browser stays responsive. */
+const MAX_GRAPH = 1500;
 type More = { ids: string[]; parent: string; side: 'up' | 'down'; hop: number };
 
 /** Breadth-first walk that keeps at most `cap` new nodes per hop; overflow stays reachable. */
@@ -284,7 +286,7 @@ function Canvas({ model, groupBy, focusId = null, scope, boundary, emphasis, onO
       setVisible(new Set([...ups.keep, ...downs.keep]));
       setMore(new Map([...ups.more, ...downs.more]));
     } else {
-      setVisible(new Set(scope ?? []));
+      setVisible(new Set((scope ?? []).slice(0, MAX_GRAPH)));
       setMore(new Map());
     }
     setSelNode(null);
@@ -478,7 +480,11 @@ function Canvas({ model, groupBy, focusId = null, scope, boundary, emphasis, onO
           </Button>
         )}
         {extraTools}
-        <Typography.Hint>{`${visible.size} objects. Double-click to focus. Click an edge to see the program.`}</Typography.Hint>
+        <Typography.Hint>
+          {(scope?.length ?? 0) > MAX_GRAPH && !focus
+            ? `Showing the first ${MAX_GRAPH} of ${scope!.length} objects. Double-click an object to focus, or narrow the scope.`
+            : `${visible.size} objects. Double-click to focus. Click an edge to see the program.`}
+        </Typography.Hint>
       </Panel>
       {(selNode || selEdge) && (
         <Panel position="top-right" className="lbl-panel">

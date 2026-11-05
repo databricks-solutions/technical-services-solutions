@@ -20,7 +20,7 @@
       "sqlStatements": [
         {
           "nodeName": "SQL_STMT_1",
-          "sql": "SELECT 1",
+          "sql": "INSERT INTO work.summary (region, total) SELECT r.region_name, SUM(s.amount) FROM work.sales s JOIN work.regions r ON s.region_id = r.region_id GROUP BY r.region_name",
           "complexityLevel": "LOW",
           "lineCount": 5,
           "functionCalls": null,
@@ -44,7 +44,7 @@
         },
         {
           "nodeName": "SQL_STMT_2",
-          "sql": "SELECT 1",
+          "sql": "CREATE TABLE out.monthly_report AS SELECT region, total FROM work.summary",
           "complexityLevel": "LOW",
           "lineCount": 5,
           "functionCalls": null,

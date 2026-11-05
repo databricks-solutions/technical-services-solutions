@@ -12,6 +12,7 @@ import {
   TargetIcon,
   Typography,
   WorkflowsIcon,
+  HistoryIcon,
 } from '@databricks/design-system';
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 
@@ -22,6 +23,7 @@ import { Impact, QuickFind } from './Impact';
 import { Objects } from './Objects';
 import { Overview } from './Overview';
 import { ProcessMap } from './ProcessMap';
+import { Changes } from './Changes';
 import { Statistics } from './Statistics';
 import { plural } from './ui';
 import { type Tab, routeHref, useRoute } from './url';
@@ -74,11 +76,17 @@ const PAGES: { group: string; items: { tab: Tab; label: string; icon: ReactNode;
   },
 ];
 
+const CHANGES = {
+  group: 'Compare',
+  items: [{ tab: 'changes' as Tab, label: 'Changes', icon: <HistoryIcon />, intro: 'What changed since the previous scan given with --compare.' }],
+};
+
 function Shell({ model, dark, onToggleDark }: { model: Model; dark: boolean; onToggleDark: () => void }) {
   const [route, go] = useRoute();
   const [graph, setGraph] = useState<GraphTarget | null>(null);
   const s = model.ins.summary;
-  const page = PAGES.flatMap((g) => g.items).find((p) => p.tab === route.tab) ?? PAGES[0].items[0];
+  const pages = model.doc.diff ? [...PAGES, CHANGES] : PAGES;
+  const page = pages.flatMap((g) => g.items).find((p) => p.tab === route.tab) ?? PAGES[0].items[0];
 
   const openObject = (id: string) => go({ obj: id, proc: undefined });
   const openProcess = (name: string) => {
@@ -103,7 +111,7 @@ function Shell({ model, dark, onToggleDark }: { model: Model; dark: boolean; onT
                 <Typography.Hint>{`${plural(s.processes, 'process', 'processes')} · ${plural(s.tables, 'table')}`}</Typography.Hint>
               </div>
             )}
-            {PAGES.map((g) => (
+            {pages.map((g) => (
               <NavList.Group key={g.group}>
                 {showExpandedContent && <NavList.GroupLabel>{g.group}</NavList.GroupLabel>}
                 <NavList.GroupContent>
@@ -157,6 +165,7 @@ function Shell({ model, dark, onToggleDark }: { model: Model; dark: boolean; onT
         {route.tab === 'objects' && (
           <Objects model={model} q={route.q ?? ''} setQ={(q) => go({ q: q || undefined })} onOpen={openObject} onOpenProcess={openProcess} />
         )}
+        {route.tab === 'changes' && model.doc.diff && <Changes model={model} onOpen={openObject} onOpenProcess={openProcess} />}
         {route.tab === 'impact' && <Impact model={model} route={route} go={go} onOpen={openObject} onOpenProcess={openProcess} />}
       </main>
 

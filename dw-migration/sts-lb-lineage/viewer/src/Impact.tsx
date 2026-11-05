@@ -284,7 +284,7 @@ export function Impact({
               {objects.length > MAX_ROWS && <Typography.Hint>{`Showing ${MAX_ROWS} of ${objects.length}. Download the CSV for all.`}</Typography.Hint>}
             </section>
           </div>
-          <AiPanel target={route.target!} mode={mode} to={route.to} />
+          <AiPanel model={model} target={route.target!} mode={mode} to={route.to} onOpen={onOpen} onOpenProcess={onOpenProcess} />
           <GraphView model={model} scope={scope} groupBy="process" onOpenDetails={onOpen} onOpenProcess={onOpenProcess} />
         </>
       )}
@@ -335,26 +335,46 @@ function Suggestions({ model, mode, onPick }: { model: Model; mode: string; onPi
 }
 
 /** Shown only when the viewer is served with --serve; the server holds the credential. */
-function AiPanel({ target, mode, to }: { target: string; mode: string; to?: string }) {
+function AiPanel({ model, target, mode, to, onOpen, onOpenProcess }: { model: Model; target: string; mode: string; to?: string; onOpen: (id: string) => void; onOpenProcess: (p: string) => void }) {
   const [status, setStatus] = useState<{ endpoint: string; host: string } | null>(null);
   const [question, setQuestion] = useState('');
-  const [answer, setAnswer] = useState<{ text: string; note: string } | null>(null);
+  const [turns, setTurns] = useState<{ q: string; a: string }[]>([]);
+  const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     aiStatus().then(setStatus).catch(() => setStatus(null));
   }, []);
   useEffect(() => {
-    setAnswer(null);
+    setTurns([]);
     setError(null);
   }, [target, mode, to]);
+  const byName = useMemo(() => new Map(model.doc.nodes.map((n) => [n.name.toLowerCase(), n.id])), [model]);
+  const link = (text: string) => {
+    const id = byName.get(text.toLowerCase());
+    if (id)
+      return (
+        <Typography.Link componentId="sts-lb-lineage.ai.object" onClick={() => onOpen(id)}>
+          <code>{text}</code>
+        </Typography.Link>
+      );
+    if (model.procByName.has(text))
+      return (
+        <Typography.Link componentId="sts-lb-lineage.ai.process" onClick={() => onOpenProcess(text)}>
+          <code>{text}</code>
+        </Typography.Link>
+      );
+    return null;
+  };
   if (!status) return null;
   const run = async (q?: string) => {
     setBusy(true);
     setError(null);
     try {
-      const r = await aiAsk({ target, mode, to, question: q });
-      setAnswer({ text: r.answer, note: `${r.objects} objects sent${r.truncated ? ' (truncated)' : ''}` });
+      const r = await aiAsk({ target, mode, to, question: q, history: q ? turns.slice(-3) : undefined });
+      setTurns((t) => (q ? [...t, { q, a: r.answer }] : [{ q: 'Explain impact and risks', a: r.answer }]));
+      setNote(`${r.objects} objects sent${r.truncated ? ' (truncated)' : ''}`);
+      setQuestion('');
     } catch (e) {
       setError(String((e as Error).message ?? e));
     } finally {
@@ -388,10 +408,18 @@ function AiPanel({ target, mode, to }: { target: string; mode: string; to?: stri
         </Button>
       </div>
       {error && <Alert componentId="sts-lb-lineage.ai.error" type="error" closable={false} message="The AI request failed" description={error} />}
-      {answer && (
-        <div className="lbl-ai-answer">
-          <Markdown text={answer.text} />
-          <Typography.Hint>{`${answer.note}. AI output can be wrong; check it against the lineage above.`}</Typography.Hint>
+      {turns.map((t, i) => (
+        <div key={i} className="lbl-ai-answer">
+          <Typography.Text bold>{t.q}</Typography.Text>
+          <Markdown text={t.a} code={link} />
+        </div>
+      ))}
+      {turns.length > 0 && (
+        <div className="lbl-row">
+          <Typography.Hint>{`${note}. Follow-up questions keep the last 3 turns. AI output can be wrong; check it against the lineage above.`}</Typography.Hint>
+          <Button componentId="sts-lb-lineage.ai.clear" size="small" disabled={busy} onClick={() => setTurns([])}>
+            Clear conversation
+          </Button>
         </div>
       )}
     </section>

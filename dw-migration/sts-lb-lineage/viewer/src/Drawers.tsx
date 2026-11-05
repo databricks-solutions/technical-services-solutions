@@ -111,6 +111,8 @@ function ObjectDetails({
   const programs = model.programsOf.get(node.id) ?? [];
   const hub = model.hubById.get(node.id);
   const prog = node.kind === 'job' ? model.programs.get(node.name) : undefined;
+  const own = (c: string) => c.slice(0, c.lastIndexOf('.')).toLowerCase() === node.name.toLowerCase();
+  const cols = (model.doc.columns ?? []).filter((c) => own(c.from) || own(c.to));
   return (
     <div className="lbl-details">
       <KeyValueList>
@@ -189,6 +191,7 @@ function ObjectDetails({
           <Tabs.Trigger value="up">{`Upstream (${up.length})`}</Tabs.Trigger>
           <Tabs.Trigger value="down">{`Downstream (${down.length})`}</Tabs.Trigger>
           <Tabs.Trigger value="programs">{`Programs (${programs.length})`}</Tabs.Trigger>
+          {cols.length > 0 && <Tabs.Trigger value="columns">{`Columns (${cols.length})`}</Tabs.Trigger>}
         </Tabs.List>
         <Tabs.Content value="up">
           <EdgeTable model={model} edges={up} side="from" onOpen={onOpen} />
@@ -226,6 +229,29 @@ function ObjectDetails({
             </Table>
           )}
         </Tabs.Content>
+        {cols.length > 0 && (
+          <Tabs.Content value="columns">
+            <Typography.Hint>Parsed from the SQL embedded in ETL programs. Statements that do not parse are skipped.</Typography.Hint>
+            <Table size="small">
+              <TableRow isHeader>
+                <TableHeader componentId="sts-lb-lineage.columns.from">From column</TableHeader>
+                <TableHeader componentId="sts-lb-lineage.columns.to">To column</TableHeader>
+                <TableHeader componentId="sts-lb-lineage.columns.via">Program</TableHeader>
+              </TableRow>
+              {cols.map((c) => (
+                <TableRow key={c.from + '>' + c.to}>
+                  <TableCell>
+                    <code>{c.from}</code>
+                  </TableCell>
+                  <TableCell>
+                    <code>{c.to}</code>
+                  </TableCell>
+                  <TableCell>{c.via.map(shortName).join(', ')}</TableCell>
+                </TableRow>
+              ))}
+            </Table>
+          </Tabs.Content>
+        )}
       </Tabs.Root>
     </div>
   );

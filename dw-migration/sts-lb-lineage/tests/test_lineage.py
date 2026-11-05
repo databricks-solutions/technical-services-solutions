@@ -2,8 +2,9 @@ import csv
 import json
 from pathlib import Path
 
-import sts_lb_uc
-from sts_lb_lineage import Lineage, fix_rel
+from sts_lb_lineage import ai as sts_lb_ai
+from sts_lb_lineage import uc as sts_lb_uc
+from sts_lb_lineage.core import Lineage, fix_rel
 
 FIX = Path(__file__).parent / "fixtures"
 
@@ -233,8 +234,6 @@ def _ai_server(d, answers):
     import threading
     from http.server import ThreadingHTTPServer
 
-    import sts_lb_ai
-
     def fake_ask(msgs):
         answers.append(msgs)
         return "## Summary\n- ok"
@@ -259,8 +258,6 @@ def _req(srv, method, path, body=None, headers=None):
 
 def test_ai_context_is_bounded_and_grounded():
     import pytest
-
-    import sts_lb_ai
 
     d = load("sql_retail", "infa_customer").to_dict()
     ctx = sts_lb_ai.impact_context(d, "table:dw.fact_orders", "down")
@@ -292,7 +289,7 @@ def test_ai_server_guards_and_answers():
             _req(srv, "POST", "/api/ai", body, {**ok, "Content-Type": "text/plain"})[0]
             == 415
         )
-        assert _req(srv, "POST", "/api/ai", "x" * 9000, ok)[0] == 413
+        assert _req(srv, "POST", "/api/ai", "x" * 25_000, ok)[0] == 413
         assert (
             _req(srv, "POST", "/api/ai", json.dumps({"target": "table:nope"}), ok)[0]
             == 400

@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc --noEmit && vite build && cp dist/index.html ../lineage_viewer.html",
+    "build": "tsc --noEmit && vite build && cp dist/index.html ../sts_lb_lineage/lineage_viewer.html",
     "dev": "vite"
   },
   "dependencies": {

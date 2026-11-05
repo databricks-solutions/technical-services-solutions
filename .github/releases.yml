@@ -145,3 +145,7 @@
   name: "Unity Gateway Migration Toolkit"
   kind: "Installer notebook + Databricks App + Declarative Automation Bundle"
   path: "unified-governance/unity-gateway-migration-toolkit"
+- slug: sts-lb-lineage
+  name: "STS Lakebridge Lineage"
+  kind: "Python package"
+  path: "dw-migration/sts-lb-lineage"

@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling>=1.24,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sts-lb-lineage"
+description = "STS Lakebridge Lineage: lineage, statistics, and impact analysis from Lakebridge Analyzer JSON"
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+dynamic = ["version"]
+license = { text = "Databricks License" }
+classifiers = ["Private :: Do Not Upload"]
+dependencies = []
+
+[project.optional-dependencies]
+# each extra is only needed for the matching flag
+analyzer = ["databricks-bb-analyzer>=0.3.1,<0.4"]   # --run
+databricks = ["databricks-sdk>=0.120,<1"]           # --uc-push, --uc-link, --uc-remove, --uc-export, --serve
+profiler = ["duckdb>=1.1,<3"]                       # --profiler
+columns = ["sqlglot>=30,<31"]                       # --columns
+all = ["sts-lb-lineage[analyzer,databricks,profiler,columns]"]
+test = ["pytest>=8,<9"]
+
+[project.scripts]
+sts-lb-lineage = "sts_lb_lineage.core:main"
+
+[tool.hatch.version]
+path = "sts_lb_lineage/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["sts_lb_lineage"]
+
+[tool.hatch.build.targets.sdist]
+exclude = ["viewer/node_modules", "viewer/dist"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

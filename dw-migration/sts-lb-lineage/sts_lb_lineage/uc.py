@@ -97,7 +97,7 @@ def enrich(
 
 
 def write_mapping(d: dict, out: Path):
-    from sts_lb_lineage import safe_writer
+    from .core import safe_writer
 
     with open(out / "uc_mapping.csv", "w", newline="") as f:
         w = safe_writer(f)
@@ -178,25 +178,85 @@ def payload(d: dict, system_type: str = "OTHER", prefix: str = "legacy") -> dict
         for e in d["edges"]
         if e["kind"] == "data" and e["from"] in names and e["to"] in names
     ]
-    return {"external_metadata": metadata, "external_lineage": rels}
+    links = [
+        {"external_metadata": names[n["id"]], "table": n["uc"]["target"]}
+        for n in d["nodes"]
+        if n["id"] in names and n.get("uc") and not n["uc"]["target"].startswith("<")
+    ]
+    return {
+        "external_metadata": metadata,
+        "external_lineage": rels,
+        "table_links": links,
+    }
 
 
-def push(p: dict, profile: str, assume_yes: bool = False):
-    """Create the payload in a workspace. Existing objects are skipped, so reruns are safe."""
-    n_meta, n_rel = len(p["external_metadata"]), len(p["external_lineage"])
+def _client(profile: str):
+    from databricks.sdk import WorkspaceClient
+
+    return WorkspaceClient(profile=profile)
+
+
+def _em(name: str):
+    from databricks.sdk.service import catalog as c
+
+    return c.ExternalLineageObject(
+        external_metadata=c.ExternalLineageExternalMetadata(name=name)
+    )
+
+
+def _tbl(name: str):
+    from databricks.sdk.service import catalog as c
+
+    return c.ExternalLineageObject(table=c.ExternalLineageTable(name=name))
+
+
+def existing_names(w, prefix: str) -> set[str]:
+    return {
+        m.name
+        for m in w.external_metadata.list_external_metadata()
+        if m.name and m.name.startswith(f"{prefix}__")
+    }
+
+
+def push(
+    p: dict,
+    profile: str,
+    assume_yes: bool = False,
+    link: bool = False,
+    prefix: str = "legacy",
+):
+    """Create the payload in a workspace. Shows a plan (new vs existing) first, only creates,
+    and skips objects that already exist, so reruns are safe. With link=True, also links each
+    legacy table to its suggested UC table when that table exists."""
+    n_meta, n_rel = (
+        len(p["external_metadata"]),
+        len(p["external_lineage"]) + (len(p["table_links"]) if link else 0),
+    )
     if n_meta > MAX_METADATA or n_rel > MAX_RELATIONSHIPS:
         sys.exit(
             f"Payload exceeds UC limits ({n_meta}/{MAX_METADATA} metadata, {n_rel}/{MAX_RELATIONSHIPS} "
             "relationships). Narrow it with --focus or split the reports."
         )
-    from databricks.sdk import WorkspaceClient
     from databricks.sdk.errors import AlreadyExists, ResourceAlreadyExists
     from databricks.sdk.service import catalog as c
 
-    w = WorkspaceClient(profile=profile)
+    w = _client(profile)
+    have = existing_names(w, prefix)
+    new_meta = sum(1 for m in p["external_metadata"] if m["name"] not in have)
+    links = []
+    if link:
+        for t in p["table_links"]:
+            if w.tables.exists(t["table"]).table_exists:
+                links.append(t)
+    print(f"Workspace {w.config.host} (profile {profile}). Plan:")
+    print(f"  external metadata: {new_meta} new, {n_meta - new_meta} already there")
     print(
-        f"Workspace {w.config.host} (profile {profile}): {n_meta} external metadata, {n_rel} relationships."
+        f"  relationships: up to {len(p['external_lineage'])} between legacy tables (existing ones are skipped)"
     )
+    if link:
+        print(
+            f"  links to UC tables: {len(links)} of {len(p['table_links'])} suggested targets exist"
+        )
     if (
         not assume_yes
         and input("Create them? Type 'yes' to continue: ").strip().lower() != "yes"
@@ -204,6 +264,9 @@ def push(p: dict, profile: str, assume_yes: bool = False):
         sys.exit("Cancelled.")
     made = skipped = 0
     for m in p["external_metadata"]:
+        if m["name"] in have:
+            skipped += 1
+            continue
         try:
             w.external_metadata.create_external_metadata(
                 c.ExternalMetadata(
@@ -218,28 +281,90 @@ def push(p: dict, profile: str, assume_yes: bool = False):
         except (AlreadyExists, ResourceAlreadyExists):
             skipped += 1
     print(f"External metadata: {made} created, {skipped} already existed.")
+    rels = [
+        (
+            r["source"]["external_metadata"]["name"],
+            _em(r["source"]["external_metadata"]["name"]),
+            _em(r["target"]["external_metadata"]["name"]),
+            r["properties"],
+        )
+        for r in p["external_lineage"]
+    ]
+    rels += [
+        (
+            t["external_metadata"],
+            _em(t["external_metadata"]),
+            _tbl(t["table"]),
+            {"kind": "migrated_to"},
+        )
+        for t in links
+    ]
     made = skipped = 0
-    for r in p["external_lineage"]:
+    for _, src, dst, props in rels:
         try:
             w.external_lineage.create_external_lineage_relationship(
-                c.CreateRequestExternalLineage(
-                    source=c.ExternalLineageObject(
-                        external_metadata=c.ExternalLineageExternalMetadata(
-                            name=r["source"]["external_metadata"]["name"]
-                        )
-                    ),
-                    target=c.ExternalLineageObject(
-                        external_metadata=c.ExternalLineageExternalMetadata(
-                            name=r["target"]["external_metadata"]["name"]
-                        )
-                    ),
-                    properties=r["properties"],
-                )
+                c.CreateRequestExternalLineage(source=src, target=dst, properties=props)
             )
             made += 1
         except (AlreadyExists, ResourceAlreadyExists):
             skipped += 1
-    print(f"External lineage: {made} created, {skipped} already existed.")
+    print(f"Relationships: {made} created, {skipped} already existed.")
+    return {"metadata_created": new_meta, "links": len(links)}
+
+
+def remove(profile: str, prefix: str, assume_yes: bool = False) -> int:
+    """Delete the external metadata objects named <prefix>__* and their relationships.
+    Only names with the prefix are touched; UC tables are never deleted."""
+    if not prefix or prefix != ident(prefix):
+        sys.exit("--uc-remove needs a plain --uc-prefix (letters, digits, underscores)")
+    from databricks.sdk.errors import NotFound
+    from databricks.sdk.service import catalog as c
+
+    w = _client(profile)
+    names = sorted(existing_names(w, prefix))
+    print(
+        f"Workspace {w.config.host} (profile {profile}): {len(names)} external metadata objects named {prefix}__*"
+    )
+    if not names:
+        return 0
+    if (
+        not assume_yes
+        and input("Delete them and their relationships? Type 'yes': ").strip().lower()
+        != "yes"
+    ):
+        sys.exit("Cancelled.")
+    rels = 0
+    for name in names:
+        for direction in (c.LineageDirection.DOWNSTREAM, c.LineageDirection.UPSTREAM):
+            for info in w.external_lineage.list_external_lineage_relationships(
+                object_info=_em(name), lineage_direction=direction
+            ):
+                if info.external_metadata_info:
+                    other = _em(info.external_metadata_info.name)
+                elif info.table_info:
+                    t = info.table_info
+                    other = _tbl(f"{t.catalog_name}.{t.schema_name}.{t.name}")
+                else:
+                    continue
+                src, dst = (
+                    (_em(name), other)
+                    if direction == c.LineageDirection.DOWNSTREAM
+                    else (other, _em(name))
+                )
+                try:
+                    w.external_lineage.delete_external_lineage_relationship(
+                        c.DeleteRequestExternalLineage(source=src, target=dst)
+                    )
+                    rels += 1
+                except NotFound:
+                    pass
+    for name in names:
+        try:
+            w.external_metadata.delete_external_metadata(name)
+        except NotFound:
+            pass
+    print(f"Deleted {rels} relationships and {len(names)} external metadata objects.")
+    return len(names)
 
 
 def system_type_for(platform: str | None, override: str | None) -> str:

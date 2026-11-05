@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
-export type Tab = 'overview' | 'statistics' | 'processes' | 'objects' | 'impact';
+export type Tab = 'overview' | 'statistics' | 'processes' | 'objects' | 'impact' | 'changes';
 export interface Route {
   tab: Tab;
   obj?: string; // object drawer

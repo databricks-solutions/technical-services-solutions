@@ -1,13 +1,8 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.10,<3.14"
-# dependencies = ["databricks-bb-analyzer>=0.3.1,<0.4", "databricks-sdk>=0.162,<1"]
-# ///
 """Build table-level lineage from BladeBridge analyzer (bladespector) JSON output.
 
-uv run sts_lb_lineage.py report.json [more.json ...] -o lineage/ --open
-uv run sts_lb_lineage.py --run ./src --platform Oracle -o lineage/
-uv run sts_lb_lineage.py report.json --focus dw.fact_orders -o lineage/
+sts-lb-lineage report.json [more.json ...] -o lineage/ --open
+sts-lb-lineage --run ./src --platform Oracle -o lineage/
+sts-lb-lineage report.json --focus dw.fact_orders -o lineage/
 """
 
 import argparse
@@ -59,7 +54,9 @@ def item_meta(item: dict) -> dict:
     }
 
 
-VIEWER = Path(__file__).with_name("lineage_viewer.html")
+VIEWER = Path(__file__).with_name(
+    "lineage_viewer.html"
+)  # built by viewer/ (npm run build)
 PLACEHOLDER = "__LINEAGE_JSON__"
 DATA_TAG = f'<script id="lineage-data" type="application/json">{PLACEHOLDER}</script>'
 
@@ -88,6 +85,7 @@ class Lineage:
         self.programs: dict[str, dict] = {}
         self.parents: dict[str, set] = defaultdict(set)
         self.post = None  # optional hook: dict -> dict, applied before writing
+        self.statements: list[dict] = []  # embedded ETL SQL text, for column lineage
 
     def node(self, kind: str, name: str, tech: str | None = None) -> str:
         name = clean(name)
@@ -150,7 +148,10 @@ class Lineage:
             # statement-level first so shared edges keep the finer grain
             for st in item.get("sqlStatements") or []:
                 self._link(st.get("objectRel"), job, "statement", tech)
-            # ponytail: inputs x outputs per job over-links multi-flow mappings; parse nodes for finer grain
+                if st.get("sql"):
+                    self.statements.append({"job": job, "tech": tech, "sql": st["sql"]})
+            # inputs x outputs per job over-links multi-flow mappings; the analyzer's `nodes` holds
+            # transformation counts only (no flow graph), so job grain is the finest available here
             self._link(item.get("objectRel"), job, "job", tech)
             self.programs[job].update(item_meta(item))
         for s in data.get("subJobInfo") or []:
@@ -700,6 +701,33 @@ def main(argv=None):
     ap.add_argument(
         "--open", action="store_true", help="open lineage.html in the browser when done"
     )
+    nm = ap.add_argument_group("Lineage accuracy (optional)")
+    nm.add_argument(
+        "--search-path",
+        help="comma-separated schemas used to qualify unqualified table names, e.g. dbo,dw",
+    )
+    nm.add_argument(
+        "--collapse-instances",
+        action="store_true",
+        help="fold ETL instance names (SQ_X, X_1) into table X",
+    )
+    nm.add_argument(
+        "--columns",
+        action="store_true",
+        help="column-level lineage from embedded ETL SQL (needs sqlglot)",
+    )
+    nm.add_argument(
+        "--compare",
+        type=Path,
+        metavar="OLD_LINEAGE_JSON",
+        help="show changes since a previous lineage.json",
+    )
+    nm.add_argument(
+        "--profiler",
+        type=Path,
+        metavar="EXTRACT_DB",
+        help="read table volumes from a Lakebridge Profiler DuckDB extract",
+    )
     ai = ap.add_argument_group("AI-assisted impact analysis (optional)")
     ai.add_argument(
         "--serve",
@@ -743,7 +771,25 @@ def main(argv=None):
         help="create the external lineage in this workspace profile",
     )
     uc.add_argument(
-        "--yes", action="store_true", help="skip the confirmation prompt for --uc-push"
+        "--uc-link",
+        action="store_true",
+        help="with --uc-push: link legacy tables to their suggested UC tables that exist",
+    )
+    uc.add_argument(
+        "--uc-remove",
+        metavar="PROFILE",
+        help="delete the external lineage named <uc-prefix>__* in this workspace",
+    )
+    uc.add_argument(
+        "--uc-export",
+        metavar="CATALOG.SCHEMA",
+        help="export lineage and insights to Delta tables (needs --profile, --warehouse)",
+    )
+    uc.add_argument("--warehouse", help="SQL warehouse id for --uc-export")
+    uc.add_argument(
+        "--yes",
+        action="store_true",
+        help="skip the confirmation prompt for --uc-push, --uc-remove, --uc-export",
     )
     a = ap.parse_args(argv)
 
@@ -752,19 +798,61 @@ def main(argv=None):
         if not a.platform:
             ap.error("--run needs --platform")
         reports.append(run_analyzer(a.run, a.platform, a.out))
+    if a.uc_remove:
+        from . import uc as sts_lb_uc
+
+        sts_lb_uc.remove(a.uc_remove, a.uc_prefix, a.yes)
+        if not reports:
+            return
     if not reports:
         ap.error("give analyzer JSON files or --run")
 
     lin = Lineage()
     for r in reports:
         lin.add_report(json.loads(r.read_text(encoding="utf-8")))
+    from . import normalize
+
+    merged = {}
+    if a.search_path:
+        paths = [x.strip() for x in a.search_path.split(",") if x.strip()]
+        merged["searchPath"] = normalize.merge(
+            lin, normalize.search_path_aliases(lin, paths)
+        )
+    if a.collapse_instances:
+        merged["instances"] = normalize.merge(lin, normalize.instance_aliases(lin))
     if a.focus:
         lin = lin.focus(a.focus)
-    import sts_lb_uc
+    from . import uc as sts_lb_uc
 
     formats = {f.strip() for f in a.format.split(",")}
     volumes = sts_lb_uc.load_volumes(a.volumes) if a.volumes else None
-    lin.post = lambda d: sts_lb_uc.enrich(d, a.uc_catalog, a.uc_pattern, volumes)
+    if a.profiler:
+        from .profiler import load_profiler
+
+        found, used = load_profiler(a.profiler)
+        print(f"profiler: {len(found)} table volumes from {used}")
+        volumes = {**found, **(volumes or {})}
+    col_edges, col_stats = [], None
+    if a.columns:
+        from .columns import column_edges
+
+        col_edges, col_stats = column_edges(lin.statements)
+
+    def post(d: dict) -> dict:
+        d = sts_lb_uc.enrich(d, a.uc_catalog, a.uc_pattern, volumes)
+        if a.columns:
+            d["columns"] = col_edges
+            d["insights"]["trust"]["columnStatements"] = col_stats["parsed"]
+            d["insights"]["trust"]["columnStatementsSkipped"] = col_stats["skipped"]
+        for k, v in merged.items():
+            d["insights"]["trust"][f"merged_{k}"] = v
+        if a.compare:
+            from .diff import compare
+
+            d["diff"] = compare(a.compare, d)
+        return d
+
+    lin.post = post
     d = lin.write(a.out, formats)
     if "csv" in formats:
         sts_lb_uc.write_mapping(d, a.out)
@@ -776,7 +864,13 @@ def main(argv=None):
         v = d["insights"]["summary"]["volumes"]
         print(f"volumes: matched {v['matched']} of {v['provided']} rows in {a.volumes}")
     if a.uc_push:
-        sts_lb_uc.push(p, a.uc_push, a.yes)
+        sts_lb_uc.push(p, a.uc_push, a.yes, link=a.uc_link, prefix=a.uc_prefix)
+    if a.uc_export:
+        if not (a.profile and a.warehouse):
+            ap.error("--uc-export needs --profile and --warehouse")
+        from .export import export
+
+        export(d, a.uc_export, a.profile, a.warehouse, a.yes)
     print(
         f"{len(lin.nodes)} nodes, {len(lin.edges)} edges, {len(lin.programs)} programs -> {a.out}"
     )
@@ -786,7 +880,7 @@ def main(argv=None):
             ap.error("--serve needs --profile and --endpoint")
         if not html.exists():
             ap.error("--serve needs the html format")
-        import sts_lb_ai
+        from . import ai as sts_lb_ai
 
         sts_lb_ai.serve(html, d, a.profile, a.endpoint, a.port)
         return

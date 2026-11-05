@@ -1,39 +1,53 @@
 # STS Lakebridge Lineage
 
-Folder and command: `sts-lb-lineage`.
-
+Python package and command: `sts-lb-lineage`.
 
 Table-level lineage and migration insights from the **Lakebridge Analyzer** (BladeBridge) JSON output, for SQL and ETL estates (Informatica, DataStage, SSIS, Talend, SAS, ADF, Oracle, Teradata, and the other analyzer sources). It writes JSON, CSV, Mermaid, and one self-contained HTML viewer.
 
-Run it on a **laptop or jump host**, next to the analyzer output. It does not need Databricks, unless you choose to push the lineage into Unity Catalog.
+Run it on a **laptop or jump host**, next to the analyzer output. It does not need Databricks, unless you choose to push the lineage into Unity Catalog or use the AI assistant.
 
 ## Safety rules
 
 | Rule | Why |
 |---|---|
-| Read-only on the source | It reads analyzer JSON (and, with `--run`, the source folder you point the analyzer at). It never changes source code. |
-| Writes only to `-o` | Every output goes to the output folder you give (default `lineage/`). Nothing is deleted. |
+| Read-only on the source | It reads analyzer JSON (and, with `--run`, the source folder you point the analyzer at). It never changes source code. A Profiler extract is opened read-only. |
+| Writes only to `-o` | Every local output goes to the output folder you give (default `lineage/`). Nothing local is deleted. |
 | Offline viewer | `lineage.html` makes no network requests. Open it from `file://`. |
-| No installs | It never installs software beyond its own pinned Python dependencies, which uv fetches. |
+| No installs | It never installs software beyond its own pinned Python dependencies. |
 | AI is opt-in and local | AI-assisted impact analysis runs only with `--serve`. The viewer is served on `127.0.0.1` only, and only the selected impact result goes to the endpoint you name, in your workspace. |
-| Unity Catalog writes are opt-in | Nothing is sent to a workspace unless you pass `--uc-push <profile>` and confirm. It only creates objects; it never updates or deletes. |
-| No customer data in git | Keep analyzer output and generated files out of the repo. `fixtures/` holds synthetic data only. |
+| Workspace writes are opt-in | Nothing is sent to a workspace unless you pass `--uc-push`, `--uc-export`, or `--uc-remove`. Each one prints the workspace and a plan, then asks you to type `yes`. |
+| Deletes are scoped | `--uc-remove` deletes only external metadata named `<uc-prefix>__*` and its relationships. It never deletes tables. `--uc-export` replaces only the `lineage_*` tables in the schema you name. |
+| No customer data in git | Keep analyzer output and generated files out of the repo. `tests/fixtures/` holds synthetic data only. |
 
-## Prerequisites
+## Install
 
-- [uv](https://docs.astral.sh/uv/getting-started/installation/) (it fetches Python 3.10-3.13 and the dependencies).
-- Lakebridge Analyzer JSON: `databricks labs lakebridge analyze ... --generate-json true`, or run the analyzer through this tool with `--run`.
-- For `--uc-push` only: a Databricks CLI profile with `CREATE EXTERNAL METADATA` on the metastore.
+Needs [uv](https://docs.astral.sh/uv/getting-started/installation/) (or pip) and Python 3.10-3.13. From a clone of this repo:
+
+```sh
+uv tool install "./dw-migration/sts-lb-lineage[all]"     # installs the sts-lb-lineage command
+uvx --from "./dw-migration/sts-lb-lineage[all]" sts-lb-lineage --help   # or run it without installing
+```
+
+The core needs only the standard library. Extras add optional features:
+
+| Extra | Adds | For |
+|---|---|---|
+| `analyzer` | databricks-bb-analyzer | `--run` (run the analyzer first) |
+| `databricks` | databricks-sdk | `--serve`, `--uc-push`, `--uc-remove`, `--uc-export` |
+| `columns` | sqlglot | `--columns` |
+| `profiler` | duckdb | `--profiler` |
+| `all` | all of the above | |
+
+Analyzer JSON comes from `databricks labs lakebridge analyze ... --generate-json true`, or from `--run`.
 
 ## Quick start
 
 ```sh
-uv run sts_lb_lineage.py analyzer-output.json --open                 # build lineage/ and open the viewer
-uv run sts_lb_lineage.py sql.json etl.json -o out/                    # several reports at once (SQL and ETL can mix)
-uv run sts_lb_lineage.py --run ./exports --platform "Informatica - PC" --open   # run the analyzer first
+sts-lb-lineage analyzer-output.json --open                 # build lineage/ and open the viewer
+sts-lb-lineage sql.json etl.json -o out/                    # several reports at once (SQL and ETL can mix)
+sts-lb-lineage --run ./exports --platform "Informatica - PC" --open   # run the analyzer first
+python -m sts_lb_lineage --help                             # all options
 ```
-
-All options: `uv run sts_lb_lineage.py --help`.
 
 ## Viewer
 
@@ -45,24 +59,40 @@ All options: `uv run sts_lb_lineage.py --help`.
 | Summary | Statistics | Lines of code, SQL statements, dynamic SQL, loops, parameters, programs by technology and type, analyzer complexity levels, top transformations and functions, most read and most fed tables, tables by schema. |
 | Explore | Process map | One node per top-level process; shared tables connect them. Filter by technology, search, and a coupling matrix. Self-contained processes are hidden by default. |
 | Explore | Objects | Every table and job. Group by process, technology, schema, or type. List or graph. Selector bar, for example `role:source`, `process:wf_sales`, `complexity:high`, `+dw.fact_orders+`. |
-| Analyze | Impact analysis | Downstream impact, upstream sources, or the path between two objects or processes, with a CSV report. Opens with suggested starting points. With `--serve`, an AI assistant explains the impact, flags risks, and answers questions. |
+| Analyze | Impact analysis | Downstream impact, upstream sources, or the path between two objects or processes, with a CSV report. Opens with suggested starting points. With `--serve`, an AI assistant explains the impact, flags risks, and answers follow-up questions. |
+| Compare | Changes | Only with `--compare`: new and removed processes, objects, and relationships, and objects that moved to another process. |
 
-Use the search box at the top of every page to jump to any process, table, or job. Drawers show the details of an object (role, process, upstream, downstream, programs, suggested UC target) or a process (programs and the analyzer drivers behind their complexity, objects, shared tables, dependencies). Every view is in the URL hash, so you can share a link to it.
+Use the search box at the top of every page to jump to any process, table, or job. Drawers show the details of an object (role, process, upstream, downstream, programs, columns with `--columns`, suggested UC target) or a process (programs and the analyzer drivers behind their complexity, objects, shared tables, dependencies). Every view is in the URL hash, so you can share a link to it. Scoped graphs show at most 1,500 objects; focus on an object to explore beyond that.
 
 The tool reports facts from the scan. It does not estimate effort or plan migration waves.
+
+## Lineage accuracy (optional)
+
+```sh
+sts-lb-lineage report.json --search-path dbo,dw          # qualify unqualified names: orders -> dbo.orders
+sts-lb-lineage report.json --collapse-instances          # fold ETL instance names: SQ_CUSTOMER, CUSTOMER_1 -> CUSTOMER
+sts-lb-lineage report.json --columns                     # column lineage from the SQL embedded in ETL programs
+sts-lb-lineage report.json --compare old/lineage.json    # what changed since a previous scan
+```
+
+- **Search path**: a name is qualified only when exactly one schema on the path has a table with that name.
+- **Instances**: folded only into a base table that exists in the scan. Both rewrites tag the result `merged` and count it in the trust checks.
+- **Columns**: parses `INSERT INTO ... SELECT` and `CREATE TABLE ... AS SELECT` with sqlglot. Statements that do not parse are skipped and counted.
+- **Compare**: keeps only the file name of the previous scan in the output.
 
 ## AI-assisted impact analysis (optional)
 
 ```sh
-uv run sts_lb_lineage.py analyzer-output.json --serve --profile <profile> --endpoint <chat-endpoint>
+sts-lb-lineage analyzer-output.json --serve --profile <profile> --endpoint <chat-endpoint>
 ```
 
-This builds the lineage, then serves the viewer at `http://127.0.0.1:8765/` (`--port` to change). On the Impact analysis page, pick a target, then use **Explain impact and risks** or ask a question. The answer is a short summary, the affected processes and objects, risk flags (shared tables, dependency cycles, approximate job-level edges, dynamic SQL, loops, high analyzer complexity), and what to check first.
+This builds the lineage, then serves the viewer at `http://127.0.0.1:8765/` (`--port` to change). On the Impact analysis page, pick a target, then use **Explain impact and risks** or ask a question. The answer is a short summary, the affected processes and objects, risk flags (shared tables, dependency cycles, approximate job-level edges, dynamic SQL, loops, high analyzer complexity), and what to check first. Object and process names in the answer link to their details. Follow-up questions keep the last 3 turns.
 
-- **Endpoint**: any chat serving endpoint in the workspace, for example a Foundation Model or external model behind Unity AI Gateway, so the gateway's permissions, rate limits, guardrails, and usage tracking apply.
+- **Endpoint**: any chat serving endpoint in the workspace, for example a Foundation Model or external model behind Unity AI Gateway, so the gateway's permissions, rate limits, guardrails, and usage tracking apply. Requests carry the usage context `client=sts-lb-lineage`.
 - **Auth**: the Databricks CLI profile, through the Databricks SDK. The credential stays in the Python process and never reaches the browser.
-- **What is sent**: only the selected impact result, at most 300 objects with their names, roles, processes, and the involved programs' technology, analyzer complexity, and dynamic-SQL / loop counts. No source code or SQL text.
-- **Local server protections**: binds to `127.0.0.1` only; checks the `Host` header; requires a per-run session token that only the served page has; accepts JSON only and caps the request size and question length. The answer is rendered as text, never as HTML.
+- **What is sent**: only the selected impact result, at most 300 objects with their names, roles, processes, and the involved programs' technology, analyzer complexity, and dynamic-SQL / loop counts, plus up to 3 earlier questions and answers. No source code or SQL text.
+- **Local server protections**: binds to `127.0.0.1` only; checks the `Host` header; requires a per-run session token that only the served page has; accepts JSON only and caps the request size, question length, and history. The answer is rendered as text, never as HTML.
+- Answers are not streamed: the server returns the full answer, which keeps the local server simple.
 - The model is told to use only the context it receives. AI output can still be wrong; check it against the lineage.
 - Without `--serve`, the HTML file works as before, with no AI panel and no network access.
 
@@ -70,7 +100,7 @@ This builds the lineage, then serves the viewer at `http://127.0.0.1:8765/` (`--
 
 | File | Content |
 |---|---|
-| `lineage.json` | Nodes, edges, programs, and `insights` (summary, processes, process edges, shared tables, statistics, trust checks) |
+| `lineage.json` | Nodes, edges, programs, `insights` (summary, processes, process edges, shared tables, statistics, trust checks), and `columns` / `diff` when asked |
 | `nodes.csv`, `edges.csv` | Lineage, ready to load into Delta |
 | `processes.csv`, `hubs.csv` | Process summary and shared tables |
 | `uc_mapping.csv` | Suggested Unity Catalog target per table |
@@ -98,18 +128,26 @@ CSV cells that start with `=`, `+`, `-`, or `@` get a leading `'` so spreadsheet
 
 ```sh
 # suggested targets: layer from the role (source -> bronze, intermediate -> silver, terminal -> gold)
-uv run sts_lb_lineage.py report.json --uc-catalog main --uc-pattern "{catalog}.{layer}_{schema}.{table}"
+sts-lb-lineage report.json --uc-catalog main --uc-pattern "{catalog}.{layer}_{schema}.{table}"
 
-# table volumes (CSV columns: table, rows, bytes), for example exported from a Lakebridge Profiler extract
-uv run sts_lb_lineage.py report.json --volumes volumes.csv
+# table volumes: a CSV (columns: table, rows, bytes) or a Lakebridge Profiler DuckDB extract
+sts-lb-lineage report.json --volumes volumes.csv
+sts-lb-lineage report.json --profiler profiler_extract.db
 
-# push the legacy lineage as Unity Catalog external lineage
-uv run sts_lb_lineage.py report.json --source-system TERADATA --uc-prefix legacy --uc-push <profile>
+# push the legacy lineage as Unity Catalog external lineage, and link it to migrated UC tables
+sts-lb-lineage report.json --source-system TERADATA --uc-prefix legacy --uc-push <profile> --uc-link
+
+# remove what --uc-push created with this prefix
+sts-lb-lineage --uc-prefix legacy --uc-remove <profile>
+
+# export the lineage and insights to Delta tables
+sts-lb-lineage report.json --uc-export <catalog>.<schema> --profile <profile> --warehouse <warehouse-id>
 ```
 
 - **Mapping**: a suggestion only. Temp tables and orphans get no target.
-- **Volumes**: matched on the full name. A bare name matches only when one side has no schema.
-- **External lineage**: one external metadata object per legacy table (`<prefix>__<name>`, with the legacy name, role, process, and suggested target as properties) and one relationship per table-to-table edge. `--uc-push` prints the workspace and counts, asks you to type `yes` (`--yes` skips the prompt), checks the per-metastore limits (10,000 objects, 100,000 relationships), and skips objects that already exist, so reruns are safe. See [external lineage](https://docs.databricks.com/aws/en/data-governance/unity-catalog/external-lineage).
+- **Volumes**: matched on the full name. A bare name matches only when one side has no schema. `--profiler` scans the extract for a table with a table-name column and a row-count or size column, and prints the table it used. CSV values win over Profiler values.
+- **External lineage**: one external metadata object per legacy table (`<prefix>__<name>`, with the legacy name, role, process, and suggested target as properties) and one relationship per table-to-table edge. `--uc-link` also links each legacy table to its suggested UC table, when that table exists, so the Catalog Explorer lineage of the migrated table shows its legacy upstream. `--uc-push` prints the workspace and a plan (new and existing objects), asks you to type `yes` (`--yes` skips the prompt), checks the per-metastore limits (10,000 objects, 100,000 relationships), and skips objects that already exist, so reruns are safe. Needs `CREATE EXTERNAL METADATA` on the metastore. See [external lineage](https://docs.databricks.com/aws/en/data-governance/unity-catalog/external-lineage).
+- **Delta export**: creates the schema and a volume `sts_lb_lineage_files` if missing, uploads the rows as JSON lines, and creates or replaces the tables `lineage_nodes`, `lineage_edges`, `lineage_processes`, `lineage_shared_tables`, `lineage_programs`, `lineage_columns`, and `lineage_summary`. Object names are data in the files, never SQL text; the catalog and schema must be plain identifiers.
 
 ## Analyzer quirks handled (databricks-bb-analyzer 0.3.1)
 
@@ -119,16 +157,18 @@ uv run sts_lb_lineage.py report.json --source-system TERADATA --uc-prefix legacy
 
 ## Limits
 
-- Job-grain ETL edges link all inputs of a job to all its outputs, so multi-flow mappings over-link. The trust checks count them.
-- No column-level lineage (not in the analyzer JSON).
-- Names come through as the analyzer writes them (ETL instance names, unqualified SQL variables).
+- Job-grain ETL edges link all inputs of a job to all its outputs, so multi-flow mappings over-link. The trust checks count them. The analyzer JSON gives only transformation counts per job, not the flow between them, so a finer grain is not possible.
+- Column lineage needs embedded SQL. Mappings without SQL text have no column lineage.
+- Without `--search-path` and `--collapse-instances`, names come through as the analyzer writes them.
 
 ## Maintainers
 
 ```sh
-uv run --with pytest pytest -q                       # tests (synthetic fixtures)
-cd viewer && npm ci --legacy-peer-deps && npm run build   # rebuild lineage_viewer.html
+uv run -p 3.13 --no-project --with-editable '.[test,columns,profiler,databricks]' pytest -q   # tests (synthetic fixtures)
+cd viewer && npm ci --legacy-peer-deps && npm run build   # rebuild sts_lb_lineage/lineage_viewer.html
 cp ../path/to/lineage.json public/sample.json && npm run dev   # live preview
 ```
+
+CI runs the tests on pull requests that touch this folder (`.github/workflows/sts-lb-lineage-tests.yml`).
 
 `npm audit` reports a zod advisory (GHSA-mrhx-c7xc-m3w5) through `@databricks/design-system`. zod is not in the built `lineage_viewer.html`; it only affects the build machine.

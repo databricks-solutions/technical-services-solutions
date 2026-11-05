@@ -79,11 +79,28 @@ export interface Statistics {
   crossProcessLinks: number;
   selfContainedProcesses: number;
 }
+export interface ColumnEdge {
+  from: string;
+  to: string;
+  via: string[];
+}
+export interface Diff {
+  previous: string;
+  addedObjects: string[];
+  removedObjects: { id: string; name: string; kind: string }[];
+  addedEdges: { from: string; to: string; kind: string }[];
+  removedEdges: { from: string; to: string; kind: string }[];
+  addedProcesses: string[];
+  removedProcesses: string[];
+  movedObjects: { id: string; from: string | null; to: string | null }[];
+}
 export interface LineageDoc {
   insights: Insights;
   nodes: LNode[];
   edges: LEdge[];
   programs: LProgram[];
+  columns?: ColumnEdge[];
+  diff?: Diff;
 }
 
 export const LEVELS = ['LOW', 'MEDIUM', 'HIGH', 'COMPLEX', 'VERY_HIGH'] as const;
@@ -110,8 +127,8 @@ export async function loadDoc(): Promise<LineageDoc> {
   let doc: LineageDoc;
   if (raw && raw !== PLACEHOLDER) doc = JSON.parse(raw);
   else if (import.meta.env.DEV) doc = await fetch('./sample.json').then((r) => r.json());
-  else throw new Error('This file has no lineage data. Generate it with sts_lb_lineage.py.');
-  if (!doc.insights) throw new Error('This lineage file has no insights. Regenerate it with the current sts_lb_lineage.py.');
+  else throw new Error('This file has no lineage data. Generate it with sts-lb-lineage.');
+  if (!doc.insights) throw new Error('This lineage file has no insights. Regenerate it with the current sts-lb-lineage.');
   return doc;
 }
 
@@ -259,7 +276,7 @@ export function fmtBytes(b?: number): string {
   return `${v >= 10 || i === 0 ? Math.round(v) : v.toFixed(1)} ${u[i]}`;
 }
 
-// ---------- optional AI (only when served by `sts_lb_lineage.py --serve`) ----------
+// ---------- optional AI (only when served by `sts-lb-lineage --serve`) ----------
 
 /** Session token injected by the local server; absent (placeholder) when opened from file://. */
 export function aiSession(): string | null {
@@ -274,7 +291,7 @@ export async function aiStatus(): Promise<{ endpoint: string; host: string } | n
   return r.ok ? r.json() : null;
 }
 
-export async function aiAsk(body: { target: string; mode: string; to?: string; question?: string }) {
+export async function aiAsk(body: { target: string; mode: string; to?: string; question?: string; history?: { q: string; a: string }[] }) {
   const s = aiSession();
   if (!s) throw new Error('AI is available only when the viewer is served with --serve.');
   const r = await fetch('/api/ai', {

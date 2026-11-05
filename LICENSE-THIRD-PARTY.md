@@ -144,15 +144,19 @@ bundle in `app/frontend/static` includes React):
 
 ## dw-migration/sts-lb-lineage (STS Lakebridge Lineage)
 
-Python runtime dependencies (declared in the
-[`sts_lb_lineage.py`](./dw-migration/sts-lb-lineage/sts_lb_lineage.py) PEP 723 header):
+Optional Python dependencies (extras in
+[`pyproject.toml`](./dw-migration/sts-lb-lineage/pyproject.toml); the core uses only the standard library):
 
 | Dependency | Purpose | License |
 |------------|---------|---------|
 | [databricks-bb-analyzer](https://github.com/databrickslabs/bladerunner) | Lakebridge Analyzer (used only with `--run`) | Databricks License |
-| [databricks-sdk](https://github.com/databricks/databricks-sdk-py) | Unity Catalog external lineage (used only with `--uc-push`) | Apache-2.0 |
+| [databricks-sdk](https://github.com/databricks/databricks-sdk-py) | Unity Catalog external lineage, Delta export, AI endpoint calls | Apache-2.0 |
+| [sqlglot](https://github.com/tobymao/sqlglot) | Column lineage from embedded SQL (used only with `--columns`) | MIT |
+| [DuckDB](https://github.com/duckdb/duckdb) | Read Lakebridge Profiler extracts (used only with `--profiler`) | MIT |
 
-The prebuilt viewer (`lineage_viewer.html`) bundles these packages and their
+Python build-time only: [Hatchling](https://github.com/pypa/hatch) (MIT). Tests: [pytest](https://github.com/pytest-dev/pytest) (MIT).
+
+The prebuilt viewer (`sts_lb_lineage/lineage_viewer.html`) bundles these packages and their
 transitive dependencies; [`viewer/package-lock.json`](./dw-migration/sts-lb-lineage/viewer/package-lock.json)
 is the version-pinned list:
 

@@ -1,6 +1,6 @@
 """AI-assisted impact analysis for sts-lb-lineage through a Databricks serving endpoint.
 
-`sts_lb_lineage.py ... --serve --profile P --endpoint E` serves the viewer on 127.0.0.1 and
+`sts-lb-lineage ... --serve --profile P --endpoint E` serves the viewer on 127.0.0.1 and
 answers the viewer's "Explain impact" / "Ask" requests. The server builds the context from the
 lineage itself (the browser only names a target), calls the endpoint with the Databricks CLI
 profile, and never sends the Databricks credential to the browser.
@@ -15,8 +15,10 @@ from collections import defaultdict, deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-MAX_BODY = 8_000  # bytes per request from the viewer
+MAX_BODY = 24_000  # bytes per request from the viewer (question plus short history)
 MAX_QUESTION = 1_000  # characters
+MAX_HISTORY = 3  # earlier question/answer turns kept per request
+MAX_ANSWER = 4_000  # characters kept from each earlier answer
 MAX_OBJECTS = 300  # objects sent to the endpoint per request
 SESSION_TAG = '<meta name="sts-ai-session" content="__AI_SESSION__">'
 
@@ -177,19 +179,35 @@ def impact_context(
     }
 
 
-def messages_for(ctx: dict, question: str | None) -> list[tuple[str, str]]:
+def clean_history(raw) -> list[tuple[str, str]]:
+    """Earlier turns from the browser: a list of {q, a} strings, capped and truncated."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise TypeError("bad history")
+    out = []
+    for t in raw[-MAX_HISTORY:]:
+        if not isinstance(t, dict) or not all(isinstance(t.get(k), str) for k in "qa"):
+            raise TypeError("bad history turn")
+        out.append((t["q"][:MAX_QUESTION], t["a"][:MAX_ANSWER]))
+    return out
+
+
+def messages_for(
+    ctx: dict, question: str | None, history: list[tuple[str, str]] = ()
+) -> list[tuple[str, str]]:
     task = (
         EXPLAIN_PROMPT
         if not question
         else f"Answer this question about the context:\n{question}"
     )
-    return [
-        ("system", SYSTEM_PROMPT),
-        (
-            "user",
-            f"{task}\n\nContext (JSON):\n{json.dumps(ctx, separators=(',', ':'))}",
-        ),
-    ]
+    context = f"Context (JSON):\n{json.dumps(ctx, separators=(',', ':'))}"
+    if not history:
+        return [("system", SYSTEM_PROMPT), ("user", f"{task}\n\n{context}")]
+    msgs = [("system", SYSTEM_PROMPT)]
+    for i, (q, a) in enumerate(history):
+        msgs += [("user", f"{q}\n\n{context}" if i == 0 else q), ("assistant", a)]
+    return msgs + [("user", task)]
 
 
 def sdk_caller(profile: str, endpoint: str):
@@ -208,6 +226,7 @@ def sdk_caller(profile: str, endpoint: str):
                 for role, content in msgs
             ],
             max_tokens=1200,
+            usage_context={"client": "sts-lb-lineage"},
         )
         choice = (r.choices or [None])[0]
         return (
@@ -295,6 +314,7 @@ def make_handler(html: bytes, d: dict, ask, endpoint: str, host: str, token: str
                 question = req.get("question")
                 if question is not None:
                     question = str(question).strip()[:MAX_QUESTION] or None
+                history = clean_history(req.get("history")) if question else []
                 ctx = impact_context(d, target, mode, to)
             except (
                 KeyError,
@@ -309,7 +329,7 @@ def make_handler(html: bytes, d: dict, ask, endpoint: str, host: str, token: str
                     429, {"error": "another request is running; try again"}
                 )
             try:
-                answer = ask(messages_for(ctx, question))
+                answer = ask(messages_for(ctx, question, history))
             except Exception as e:  # noqa: BLE001 - keep SDK details (host, config) out of the browser
                 print(f"endpoint call failed: {type(e).__name__}: {e}", file=sys.stderr)
                 return self._json(

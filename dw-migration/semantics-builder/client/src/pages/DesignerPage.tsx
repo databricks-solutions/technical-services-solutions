@@ -418,6 +418,18 @@ function Designer({
   };
   const save = () => run('save', `/api/projects/${projectId}/designs`, { baseVersion: draft.version, yaml });
 
+  // AI help for a saved draft with errors or failed tests. The user can still fix it by hand.
+  const savedErrors = draft.issues.filter((i) => i.severity === 'error');
+  const failed =
+    data.validation?.version === draft.version ? data.validation.results.filter((r) => r.status !== 'passed') : [];
+  const aiFix = dirty
+    ? undefined
+    : savedErrors.length
+      ? `Fix these errors in the metric view: ${savedErrors.map((i) => i.message).join('; ')}`
+      : failed.length
+        ? `These tests failed: ${failed.map((r) => `${r.name}: ${r.detail}`).join('; ')}. Fix the metric view so they pass.`
+        : undefined;
+
   // One clear next action, from the state of the draft.
   const next: { text: string; action?: { label: string; onClick: () => void; disabled?: boolean } } = errors
     ? {
@@ -482,6 +494,18 @@ function Designer({
             onClick={next.action.onClick}
           >
             {next.action.label}
+          </Button>
+        )}
+        {aiFix && (
+          <Button
+            componentId="gsb.designer.ai_fix"
+            loading={busy === 'refine'}
+            disabled={!!busy}
+            onClick={() =>
+              run('refine', `/api/projects/${projectId}/designs/refine`, { instruction: aiFix.slice(0, 2000) })
+            }
+          >
+            Fix with AI
           </Button>
         )}
       </div>
@@ -561,6 +585,13 @@ function Designer({
                   onClick={() => run('generate', `/api/projects/${projectId}/designs/generate`, {})}
                 >
                   Generate a new design
+                </Button>
+                <Button
+                  componentId="gsb.designer.retemplate"
+                  disabled={dirty || !!busy}
+                  onClick={() => run('save', `/api/projects/${projectId}/designs/template`, {})}
+                >
+                  Start from a template
                 </Button>
               </div>
               {(busy === 'refine' || busy === 'generate') && (

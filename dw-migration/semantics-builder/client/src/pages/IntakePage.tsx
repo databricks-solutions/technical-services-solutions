@@ -153,6 +153,19 @@ function BriefPanel({
   const [busy, setBusy] = useState<'refine' | 'confirm' | 'edit'>();
   const [error, setError] = useState<string>();
   const confirmed = version.status === 'confirmed';
+  const SECTIONS = {
+    keyQuestions: 'key questions',
+    measures: 'measures',
+    dimensions: 'dimensions',
+    timeGrains: 'time grains',
+    candidateSources: 'candidate sources',
+    glossary: 'glossary',
+  } as const;
+  const empty = confirmed
+    ? []
+    : Object.entries(SECTIONS).flatMap(([k, label]) =>
+        version.brief[k as keyof typeof SECTIONS].length ? [] : [label]
+      );
 
   const run = (kind: 'refine' | 'confirm' | 'edit', path: string, body: unknown) => {
     setBusy(kind);
@@ -232,6 +245,20 @@ function BriefPanel({
           <Button componentId="gsb.brief.edit" disabled={!!busy || editing} onClick={() => setEditing(true)}>
             Edit by hand
           </Button>
+          {empty.length > 0 && !editing && (
+            <Button
+              componentId="gsb.brief.suggest"
+              loading={busy === 'refine'}
+              disabled={!!busy}
+              onClick={() =>
+                run('refine', `/api/projects/${projectId}/briefs/refine`, {
+                  instruction: `Suggest content for the empty sections: ${empty.join(', ')}. Keep the other sections.`,
+                })
+              }
+            >
+              Suggest the empty sections with AI
+            </Button>
+          )}
           <Button componentId="gsb.brief.start_over" disabled={!!busy} onClick={onStartOver}>
             Start over
           </Button>

@@ -509,7 +509,13 @@ def build_model_service(ep: planner.LegacyEndpoint, row: planner.PlanRow, provid
         while name in used_names:  # 'gpt-5' and 'gpt_5' would both become gpt_5
             name, n = f"{base}_{n}", n + 1
         used_names.add(name)
-        if d["type"] == "external_model":
+        uc_model = planner.ppt_uc_model(d)
+        if uc_model:
+            # A databricks-* endpoint behind the databricks-model-serving provider: route to the same model.
+            dests.append(({"name": name, "destination_type": "DESTINATION_TYPE_PAY_PER_TOKEN_FOUNDATION_MODEL",
+                           "pay_per_token_config": {"model": f"models/{uc_model}"}},
+                          pct.get(d.get("served_entity"))))
+        elif d["type"] == "external_model":
             family = provider_family(d)
             api_types = NATIVE_API_TYPES.get((family, d.get("task")))
             if not api_types:
@@ -582,8 +588,10 @@ def build_model_service(ep: planner.LegacyEndpoint, row: planner.PlanRow, provid
 def _dest_sig(d: dict) -> tuple:
     ext = d.get("external_model_config") or {}
     pt = d.get("provisioned_throughput_config") or {}
+    ppt = d.get("pay_per_token_config") or {}
     return (d.get("name"), d.get("destination_type"), ext.get("model_provider_service"),
-            (ext.get("target") or {}).get("model"), pt.get("model_serving_endpoint"), d.get("traffic_percentage"))
+            (ext.get("target") or {}).get("model"), pt.get("model_serving_endpoint"), ppt.get("model"),
+            d.get("traffic_percentage"))
 
 
 def _limit_sig(l: dict) -> tuple:
@@ -877,7 +885,7 @@ def apply(w: WorkspaceClient, endpoint_names: list[str] | None, target_catalog: 
         groups: dict[str, list[dict]] = {}
         for r in selected:
             for d in by_name[r.legacy_endpoint].destinations:
-                if d["type"] == "external_model":
+                if planner.needs_provider_service(d):
                     groups.setdefault(planner._provider_key(d), []).append(d)
         provider_fqn = {p["provider_key"]: p["provider_service"] for p in all_providers}
         if secrets.create_uc:
@@ -907,7 +915,7 @@ def apply(w: WorkspaceClient, endpoint_names: list[str] | None, target_catalog: 
 
         for r in selected:
             ep = by_name[r.legacy_endpoint]
-            if any(planner._provider_key(d) in failed_providers for d in ep.destinations if d["type"] == "external_model"):
+            if any(planner._provider_key(d) in failed_providers for d in ep.destinations if planner.needs_provider_service(d)):
                 a.log(type="model_service", name=r.target_service, action="skipped", reason="provider service not available")
                 continue
             try:
@@ -2073,7 +2081,7 @@ def terraform(w: WorkspaceClient, endpoint_names: list[str] | None, target_catal
     groups: dict[str, list[dict]] = {}
     for r in selected:
         for d in by_name[r.legacy_endpoint].destinations:
-            if d["type"] == "external_model":
+            if planner.needs_provider_service(d):
                 groups.setdefault(planner._provider_key(d), []).append(d)
 
     blocks, skipped, provider_res = [], [], {}
@@ -2094,7 +2102,7 @@ def terraform(w: WorkspaceClient, endpoint_names: list[str] | None, target_catal
                       f'  config = {to_hcl(body["config"], 1)}\n}}\n')
     for r in selected:
         ep = by_name[r.legacy_endpoint]
-        keys = [planner._provider_key(d) for d in ep.destinations if d["type"] == "external_model"]
+        keys = [planner._provider_key(d) for d in ep.destinations if planner.needs_provider_service(d)]
         if any(k not in provider_res for k in keys):
             skipped.append({"name": r.target_service, "reason": "provider service not generated"})
             continue

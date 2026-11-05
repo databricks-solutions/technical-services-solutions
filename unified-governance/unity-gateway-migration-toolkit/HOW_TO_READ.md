@@ -55,12 +55,11 @@ Blocker types:
 | `pay_per_token_call` | Code calls a Databricks pay-per-token endpoint | Code references a `databricks-*` endpoint. The call fails once Enforce is on. If the endpoint also embeds for an AI Search index, switch only the direct calls and keep the endpoint. |
 | `v2_workspace_call` | Code calls a v2 workspace endpoint | Code calls a workspace-bound v2 endpoint by its flat name. Fix: keep the `/ai-gateway/` route and change the model (see CODE_FIXES.md). |
 | `ai_query_custom` | ai_query calls a model with no Unity Gateway service yet | Keep the call, or switch it to a `system.ai` model. |
-| `vector_search` | AI Search index embeds with a legacy endpoint | Keep the endpoint, and don't enforce Unity Gateway until the index can re-embed with a supported `system.ai` embedding service. Support is rolling out model by model: check the AI Search docs. |
+| `vector_search` | AI Search index embeds with a legacy endpoint | Keep the endpoint and don't enforce Unity Gateway yet. AI Search can't embed with a Unity Gateway service (no date announced), and an index can't switch its embedding endpoint: it has to be recreated. An index on a `databricks-*` embedding stops at the deadline even if Enforce is never turned on. |
 | `unresolved_endpoint_call` | Code calls a serving endpoint the scan can't name | The endpoint name is built at run time, or a client bound to `/serving-endpoints` (`get_open_ai_client()`, `serving_endpoints.query`, the MLflow deployments client, `ChatDatabricks`, an `endpoints:/` URI) gets it from a variable. Find which endpoint the call reaches: rewrite a legacy one as the finding says (changing only the name gives a 404). A custom model or feature serving one needs no change; putting its name in the code or a config value lets the next scan confirm it. |
-| `external_model_on_ppt` | External model endpoint forwards to a pay-per-token endpoint | It uses the `databricks-model-serving` provider to reach a `databricks-*` endpoint, which Enforce stops, so it breaks too. Move its callers to the `system.ai` model, or to a model service with that destination. |
+| `external_model_on_ppt` | External model endpoint forwards to a pay-per-token endpoint | It uses the `databricks-model-serving` provider to reach a `databricks-*` endpoint, which Enforce stops, so it breaks too. Move its callers to the `system.ai` model, or to the model service Apply creates (a pay-per-token destination on the same model, keeping rate limits and the inference table). |
 | `agent_bricks_vector_search` | Agent Bricks agent uses AI Search | Check its index and embedding model. |
 | `app_resource` | App declares a legacy serving endpoint resource | Replace the resource with the Unity Gateway service. |
-| `agent` | Agent endpoint runs on legacy serving | The agent has requests in the window. Redeploy it on Databricks Apps. |
 
 Warning types:
 
@@ -74,7 +73,8 @@ Warning types:
 | `tabular_endpoint_call` | Code sends tabular input to an endpoint the scan can't name | `serving_endpoints.query` with a variable name and `dataframe_records`, `dataframe_split`, `instances` or `inputs`: the shape a custom model endpoint takes, so it's usually no change. Confirm which endpoint it calls. Reported only when the workspace has endpoints that retire. |
 | `custom_endpoint_inner_call` | A serving endpoint may call this endpoint from its model code | Requests from a `System Service Principal` are usually a custom agent's automatic authentication. Find the agent, re-log it with explicit credentials to call the model service (CODE_FIXES.md marks calls in MLflow model code), and turn on its usage tracking. Credentials: service principal OAuth (M2M) first, an `ai-gateway` scoped PAT as the fallback, both as `{{secrets/<scope>/<key>}}` references, never a literal value. |
 | `no_traffic_in_window` | No requests in the window and usage tracking is off | Confirm with the owners that no infrequent job calls it. |
-| `dormant_agent_endpoint` | Agent endpoint has no traffic in the window | Confirm with the owner that it is unused. |
+| `agent_endpoint` | Agent endpoint: the LLM calls inside it must move | The endpoint isn't retired and its callers need no change. Its inner LLM calls move to `system.ai` or model services: automatic authentication can't call Unity Gateway services, so re-log it with explicit credentials, or move it to Databricks Apps. The detail gives its requests in the window. |
+| `agent_bricks_endpoint` | Agent Bricks agent: a legacy offering, replaced by Genie Agents | A Knowledge Assistant or Supervisor Agent endpoint. No code to change. Plan the move to Genie Agents, and check for an AI Search index before enforcing. |
 | `legacy_traffic_kept_after_enforce` | Callers use an external or PT endpoint that outlives Enforce | It keeps working after Enforce and retires on the deadline in [USER_GUIDE.md](USER_GUIDE.md#the-deadline). |
 
 Code-reference warnings use the reference pattern as their type, for example `sdk_serving_query` or `ai_gateway_regional_host`. Each has its fix in CODE_FIXES.md. Calls to custom model endpoints are listed in CODE_FIXES.md as `custom_endpoint_call` (no change) and are not findings: custom model endpoints aren't retired or affected by Enforce.
@@ -93,10 +93,10 @@ Code-reference warnings use the reference pattern as their type, for example `sd
 | External model | OpenAI, Anthropic and other providers. Apply can create a service |
 | Provisioned throughput | Dedicated capacity. Apply can wrap it |
 | Custom ML model | Your own models. Not affected |
-| Agent | Agent served on legacy serving. Redeploy it on Databricks Apps |
+| Agent | Agent served on legacy serving. Not retired: only the LLM calls inside it move |
 | v2 workspace endpoint | An AI Gateway v2 endpoint with no serving-endpoint object. Its only trace is its traffic, so it is inventoried from `system.ai_gateway.usage`. Its source in `legacy_endpoints.csv` and `migration_plan.csv` is `AI Gateway v2 (workspace-bound)` |
 
-The plan actions are "Use a system.ai model" (`use_system_ai`), "Create a Unity Gateway service" (`create_model_service`), "Out of scope (custom ML)" (`out_of_scope`) and "Manual (see needs)" (`manual`). `manual` covers a system endpoint with no `system.ai` model, and a v2 endpoint whose target doesn't support an API type its callers use.
+The plan actions are "Use a system.ai model" (`use_system_ai`), "Create a Unity Gateway service" (`create_model_service`), "Out of scope (custom model or agent)" (`out_of_scope`) and "Manual (see needs)" (`manual`). `manual` covers a system endpoint with no `system.ai` model, and a v2 endpoint whose target doesn't support an API type its callers use.
 
 - **Active endpoints:** the top 25 with traffic: endpoint, kind, requests, tokens, requesters, last request, target service.
 - **Who calls legacy endpoints:** the top 30 caller and endpoint pairs, with columns endpoint, caller, caller type, API, requests, last request and code found. "no code found: check jobs, external apps or local code" means the code isn't in a scanned folder. The caller type is explained in [Caller types](USER_GUIDE.md#caller-types).

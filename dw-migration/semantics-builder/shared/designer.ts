@@ -22,7 +22,7 @@ export interface DesignDraft {
   explanations: Explanations;
   tests: TestCase[];
   issues: MetricViewIssue[];
-  origin: 'generated' | 'refined' | 'edited' | 'pattern';
+  origin: 'generated' | 'refined' | 'edited' | 'pattern' | 'template';
   status: 'draft' | 'validated';
   createdBy: string;
   createdAt: string;

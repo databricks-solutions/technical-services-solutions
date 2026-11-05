@@ -44,6 +44,7 @@ const ORIGIN: Record<DesignDraft['origin'], string> = {
   refined: 'Changed by AI',
   edited: 'Edited',
   pattern: 'From a pattern',
+  template: 'From the template',
 };
 
 function YamlEditor({ value, onChange }: { value: string; onChange: (v: string) => void }) {
@@ -780,10 +781,10 @@ export function DesignerPage() {
   const [error, setError] = useState<string>();
   const data = view.data;
 
-  const generate = () => {
+  const start = (how: 'generate' | 'template') => {
     setBusy(true);
     setError(undefined);
-    api<DesignerView>(`/api/projects/${projectId}/designs/generate`, {}).then(
+    api<DesignerView>(`/api/projects/${projectId}/designs/${how}`, {}).then(
       (v) => {
         setBusy(false);
         view.setData(v);
@@ -803,11 +804,21 @@ export function DesignerPage() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center' }}>
           <Empty
             title="No metric view yet"
-            description="The AI designs a metric view from the confirmed brief and the profiled source tables. It reads metadata only, with your permissions."
+            description="The AI designs a metric view from the confirmed brief and the profiled source tables. It reads metadata only, with your permissions. Or start from the template, with no AI, and edit the YAML yourself."
             button={
-              <Button componentId="gsb.designer.generate" type="primary" loading={busy} onClick={generate}>
-                Generate design
-              </Button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <Button
+                  componentId="gsb.designer.generate"
+                  type="primary"
+                  loading={busy}
+                  onClick={() => start('generate')}
+                >
+                  Generate design
+                </Button>
+                <Button componentId="gsb.designer.template" disabled={busy} onClick={() => start('template')}>
+                  Start from a template
+                </Button>
+              </div>
             }
           />
           {busy && (

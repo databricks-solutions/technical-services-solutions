@@ -1,3 +1,4 @@
+import { templateDesign } from '../designer/template';
 import type { Application, Request } from 'express';
 import { z } from 'zod';
 import type { LakebasePool } from '@databricks/appkit';
@@ -266,6 +267,18 @@ export function registerDesignerRoutes(
         llmFor(req)
       );
       await repo.add(ctx.actor, ctx.project.id, { ...fromModel(out, ctx), origin: 'generated' });
+      return repo.view(ctx.project.id);
+    })
+  );
+
+  app.post(
+    '/api/projects/:id/designs/template',
+    handle(async (req) => {
+      const ctx = await context(req);
+      await repo.add(ctx.actor, ctx.project.id, {
+        ...fromModel(templateDesign(ctx.profiles), ctx),
+        origin: 'template',
+      });
       return repo.view(ctx.project.id);
     })
   );

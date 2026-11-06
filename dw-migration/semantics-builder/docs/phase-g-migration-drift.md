@@ -2,7 +2,7 @@
 
 From the original brief, module 5 "Migration & Custodian Utility": discover existing metrics, consolidate duplicate
 KPIs, adopt views, monitor drift, and show a health page per view. Adopt is done (phase e: import, versions,
-promote, restore). This phase adds drift, health, and discovery, in three steps.
+promote, restore). This phase adds drift, health, and discovery, in four steps.
 
 ## g1. Drift checks on demand, as the user
 

@@ -104,9 +104,9 @@ export function ImportModal({
   return (
     <Modal
       componentId="gsb.import.modal"
-      title="Import a metric view"
+      title={initialView ? `Adopt ${initialView}` : 'Adopt a metric view'}
       visible
-      okText="Import"
+      okText="Adopt"
       cancelText="Cancel"
       okButtonProps={{ disabled: !ready, loading: busy }}
       onCancel={onClose}

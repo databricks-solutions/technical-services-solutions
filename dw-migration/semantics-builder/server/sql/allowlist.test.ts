@@ -61,6 +61,18 @@ describe('checkStatement accepts the allowlist', () => {
   });
 });
 
+describe('checkStatement reads information_schema', () => {
+  it('accepts the metric view list of the library', () => {
+    expect(
+      checkStatement(
+        `SELECT table_catalog, table_schema, table_name, table_owner, CAST(last_altered AS STRING), comment
+         FROM system.information_schema.tables WHERE table_type = 'METRIC_VIEW'
+         ORDER BY last_altered DESC LIMIT 1000`
+      ).kind
+    ).toBe('read');
+  });
+});
+
 describe('checkStatement rejects everything else', () => {
   it.each([
     ['empty', '   '],

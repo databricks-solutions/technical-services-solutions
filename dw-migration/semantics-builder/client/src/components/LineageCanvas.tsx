@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   applyNodeChanges,
   Background,
@@ -266,16 +266,16 @@ export function LineageCanvas({
   // React Flow stores each node's measured size and dragged position through onNodesChange; the minimap needs the
   // size. New props keep the user's positions.
   const [state, setState] = useState(flowNodes);
-  useEffect(
-    () =>
-      setState((prev) =>
-        flowNodes.map((n) => {
-          const p = prev.find((x) => x.id === n.id);
-          return p ? { ...n, position: p.position, measured: p.measured } : n;
-        })
-      ),
-    [flowNodes]
-  );
+  const [source, setSource] = useState(flowNodes);
+  if (source !== flowNodes) {
+    setSource(flowNodes);
+    setState((prev) =>
+      flowNodes.map((n) => {
+        const p = prev.find((x) => x.id === n.id);
+        return p ? { ...n, position: p.position, measured: p.measured } : n;
+      })
+    );
+  }
   const flowEdges = useMemo<Edge[]>(
     () =>
       edges.map((e) => ({

@@ -50,7 +50,7 @@ createApp({
       registerOptimizeRoutes(app, pool, runFor, ucFor);
       registerDictionaryRoutes(app, pool, runFor);
       registerPromoteRoutes(app, pool, runFor, ucFor);
-      registerLibraryRoutes(app, pool);
+      registerLibraryRoutes(app, pool, runFor);
       registerImportRoutes(app, pool, ucFor);
       registerGovernRoutes(app, pool, runFor, ucFor);
       registerDriftRoutes(app, pool, runFor, ucFor);

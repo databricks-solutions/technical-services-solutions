@@ -1,6 +1,9 @@
-import type { Application } from 'express';
+import type { Application, Request } from 'express';
 import type { LakebasePool } from '@databricks/appkit';
-import type { LibraryRow } from '../../shared/promote';
+import type { AdoptableView, LibraryRow } from '../../shared/promote';
+import { sandboxSchema } from '../designer/validate';
+import { runStatement } from '../sql/runner';
+import type { RunDeps } from '../sql/runner';
 import { actorOf, handle } from './http';
 
 type Db = Pick<LakebasePool, 'query'>;
@@ -24,7 +27,49 @@ interface Row {
 }
 
 /** Every sub-project of the user with a design: its Unity Catalog view, promoted and latest versions. */
-export function registerLibraryRoutes(app: Application, db: Db) {
+const MAX_ADOPTABLE = 1000;
+
+export function registerLibraryRoutes(app: Application, db: Db, runFor: (req: Request) => RunDeps) {
+  /**
+   * Every metric view the user can see in Unity Catalog that the app does not manage for them: one read of
+   * information_schema, as the user, so it lists only what their privileges allow. Sandbox copies are left out.
+   */
+  app.get(
+    '/api/library/adoptable',
+    handle(async (req): Promise<AdoptableView[]> => {
+      const actor = actorOf(req);
+      const res = await runStatement(
+        `SELECT table_catalog, table_schema, table_name, table_owner, CAST(last_altered AS STRING), comment
+         FROM system.information_schema.tables WHERE table_type = 'METRIC_VIEW'
+         ORDER BY last_altered DESC LIMIT ${MAX_ADOPTABLE}`,
+        { actor, approved: false },
+        runFor(req)
+      );
+      const { rows: managed } = await db.query<{ target: string; mine: boolean }>(
+        `SELECT lower(promotion_target) AS target, bool_or(created_by = $1) AS mine
+         FROM gsb.project WHERE promotion_target IS NOT NULL GROUP BY lower(promotion_target)`,
+        [actor]
+      );
+      const byTarget = new Map(managed.map((m) => [m.target, m.mine]));
+      const sandbox = sandboxSchema()?.toLowerCase();
+      return res.rows.flatMap((r) => {
+        const fullName = [r[0], r[1], r[2]].join('.');
+        const key = fullName.toLowerCase();
+        if (sandbox && `${r[0]}.${r[1]}`.toLowerCase() === sandbox) return [];
+        if (byTarget.get(key) === true) return [];
+        return [
+          {
+            fullName,
+            owner: r[3] ?? null,
+            lastAltered: r[4] ?? null,
+            comment: r[5] ?? null,
+            managedByOther: byTarget.get(key) === false,
+          },
+        ];
+      });
+    })
+  );
+
   app.get(
     '/api/library',
     handle(async (req): Promise<LibraryRow[]> => {

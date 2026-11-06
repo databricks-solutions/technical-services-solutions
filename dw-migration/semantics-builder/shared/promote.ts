@@ -50,3 +50,13 @@ export interface LibraryRow {
   /** From the last drift check. null when the view was never checked. */
   health: { status: 'ok' | 'warning' | 'error'; at: string } | null;
 }
+
+/** A metric view in Unity Catalog that the app does not manage for this user yet. */
+export interface AdoptableView {
+  fullName: string;
+  owner: string | null;
+  lastAltered: string | null;
+  comment: string | null;
+  /** True when another user's sub-project already manages it. */
+  managedByOther: boolean;
+}

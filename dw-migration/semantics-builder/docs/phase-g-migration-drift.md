@@ -46,4 +46,7 @@ A Lakeflow job that runs the same checks daily and writes findings to Lakebase. 
 - Order: g1, g2, g3, g4.
 - Data drift: store measure totals only, opt-in per view.
 - Schedule: the job runs as the user who turns on the schedule.
+- g3 (2026-11-06): check on open first. When the user opens the app, it checks their promoted views whose last
+  check is older than a limit (default one day), as the user. A bundle job `run_as` the user, writing findings to
+  a UC table, comes later if an unattended schedule is needed.
 - Discover in v1: metric views and SQL views only.

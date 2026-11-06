@@ -35,6 +35,8 @@ test('pick sources, check how they relate, and assess them', async ({ page }) =>
   await page.goto('/');
   await page.getByRole('heading', { name: project }).click();
   await page.getByRole('link', { name: sub }).first().click();
+  // A sub-project opens on Overview.
+  await openModule(page, 'Sources & Readiness');
   await pickTables(page, 'sandbox_source', 'bakehouse', ['sales_transactions', 'sales_franchises', 'sales_customers']);
   await page.getByRole('button', { name: 'Check how they relate' }).click();
   // Wait for the check result, then keep all three even if a rule does not join one of them.

@@ -49,6 +49,8 @@ resources:
         - catalog.catalogs:read
         - catalog.schemas:read
         - catalog.tables:read
+        # Ask Genie (Genie space) and Ask Genie One (OneChat). Keep it here: each deploy resets the scopes to this list.
+        - genie
 
       # The resources which this app has access to.
       resources:

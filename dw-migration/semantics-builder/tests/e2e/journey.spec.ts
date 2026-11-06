@@ -72,10 +72,14 @@ test('build a design by hand, with no AI', async ({ page }) => {
   await openModule(page, 'Metric Designer');
   await page.getByRole('button', { name: 'Start from a template' }).click();
   await expect(page.getByText('From the template')).toBeVisible({ timeout: 120_000 });
+  await page.getByRole('button', { name: 'Edit fields' }).click();
   await page.locator('#fb-name').fill('Hand Count');
   await page.locator('#fb-expr').fill('COUNT(1)');
   await page.getByRole('button', { name: 'Add the measure' }).click();
-  await expect(page.getByRole('article', { name: 'Hand Count' })).toBeVisible({ timeout: 120_000 });
+  await page.getByRole('button', { name: 'Save as a new version' }).click();
+  // Scrollable Du Bois tables carry the label on a wrapper, so they are found by label.
+  await expect(page.getByLabel('Measures')).toContainText('Hand Count', { timeout: 120_000 });
+  await expect(page.getByRole('button', { name: 'Edit fields' })).toBeEnabled();
   await page.getByRole('tab', { name: /^Tests/ }).click();
   await page.getByRole('button', { name: 'Edit tests by hand' }).click();
   await page.getByRole('button', { name: 'Add a test' }).click();
@@ -114,6 +118,15 @@ test('stress test two queries', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Materialization suggestions' })).toBeVisible();
   await page.getByRole('tab', { name: 'Cost' }).click();
   await expect(page.getByLabel('Runs and their cost')).toContainText('Stress test');
+
+  // Roll back: restore version 1 (the template, the oldest row) as a new version; then the Unity Catalog tab asks for a target.
+  await openModule(page, 'Metric Designer');
+  await page.getByRole('tab', { name: /^History/ }).click();
+  await page.getByRole('button', { name: 'Open' }).last().click();
+  await page.getByRole('button', { name: 'Restore as a new version' }).click();
+  await expect(page.getByText('Restored', { exact: true }).first()).toBeVisible({ timeout: 60_000 });
+  await page.getByRole('tab', { name: 'Unity Catalog' }).click();
+  await expect(page.getByText('Set the Unity Catalog view to promote to.')).toBeVisible({ timeout: 60_000 });
 });
 
 test('delete the project from its page, with the sandbox cleanup', async ({ page }) => {

@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Alert, Button, FormUI, Input, SimpleSelect, SimpleSelectOption, Typography } from '@databricks/design-system';
 import { AGGREGATIONS, GRAINS, fieldExpr } from '../../../shared/designer';
-import { renderMetricView, validateMetricView } from '../../../shared/metricView';
 import type { Join, MetricView } from '../../../shared/metricView';
 import { useResource } from '../api';
 
@@ -19,15 +18,12 @@ const refsOf = (joins: Join[] | undefined, parent = ''): { ref: string; table: s
 export function FieldBuilder({
   projectId,
   view,
-  busy,
-  disabled,
-  onSave,
+  onAdd,
 }: {
   projectId: string;
   view: MetricView;
-  busy: boolean;
-  disabled: boolean;
-  onSave: (yaml: string) => void;
+  /** Adds the field to the edited view. Saving the view is the caller's job. */
+  onAdd: (kind: 'measure' | 'dimension', field: { name: string; expr: string; comment?: string }) => void;
 }) {
   const columns = useResource<Columns>(`/api/projects/${projectId}/designs/columns`);
   const refs = useMemo(() => [{ ref: 'source', table: view.source }, ...refsOf(view.joins)], [view]);
@@ -52,18 +48,8 @@ export function FieldBuilder({
 
   const add = () => {
     const field = { name: name.trim(), expr: sql.trim(), ...(comment.trim() ? { comment: comment.trim() } : {}) };
-    const next: MetricView =
-      kind === 'measure'
-        ? { ...view, measures: [...view.measures, field] }
-        : { ...view, dimensions: [...view.dimensions, field] };
     if (!field.name || !field.expr) {
       setProblems(['Give the field a name and an expression.']);
-      return;
-    }
-    const yaml = renderMetricView(next);
-    const errors = validateMetricView(yaml).issues.filter((i) => i.severity === 'error');
-    if (errors.length) {
-      setProblems(errors.map((e) => e.message));
       return;
     }
     setProblems([]);
@@ -71,16 +57,16 @@ export function FieldBuilder({
     setColumn('');
     setExpr(undefined);
     setComment('');
-    onSave(yaml);
+    onAdd(kind, field);
   };
 
   return (
     <section aria-label="Add a field" style={{ display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 880 }}>
       <Typography.Title level={4} withoutMargins>
-        Add a field by hand
+        Add a field
       </Typography.Title>
       <Typography.Text color="secondary">
-        Pick the table and the column, or write the SQL. The field is saved as a new version.
+        Pick the table and the column, or write the SQL. Save the changes to create a new version.
       </Typography.Text>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
         <div>
@@ -220,7 +206,7 @@ export function FieldBuilder({
         />
       )}
       <div>
-        <Button componentId="gsb.field_builder.add" loading={busy} disabled={disabled} onClick={add}>
+        <Button componentId="gsb.field_builder.add" onClick={add}>
           Add the {kind}
         </Button>
       </div>

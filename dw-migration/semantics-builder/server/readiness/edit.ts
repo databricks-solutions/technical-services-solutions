@@ -8,7 +8,7 @@ const COMMENT = /^COMMENT ON (TABLE|COLUMN) (.+?) IS '((?:[^'\\]|\\.)*)'$/s;
 const PK = /PRIMARY KEY \((.*)\)$/s;
 const FK = /FOREIGN KEY \((.*?)\) REFERENCES (.+?) \((.*)\)$/s;
 
-const commentOf = (statement: string) => {
+export const commentOf = (statement: string) => {
   const m = COMMENT.exec(statement);
   if (!m) return null;
   const parts = ids(m[2]);
@@ -127,5 +127,31 @@ export function finalFix(
   return {
     statements: [fkStatement(fullName, references, columns, refColumns)],
     effect: { foreignKey: { columns, references, refColumns } },
+  };
+}
+
+/**
+ * A comment fix without the statements for one target (a column, or the table when column is null).
+ * Returns null when the fix has none for it.
+ */
+export function withoutTarget(
+  kind: Recommendation['kind'],
+  statements: string[],
+  target: { column: string | null } | { index: number }
+): { statements: string[]; effect: FixEffect } | null {
+  if (kind !== 'table_comment' && kind !== 'column_comments') return null;
+  const drop = (s: string, i: number) => {
+    if ('index' in target) return i === target.index;
+    const c = commentOf(s);
+    return (
+      !!c && (target.column === null ? c.column === null : c.column?.toLowerCase() === target.column.toLowerCase())
+    );
+  };
+  const kept = statements.filter((s, i) => !drop(s, i));
+  if (kept.length === statements.length) return null;
+  return {
+    statements: kept,
+    effect:
+      kind === 'table_comment' ? { tableComment: true } : { columns: kept.flatMap((s) => commentOf(s)?.column ?? []) },
   };
 }

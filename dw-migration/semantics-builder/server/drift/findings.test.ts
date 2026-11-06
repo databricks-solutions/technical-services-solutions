@@ -97,5 +97,5 @@ describe('totalsQuery', () => {
     const { validateMetricView } = await import('../../shared/metricView');
     const q = totalsQuery('main.m.v', validateMetricView(yaml).view!);
     expect(q).toEqual({ sql: 'SELECT MEASURE(`Revenue`) AS m0 FROM `main`.`m`.`v`', names: ['Revenue'] });
-   }, 30_000);
+  }, 30_000);
 });

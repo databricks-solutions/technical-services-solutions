@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate, useParams } from 'react-router';
+import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { useTab } from '../useTab';
 import {
   Alert,
@@ -31,7 +31,7 @@ import type {
 } from '../../../shared/readiness';
 import { api, useResource } from '../api';
 import { FixEditor } from '../components/FixEditor';
-import { WriteComment } from '../components/WriteComment';
+import { ColumnsEditor } from '../components/ColumnsEditor';
 import { OpenInCatalog } from '../components/OpenInCatalog';
 import { DictionaryCoverage } from '../components/DictionaryCoverage';
 import { DataState } from '../components/DataState';
@@ -46,14 +46,6 @@ const CHECK_TAG: Record<CheckStatus, { color: TagColor; label: string }> = {
   pass: { color: 'teal', label: 'Pass' },
   warn: { color: 'lemon', label: 'Warning' },
   fail: { color: 'coral', label: 'Fail' },
-};
-
-const STATUS_TAG: Record<Recommendation['status'], { color: TagColor; label: string }> = {
-  proposed: { color: 'default', label: 'Proposed' },
-  approved: { color: 'lemon', label: 'Running' },
-  applied: { color: 'teal', label: 'Applied' },
-  rejected: { color: 'default', label: 'Rejected' },
-  failed: { color: 'coral', label: 'Failed' },
 };
 
 const band = (score: number): [TagColor, string] =>
@@ -175,69 +167,23 @@ function ScoreSummary({ view }: { view: ReadinessView }) {
   );
 }
 
-function FixCard({
-  fix,
+function SourceDetail({
+  source,
   busy,
-  onApply,
-  onReject,
+  onRemove,
+  view,
+  onView,
+  onReviewKey,
 }: {
-  fix: Recommendation;
+  source: SourceReadiness;
   busy: boolean;
-  onApply: () => void;
-  onReject: () => void;
+  onRemove: () => void;
+  view: ReadinessView;
+  onView: (v: ReadinessView) => void;
+  onReviewKey: (r: Recommendation) => void;
 }) {
-  const open = isOpen(fix);
-  return (
-    <article
-      aria-label={fix.title}
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 8,
-        padding: 16,
-        border: '1px solid var(--db-border-base)',
-        borderRadius: 8,
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <Typography.Text bold>{fix.title}</Typography.Text>
-        {open && fix.scoreGain > 0 && (
-          <Tag componentId="gsb.sources.fix_gain" color="teal">
-            +{fix.scoreGain} points
-          </Tag>
-        )}
-        <Tag componentId="gsb.sources.fix_status" color={STATUS_TAG[fix.status].color}>
-          {STATUS_TAG[fix.status].label}
-        </Tag>
-      </div>
-      <Typography.Text color="secondary">{fix.rationale}</Typography.Text>
-      {open && <FixEditor rows={fix.rows} edits={{}} />}
-      {fix.error && <Alert componentId="gsb.sources.fix_error" type="error" closable={false} message={fix.error} />}
-      {fix.decidedBy && !open && (
-        <Typography.Text color="secondary" size="sm">
-          {STATUS_TAG[fix.status].label} by {fix.decidedBy}
-          {fix.decidedAt ? ` on ${new Date(fix.decidedAt).toLocaleString()}` : ''}
-        </Typography.Text>
-      )}
-      {open && (
-        <div style={{ display: 'flex', gap: 8 }}>
-          <Button componentId="gsb.sources.fix_review" type="primary" disabled={busy} onClick={onApply}>
-            {fix.status === 'failed' ? 'Review and retry' : 'Review and apply'}
-          </Button>
-          <Button componentId="gsb.sources.fix_reject" disabled={busy} onClick={onReject}>
-            Reject
-          </Button>
-        </div>
-      )}
-    </article>
-  );
-}
-
-function SourceDetail({ source, busy, onRemove }: { source: SourceReadiness; busy: boolean; onRemove: () => void }) {
   const report = source.report;
   const { projectId = '' } = useParams();
-  const [writing, setWriting] = useState(false);
-  const [wrote, setWrote] = useState(false);
   return (
     <section
       aria-label={source.fullName}
@@ -262,14 +208,6 @@ function SourceDetail({ source, busy, onRemove }: { source: SourceReadiness; bus
         {report ? <ScoreTag score={report.score} /> : <Tag componentId="gsb.sources.score">Not assessed</Tag>}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
           <Button
-            componentId="gsb.sources.write_comment_open"
-            size="small"
-            disabled={busy}
-            onClick={() => setWriting(true)}
-          >
-            Write a comment
-          </Button>
-          <Button
             componentId="gsb.sources.remove"
             size="small"
             icon={<TrashIcon />}
@@ -281,26 +219,14 @@ function SourceDetail({ source, busy, onRemove }: { source: SourceReadiness; bus
           </Button>
         </div>
       </div>
-      {writing && (
-        <WriteComment
-          projectId={projectId}
-          sourceId={source.sourceId}
-          fullName={source.fullName}
-          onClose={(saved) => {
-            setWriting(false);
-            if (saved) setWrote(true);
-          }}
-        />
-      )}
-      {wrote && (
-        <Alert
-          componentId="gsb.sources.write_comment_done"
-          type="success"
-          closable
-          onClose={() => setWrote(false)}
-          message="The comment is saved in Unity Catalog. Run the assessment again to update the score."
-        />
-      )}
+      <ColumnsEditor
+        projectId={projectId}
+        sourceId={source.sourceId}
+        fullName={source.fullName}
+        view={view}
+        onView={onView}
+        onReviewKey={onReviewKey}
+      />
       {report && report.areas.length > 0 && <Areas areas={report.areas} />}
       {report?.assessment && (
         <Alert
@@ -438,6 +364,22 @@ export function SourcesPage() {
   const [sql, setSql] = useState<string[]>();
   const [adding, setAdding] = useState<'pick' | 'related'>();
   const [tab, setTab] = useTab(['plan', 'lineage', 'tables', 'permissions'] as const, 'plan');
+  const [search, setSearch] = useSearchParams();
+  const openTable = (sourceId: string) =>
+    setSearch(
+      (p) => {
+        p.set('tab', 'tables');
+        p.set('table', sourceId);
+        return p;
+      },
+      { replace: true }
+    );
+  const review = (r: Recommendation) => {
+    setEdits({});
+    setSql(undefined);
+    setError(undefined);
+    setReviewing(r);
+  };
 
   const post = (key: string, path: string, body: unknown = {}) => {
     setBusy(key);
@@ -496,6 +438,7 @@ export function SourcesPage() {
     (a, b) => Number(isOpen(b)) - Number(isOpen(a)) || b.scoreGain - a.scoreGain
   );
   const openFixes = fixes.filter(isOpen);
+  const selected = data?.sources.find((x) => x.sourceId === search.get('table')) ?? data?.sources[0];
   const potential = Math.min(100, (data?.score?.score ?? 0) + openFixes.reduce((s, r) => s + r.scoreGain, 0));
   const addButtons = (
     <>
@@ -578,8 +521,9 @@ export function SourcesPage() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 16 }}>
                   {openFixes.length > 0 ? (
                     <Typography.Text color="secondary">
-                      Ranked by the points each fix adds. Applying all open fixes brings the score to about {potential}.
-                      Declare primary keys before the foreign keys that reference them.
+                      The AI suggests descriptions and keys. Review them in place in Tables: accept, edit or dismiss
+                      each one. Accepting all brings the score to about {potential}. Declare primary keys before the
+                      foreign keys that reference them.
                     </Typography.Text>
                   ) : (
                     <Typography.Text color="secondary">
@@ -588,20 +532,51 @@ export function SourcesPage() {
                         : 'Assess the sources to get a ranked plan.'}
                     </Typography.Text>
                   )}
-                  {fixes.map((r) => (
-                    <FixCard
-                      key={r.id}
-                      fix={r}
-                      busy={!!busy}
-                      onApply={() => {
-                        setEdits({});
-                        setSql(undefined);
-                        setError(undefined);
-                        setReviewing(r);
-                      }}
-                      onReject={() => void post(r.id, `/api/projects/${projectId}/recommendations/${r.id}/reject`)}
-                    />
-                  ))}
+                  {openFixes.length > 0 && (
+                    <Table aria-label="Suggestions by table">
+                      <TableRow isHeader>
+                        <TableHeader componentId="gsb.sources.h_plan_table">Table</TableHeader>
+                        <TableHeader componentId="gsb.sources.h_plan_desc">Descriptions to review</TableHeader>
+                        <TableHeader componentId="gsb.sources.h_plan_keys">Keys to review</TableHeader>
+                        <TableHeader componentId="gsb.sources.h_plan_gain">Points</TableHeader>
+                        <TableHeader componentId="gsb.sources.h_plan_open"> </TableHeader>
+                      </TableRow>
+                      {data.sources
+                        .map((src) => {
+                          const mine = openFixes.filter((r) => r.sourceName === src.fullName);
+                          return {
+                            src,
+                            descriptions: mine.reduce(
+                              (n, r) => n + r.rows.filter((x) => x.kind === 'comment').length,
+                              0
+                            ),
+                            keys: mine.filter((r) => r.kind === 'primary_key' || r.kind === 'foreign_key').length,
+                            gain: mine.reduce((n, r) => n + r.scoreGain, 0),
+                          };
+                        })
+                        .filter((x) => x.descriptions || x.keys)
+                        .sort((a, b) => b.gain - a.gain)
+                        .map((x) => (
+                          <TableRow key={x.src.sourceId}>
+                            <TableCell>
+                              <code>{x.src.fullName}</code>
+                            </TableCell>
+                            <TableCell>{x.descriptions}</TableCell>
+                            <TableCell>{x.keys}</TableCell>
+                            <TableCell>+{x.gain}</TableCell>
+                            <TableCell>
+                              <Button
+                                componentId="gsb.sources.plan_open"
+                                size="small"
+                                onClick={() => openTable(x.src.sourceId)}
+                              >
+                                Review in Tables
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                    </Table>
+                  )}
                 </div>
               </Tabs.Content>
 
@@ -638,15 +613,63 @@ export function SourcesPage() {
               </Tabs.Content>
 
               <Tabs.Content value="tables">
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingTop: 16 }}>
-                  {data.sources.map((s) => (
-                    <SourceDetail
-                      key={s.sourceId}
-                      source={s}
-                      busy={!!busy}
-                      onRemove={() => void post(s.sourceId, `/api/projects/${projectId}/sources/${s.sourceId}/remove`)}
-                    />
-                  ))}
+                <div style={{ display: 'flex', gap: 16, paddingTop: 16, alignItems: 'flex-start' }}>
+                  <nav
+                    aria-label="Source tables"
+                    style={{ flex: '0 0 260px', display: 'flex', flexDirection: 'column', gap: 4 }}
+                  >
+                    {data.sources.map((src) => {
+                      const n = openFixes.filter((r) => r.sourceName === src.fullName).length;
+                      const on = src.sourceId === selected?.sourceId;
+                      return (
+                        <button
+                          key={src.sourceId}
+                          type="button"
+                          aria-current={on ? 'true' : undefined}
+                          onClick={() => openTable(src.sourceId)}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: 8,
+                            padding: '8px 12px',
+                            border: '1px solid var(--db-border-base)',
+                            borderRadius: 6,
+                            background: on ? 'var(--db-surface-subtle)' : 'transparent',
+                            color: 'inherit',
+                            cursor: 'pointer',
+                            textAlign: 'left',
+                            fontWeight: on ? 600 : undefined,
+                          }}
+                        >
+                          <span style={{ overflowWrap: 'anywhere' }}>{src.fullName.split('.').pop()}</span>
+                          <span style={{ display: 'flex', gap: 4 }}>
+                            {n > 0 && (
+                              <Tag componentId="gsb.sources.table_fixes" color="lemon">
+                                {n}
+                              </Tag>
+                            )}
+                            {src.report && <ScoreTag score={src.report.score} />}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </nav>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    {selected && (
+                      <SourceDetail
+                        key={selected.sourceId}
+                        source={selected}
+                        busy={!!busy}
+                        view={data}
+                        onView={view.setData}
+                        onReviewKey={review}
+                        onRemove={() =>
+                          void post(selected.sourceId, `/api/projects/${projectId}/sources/${selected.sourceId}/remove`)
+                        }
+                      />
+                    )}
+                  </div>
                 </div>
               </Tabs.Content>
               <Tabs.Content value="permissions">

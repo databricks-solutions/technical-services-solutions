@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fixRows, finalFix } from './edit';
+import { fixRows, finalFix, withoutTarget } from './edit';
 import { fkStatement, pkStatements, sqlString } from './profile';
 import type { TableProfile } from './profile';
 
@@ -111,5 +111,17 @@ describe('finalFix', () => {
         profiles
       ).statements
     ).toEqual([fkStatement('c.s.orders', 'c.s.customer', ['o_orderkey'], ['c_custkey'])]);
+  });
+});
+
+describe('withoutTarget', () => {
+  it('drops the statement of one column, by name or by index, and keeps the rest', () => {
+    expect(withoutTarget('column_comments', colComments, { column: 'O_CUSTKEY' })).toEqual({
+      statements: [colComments[0]],
+      effect: { columns: ['o_orderkey'] },
+    });
+    expect(withoutTarget('column_comments', colComments, { index: 0 })?.statements).toEqual([colComments[1]]);
+    expect(withoutTarget('column_comments', colComments, { column: 'other' })).toBeNull();
+    expect(withoutTarget('primary_key', pkStatements('c.s.orders', ['o_orderkey']), { index: 0 })).toBeNull();
   });
 });

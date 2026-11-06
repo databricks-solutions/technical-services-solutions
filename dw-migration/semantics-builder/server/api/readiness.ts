@@ -32,7 +32,7 @@ import { profileFromTable } from '../uc/metadata';
 import type { UcDeps } from '../uc/metadata';
 import { applyEffect, inferLinks, projectScore, tableAreas, tableScore } from '../readiness/score';
 import type { FixEffect } from '../readiness/score';
-import { finalFix, fixRows } from '../readiness/edit';
+import { finalFix, fixRows, withoutTarget } from '../readiness/edit';
 import type { NewRecommendation, TableProfile } from '../readiness/profile';
 import { runStatement } from '../sql/runner';
 import type { RunDeps } from '../sql/runner';
@@ -309,6 +309,66 @@ export function readinessRepo(db: Db) {
       return { rec: rec.rows[0], profiles: new Map(sources.rows.map((r) => [r.profile.fullName, r.profile])) };
     },
 
+    /**
+     * Takes the statements for one comment target out of the open fixes of a source. A fix with none left is
+     * closed with the given status. Used when the user writes or dismisses a description inline.
+     */
+    async resolveComment(
+      actor: string,
+      projectId: string,
+      sourceId: string,
+      target: { column: string | null },
+      status: 'applied' | 'rejected'
+    ) {
+      const { rows } = await db.query<{ id: string; kind: Recommendation['kind']; statements: string[] }>(
+        `SELECT id, kind, statements FROM gsb.recommendation
+         WHERE project_id = $1 AND source_id = $2 AND status IN ('proposed', 'failed')
+           AND kind IN ('table_comment', 'column_comments')`,
+        [projectId, sourceId]
+      );
+      for (const r of rows) {
+        const next = withoutTarget(r.kind, r.statements, target);
+        if (next) await this.shrink(actor, r.id, next, status);
+      }
+    },
+
+    async shrink(
+      actor: string,
+      id: string,
+      next: { statements: string[]; effect: FixEffect },
+      status: 'applied' | 'rejected'
+    ) {
+      if (next.statements.length)
+        await db.query(
+          `UPDATE gsb.recommendation SET statements = $2::text[], effect = $3
+           WHERE id = $1 AND status IN ('proposed', 'failed')`,
+          [id, next.statements, JSON.stringify(next.effect)]
+        );
+      else
+        await db.query(
+          `UPDATE gsb.recommendation SET status = $2, decided_by = $3, decided_at = now(),
+             applied_at = CASE WHEN $2 = 'applied' THEN now() END
+           WHERE id = $1 AND status IN ('proposed', 'failed')`,
+          [id, status, actor]
+        );
+    },
+
+    /** Writes a comment into the stored profile of the latest report, so the score moves before the next assessment. */
+    async patchComment(sourceId: string, column: string | null, text: string) {
+      const { rows } = await db.query<{ id: string; profile: TableProfile | null }>(
+        'SELECT id, profile FROM gsb.readiness_report WHERE source_id = $1 ORDER BY created_at DESC LIMIT 1',
+        [sourceId]
+      );
+      const r = rows[0];
+      if (!r?.profile) return;
+      const p = r.profile;
+      const next: TableProfile =
+        column === null
+          ? { ...p, comment: text }
+          : { ...p, columns: p.columns.map((c) => (c.name === column ? { ...c, comment: text } : c)) };
+      await db.query('UPDATE gsb.readiness_report SET profile = $2 WHERE id = $1', [r.id, JSON.stringify(next)]);
+    },
+
     async finish(id: string, status: 'applied' | 'failed', error: string | null): Promise<void> {
       await db.query(
         `UPDATE gsb.recommendation SET status = $2, error = $3, applied_at = CASE WHEN $2 = 'applied' THEN now() END
@@ -391,7 +451,13 @@ export function joinGroups(tables: string[], links: Link[]): string[][] {
 const idParam = z.object({ id: z.uuid() });
 const recParam = idParam.extend({ recId: z.uuid() });
 const sourceParam = idParam.extend({ sourceId: z.uuid() });
-const commentBody = z.object({ column: z.string().min(1).max(255).nullable(), text: z.string().max(1000) });
+const commentBody = z.object({
+  column: z.string().min(1).max(255).nullable(),
+  text: z.string().max(1000),
+  /** Return the statement without running it. */
+  preview: z.boolean().optional(),
+});
+const dismissBody = z.object({ index: z.number().int().min(0).max(199) });
 const checkBody = z.object({ tables: z.array(z.string().trim().regex(UC_TABLE_NAME)).min(1).max(MAX_SOURCES) });
 const addBody = z.object({ tables: z.array(z.string().trim().regex(UC_TABLE_NAME)).min(1).max(MAX_SOURCES) });
 const MAX_RELATED_SCHEMAS = 5;
@@ -519,6 +585,26 @@ export function registerReadinessRoutes(
     })
   );
 
+  /** Leaves one proposed description out of a fix, from the inline table. */
+  app.post(
+    '/api/projects/:id/recommendations/:recId/dismiss',
+    handle(async (req) => {
+      const actor = actorOf(req);
+      const { id, recId } = recParam.parse(req.params);
+      const project = await projects.get(actor, id);
+      const { index } = dismissBody.parse(req.body);
+      const { rec } = await repo.fixContext(project.id, recId);
+      const next = withoutTarget(rec.kind, rec.statements, { index });
+      if (!next) throw new HttpError(400, 'Only a proposed description can be dismissed.');
+      await repo.shrink(actor, recId, next, 'rejected');
+      await db.query(
+        `INSERT INTO gsb.audit_log (actor, action, project_id, target, outcome) VALUES ($1, 'dismiss_suggestion', $2, $3, 'succeeded')`,
+        [actor, project.id, recId]
+      );
+      return repo.view(project.id);
+    })
+  );
+
   app.post(
     '/api/projects/:id/recommendations/:recId/apply',
     handle(async (req) => {
@@ -616,7 +702,12 @@ export function registerReadinessRoutes(
     '/api/projects/:id/sources/:sourceId/columns',
     handle(async (req) => {
       const { profile } = await sourceProfile(req);
-      return { comment: profile.comment, columns: profile.columns };
+      return {
+        comment: profile.comment,
+        columns: profile.columns,
+        primaryKey: profile.primaryKey,
+        foreignKeys: profile.foreignKeys,
+      };
     })
   );
 
@@ -624,7 +715,7 @@ export function registerReadinessRoutes(
   app.post(
     '/api/projects/:id/sources/:sourceId/comment',
     handle(async (req) => {
-      const { column, text } = commentBody.parse(req.body);
+      const { column, text, preview } = commentBody.parse(req.body);
       const { actor, project, profile } = await sourceProfile(req);
       const table = quoteName(profile.fullName);
       const col = column === null ? null : profile.columns.find((c) => c.name === column);
@@ -638,8 +729,13 @@ export function registerReadinessRoutes(
       } catch (err) {
         throw new HttpError(400, (err as Error).message);
       }
+      if (preview) return { statement };
       await runStatement(statement, { actor, projectId: project.id, approved: true }, runFor(req));
-      return { statement };
+      const { sourceId } = sourceParam.parse(req.params);
+      const name = col?.name ?? null;
+      await repo.patchComment(sourceId, name, text.trim());
+      await repo.resolveComment(actor, project.id, sourceId, { column: name }, 'applied');
+      return { statement, view: await repo.view(project.id) };
     })
   );
 

@@ -1,8 +1,10 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Button, Empty, Table, TableCell, TableHeader, TableRow, Tag, Typography } from '@databricks/design-system';
 import type { LibraryRow } from '../../../shared/promote';
 import { useResource } from '../api';
 import { DataState } from '../components/DataState';
+import { ImportModal } from '../components/ImportModal';
 import { OpenInCatalog } from '../components/OpenInCatalog';
 import { subPath } from './ProjectsPage';
 
@@ -24,12 +26,22 @@ function Behind({ r }: { r: LibraryRow }) {
 export function LibraryPage() {
   const navigate = useNavigate();
   const data = useResource<LibraryRow[]>('/api/library');
+  const [importing, setImporting] = useState(false);
   const rows = data.data ?? [];
   const sandbox = rows.filter((r) => r.sandboxView);
   return (
     <DataState status={data.status} message={data.error} onRetry={data.reload}>
+      <div style={{ marginBottom: 16 }}>
+        <Button componentId="gsb.library.import" type="primary" onClick={() => setImporting(true)}>
+          Import a metric view
+        </Button>
+      </div>
+      {importing && <ImportModal onClose={() => setImporting(false)} />}
       {rows.length === 0 ? (
-        <Empty title="No metric views yet" description="Design a metric view in a sub-project. It shows here." />
+        <Empty
+          title="No metric views yet"
+          description="Design a metric view in a sub-project, or import one made outside the app. It shows here."
+        />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <Table aria-label="Metric views" scrollable>

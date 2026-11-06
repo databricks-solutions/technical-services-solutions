@@ -31,6 +31,8 @@ export type SemanticBrief = z.infer<typeof semanticBriefSchema>;
 
 /** The summary of a brief saved by hand, so the page does not call it AI-generated. */
 export const MANUAL_SUMMARY = 'Written or edited by hand.';
+/** The summary of a brief built from an imported metric view. */
+export const IMPORTED_SUMMARY = 'Built from a metric view imported from Unity Catalog. Review it, then confirm.';
 
 export const intakeSchema = z.object({
   goal: text(4000).min(10, 'Describe the goal in at least 10 characters'),

@@ -28,12 +28,14 @@ export function statusOf(err: unknown): DataStateStatus {
 /** Fired after a delete that does not change the URL, so the navigation tree refreshes. */
 export const PROJECTS_CHANGED = 'gsb:projects-changed';
 
-export function useResource<T>(path: string) {
-  const [state, setState] = useState<{ path: string; status: DataStateStatus; data?: T; error?: string }>({
+/** Loads path as the user. A null path loads nothing, for a picker that waits on an earlier choice. */
+export function useResource<T>(path: string | null) {
+  const [state, setState] = useState<{ path: string | null; status: DataStateStatus; data?: T; error?: string }>({
     path,
     status: 'loading',
   });
   const fetchIt = useCallback(() => {
+    if (path === null) return;
     api<T>(path).then(
       (data) => setState({ path, status: 'ready', data }),
       (err: unknown) => setState({ path, status: statusOf(err), error: (err as Error).message })

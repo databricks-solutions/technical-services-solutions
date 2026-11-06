@@ -14,7 +14,7 @@ import {
   Tag,
   Typography,
 } from '@databricks/design-system';
-import { MANUAL_SUMMARY } from '../../../shared/brief';
+import { IMPORTED_SUMMARY, MANUAL_SUMMARY } from '../../../shared/brief';
 import type { BriefVersion, IntakeContext, MemoryItem, ProjectDetail, SemanticBrief } from '../../../shared/brief';
 import { api, useResource } from '../api';
 import { DataState } from '../components/DataState';
@@ -192,8 +192,8 @@ function BriefPanel({
           {confirmed ? 'Confirmed' : 'Draft'}
         </Tag>
       </div>
-      {version.summary === MANUAL_SUMMARY ? (
-        <Alert componentId="gsb.brief.manual_notice" type="info" closable={false} message={MANUAL_SUMMARY} />
+      {version.summary === MANUAL_SUMMARY || version.summary === IMPORTED_SUMMARY ? (
+        <Alert componentId="gsb.brief.manual_notice" type="info" closable={false} message={version.summary} />
       ) : (
         <Alert
           componentId="gsb.brief.ai_notice"

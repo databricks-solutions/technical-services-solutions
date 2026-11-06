@@ -34,3 +34,17 @@ export const promoteSchema = z.object({
   statement: z.string().min(1).max(200_000),
   overwrite: z.boolean(),
 });
+
+/** One sub-project with a design, for the Metric views library. */
+export interface LibraryRow {
+  projectId: string;
+  parentId: string;
+  project: string;
+  subProject: string;
+  name: string;
+  target: string | null;
+  latest: { version: number; status: 'draft' | 'validated' };
+  promoted: { version: number; by: string; at: string } | null;
+  /** The sandbox view of the last passed validation. It can be dropped since. */
+  sandboxView: string | null;
+}

@@ -27,6 +27,7 @@ import { PlaygroundPage } from './pages/PlaygroundPage';
 import { ProjectPage } from './pages/ProjectPage';
 import { ProjectsPage, subPath } from './pages/ProjectsPage';
 import { SourcesPage } from './pages/SourcesPage';
+import { LibraryPage } from './pages/LibraryPage';
 
 // Sub-project modules appear here as each phase ships.
 const projectModules = [
@@ -92,6 +93,16 @@ function Shell() {
                         iconPosition={side}
                         label="All projects"
                         onClick={go('/')}
+                      />
+                    </NavList.Item>
+                    <NavList.Item>
+                      <NavList.Link
+                        href="/metric-views"
+                        active={pathname === '/metric-views'}
+                        icon={<CatalogIcon />}
+                        iconPosition={side}
+                        label="Metric views"
+                        onClick={go('/metric-views')}
                       />
                     </NavList.Item>
                   </NavList.List>
@@ -208,6 +219,14 @@ const router = createBrowserRouter([
         element: (
           <Page title="Projects">
             <ProjectsPage />
+          </Page>
+        ),
+      },
+      {
+        path: '/metric-views',
+        element: (
+          <Page title="Metric views">
+            <LibraryPage />
           </Page>
         ),
       },

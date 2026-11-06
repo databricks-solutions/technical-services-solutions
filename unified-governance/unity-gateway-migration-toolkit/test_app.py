@@ -591,7 +591,7 @@ def test_rollback_needs_its_own_dry_run(env):
                      (_rollback_dry_row(rollback_of=DRY_OK), "another execute run"),
                      (_rollback_dry_row(requested_by="someone@else.com"), "someone else"),
                      (_rollback_dry_row(started_at=now_ts(days_ago=2)), "hours old"),
-                     (_rollback_dry_row(mode="dry_run"), "must be a rollback dry run")):
+                     (_rollback_dry_row(mode="dry_run"), "isn't a rollback dry run")):
         env.store["applies"] = [r for r in env.store["applies"] if r["apply_id"] != RB_DRY] + [bad]
         r = env.client.post("/api/applies", json=ROLLBACK_BODY, headers=OP)
         assert r.status_code == 409 and why in r.json()["detail"], (why, r.text)

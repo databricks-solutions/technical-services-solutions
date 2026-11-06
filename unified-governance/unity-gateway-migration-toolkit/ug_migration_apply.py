@@ -1330,7 +1330,7 @@ def rollback_gate_error(dry: dict | None, rollback_of: str, requested_by: str = 
     if dry is None:
         return "rollback needs dry_run_id: the apply_id of a finished rollback dry run of the same execute run"
     if dry.get("mode") != "rollback_dry_run" or (dry.get("operation") or "apply") != "apply":
-        return "dry_run_id must be a rollback dry run"
+        return "that run isn't a rollback dry run; run a rollback dry run of this execute run first"
     if (dry.get("rollback_of") or "") != (rollback_of or ""):
         return "that rollback dry run is of another execute run; run a rollback dry run of this one"
     # NEEDS_ATTENTION is a finished dry run too: rollback marks every object it keeps (another run uses it, it

@@ -1240,12 +1240,15 @@ CUSTOM_CALL_PATTERNS = ("legacy_endpoint_name", "sdk_serving_query", "ai_query",
                         "mlflow_deployments_predict", "config_value", "ChatDatabricks")
 
 
-MODEL_CLASS_RE = re.compile(r"^([ \t]*)class\s+(\w+)\s*\([^)\n]*PythonModel[^)\n]*\)\s*:", re.M)
+# MLflow model code: PythonModel and the agent base classes (agents.deploy serves ResponsesAgent and ChatAgent).
+MODEL_BASES = r"(?:PythonModel|ResponsesAgent|ChatAgent|ChatModel)"
+MODEL_CLASS_RE = re.compile(r"^([ \t]*)class\s+(\w+)\s*\([^)\n]*\b" + MODEL_BASES + r"\b[^)\n]*\)\s*:", re.M)
 LOG_MODEL_RE = re.compile(r"\blog_model\s*\(")
 
 
 def model_classes(text: str) -> dict[str, tuple[int, int]]:
-    """MLflow PythonModel classes in the text: class name -> (first line, last line) of its body."""
+    """MLflow model classes (PythonModel, ResponsesAgent, ChatAgent, ChatModel) in the text: class name -> (first
+    line, last line) of its body."""
     lines = text.split("\n")
     out = {}
     for m in MODEL_CLASS_RE.finditer(text):
@@ -1288,7 +1291,11 @@ AGENT_NEED = ("agent endpoint: not retired, and its callers need no change. Only
               "documented path)")
 AGENT_ACTION = ("move the LLM calls inside the agent to system.ai or model services: re-log it with explicit "
                 "credentials (automatic authentication can't call Unity Gateway services), or move it to Databricks "
-                "Apps. Turn on its usage tracking where the endpoint supports it. Its callers need no change")
+                "Apps. Its callers need no change")
+# Measured Nov 5, 2026: agent endpoints (agents.deploy, Knowledge Assistant) can't turn on usage tracking, so their
+# requests aren't in system.serving.endpoint_usage. Zero requests there says nothing about whether the agent is used.
+AGENT_TRAFFIC_UNKNOWN = ("traffic unknown: agent endpoints can't turn on usage tracking, so their requests aren't in "
+                         "system.serving.endpoint_usage. Check the agent's inference table or MLflow traces")
 # Knowledge Assistant and Supervisor Agent endpoints: Databricks builds and runs them, so there is no code to change.
 AGENT_BRICKS_NEED = ("Agent Bricks {what}: not retired by this deadline, and its LLM calls are Databricks-managed, "
                      "so there is no code to change. Knowledge Assistant and Supervisor Agent are legacy offerings "
@@ -1311,8 +1318,8 @@ def model_code_note(cls: str, endpoints: list[str] | None) -> str:
     return (f"; this call is in MLflow model code (class {cls}), so it runs inside {where}. Under automatic "
             "authentication a Unity Gateway call from an endpoint fails with a misleading NotFound: re-log the model "
             "to call <workspace>/ai-gateway/mlflow/v1/chat/completions with explicit credentials and redeploy, or move "
-            "the agent to a Databricks App. " + CREDENTIALS_ADVICE + ". Also turn on the endpoint's usage tracking; its "
-            "own callers need no change")
+            "the agent to a Databricks App. " + CREDENTIALS_ADVICE + ". On a custom model endpoint, also turn on usage "
+            "tracking (agent endpoints can't); the endpoint's own callers need no change")
 
 
 # The advice for an unnamed call that reaches a custom model or feature serving endpoint (same text in both guides).
@@ -1541,7 +1548,7 @@ class Scanner:
         self._mark_model_code(text, self.refs[first:])
 
     def _mark_model_code(self, text: str, refs: list) -> None:
-        """Calls inside MLflow model code (a PythonModel class) run inside the serving endpoint that serves it.
+        """Calls inside MLflow model code (a PythonModel or agent class) run inside the serving endpoint that serves it.
 
         Under automatic authentication a Unity Gateway call from there fails with a misleading NotFound, so the fix
         is a re-logged model with explicit credentials (or an app), and the endpoint's own callers don't change."""
@@ -2715,7 +2722,7 @@ def readiness(rows: list[PlanRow], refs: list[ClientReference], traffic_ok: bool
             # them: code, inner-call traffic). So the endpoint itself is a warning, with or without traffic.
             bricks = any(n.startswith("Agent Bricks") for n in r.needs_human)
             used = (f"{r.requests_window:,} requests in {days} days" if r.requests_window
-                    else "no requests in the window")
+                    else AGENT_TRAFFIC_UNKNOWN)
             if bricks:
                 warnings.append(_flag("agent_bricks_endpoint", r.legacy_endpoint,
                                       f"{used}; " + "; ".join(r.needs_human),
@@ -2725,7 +2732,8 @@ def readiness(rows: list[PlanRow], refs: list[ClientReference], traffic_ok: bool
                 warnings.append(_flag("agent_endpoint", r.legacy_endpoint, f"{used}; " + "; ".join(r.needs_human),
                                       "Agent endpoint: the LLM calls inside it must move",
                                       AGENT_ACTION if r.requests_window else
-                                      "confirm with the owner whether it is still used; if it is, " + AGENT_ACTION))
+                                      "confirm with the owner whether it is still used (its traffic isn't recorded); "
+                                      "if it is, " + AGENT_ACTION))
         # A PT endpoint behind a Unity Gateway model service keeps serving after the deadline (the service routes to
         # its capacity), so the wrapper itself needs no warning; direct callers of the endpoint are flagged as traffic.
     # Measured Nov 3, 2026: a custom agent endpoint's automatic-auth identity shows up as "System Service Principal".
@@ -2742,8 +2750,8 @@ def readiness(rows: list[PlanRow], refs: list[ClientReference], traffic_ok: bool
             "authentication, such as a custom agent" + (f". Custom endpoints here: {', '.join(custom[:5])}" if custom else ""),
             "A serving endpoint may call this endpoint from its model code",
             "find the custom endpoint whose model code calls it: re-log the model with explicit credentials to call "
-            "the model service (see CODE_FIXES.md), and turn on that endpoint's usage tracking. Its own callers need "
-            "no change"))
+            "the model service (see CODE_FIXES.md). If it's a custom model endpoint, turn on its usage tracking (agent "
+            "endpoints can't). Its own callers need no change"))
     for x in refs:
         loc = x.asset + (f":{x.line}" if x.line else "")
         if x.pattern == "custom_endpoint_call":

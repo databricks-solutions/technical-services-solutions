@@ -979,7 +979,10 @@ def test_agent_endpoints_are_not_retired_only_their_inner_calls_move():
     dormant = m.readiness(rows, [], True, 30, [agent], {})
     assert dormant["status"] == "READY_WITH_WARNINGS" and not dormant["blockers"]
     w = next(x for x in dormant["warnings"] if x["type"] == "agent_endpoint")
-    assert w["action"].startswith("confirm with the owner")
+    assert w["action"].startswith("confirm with the owner") and "isn't recorded" in w["action"]
+    # Agent endpoints can't turn on usage tracking: zero requests is unknown traffic, not "no requests".
+    assert w["detail"].startswith(m.AGENT_TRAFFIC_UNKNOWN) and "no requests" not in w["detail"]
+    assert "usage tracking" not in m.AGENT_ACTION
     rows2, _ = m.plan([agent], {}, {"agent-x": {"requests": 5, "requesters": 1, "last_request": "x"}}, "c", "s")
     active = m.readiness(rows2, [], True, 30, [agent], {})
     # Its callers need no change: no blocker for the agent or its traffic.
@@ -1398,6 +1401,24 @@ def test_apply_creates_a_pay_per_token_model_service_for_an_external_model_on_da
     other = _ep({**PPT_BACKED, "config": {"served_entities": [{"name": "x", "external_model": {
         "name": "databricks-old-model", "provider": "databricks-model-serving", "task": "llm/v1/chat"}}]}})
     assert m.plan([other], SIM_SYS, {}, "c", "s")[0][0].action == "manual"
+
+
+def test_calls_in_agent_classes_are_model_code():
+    text = "\n".join([
+        "from mlflow.pyfunc import ResponsesAgent",
+        "class TestAgent(ResponsesAgent):",
+        "    def predict(self, request):",
+        '        return requests.post(f"{host}/serving-endpoints/databricks-claude-haiku-4-5/invocations")',
+        "",
+        "mlflow.models.set_model(TestAgent())"])
+    assert set(m.model_classes(text)) == {"TestAgent"}
+    assert m.model_classes("class Chat(mlflow.pyfunc.ChatAgent):\n    pass\n") and \
+        not m.model_classes("class Handler(BaseChatAgentHelper):\n    pass\n")
+    rows, _ = m.plan([_ep(SYSTEM_PPT)], SIM_SYS, {}, "c", "s")
+    sc = m.Scanner(["databricks-claude-haiku-4-5"], SIM_SYS, rows)
+    sc.scan_text("file", "/Shared/a/agent.py", text)
+    ref = next(r for r in sc.refs if r.line == 4)
+    assert "MLflow model code (class TestAgent)" in ref.suggestion and "explicit credentials" in ref.suggestion
 
 
 def test_calls_in_mlflow_model_code_point_at_the_custom_endpoint():

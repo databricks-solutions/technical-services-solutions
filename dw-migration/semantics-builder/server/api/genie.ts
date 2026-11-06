@@ -6,6 +6,7 @@ import type { GenieCheck, GenieView } from '../../shared/genie';
 import { validateMetricView } from '../../shared/metricView';
 import { createStatement, sandboxSchema, sandboxViewName } from '../designer/validate';
 import type { GenieDeps } from '../genie/client';
+import { readsView } from '../genie/onechat';
 import { verdictOf } from '../genie/verdict';
 import { runStatement } from '../sql/runner';
 import type { RunDeps } from '../sql/runner';
@@ -20,6 +21,8 @@ const MAX_CHECKS = 50;
 
 interface CheckRow {
   id: string;
+  engine: GenieCheck['engine'];
+  read: GenieCheck['read'];
   version: number;
   question: string;
   expected: GenieCheck['expected'];
@@ -59,7 +62,7 @@ export function registerGenieRoutes(
     const ctx = await context(req);
     const brief = await projects.latestBrief(ctx.project.id);
     const { rows } = await db.query<CheckRow>(
-      `SELECT id, version, question, expected, verdict, detail, answer, sql, created_by, created_at
+      `SELECT id, engine, read, version, question, expected, verdict, detail, answer, sql, created_by, created_at
        FROM gsb.genie_check WHERE project_id = $1 ORDER BY created_at DESC LIMIT ${MAX_CHECKS}`,
       [ctx.project.id]
     );
@@ -73,6 +76,8 @@ export function registerGenieRoutes(
       setup: ctx.draft && ctx.sandboxView ? [createStatement(ctx.sandboxView, ctx.draft.yaml)] : [],
       checks: rows.map((r) => ({
         id: r.id,
+        engine: r.engine,
+        read: r.read,
         version: r.version,
         question: r.question,
         expected: r.expected,
@@ -132,9 +137,10 @@ export function registerGenieRoutes(
   app.post(
     '/api/projects/:id/genie/ask',
     handle(async (req) => {
-      const { question, expected } = askSchema.parse(req.body);
+      const { question, expected, engine } = askSchema.parse(req.body);
       const ctx = await context(req);
-      if (!ctx.draft || !ctx.space) throw new HttpError(409, 'Create the Genie space first.');
+      if (!ctx.draft || !ctx.sandboxView) throw new HttpError(409, 'Validate the design first.');
+      if (engine === 'space' && !ctx.space) throw new HttpError(409, 'Create the Genie space first.');
       const fields = validateMetricView(ctx.draft.yaml).view;
       const names = {
         measures: fields?.measures.map((m) => m.name) ?? [],
@@ -147,16 +153,37 @@ export function registerGenieRoutes(
         ];
         if (unknown.length) throw new HttpError(400, `Not fields of the view: ${unknown.join(', ')}`);
       }
-      let result: { verdict: GenieCheck['verdict']; detail: string; answer: string; sql: string | null };
+      let result: {
+        verdict: GenieCheck['verdict'];
+        detail: string;
+        answer: string;
+        sql: string | null;
+        read?: GenieCheck['read'];
+      };
       try {
-        const answer = await genieFor(req).ask(ctx.space.space_id, question);
-        result = { ...verdictOf(answer.sql, names, expected), answer: answer.text.slice(0, 20_000), sql: answer.sql };
+        if (engine === 'one') {
+          // Genie One is not bound to a space, so the question names the sandbox view of this version.
+          const view = ctx.sandboxView;
+          const answer = await genieFor(req).askOne(`${question}\n\nAnswer with the metric view ${view} only.`);
+          const v = verdictOf(answer.sql, names, expected);
+          const other = answer.sql && !readsView(answer.sql, view);
+          result = {
+            ...(other ? { verdict: 'different' as const, detail: `Genie One did not read ${view}. ${v.detail}` } : v),
+            answer: answer.text.slice(0, 20_000),
+            sql: answer.sql,
+            read: { assets: answer.assets, snippets: answer.snippets },
+          };
+        } else {
+          const answer = await genieFor(req).ask(ctx.space.space_id, question);
+          result = { ...verdictOf(answer.sql, names, expected), answer: answer.text.slice(0, 20_000), sql: answer.sql };
+        }
       } catch (err) {
         result = { verdict: 'error', detail: (err as Error).message.slice(0, 500), answer: '', sql: null };
       }
       await db.query(
-        `INSERT INTO gsb.genie_check (project_id, version, question, expected, verdict, detail, answer, sql, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        `INSERT INTO gsb.genie_check
+           (project_id, version, question, expected, verdict, detail, answer, sql, created_by, engine, read)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [
           ctx.project.id,
           ctx.draft.version,
@@ -167,6 +194,8 @@ export function registerGenieRoutes(
           result.answer,
           result.sql,
           ctx.actor,
+          engine,
+          result.read ? JSON.stringify(result.read) : null,
         ]
       );
       return view(req);

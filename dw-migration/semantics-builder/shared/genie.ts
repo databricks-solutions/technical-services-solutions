@@ -7,8 +7,13 @@ export interface GenieExpected {
   dimensions: string[];
 }
 
+export type GenieEngine = 'space' | 'one';
+
 export interface GenieCheck {
   id: string;
+  engine: GenieEngine;
+  /** Genie One only: the UC objects it read, and if it searched workspace knowledge snippets. */
+  read: { assets: string[]; snippets: boolean } | null;
   version: number;
   question: string;
   expected: GenieExpected | null;
@@ -33,4 +38,5 @@ const name = z.string().trim().min(1).max(255);
 export const askSchema = z.object({
   question: z.string().trim().min(3).max(1000),
   expected: z.object({ measures: z.array(name).max(10), dimensions: z.array(name).max(10) }).nullable(),
+  engine: z.enum(['space', 'one']).default('space'),
 });

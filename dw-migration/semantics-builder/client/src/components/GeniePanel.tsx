@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Alert, Button, Input, Modal, PlusIcon, Tag, TrashIcon, Typography } from '@databricks/design-system';
-import type { GenieCheck, GenieExpected, GenieVerdict, GenieView } from '../../../shared/genie';
+import type { GenieCheck, GenieEngine, GenieExpected, GenieVerdict, GenieView } from '../../../shared/genie';
 import { api, useResource } from '../api';
 import { DataState } from './DataState';
 import { SqlBlock } from './SqlBlock';
@@ -39,12 +39,23 @@ function Check({ c }: { c: GenieCheck }) {
         <Tag componentId="gsb.genie.verdict" color={v.color}>
           {v.label}
         </Tag>
+        {c.engine === 'one' && (
+          <Tag componentId="gsb.genie.engine" color="indigo">
+            Genie One
+          </Tag>
+        )}
         <Typography.Text bold>{c.question}</Typography.Text>
         <Typography.Text color="secondary" size="sm">
           Version {c.version}, {new Date(c.createdAt).toLocaleString()}
         </Typography.Text>
       </div>
       <Typography.Text>{c.detail}</Typography.Text>
+      {c.read && (
+        <Typography.Text color="secondary" size="sm">
+          Read: {c.read.assets.join(', ') || 'no object listed'}.
+          {c.read.snippets && ' It also searched workspace knowledge snippets, which other users may have written.'}
+        </Typography.Text>
+      )}
       {(c.answer || c.sql) && (
         <div>
           <Button componentId="gsb.genie.toggle" size="small" type="link" onClick={() => setOpen(!open)}>
@@ -100,15 +111,15 @@ export function GeniePanel({
     );
   };
 
-  const askAll = async () => {
+  const askAll = async (engine: GenieEngine) => {
     setError(undefined);
     const todo = rows.filter((q) => q.question.trim().length >= 3);
     for (const [i, q] of todo.entries()) {
-      setBusy(`Asking ${i + 1} of ${todo.length}: ${q.question}`);
+      setBusy(`Asking ${engine === 'one' ? 'Genie One' : 'Genie'} ${i + 1} of ${todo.length}: ${q.question}`);
       try {
         const expected = q.expected.measures.length || q.expected.dimensions.length ? q.expected : null;
         data.setData(
-          await api<View>(`/api/projects/${projectId}/genie/ask`, { question: q.question.trim(), expected })
+          await api<View>(`/api/projects/${projectId}/genie/ask`, { question: q.question.trim(), expected, engine })
         );
       } catch (err) {
         setError((err as Error).message);
@@ -125,7 +136,9 @@ export function GeniePanel({
           <Typography.Text color="secondary">
             Genie answers the business questions on the sandbox view of the validated version, as you. For each
             question, pick the measures and dimensions a correct answer uses; the app checks Genie&apos;s SQL against
-            them. Questions run SQL on the SQL warehouse.
+            them. Questions run SQL on the SQL warehouse. Genie One is the workspace assistant: it is not bound to a
+            space, so the app names the sandbox view in each question. It can also read workspace knowledge that other
+            users wrote.
           </Typography.Text>
           {v.version === null ? (
             <Alert
@@ -165,7 +178,7 @@ export function GeniePanel({
             </div>
           )}
 
-          {v.space && (
+          {v.version !== null && (
             <section aria-label="Questions" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <Typography.Title level={4} withoutMargins>
                 Questions
@@ -226,10 +239,18 @@ export function GeniePanel({
                   componentId="gsb.genie.ask"
                   type="primary"
                   loading={!!busy && busy !== 'space'}
-                  disabled={!!busy || !rows.some((q) => q.question.trim().length >= 3)}
-                  onClick={() => void askAll()}
+                  disabled={!!busy || !v.space || !rows.some((q) => q.question.trim().length >= 3)}
+                  onClick={() => void askAll('space')}
                 >
                   Ask Genie
+                </Button>
+                <Button
+                  componentId="gsb.genie.ask_one"
+                  loading={!!busy && busy !== 'space'}
+                  disabled={!!busy || !rows.some((q) => q.question.trim().length >= 3)}
+                  onClick={() => void askAll('one')}
+                >
+                  Ask Genie One
                 </Button>
               </div>
               {busy && busy !== 'space' && (

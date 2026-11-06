@@ -19,6 +19,8 @@ import { projectRepo } from './projects';
 type Db = Pick<LakebasePool, 'query' | 'connect'>;
 const idParam = z.object({ id: z.uuid() });
 const MAX_TOTALS = 20;
+/** Views checked per app open, one after the other, so that the open stays light. */
+const MAX_STALE = 5;
 const notFound = (err: unknown) => /does not exist|not found|TABLE_OR_VIEW_NOT_FOUND|404/i.test((err as Error).message);
 
 interface Baseline {
@@ -49,9 +51,9 @@ export function registerDriftRoutes(
 ) {
   const projects = projectRepo(db);
 
-  async function context(req: Request) {
+  async function context(req: Request, id = idParam.parse(req.params).id) {
     const actor = actorOf(req);
-    const project = await projects.get(actor, idParam.parse(req.params).id);
+    const project = await projects.get(actor, id);
     const { rows } = await db.query<{ target: string | null; baseline: Baseline | null; yaml: string | null }>(
       `SELECT p.promotion_target AS target, p.data_baseline AS baseline,
          (SELECT yaml FROM gsb.promotion pr WHERE pr.project_id = p.id AND pr.status = 'succeeded'
@@ -82,8 +84,8 @@ export function registerDriftRoutes(
     );
   }
 
-  async function view(req: Request): Promise<DriftView> {
-    const ctx = await context(req);
+  async function view(req: Request, id?: string): Promise<DriftView> {
+    const ctx = await context(req, id);
     const problem = !ctx.target
       ? 'Set the Unity Catalog view and promote it first.'
       : !ctx.promotedYaml
@@ -125,82 +127,107 @@ export function registerDriftRoutes(
     };
   }
 
-  app.get('/api/projects/:id/drift', handle(view));
+  app.get(
+    '/api/projects/:id/drift',
+    handle((req) => view(req))
+  );
+
+  async function check(req: Request, id: string) {
+    const ctx = await context(req, id);
+    if (!ctx.target || !ctx.promotedYaml) throw new HttpError(409, (await view(req, id)).problem ?? 'Promote first.');
+    const uc = ucFor(req);
+    const run = runFor(req);
+    const as = { actor: ctx.actor, projectId: ctx.project.id, approved: false };
+
+    let ucYaml: string | null = null;
+    let owner: string | null = null;
+    try {
+      const t = await uc.table(ctx.target);
+      ucYaml = t.view_definition ?? '';
+      owner = t.owner ?? null;
+    } catch (err) {
+      if (!notFound(err))
+        throw new HttpError(502, `Cannot read ${ctx.target}: ${(err as Error).message.slice(0, 300)}`);
+    }
+    const yaml = ucYaml ?? ctx.promotedYaml;
+    const parsed = validateMetricView(yaml).view;
+    const restricted: string[] = [];
+    const sources = await Promise.all(
+      (parsed ? tablesOf(parsed) : []).map(
+        async (fullName): Promise<{ fullName: string; profile?: TableProfile; error?: string }> => {
+          try {
+            const t = await uc.table(fullName);
+            if (t.row_filter || t.columns?.some((c) => c.mask)) restricted.push(fullName);
+            return { fullName, profile: profileFromTable(fullName, t) };
+          } catch (err) {
+            return { fullName, error: (err as Error).message.slice(0, 300) };
+          }
+        }
+      )
+    );
+
+    let grants: string[] = [];
+    let refreshStatus: string | null = null;
+    let current: Record<string, number | null> | null = null;
+    if (ucYaml !== null) {
+      const g = await runStatement(`SHOW GRANTS ON VIEW ${quoteName(ctx.target)}`, as, run);
+      const p = g.columns.indexOf('Principal');
+      const a = g.columns.indexOf('ActionType');
+      grants = g.rows.map((r) => `${r[p] ?? ''}:${r[a] ?? ''}`);
+      if (parsed?.materialization !== undefined) {
+        const d = await runStatement(`DESCRIBE EXTENDED ${quoteName(ctx.target)}`, as, run);
+        refreshStatus = d.rows.find((r) => r[0]?.trim() === 'Latest Refresh Status')?.[1]?.trim() ?? null;
+      }
+      if (ctx.baseline) current = await totals(req, ctx, yaml).catch(() => ({}));
+    }
+
+    const { rows: prev } = await db.query<{ snapshot: DriftSnapshot }>(
+      'SELECT snapshot FROM gsb.drift_check WHERE project_id = $1 ORDER BY created_at DESC LIMIT 1',
+      [ctx.project.id]
+    );
+    const { findings, snapshot } = driftFindings({
+      target: ctx.target,
+      promotedYaml: ctx.promotedYaml,
+      ucYaml,
+      sources,
+      owner,
+      grants,
+      restricted,
+      materialized: parsed?.materialization !== undefined,
+      refreshStatus,
+      totals: current,
+      baseline: ctx.baseline?.values ?? null,
+      previous: prev[0]?.snapshot ?? null,
+    });
+    await db.query(
+      `INSERT INTO gsb.drift_check (project_id, target, findings, snapshot, created_by) VALUES ($1, $2, $3, $4, $5)`,
+      [ctx.project.id, ctx.target, JSON.stringify(findings), JSON.stringify(snapshot), ctx.actor]
+    );
+    return view(req, id);
+  }
 
   app.post(
     '/api/projects/:id/drift/check',
+    handle((req) => check(req, idParam.parse(req.params).id))
+  );
+
+  /** Check on open: checks the user's promoted views whose last check is older than one day, as the user. */
+  app.post(
+    '/api/drift/stale',
     handle(async (req) => {
-      const ctx = await context(req);
-      if (!ctx.target || !ctx.promotedYaml) throw new HttpError(409, (await view(req)).problem ?? 'Promote first.');
-      const uc = ucFor(req);
-      const run = runFor(req);
-      const as = { actor: ctx.actor, projectId: ctx.project.id, approved: false };
-
-      let ucYaml: string | null = null;
-      let owner: string | null = null;
-      try {
-        const t = await uc.table(ctx.target);
-        ucYaml = t.view_definition ?? '';
-        owner = t.owner ?? null;
-      } catch (err) {
-        if (!notFound(err))
-          throw new HttpError(502, `Cannot read ${ctx.target}: ${(err as Error).message.slice(0, 300)}`);
-      }
-      const yaml = ucYaml ?? ctx.promotedYaml;
-      const parsed = validateMetricView(yaml).view;
-      const restricted: string[] = [];
-      const sources = await Promise.all(
-        (parsed ? tablesOf(parsed) : []).map(
-          async (fullName): Promise<{ fullName: string; profile?: TableProfile; error?: string }> => {
-            try {
-              const t = await uc.table(fullName);
-              if (t.row_filter || t.columns?.some((c) => c.mask)) restricted.push(fullName);
-              return { fullName, profile: profileFromTable(fullName, t) };
-            } catch (err) {
-              return { fullName, error: (err as Error).message.slice(0, 300) };
-            }
-          }
-        )
+      const { rows } = await db.query<{ id: string }>(
+        `SELECT p.id FROM gsb.project p
+         WHERE p.created_by = $1 AND p.promotion_target IS NOT NULL
+           AND EXISTS (SELECT 1 FROM gsb.promotion pr WHERE pr.project_id = p.id AND pr.status = 'succeeded'
+                         AND pr.target = p.promotion_target)
+           AND NOT EXISTS (SELECT 1 FROM gsb.drift_check d WHERE d.project_id = p.id
+                             AND d.created_at > now() - interval '1 day')
+         ORDER BY p.id LIMIT $2`,
+        [actorOf(req), MAX_STALE]
       );
-
-      let grants: string[] = [];
-      let refreshStatus: string | null = null;
-      let current: Record<string, number | null> | null = null;
-      if (ucYaml !== null) {
-        const g = await runStatement(`SHOW GRANTS ON VIEW ${quoteName(ctx.target)}`, as, run);
-        const p = g.columns.indexOf('Principal');
-        const a = g.columns.indexOf('ActionType');
-        grants = g.rows.map((r) => `${r[p] ?? ''}:${r[a] ?? ''}`);
-        if (parsed?.materialization !== undefined) {
-          const d = await runStatement(`DESCRIBE EXTENDED ${quoteName(ctx.target)}`, as, run);
-          refreshStatus = d.rows.find((r) => r[0]?.trim() === 'Latest Refresh Status')?.[1]?.trim() ?? null;
-        }
-        if (ctx.baseline) current = await totals(req, ctx, yaml).catch(() => ({}));
-      }
-
-      const { rows: prev } = await db.query<{ snapshot: DriftSnapshot }>(
-        'SELECT snapshot FROM gsb.drift_check WHERE project_id = $1 ORDER BY created_at DESC LIMIT 1',
-        [ctx.project.id]
-      );
-      const { findings, snapshot } = driftFindings({
-        target: ctx.target,
-        promotedYaml: ctx.promotedYaml,
-        ucYaml,
-        sources,
-        owner,
-        grants,
-        restricted,
-        materialized: parsed?.materialization !== undefined,
-        refreshStatus,
-        totals: current,
-        baseline: ctx.baseline?.values ?? null,
-        previous: prev[0]?.snapshot ?? null,
-      });
-      await db.query(
-        `INSERT INTO gsb.drift_check (project_id, target, findings, snapshot, created_by) VALUES ($1, $2, $3, $4, $5)`,
-        [ctx.project.id, ctx.target, JSON.stringify(findings), JSON.stringify(snapshot), ctx.actor]
-      );
-      return view(req);
+      let failed = 0;
+      for (const r of rows) await check(req, r.id).catch(() => failed++);
+      return { checked: rows.length - failed, failed };
     })
   );
 

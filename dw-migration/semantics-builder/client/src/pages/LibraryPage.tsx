@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Button, Empty, Table, TableCell, TableHeader, TableRow, Tag, Typography } from '@databricks/design-system';
 import type { LibraryRow } from '../../../shared/promote';
-import { useResource } from '../api';
+import { DRIFT_CHECKED, useResource } from '../api';
 import { DataState } from '../components/DataState';
 import { DiscoverPanel } from '../components/DiscoverPanel';
 import { ImportModal } from '../components/ImportModal';
@@ -38,6 +38,11 @@ function Behind({ r }: { r: LibraryRow }) {
 export function LibraryPage() {
   const navigate = useNavigate();
   const data = useResource<LibraryRow[]>('/api/library');
+  const { reload } = data;
+  useEffect(() => {
+    window.addEventListener(DRIFT_CHECKED, reload);
+    return () => window.removeEventListener(DRIFT_CHECKED, reload);
+  }, [reload]);
   const [importing, setImporting] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const rows = data.data ?? [];

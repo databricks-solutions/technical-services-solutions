@@ -1,7 +1,13 @@
 import type { DiscoveredKpi, KpiGroup } from '../../shared/discover';
 import { validateMetricView } from '../../shared/metricView';
 
-const AGG = /\b(sum|count|count_if|avg|mean|min|max|median|percentile|approx_count_distinct|stddev|variance|any_value)\s*\(/i;
+const AGG =
+  /\b(sum|count|count_if|avg|mean|min|max|median|percentile|approx_count_distinct|stddev|variance|any_value)\s*\(/i;
+const TABLE = /^[^\s().]+\.[^\s().]+\.[^\s().]+$/;
+const sourceKey = (name: string | undefined) => {
+  const n = name?.replace(/`/g, '').trim().toLowerCase();
+  return n && TABLE.test(n) ? n : undefined;
+};
 const STOP = new Set(['total', 'sum', 'of', 'the', 'num', 'number', 'amt', 'amount']);
 
 /** Lower case, no quotes, no table qualifiers, no spaces: `SUM(o.Amount)` and `sum(amount)` are the same. */
@@ -27,7 +33,8 @@ export const normalizeName = (name: string) => {
 
 export function kpisOfMetricView(view: string, yaml: string): DiscoveredKpi[] {
   const parsed = validateMetricView(yaml).view;
-  return (parsed?.measures ?? []).map((m) => ({ view, kind: 'metric_view', name: m.name, expr: m.expr }));
+  const source = sourceKey(parsed?.source);
+  return (parsed?.measures ?? []).map((m) => ({ view, kind: 'metric_view', name: m.name, expr: m.expr, source }));
 }
 
 /** Splits at top-level commas. */
@@ -83,6 +90,7 @@ function selectLists(sql: string): string[] {
 export function kpisOfSqlView(view: string, sql: string): DiscoveredKpi[] {
   const out: DiscoveredKpi[] = [];
   const seen = new Set<string>();
+  const source = sourceKey(/\bfrom\s+([`\w.-]+)/i.exec(sql)?.[1]);
   for (const list of selectLists(sql))
     for (const item of items(list)) {
       if (!AGG.test(item)) continue;
@@ -91,7 +99,7 @@ export function kpisOfSqlView(view: string, sql: string): DiscoveredKpi[] {
       const name = m && !/\)$/.test(item) ? m[2] : item;
       if (seen.has(name)) continue;
       seen.add(name);
-      out.push({ view, kind: 'sql_view', name, expr });
+      out.push({ view, kind: 'sql_view', name, expr, source });
     }
   return out;
 }
@@ -119,10 +127,15 @@ export function consolidate(kpis: DiscoveredKpi[]): KpiGroup[] {
   for (const members of groups.values()) {
     const views = new Set(members.map((k) => k.view));
     if (views.size < 2) continue;
-    const byName = new Map<string, Set<string>>();
-    for (const k of members)
-      byName.set(normalizeName(k.name), (byName.get(normalizeName(k.name)) ?? new Set()).add(normalizeExpr(k.expr)));
-    const conflict = [...byName.values()].some((s) => s.size > 1);
+    let conflict = false;
+    let differentTables = false;
+    for (const a of members)
+      for (const b of members) {
+        if (normalizeName(a.name) !== normalizeName(b.name) || normalizeExpr(a.expr) === normalizeExpr(b.expr))
+          continue;
+        if (a.source && b.source && a.source !== b.source) differentTables = true;
+        else conflict = true;
+      }
     const count = new Map<string, number>();
     for (const k of members) count.set(normalizeExpr(k.expr), (count.get(normalizeExpr(k.expr)) ?? 0) + 1);
     const canonical = [...members].sort(
@@ -134,6 +147,7 @@ export function consolidate(kpis: DiscoveredKpi[]): KpiGroup[] {
     out.push({
       kpis: members,
       conflict,
+      differentTables: differentTables && !conflict,
       canonical,
       replaces: [...views].filter((v) => v !== canonical.view).sort(),
     });

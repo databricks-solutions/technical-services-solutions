@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import type { MouseEvent, ReactNode } from 'react';
 import { createBrowserRouter, Outlet, RouterProvider, useLocation, useMatch, useNavigate } from 'react-router';
 import type { ProjectSummary } from '../../shared/brief';
-import { PROJECTS_CHANGED, useResource } from './api';
+import { api, DRIFT_CHECKED, PROJECTS_CHANGED, useResource } from './api';
 import {
   BeakerIcon,
   CatalogIcon,
@@ -64,6 +64,15 @@ function Shell() {
   const { refresh } = projects;
   // Pages create and delete projects, so the tree refreshes on each navigation.
   useEffect(() => refresh(), [pathname, refresh]);
+  // Check on open: once per browser session, the server checks the user's promoted views older than one day.
+  useEffect(() => {
+    if (sessionStorage.getItem(DRIFT_CHECKED)) return;
+    sessionStorage.setItem(DRIFT_CHECKED, '1');
+    api<{ checked: number }>('/api/drift/stale', {}).then(
+      (r) => r.checked && window.dispatchEvent(new Event(DRIFT_CHECKED)),
+      () => sessionStorage.removeItem(DRIFT_CHECKED)
+    );
+  }, []);
   useEffect(() => {
     window.addEventListener(PROJECTS_CHANGED, refresh);
     return () => window.removeEventListener(PROJECTS_CHANGED, refresh);

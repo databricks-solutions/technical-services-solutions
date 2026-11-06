@@ -27,6 +27,7 @@ export function statusOf(err: unknown): DataStateStatus {
 /** Loads a resource and maps the result to the four required data states. */
 /** Fired after a delete that does not change the URL, so the navigation tree refreshes. */
 export const PROJECTS_CHANGED = 'gsb:projects-changed';
+export const DRIFT_CHECKED = 'gsb:drift-checked';
 
 /** Loads path as the user. A null path loads nothing, for a picker that waits on an earlier choice. */
 export function useResource<T>(path: string | null) {

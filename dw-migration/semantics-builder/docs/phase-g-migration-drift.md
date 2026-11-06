@@ -66,5 +66,15 @@ Done in v1:
 - Map: "Import" opens the import modal with the canonical metric view. The views it replaces go into the audit log
   of the import (`detail.replaces`).
 
-Not yet: a certified dictionary entry from the proposal, and source-table awareness (the same name on different
-tables is shown as a conflict).
+- Source tables: each KPI keeps its main table (the metric view `source`, or the first `FROM` of a SQL view). The same
+  name with other formulas on other tables is "Same name, other tables", not a conflict. A table that is not known
+  counts as the same table.
+- "Add to a dictionary" stores the proposal as a certified metric in the dictionary of a project the user picks
+  (`POST /api/projects/:id/dictionary/certify`). An entry with the same name is replaced. The other names become
+  synonyms.
+
+## g3 status (2026-11-06)
+
+- `POST /api/drift/stale` checks up to 5 of the user's promoted views whose last check is older than one day, one
+  after the other, as the user. It reuses the drift check of g1.
+- The app shell calls it once per browser session. The library reloads its Health column when a check ran.

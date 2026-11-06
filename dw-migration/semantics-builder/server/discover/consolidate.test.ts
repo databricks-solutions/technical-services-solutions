@@ -62,6 +62,14 @@ describe('consolidate', () => {
     expect(groups).toHaveLength(1);
     expect(groups[0].conflict).toBe(false);
   });
+  it('tells a formula conflict on one table from the same name on other tables', () => {
+    const [g] = consolidate([
+      ...kpisOfSqlView('a', 'SELECT COUNT(DISTINCT customer_id) AS customers FROM main.shop.orders'),
+      ...kpisOfSqlView('b', 'SELECT COUNT(DISTINCT `cust`) AS customers FROM `main`.`crm`.`accounts`'),
+    ]);
+    expect(g.kpis.map((k) => k.source)).toEqual(['main.shop.orders', 'main.crm.accounts']);
+    expect(g).toMatchObject({ conflict: false, differentTables: true });
+  });
   it('ignores a KPI that only one view has', () => {
     expect(consolidate(kpisOfSqlView('a', 'SELECT SUM(x) AS x1, SUM(x) AS x2 FROM t'))).toEqual([]);
   });

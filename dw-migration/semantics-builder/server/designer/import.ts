@@ -11,7 +11,7 @@ const sourcesOf = (joins: Join[] | undefined): string[] =>
 export const tablesOf = (view: MetricView) =>
   [...new Set([view.source, ...sourcesOf(view.joins)].filter((s) => TABLE.test(s.trim())))].slice(0, 30);
 
-function aggregationOf(expr: string): SemanticBrief['measures'][number]['aggregation'] {
+export function aggregationOf(expr: string): SemanticBrief['measures'][number]['aggregation'] {
   const e = expr.trim().toUpperCase();
   if (/^COUNT\s*\(\s*DISTINCT\b/.test(e)) return 'count_distinct';
   for (const [re, agg] of [

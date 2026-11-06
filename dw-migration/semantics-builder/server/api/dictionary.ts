@@ -10,6 +10,8 @@ import { MAX_CELL, MAX_ROWS, parseCsv, entriesFromTable, parseMarkdown, parseXls
 import { sqlString } from '../readiness/profile';
 import { runStatement } from '../sql/runner';
 import type { RunDeps } from '../sql/runner';
+import { certifySchema } from '../../shared/discover';
+import { aggregationOf } from '../designer/import';
 import { actorOf, handle, HttpError } from './http';
 import { projectRepo } from './projects';
 
@@ -214,6 +216,41 @@ export function registerDictionaryRoutes(app: Application, db: Db, runFor: (req:
         [actor, project.id, { entries: rowCount }]
       );
       return { removed: rowCount };
+    })
+  );
+
+  /** Adds or replaces one certified metric, from a definition that discover proposes. */
+  app.post(
+    '/api/projects/:id/dictionary/certify',
+    handle(async (req) => {
+      const actor = actorOf(req);
+      const project = await owner(actor, idParam.parse(req.params).id);
+      const body = certifySchema.parse(req.body);
+      const entry: DictionaryEntry = {
+        kind: 'metric',
+        name: body.name,
+        definition: `Canonical definition of ${body.name}, used by ${body.views} view${body.views === 1 ? '' : 's'}.`,
+        formula: body.formula,
+        aggregation: aggregationOf(body.formula),
+        synonyms: [...new Set(body.synonyms.filter((n) => n.toLowerCase() !== body.name.toLowerCase()))],
+        ...(body.source ? { source: body.source } : {}),
+        status: 'certified',
+        notes: {},
+      };
+      await db.query(
+        `INSERT INTO gsb.dictionary_entry (project_id, kind, name, entry, source_file, imported_by)
+         VALUES ($1, 'metric', $2, $3, 'discover', $4)
+         ON CONFLICT (project_id, kind, lower(name))
+         DO UPDATE SET entry = EXCLUDED.entry, source_file = 'discover', imported_by = EXCLUDED.imported_by,
+           imported_at = now()`,
+        [project.id, entry.name, entry, actor]
+      );
+      await db.query(
+        `INSERT INTO gsb.audit_log (actor, action, project_id, target, outcome, detail)
+         VALUES ($1, 'certify_dictionary_entry', $2, $3, 'succeeded', $4)`,
+        [actor, project.id, entry.name, { formula: entry.formula }]
+      );
+      return { entry };
     })
   );
 

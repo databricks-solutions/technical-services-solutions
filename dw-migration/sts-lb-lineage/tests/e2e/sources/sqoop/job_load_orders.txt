@@ -1,0 +1,3 @@
+sqoop import --connect jdbc:mysql://srchost/sales --username u --password-file /user/u/pw --query "SELECT o.* FROM orders o WHERE \$CONDITIONS" --target-dir /user/hive/warehouse/raw.db/orders --split-by id -m 4
+sqoop import --connect jdbc:mysql://srchost/sales --username u --password-file /user/u/pw --table orders --hive-import --hive-table stg.orders_clean --create-hive-table
+sqoop export --connect jdbc:mysql://tgthost/dw --username u --password-file /user/u/pw --table dw.fact_orders --export-dir /user/hive/warehouse/stg.db/orders_clean

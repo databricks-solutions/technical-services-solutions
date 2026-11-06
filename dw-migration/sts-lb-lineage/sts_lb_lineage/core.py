@@ -28,7 +28,7 @@ LEVELS = [
 ]  # COMPLEX: SAS emits it off-schema
 
 
-def item_meta(item: dict) -> dict:
+def item_meta(item: dict, root: str | None = None) -> dict:
     """Complexity and its drivers for one analyzer inventory item (SQL script or ETL job)."""
 
     def n(k):
@@ -49,7 +49,7 @@ def item_meta(item: dict) -> dict:
     return {
         "complexity": item.get("complexityLevel") or "UNKNOWN",
         "type": item.get("type") or item.get("scriptType"),
-        "folder": item.get("folder"),
+        "folder": local(item.get("folder"), root),
         "drivers": {k: v for k, v in drivers.items() if v not in (None, 0, {}, [])},
     }
 
@@ -62,7 +62,20 @@ DATA_TAG = f'<script id="lineage-data" type="application/json">{PLACEHOLDER}</sc
 
 
 def clean(name: str) -> str:
-    return ".".join(p.strip('[]"` ') for p in name.strip().split("."))
+    return ".".join(p.strip("[]\"`' ") for p in name.strip().split("."))
+
+
+def local(path, root: str | None):
+    """Analyzer paths can be absolute on the scanning machine. Keep them relative to the scanned
+    folder (or the file name only) so outputs carry no local paths."""
+    if not path:
+        return path
+    s, r = str(path).replace("\\", "/"), (root or "").replace("\\", "/").rstrip("/")
+    if r and (s == r or s.startswith(r + "/")):
+        return s[len(r) + 1 :] or "."
+    if s.startswith("/") or re.match(r"^[A-Za-z]:/", s):
+        return s.rsplit("/", 1)[-1]
+    return path
 
 
 def fix_rel(r: dict) -> dict:
@@ -85,6 +98,9 @@ class Lineage:
         self.programs: dict[str, dict] = {}
         self.parents: dict[str, set] = defaultdict(set)
         self.post = None  # optional hook: dict -> dict, applied before writing
+        self.input_dir: str | None = (
+            None  # analyzer inputFolder of the report being read
+        )
         self.statements: list[dict] = []  # embedded ETL SQL text, for column lineage
 
     def node(self, kind: str, name: str, tech: str | None = None) -> str:
@@ -121,7 +137,9 @@ class Lineage:
         p["writes"].update(writes)
 
     def add_report(self, data: dict):
-        tech = (data.get("runInfo") or {}).get("sourceTechnology") or "unknown"
+        run = data.get("runInfo") or {}
+        tech = run.get("sourceTechnology") or "unknown"
+        self.input_dir = run.get("inputFolder")
         if "object_lineage" in data or tech == "SQL":
             self._add_sql(data, tech)
         else:
@@ -129,22 +147,23 @@ class Lineage:
 
     def _add_sql(self, data: dict, tech: str):
         for item in data.get("inventory") or []:
-            name = item.get("sourceFile") or item["name"]
+            name = local(item.get("sourceFile") or item["name"], self.input_dir)
             self.program(name, tech)
-            self.programs[name].update(item_meta(item))
+            self.programs[name].update(item_meta(item, self.input_dir))
         for entry in data.get("object_lineage") or []:
             dst = self.node("table", entry["target"])
             for w in entry.get("writes") or []:
                 srcs = [self.node("table", s) for s in w["sources"]]
+                f = local(w["file"], self.input_dir)
                 for src in srcs:
-                    self.edge(src, dst, "data", w["file"], "statement", tech)
-                self.program(w["file"], tech, srcs, [dst])
+                    self.edge(src, dst, "data", f, "statement", tech)
+                self.program(f, tech, srcs, [dst])
             for f in entry.get("reads") or []:
-                self.program(f, tech, reads=[dst])
+                self.program(local(f, self.input_dir), tech, reads=[dst])
 
     def _add_etl(self, data: dict, tech: str):
         for item in data.get("inventory") or []:
-            job = item["name"]
+            job = local(item["name"], self.input_dir)
             # statement-level first so shared edges keep the finer grain
             for st in item.get("sqlStatements") or []:
                 self._link(st.get("objectRel"), job, "statement", tech)
@@ -153,14 +172,26 @@ class Lineage:
             # inputs x outputs per job over-links multi-flow mappings; the analyzer's `nodes` holds
             # transformation counts only (no flow graph), so job grain is the finest available here
             self._link(item.get("objectRel"), job, "job", tech)
-            self.programs[job].update(item_meta(item))
-        for s in data.get("subJobInfo") or []:
+            self.programs[job].update(item_meta(item, self.input_dir))
+        subs = data.get("subJobInfo") or []
+        known = {s["parent"] for s in subs}
+        for s in subs:
+            child = s["child"]
+            # Oozie (0.3.1) qualifies parents (workflow.wf.action) but not children (action)
+            scope = s["parent"].rpartition(".")[0]
+            if (
+                child not in known
+                and "." not in child
+                and scope
+                and f"{scope}.{child}" in known
+            ):
+                child = f"{scope}.{child}"
             p, c = (
                 self.node("job", s["parent"], s.get("parentType")),
-                self.node("job", s["child"], s.get("childType")),
+                self.node("job", child, s.get("childType")),
             )
             self.edge(p, c, "orchestration", s["parent"], "job", tech)
-            self.parents[s["child"]].add(s["parent"])
+            self.parents[child].add(s["parent"])
 
     def _link(self, rels, job: str, grain: str, tech: str):
         rels = [fix_rel(r) for r in rels or []]
@@ -662,12 +693,16 @@ def scc(nodes: list[str], succ: dict[str, set]) -> dict[str, int]:
     return comp
 
 
-def run_analyzer(src: Path, platform: str, out: Path) -> Path:
+def run_analyzer(
+    src: Path, platform: str, out: Path, extension: str | None = None
+) -> Path:
     from databricks.labs.bladespector.analyzer import Analyzer
 
     out.mkdir(parents=True, exist_ok=True)
     xlsx = out / "analyzer.xlsx"
     report = xlsx.with_suffix(".json")
+    if extension:
+        return _run_with_extension(Analyzer, src, platform, xlsx, report, extension)
     try:
         Analyzer.analyze(src, xlsx, platform, json_result=report)
     except RuntimeError as e:
@@ -678,6 +713,30 @@ def run_analyzer(src: Path, platform: str, out: Path) -> Path:
             f"warning: analyzer JSON failed schema check ({e.__cause__}); using it anyway",
             file=sys.stderr,
         )
+    return report
+
+
+def _run_with_extension(Analyzer, src, platform, xlsx, report, extension) -> Path:
+    """The analyzer wrapper (0.3.x) cannot pass the binary's -E (file extension) option, which
+    some sources need (for example DataStage .dsx). Run the bundled binary with it directly."""
+    import os
+    import subprocess
+
+    from databricks.labs.bladespector import analyzer as bb
+
+    tech = bb._PLATFORM_TO_SOURCE_TECHNOLOGY.get(platform)
+    if not tech:
+        sys.exit(f"--platform: unsupported '{platform}'")
+    ext = extension.lstrip(".")
+    if not re.fullmatch(r"[A-Za-z0-9]{1,10}", ext):
+        sys.exit("--extension: letters and digits only, for example dsx")
+    args = [str(Analyzer()._binary), "-d", str(src), "-r", str(xlsx), "-t", tech]
+    args += ["-E", ext, "-j", str(report)]
+    rc = subprocess.run(
+        args, env={**os.environ, "UTF8_NOT_SUPPORTED": "1"}, check=False
+    ).returncode
+    if rc or not report.exists():
+        sys.exit(f"Lakebridge Analyzer failed (exit {rc}) for {platform} with -E {ext}")
     return report
 
 
@@ -692,6 +751,10 @@ def main(argv=None):
     ap.add_argument(
         "--platform",
         help="analyzer platform for --run, e.g. 'Oracle', 'Informatica - PC'",
+    )
+    ap.add_argument(
+        "--extension",
+        help="source file extension for --run when the Lakebridge Analyzer needs one, e.g. dsx",
     )
     ap.add_argument("-o", "--out", type=Path, default=Path("lineage"))
     ap.add_argument("--format", default="json,csv,mermaid,html")
@@ -797,7 +860,7 @@ def main(argv=None):
     if a.run:
         if not a.platform:
             ap.error("--run needs --platform")
-        reports.append(run_analyzer(a.run, a.platform, a.out))
+        reports.append(run_analyzer(a.run, a.platform, a.out, a.extension))
     if a.uc_remove:
         from . import uc as sts_lb_uc
 

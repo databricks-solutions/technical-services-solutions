@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2021.4">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileInput.DbFileInput"><Position x="54" y="54"/></GuiSettings>
+      <Properties><Configuration><Passwords/><File OutputFileName="" FileFormat="23" SearchSubDirs="False" RecordLimit="">odbc:DSN=dwh;UID=u;PWD=x|||SELECT order_id, amount FROM raw.orders</File><FormatSpecificOptions><CacheData>False</CacheData></FormatSpecificOptions></Configuration><Annotation DisplayMode="0"><Name/><DefaultAnnotationText>raw.orders</DefaultAnnotationText></Annotation></Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDbFileInput"/>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileOutput.DbFileOutput"><Position x="200" y="54"/></GuiSettings>
+      <Properties><Configuration><File MaxRecords="" FileFormat="23" Passwords="">odbc:DSN=dwh;UID=u;PWD=x|||stg.orders_clean</File><Passwords/><FormatSpecificOptions><TransactionMessages>False</TransactionMessages><OutputOption>Append</OutputOption><PostSQL>INSERT INTO stg.orders_clean SELECT order_id, amount FROM raw.orders</PostSQL></FormatSpecificOptions></Configuration><Annotation DisplayMode="0"><Name/><DefaultAnnotationText>stg.orders_clean</DefaultAnnotationText></Annotation></Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDbFileOutput"/>
+    </Node>
+  </Nodes>
+  <Connections><Connection><Origin ToolID="1" Connection="Output"/><Destination ToolID="2" Connection="Input"/></Connection></Connections>
+  <Properties><MetaInfo><Name>load_orders</Name></MetaInfo></Properties>
+</AlteryxDocument>

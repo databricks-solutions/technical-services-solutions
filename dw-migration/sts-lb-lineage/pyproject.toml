@@ -36,3 +36,5 @@ exclude = ["viewer/node_modules", "viewer/dist"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = ["e2e: runs the Lakebridge Analyzer on tests/e2e/sources (needs the analyzer extra)"]
+addopts = "-m 'not e2e'"

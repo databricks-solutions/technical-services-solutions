@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<job>
+  <name>job_load_orders</name>
+  <entries>
+    <entry><name>START</name><type>SPECIAL</type><start>Y</start><dummy>N</dummy><repeat>N</repeat><schedulerType>0</schedulerType><intervalSeconds>0</intervalSeconds><intervalMinutes>60</intervalMinutes><hour>12</hour><minutes>0</minutes><weekDay>1</weekDay><DayOfMonth>1</DayOfMonth><parallel>N</parallel><xloc>50</xloc><yloc>50</yloc><draw>Y</draw></entry>
+    <entry><name>Run load_orders</name><type>TRANS</type><filename>${Internal.Entry.Current.Directory}/load_orders.ktr</filename><transname>load_orders</transname><arg_from_previous>N</arg_from_previous><parallel>N</parallel><parallel>N</parallel><xloc>200</xloc><yloc>50</yloc><draw>Y</draw></entry>
+  </entries>
+  <hops><hop><from>START</from><to>Run load_orders</to><from_nr>0</from_nr><to_nr>0</to_nr><enabled>Y</enabled><evaluation>Y</evaluation><unconditional>Y</unconditional></hop></hops>
+</job>

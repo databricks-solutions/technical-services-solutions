@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<transformation>
+  <info><name>load_orders</name><trans_version/><trans_type>Normal</trans_type></info>
+  <connection><name>dwh</name><server>localhost</server><type>POSTGRESQL</type><access>Native</access><database>db</database><port>5432</port><username>u</username><password>x</password></connection>
+  <order><hop><from>Read raw</from><to>Write stg</to><enabled>Y</enabled></hop></order>
+  <step><name>Read raw</name><type>TableInput</type><connection>dwh</connection><sql>SELECT order_id, amount FROM raw.orders</sql><limit>0</limit><distribute>Y</distribute><copies>1</copies><GUI><xloc>100</xloc><yloc>100</yloc><draw>Y</draw></GUI></step>
+  <step><name>Write stg</name><type>TableOutput</type><connection>dwh</connection><schema>stg</schema><table>stg.orders_clean</table><commit>1000</commit><truncate>N</truncate><distribute>Y</distribute><copies>1</copies><GUI><xloc>300</xloc><yloc>100</yloc><draw>Y</draw></GUI></step>
+</transformation>

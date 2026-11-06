@@ -222,3 +222,51 @@ def test_shared_uc_targets_are_flagged(tmp_path):
     assert "dst.orders|src.orders" in (tmp_path / "uc_mapping.csv").read_text()
     clean = sts_lb_uc.enrich(load("sql_retail").to_dict(), "main")
     assert clean["insights"]["trust"]["ucTargetCollisions"] == 0
+
+
+def test_analyzer_paths_quotes_and_oozie_children_are_normalized():
+    from sts_lb_lineage.core import local
+
+    root = "/home/someone/scan"
+    assert local(f"{root}/jobs/a.py", root) == "jobs/a.py"
+    assert local("/elsewhere/b.py", root) == "b.py"
+    assert local("C:\\scan\\c.dtsx", None) == "c.dtsx"
+    assert local("m_load", root) == "m_load"
+    lin = Lineage()
+    lin.add_report(
+        {
+            "runInfo": {"sourceTechnology": "OOZIE", "inputFolder": root},
+            "inventory": [
+                {
+                    "name": f"{root}/wf.py",
+                    "folder": f"{root}/sub",
+                    "objectRel": [{"action": "read", "object": "'raw.orders'"}],
+                }
+            ],
+            "subJobInfo": [
+                {"parent": "workflow.wf.a", "child": "b"},
+                {"parent": "workflow.wf.b", "child": "end"},
+            ],
+        }
+    )
+    raw = json.dumps(lin.to_dict())
+    assert root not in raw and "table:raw.orders" in lin.nodes
+    assert ("job:workflow.wf.a", "job:workflow.wf.b", "orchestration") in lin.edges
+    assert lin.programs["wf.py"]["folder"] == "sub"
+
+
+def test_run_extension_is_validated(tmp_path):
+    pytest.importorskip("databricks.labs.bladespector.analyzer")
+    with pytest.raises(SystemExit):
+        main(
+            [
+                "--run",
+                str(tmp_path),
+                "--platform",
+                "Datastage",
+                "--extension",
+                "ds x;rm",
+                "-o",
+                str(tmp_path),
+            ]
+        )

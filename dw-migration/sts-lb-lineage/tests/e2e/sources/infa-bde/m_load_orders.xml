@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<imx:IMX xmlns:imx="http://com.informatica.imx" serializationSpecVersion="2.0" crossReferenceStyle="ID">
+<imx:Header><imx:Source version="10.4.0"/></imx:Header>
+<imx:Content>
+<com.informatica.metadata.common.folder.Folder imx:id="F1" name="syn_folder">
+<children>
+<com.informatica.metadata.common.mapping.xsd.Mapping imx:id="M1" name="m_load_orders">
+<transformations>
+<com.informatica.metadata.common.read.xsd.Read imx:id="R1" name="Read_orders" type="Read">
+ <dataObject name="orders" schema="raw"/>
+ <outputPorts><port name="order_id"/><port name="amount"/></outputPorts>
+</com.informatica.metadata.common.read.xsd.Read>
+<com.informatica.metadata.common.write.xsd.Write imx:id="W1" name="Write_orders_clean" type="Write">
+ <dataObject name="orders_clean" schema="stg"/>
+ <inputPorts><port name="order_id"/><port name="amount"/></inputPorts>
+</com.informatica.metadata.common.write.xsd.Write>
+</transformations>
+<links><link fromTransformation="R1" toTransformation="W1"/></links>
+</com.informatica.metadata.common.mapping.xsd.Mapping>
+</children>
+</com.informatica.metadata.common.folder.Folder>
+</imx:Content>
+</imx:IMX>

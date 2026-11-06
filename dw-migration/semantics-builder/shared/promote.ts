@@ -47,4 +47,6 @@ export interface LibraryRow {
   promoted: { version: number; by: string; at: string } | null;
   /** The sandbox view of the last passed validation. It can be dropped since. */
   sandboxView: string | null;
+  /** From the last drift check. null when the view was never checked. */
+  health: { status: 'ok' | 'warning' | 'error'; at: string } | null;
 }

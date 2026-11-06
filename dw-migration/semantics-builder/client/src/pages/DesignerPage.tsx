@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router';
+import { useNavigate, useParams, useSearchParams } from 'react-router';
 import {
   Alert,
   Button,
@@ -730,7 +730,8 @@ function History({
 export function DesignerPage() {
   const { projectId = '' } = useParams();
   const view = useResource<DesignerView>(`/api/projects/${projectId}/designs`);
-  const [tab, setTab] = useState<DesignerTab>('model');
+  const [search] = useSearchParams();
+  const [tab, setTab] = useState<DesignerTab>(search.get('tab') === 'promote' ? 'promote' : 'model');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const data = view.data;

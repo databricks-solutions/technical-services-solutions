@@ -8,6 +8,17 @@ import { ImportModal } from '../components/ImportModal';
 import { OpenInCatalog } from '../components/OpenInCatalog';
 import { subPath } from './ProjectsPage';
 
+function Health({ r }: { r: LibraryRow }) {
+  if (!r.health) return <Typography.Text color="secondary">Not checked</Typography.Text>;
+  const tag = { ok: ['teal', 'OK'], warning: ['lemon', 'Warning'], error: ['coral', 'Error'] } as const;
+  const [color, label] = tag[r.health.status];
+  return (
+    <Tag componentId="gsb.library.health" color={color} title={`Checked ${new Date(r.health.at).toLocaleString()}`}>
+      {label}, {new Date(r.health.at).toLocaleDateString()}
+    </Tag>
+  );
+}
+
 function Behind({ r }: { r: LibraryRow }) {
   if (!r.promoted) return <Tag componentId="gsb.library.state">Not promoted</Tag>;
   const n = r.latest.version - r.promoted.version;
@@ -51,6 +62,7 @@ export function LibraryPage() {
               <TableHeader componentId="gsb.library.h_promoted">In Unity Catalog</TableHeader>
               <TableHeader componentId="gsb.library.h_latest">Latest version</TableHeader>
               <TableHeader componentId="gsb.library.h_state">State</TableHeader>
+              <TableHeader componentId="gsb.library.h_health">Health</TableHeader>
               <TableHeader componentId="gsb.library.h_actions">Actions</TableHeader>
             </TableRow>
             {rows.map((r) => (
@@ -77,8 +89,20 @@ export function LibraryPage() {
                   <Behind r={r} />
                 </TableCell>
                 <TableCell>
+                  <Health r={r} />
+                </TableCell>
+                <TableCell>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     {r.target && r.promoted && <OpenInCatalog fullName={r.target} />}
+                    {r.promoted && (
+                      <Button
+                        componentId="gsb.library.health_open"
+                        size="small"
+                        onClick={() => void navigate(`${subPath(r.parentId, r.projectId, 'designer')}?tab=promote`)}
+                      >
+                        Health and drift
+                      </Button>
+                    )}
                     <Button
                       componentId="gsb.library.open"
                       size="small"

@@ -18,6 +18,9 @@ interface Row {
   promoted_by: string | null;
   promoted_at: Date | null;
   sandbox_view: string | null;
+  check_at: Date | null;
+  check_errors: number | null;
+  check_warnings: number | null;
 }
 
 /** Every sub-project of the user with a design: its Unity Catalog view, promoted and latest versions. */
@@ -30,13 +33,18 @@ export function registerLibraryRoutes(app: Application, db: Db) {
            d.version AS latest_version, d.status AS latest_status,
            pr.version AS promoted_version, pr.created_by AS promoted_by, pr.created_at AS promoted_at,
            (SELECT r.sandbox_view FROM gsb.validation_run r JOIN gsb.metric_view_draft x ON x.id = r.draft_id
-            WHERE x.project_id = s.id AND r.status = 'passed' ORDER BY r.created_at DESC LIMIT 1) AS sandbox_view
+            WHERE x.project_id = s.id AND r.status = 'passed' ORDER BY r.created_at DESC LIMIT 1) AS sandbox_view,
+           dc.created_at AS check_at,
+           (SELECT count(*)::int FROM jsonb_array_elements(dc.findings) f WHERE f->>'severity' = 'error') AS check_errors,
+           (SELECT count(*)::int FROM jsonb_array_elements(dc.findings) f WHERE f->>'severity' = 'warning') AS check_warnings
          FROM gsb.project s
          JOIN gsb.project p ON p.id = s.parent_id
          JOIN LATERAL (SELECT version, status, name FROM gsb.metric_view_draft
                        WHERE project_id = s.id ORDER BY version DESC LIMIT 1) d ON true
          LEFT JOIN LATERAL (SELECT version, created_by, created_at FROM gsb.promotion
                             WHERE project_id = s.id AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1) pr ON true
+         LEFT JOIN LATERAL (SELECT created_at, findings FROM gsb.drift_check
+                            WHERE project_id = s.id ORDER BY created_at DESC LIMIT 1) dc ON true
          WHERE s.created_by = $1
          ORDER BY p.name, s.name
          LIMIT 500`,
@@ -55,6 +63,12 @@ export function registerLibraryRoutes(app: Application, db: Db) {
             ? { version: r.promoted_version, by: r.promoted_by, at: r.promoted_at.toISOString() }
             : null,
         sandboxView: r.sandbox_view,
+        health: r.check_at
+          ? {
+              status: r.check_errors ? 'error' : r.check_warnings ? 'warning' : 'ok',
+              at: r.check_at.toISOString(),
+            }
+          : null,
       }));
     })
   );

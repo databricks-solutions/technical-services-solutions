@@ -32,6 +32,7 @@ import { profileFromTable } from '../uc/metadata';
 import type { UcDeps } from '../uc/metadata';
 import { applyEffect, inferLinks, projectScore, tableAreas, tableScore } from '../readiness/score';
 import type { FixEffect } from '../readiness/score';
+import { finalFix, fixRows } from '../readiness/edit';
 import type { NewRecommendation, TableProfile } from '../readiness/profile';
 import { runStatement } from '../sql/runner';
 import type { RunDeps } from '../sql/runner';
@@ -186,6 +187,7 @@ export function buildView(
       title: r.title,
       rationale: r.rationale ?? '',
       statements: r.statements,
+      rows: fixRows(r.kind, r.full_name, r.statements, profiles),
       status: r.status,
       error: r.error,
       decidedBy: r.decided_by,
@@ -269,15 +271,42 @@ export function readinessRepo(db: Db) {
      * The status check makes a double click or a second tab a no-op.
      */
     /** Approves the fix when the shown statements still match, and stores the statements that will run. */
-    async claim(actor: string, projectId: string, id: string, statements: string[], final = statements): Promise<void> {
+    async claim(
+      actor: string,
+      projectId: string,
+      id: string,
+      statements: string[],
+      final = statements,
+      effect: FixEffect | null = null
+    ): Promise<void> {
       const { rows } = await db.query(
         `UPDATE gsb.recommendation SET status = 'approved', decided_by = $3, decided_at = now(), error = NULL,
-           statements = $5::text[]
+           statements = $5::text[], effect = COALESCE($6::jsonb, effect)
          WHERE id = $1 AND project_id = $2 AND status IN ('proposed', 'failed') AND statements = $4::text[]
          RETURNING id`,
-        [id, projectId, actor, statements, final]
+        [id, projectId, actor, statements, final, effect ? JSON.stringify(effect) : null]
       );
       if (!rows[0]) throw new HttpError(409, 'This fix changed or was already handled. Reload the page.');
+    },
+
+    /** The fix and the latest profile of each source, to rebuild an edited fix. */
+    async fixContext(projectId: string, id: string) {
+      const [rec, sources] = await Promise.all([
+        db.query<{ kind: Recommendation['kind']; full_name: string | null; statements: string[] }>(
+          `SELECT r.kind, s.full_name, r.statements FROM gsb.recommendation r
+           LEFT JOIN gsb.source s ON s.id = r.source_id WHERE r.id = $1 AND r.project_id = $2`,
+          [id, projectId]
+        ),
+        db.query<{ profile: TableProfile }>(
+          `SELECT r.profile FROM gsb.source s
+           JOIN LATERAL (SELECT profile FROM gsb.readiness_report WHERE source_id = s.id
+                         ORDER BY created_at DESC LIMIT 1) r ON true
+           WHERE s.project_id = $1 AND r.profile IS NOT NULL`,
+          [projectId]
+        ),
+      ]);
+      if (!rec.rows[0]) throw new HttpError(404, 'Fix not found.');
+      return { rec: rec.rows[0], profiles: new Map(sources.rows.map((r) => [r.profile.fullName, r.profile])) };
     },
 
     async finish(id: string, status: 'applied' | 'failed', error: string | null): Promise<void> {
@@ -368,10 +397,17 @@ const addBody = z.object({ tables: z.array(z.string().trim().regex(UC_TABLE_NAME
 const MAX_RELATED_SCHEMAS = 5;
 const short = (t: string) => t.split('.').pop()!;
 
+const columnName = z.string().trim().min(1).max(255);
 const applyBody = z.object({
   statements: z.array(z.string().min(1).max(200_000)).min(1).max(200),
   /** Edited text for each comment statement, by index. null keeps the proposed text. */
   comments: z.array(z.string().max(1000).nullable()).max(200).optional(),
+  /** Comment statements to leave out, by index. */
+  skip: z.array(z.number().int().min(0).max(199)).max(200).optional(),
+  /** The edited key columns, and the referenced columns of a foreign key. */
+  key: z
+    .object({ columns: z.array(columnName).min(1).max(10), refColumns: z.array(columnName).max(10).optional() })
+    .optional(),
 });
 
 export function registerReadinessRoutes(
@@ -461,6 +497,28 @@ export function registerReadinessRoutes(
     })
   );
 
+  /** The statements an edited fix runs, rebuilt on the server. The shown statements must match the stored ones. */
+  async function rebuild(projectId: string, recId: string, body: z.infer<typeof applyBody>) {
+    const { rec, profiles } = await repo.fixContext(projectId, recId);
+    if (rec.statements.join('\n') !== body.statements.join('\n'))
+      throw new HttpError(409, 'This fix changed or was already handled. Reload the page.');
+    try {
+      return finalFix(rec.kind, rec.full_name, body.statements, body, profiles);
+    } catch (err) {
+      throw new HttpError(400, (err as Error).message);
+    }
+  }
+
+  /** Shows the exact SQL of an edited fix. Changes nothing. */
+  app.post(
+    '/api/projects/:id/recommendations/:recId/preview',
+    handle(async (req) => {
+      const { id, recId } = recParam.parse(req.params);
+      const project = await projects.get(actorOf(req), id);
+      return { statements: (await rebuild(project.id, recId, applyBody.parse(req.body))).statements };
+    })
+  );
+
   app.post(
     '/api/projects/:id/recommendations/:recId/apply',
     handle(async (req) => {
@@ -468,16 +526,8 @@ export function registerReadinessRoutes(
       const { id, recId } = recParam.parse(req.params);
       const project = await projects.get(actor, id);
       const body = applyBody.parse(req.body);
-      let statements = body.statements;
-      try {
-        statements = statements.map((s, i) => {
-          const text = body.comments?.[i];
-          return text == null ? s : withComment(s, text);
-        });
-      } catch (err) {
-        throw new HttpError(400, (err as Error).message);
-      }
-      await repo.claim(actor, project.id, recId, body.statements, statements);
+      const { statements, effect } = await rebuild(project.id, recId, body);
+      await repo.claim(actor, project.id, recId, body.statements, statements, effect);
 
       const run = runFor(req);
       for (const [i, statement] of statements.entries()) {

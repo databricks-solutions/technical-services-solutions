@@ -68,6 +68,44 @@ export interface SourceReadiness {
 
 export type RecommendationStatus = 'proposed' | 'approved' | 'applied' | 'rejected' | 'failed';
 
+export interface FixColumn {
+  name: string;
+  type: string;
+}
+
+/** One editable row of a fix: a comment to write, or the columns of a key. */
+export type FixRow =
+  | {
+      kind: 'comment';
+      /** Index of the statement in the fix. */
+      index: number;
+      table: string;
+      column: string | null;
+      type: string | null;
+      current: string;
+      proposed: string;
+    }
+  | {
+      kind: 'key';
+      table: string;
+      columns: string[];
+      options: FixColumn[];
+      /** The referenced table of a foreign key; null for a primary key. */
+      references: string | null;
+      refColumns: string[];
+      refOptions: FixColumn[];
+    };
+
+/** The user's changes to a proposed fix. The server rebuilds the SQL from them. */
+export interface FixEdits {
+  /** Edited comment text by statement index; null keeps the proposal. */
+  comments?: (string | null)[];
+  /** Statement indexes of comments to leave out. */
+  skip?: number[];
+  /** The key columns, and for a foreign key the referenced columns, in order. */
+  key?: { columns: string[]; refColumns?: string[] };
+}
+
 export interface Recommendation {
   id: string;
   sourceName: string | null;
@@ -75,6 +113,8 @@ export interface Recommendation {
   title: string;
   rationale: string;
   statements: string[];
+  /** The fix as rows the user can edit. */
+  rows: FixRow[];
   status: RecommendationStatus;
   error: string | null;
   decidedBy: string | null;

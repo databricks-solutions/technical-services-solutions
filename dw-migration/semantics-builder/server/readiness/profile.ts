@@ -102,6 +102,15 @@ const constraintName = (table: string, suffix: string) =>
     .pop()!
     .replace(/[^A-Za-z0-9_]/g, '_')}_${suffix}`.slice(0, 120);
 
+/** NOT NULL on each key column, then the informational primary key. */
+export const pkStatements = (fullName: string, columns: string[]) => [
+  ...columns.map((c) => `ALTER TABLE ${quoteName(fullName)} ALTER COLUMN ${quoteId(c)} SET NOT NULL`),
+  `ALTER TABLE ${quoteName(fullName)} ADD CONSTRAINT ${quoteId(constraintName(fullName, 'pk'))} PRIMARY KEY (${columns.map(quoteId).join(', ')})`,
+];
+
+export const fkStatement = (fullName: string, references: string, columns: string[], refColumns: string[]) =>
+  `ALTER TABLE ${quoteName(fullName)} ADD CONSTRAINT ${quoteId(constraintName(fullName, `${references.split('.').pop()}_fk`))} FOREIGN KEY (${columns.map(quoteId).join(', ')}) REFERENCES ${quoteName(references)} (${refColumns.map(quoteId).join(', ')})`;
+
 export interface Proposal {
   tableComment: string | null;
   columnComments: { column: string; comment: string }[];
@@ -187,10 +196,7 @@ export function buildRecommendations(
       kind: 'primary_key',
       title: `Declare the primary key of ${p.fullName}`,
       rationale: `Declares ${pk.join(', ')} as the unique key. Key columns must not contain NULL values, so the columns are set to NOT NULL first. The key is informational and is not enforced.`,
-      statements: [
-        ...pk.map((c) => `ALTER TABLE ${table} ALTER COLUMN ${quoteId(c)} SET NOT NULL`),
-        `ALTER TABLE ${table} ADD CONSTRAINT ${quoteId(constraintName(p.fullName, 'pk'))} PRIMARY KEY (${pk.map(quoteId).join(', ')})`,
-      ],
+      statements: pkStatements(p.fullName, pk),
       effect: { primaryKey: pk },
     });
   }
@@ -208,9 +214,7 @@ export function buildRecommendations(
       kind: 'foreign_key',
       title: `Link ${p.fullName} to ${ref.fullName}`,
       rationale: `Documents the join ${local.join(', ')} -> ${ref.fullName} (${remote.join(', ')}). ${ref.fullName} needs a primary key on ${remote.join(', ')} first. The key is informational and is not enforced.`,
-      statements: [
-        `ALTER TABLE ${table} ADD CONSTRAINT ${quoteId(constraintName(p.fullName, `${ref.fullName.split('.').pop()}_fk`))} FOREIGN KEY (${local.map(quoteId).join(', ')}) REFERENCES ${quoteName(ref.fullName)} (${remote.map(quoteId).join(', ')})`,
-      ],
+      statements: [fkStatement(p.fullName, ref.fullName, local, remote)],
       effect: { foreignKey: { columns: local, references: ref.fullName, refColumns: remote } },
     });
   }

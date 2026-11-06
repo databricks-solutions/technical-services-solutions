@@ -22,13 +22,14 @@ import {
 import type {
   AreaScore,
   CheckStatus,
+  FixEdits,
   ReadinessView,
   Recommendation,
   RelatedTable,
   SourceReadiness,
 } from '../../../shared/readiness';
 import { api, useResource } from '../api';
-import { CommentEdits, commentsOf, previewOf } from '../components/CommentEdits';
+import { FixEditor } from '../components/FixEditor';
 import { WriteComment } from '../components/WriteComment';
 import { OpenInCatalog } from '../components/OpenInCatalog';
 import { DictionaryCoverage } from '../components/DictionaryCoverage';
@@ -209,7 +210,7 @@ function FixCard({
         </Tag>
       </div>
       <Typography.Text color="secondary">{fix.rationale}</Typography.Text>
-      {open && <Sql statements={fix.statements} />}
+      {open && <FixEditor rows={fix.rows} edits={{}} />}
       {fix.error && <Alert componentId="gsb.sources.fix_error" type="error" closable={false} message={fix.error} />}
       {fix.decidedBy && !open && (
         <Typography.Text color="secondary" size="sm">
@@ -432,7 +433,8 @@ export function SourcesPage() {
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState<string>();
   const [reviewing, setReviewing] = useState<Recommendation>();
-  const [edits, setEdits] = useState<(string | null)[]>([]);
+  const [edits, setEdits] = useState<FixEdits>({});
+  const [sql, setSql] = useState<string[]>();
   const [adding, setAdding] = useState<'pick' | 'related'>();
 
   const post = (key: string, path: string, body: unknown = {}) => {
@@ -590,7 +592,9 @@ export function SourcesPage() {
                       fix={r}
                       busy={!!busy}
                       onApply={() => {
-                        setEdits([]);
+                        setEdits({});
+                        setSql(undefined);
+                        setError(undefined);
                         setReviewing(r);
                       }}
                       onReject={() => void post(r.id, `/api/projects/${projectId}/recommendations/${r.id}/reject`)}
@@ -654,7 +658,7 @@ export function SourcesPage() {
               componentId="gsb.sources.apply_modal"
               title={reviewing ? `Apply: ${reviewing.title}` : ''}
               visible={!!reviewing}
-              okText="Run SQL"
+              okText="Apply"
               cancelText="Cancel"
               okButtonProps={{ loading: !!reviewing && busy === reviewing.id }}
               onCancel={() => setReviewing(undefined)}
@@ -662,9 +666,7 @@ export function SourcesPage() {
                 if (!reviewing) return;
                 void post(reviewing.id, `/api/projects/${projectId}/recommendations/${reviewing.id}/apply`, {
                   statements: reviewing.statements,
-                  ...(edits.some((e) => e != null)
-                    ? { comments: reviewing.statements.map((_, i) => edits[i] ?? null) }
-                    : {}),
+                  ...edits,
                 }).then(() => setReviewing(undefined));
               }}
             >
@@ -674,13 +676,41 @@ export function SourcesPage() {
                     componentId="gsb.sources.apply_warning"
                     type="warning"
                     closable={false}
-                    message="This SQL runs as you on the SQL warehouse and changes Unity Catalog metadata. It does not change table data."
+                    message="Apply changes Unity Catalog metadata as you, on the SQL warehouse. It does not change table data. Edit the proposal first if needed."
                   />
                   {reviewing.sourceName && <FixPermission projectId={projectId} table={reviewing.sourceName} />}
-                  {commentsOf(reviewing.statements).some(Boolean) && (
-                    <CommentEdits statements={reviewing.statements} edits={edits} onChange={setEdits} />
+                  <FixEditor
+                    rows={reviewing.rows}
+                    edits={edits}
+                    onChange={(e) => {
+                      setEdits(e);
+                      setSql(undefined);
+                    }}
+                  />
+                  <div>
+                    <Button
+                      componentId="gsb.sources.show_sql"
+                      size="small"
+                      type="link"
+                      onClick={() =>
+                        sql
+                          ? setSql(undefined)
+                          : void api<{ statements: string[] }>(
+                              `/api/projects/${projectId}/recommendations/${reviewing.id}/preview`,
+                              { statements: reviewing.statements, ...edits }
+                            ).then(
+                              (r) => setSql(r.statements),
+                              (err: unknown) => setError((err as Error).message)
+                            )
+                      }
+                    >
+                      {sql ? 'Hide the SQL' : 'Show the SQL that runs'}
+                    </Button>
+                  </div>
+                  {sql && <Sql statements={sql} />}
+                  {error && (
+                    <Alert componentId="gsb.sources.apply_error" type="error" closable={false} message={error} />
                   )}
-                  <Sql statements={previewOf(reviewing.statements, edits)} />
                 </div>
               )}
             </Modal>

@@ -1315,11 +1315,68 @@ def test_notebook_resume_needs_a_pause_run(monkeypatch):
                                 "mode": "execute", "rollback_of": APPLY}, CutoverW([]), apply_rows={APPLY: apply_run})
 
 
+RB_DRY = "eeeeeeee-0000-0000-0000-000000000001"
+
+
+def rollback_dry_rows(rollback_of, **over):
+    """A successful, recent rollback dry run of rollback_of, as the job reads it back (dry_rows for _notebook)."""
+    import time
+    return {RB_DRY: {"mode": "rollback_dry_run", "operation": "apply", "status": "SUCCEEDED",
+                     "rollback_of": rollback_of, "requested_by": "", "started_at": time.time(), **over}}
+
+
 def test_notebook_rollback_of_a_tracking_run_is_refused(monkeypatch):
     tracking_run = {"mode": "execute", "operation": "enable_tracking", "status": "SUCCEEDED", "job_run_id": "1"}
     with pytest.raises(ValueError, match="enable_tracking"):
         _notebook(monkeypatch, {"apply_id": OTHER, "results_schema": "c.s", "mode": "rollback",
-                                "rollback_of": APPLY}, CutoverW([]), apply_rows={APPLY: tracking_run})
+                                "rollback_of": APPLY, "dry_run_id": RB_DRY}, CutoverW([]),
+                  apply_rows={APPLY: tracking_run}, dry_rows=rollback_dry_rows(APPLY))
+
+
+def test_notebook_rollback_follows_its_dry_run(monkeypatch):
+    import ug_migration_store as st
+    src = {"mode": "execute", "operation": "apply", "status": "SUCCEEDED", "job_run_id": "1"}
+    seen = []
+    monkeypatch.setattr(st, "apply_log_from_items", lambda *a, **k: 1)
+    monkeypatch.setattr(st, "protection_runs", lambda *a, **k: [])
+    import ug_migration_apply as am
+    monkeypatch.setattr(am, "rollback", lambda w, path, execute, **k: seen.append(execute) or
+                        [{"type": "model_service", "name": "c.s.x", "action": "deleted" if execute else "would_delete"}])
+    base = {"results_schema": "c.s", "rollback_of": APPLY, "job_run_id": "5"}
+    # The dry run lists what would go and deletes nothing.
+    calls = _notebook(monkeypatch, {**base, "apply_id": OTHER, "mode": "rollback_dry_run"}, CutoverW([]),
+                      apply_rows={APPLY: src})
+    assert seen == [False] and calls["items"][OTHER][0]["action"] == "would_delete"
+    assert calls["upserts"][0]["mode"] == "rollback_dry_run" and calls["upserts"][0]["dry_run_id"] == ""
+    # Without a matching dry run the rollback is refused before its row is written.
+    for rows, why in ((None, "needs dry_run_id"), (rollback_dry_rows(OTHER), "another execute run"),
+                      (rollback_dry_rows(APPLY, status="FAILED"), "didn't finish"),
+                      (rollback_dry_rows(APPLY, started_at=0), "hours old")):
+        with pytest.raises(ValueError, match=why):
+            _notebook(monkeypatch, {**base, "apply_id": DRY, "mode": "rollback",
+                                    "dry_run_id": RB_DRY if rows else ""}, CutoverW([]),
+                      apply_rows={APPLY: src}, dry_rows=rows)
+    calls = _notebook(monkeypatch, {**base, "apply_id": DRY, "mode": "rollback", "dry_run_id": RB_DRY}, CutoverW([]),
+                      apply_rows={APPLY: src}, dry_rows=rollback_dry_rows(APPLY))
+    assert seen[-1] is True and calls["upserts"][0]["dry_run_id"] == RB_DRY
+    # A dry run that keeps objects (NEEDS_ATTENTION) still unlocks the rollback.
+    _notebook(monkeypatch, {**base, "apply_id": DRY, "mode": "rollback", "dry_run_id": RB_DRY}, CutoverW([]),
+              apply_rows={APPLY: src}, dry_rows=rollback_dry_rows(APPLY, status="NEEDS_ATTENTION"))
+    assert seen[-1] is True
+
+
+def test_a_rollback_dry_run_that_keeps_objects_finishes_as_needs_attention_and_writes_no_marker(tmp_path):
+    """The real rollback() on a dry run: kept objects make NEEDS_ATTENTION (so the gate must accept it), and no
+    rollback_complete marker is written, so the execute run doesn't count as rolled back."""
+    import ug_migration_apply as am
+    st = am.run_outcome([{"action": "would_delete"}, {"action": "kept", "other_run": True}])[0]
+    assert st == "NEEDS_ATTENTION" and am.rollback_gate_error(
+        {"mode": "rollback_dry_run", "operation": "apply", "status": st, "rollback_of": APPLY,
+         "started_at": __import__("time").time()}, APPLY) is None
+    log = tmp_path / "a.jsonl"
+    log.write_text(json.dumps({"type": "run", "action": "run_start", "apply_id": APPLY, "execute": True}) + "\n")
+    am.rollback(CutoverW([]), str(log), execute=False, apply_id=APPLY, audit_path=str(log))
+    assert "rollback_complete" not in log.read_text()
 
 
 def test_notebook_pause_needs_endpoints(monkeypatch):

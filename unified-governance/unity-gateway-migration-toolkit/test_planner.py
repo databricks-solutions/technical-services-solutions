@@ -1483,6 +1483,112 @@ def test_system_ai_uc_models_list_and_failure():
     assert m.system_ai_uc_models(w, cov) == set() and cov["system_ai_models"].startswith("failed")
 
 
+@pytest.mark.parametrize("name, code, pattern", [
+    ("llm", 'w.serving_endpoints.query(name="llm", messages=m)', "sdk_serving_query"),
+    ("llm", 'w.serving_endpoints.query(\n    name="llm",\n    messages=m)', "sdk_serving_query"),
+    ("chat", 'client.predict(endpoint="chat", inputs={})', "mlflow_deployments_predict"),
+    ("chat", 'dc = get_deploy_client("databricks")\ndc.predict("chat", inputs={})', "mlflow_deployments_predict"),
+    ("chat", 'dc = get_deploy_client("databricks")\ndc.predict(\n    "chat",\n    inputs={})',
+     "mlflow_deployments_predict"),
+])
+def test_short_or_common_names_count_inside_a_call(name, code, pattern):
+    s = m.Scanner([name], {}, [])
+    s.scan_text("notebook", "/n", code)
+    assert [r.pattern for r in s.refs] == [pattern]
+    unrelated = m.Scanner([name], {}, [])
+    unrelated.scan_text("notebook", "/n", f'x = "{name}"  # not a call')
+    assert unrelated.refs == []
+
+
+@pytest.mark.parametrize("code", [
+    'w.serving_endpoints.query(name=ep, messages=x)\nprint("test")',   # after the call closed
+    'r = w.serving_endpoints.query(name=ep)\ncfg = {"name": "test"}',
+    'model.predict("test")',                                           # any model has .predict
+])
+def test_a_short_name_outside_a_call_doesnt_count(code):
+    s = m.Scanner(["test"], {}, [])
+    s.scan_text("notebook", "/n", code)
+    assert not [r for r in s.refs if r.legacy_endpoint == "test"]
+
+
+def test_a_short_name_called_by_code_isnt_a_close_candidate():
+    ext = _ep({**EXTERNAL, "name": "llm"})
+    rows, _ = m.plan([ext], {}, {}, "c", "s")
+    s = m.Scanner(["llm"], {}, rows)
+    s.scan_text("notebook", "/monthly", 'w.serving_endpoints.query(name="llm", messages=m)')
+    r = m.readiness(rows, s.refs, True, 30, [ext], {"local_files": "ok"})
+    assert "rate_limit_zero_candidates" in r and "llm" not in json.dumps(r["rate_limit_zero_candidates"])
+    assert "sdk_serving_query" in [w["type"] for w in r["warnings"]]
+
+
+def test_readiness_says_volumes_and_dbfs_arent_searched():
+    assert m.VOLUMES_NOTE.startswith(m.NOT_SCANNED)
+    r = m.readiness([], [], True, 30, [], {"local_files": "ok", "volumes_dbfs": m.VOLUMES_NOTE})
+    assert "volumes_dbfs" not in r["coverage_gaps"] and "volumes" in m.readiness_md("https://x", r, 30).lower()
+
+
+def _agent_bricks_w(sources_by_ka, tools_by_sa=None, unreadable=()):
+    w = mock.MagicMock()
+    w.knowledge_assistants.list_knowledge_assistants.return_value = [
+        SimpleNamespace(name=f"knowledge-assistants/{k}", display_name=k, endpoint_name=f"ka-{k}-endpoint")
+        for k in sources_by_ka]
+
+    def sources(parent):
+        k = parent.rsplit("/", 1)[-1]
+        if k in unreadable:
+            raise RuntimeError("PERMISSION_DENIED")
+        return sources_by_ka[k]
+    w.knowledge_assistants.list_knowledge_sources.side_effect = sources
+    w.supervisor_agents.list_supervisor_agents.return_value = [
+        SimpleNamespace(name=f"supervisor-agents/{n}", display_name=n, endpoint_name=f"sa-{n}-endpoint")
+        for n in (tools_by_sa or {})]
+    w.supervisor_agents.list_tools.side_effect = lambda parent: (tools_by_sa or {})[parent.rsplit("/", 1)[-1]]
+    col = SimpleNamespace(embedding_model_endpoint_name="databricks-gte-large-en")
+    w.vector_search_indexes.get_index.return_value = SimpleNamespace(
+        delta_sync_index_spec=SimpleNamespace(embedding_source_columns=[col]))
+    return w
+
+
+def test_every_knowledge_assistant_blocks_enforce_files_sources_included():
+    """A files-source Knowledge Assistant syncs into its own AI Search index, and the Enforce limitations say Agent
+    Bricks agents that depend on AI Search don't work: it must block, not only warn (review of 0.10.2)."""
+    files = SimpleNamespace(source_type="files", index=None)
+    index = SimpleNamespace(source_type="index", index=SimpleNamespace(index_name="c.s.docs_index"))
+    tool = lambda ka: SimpleNamespace(name="docs", knowledge_assistant=SimpleNamespace(knowledge_assistant_id=ka))
+    genie = SimpleNamespace(name="sales", knowledge_assistant=None)
+    w = _agent_bricks_w({"FilesKA": [files], "IndexKA": [index], "EmptyKA": [], "LockedKA": []},
+                        {"Super": [tool("FilesKA"), genie], "GenieOnly": [genie]}, unreadable={"LockedKA"})
+    sc = m.Scanner([], {}, [])
+    m.scan_agent_bricks(w, sc)
+    by = {(r.asset, r.pattern) for r in sc.refs}
+    assert ("knowledge assistant FilesKA", "ka_ai_search") in by
+    assert ("knowledge assistant IndexKA", "ka_vector_search_source") in by
+    assert ("knowledge assistant IndexKA", "ka_ai_search") not in by  # one finding per index source is enough
+    assert ("knowledge assistant EmptyKA", "ka_ai_search") in by
+    assert ("knowledge assistant LockedKA", "ka_ai_search") in by  # unreadable sources: still blocks
+    assert ("supervisor agent Super", "supervisor_uses_vs_ka") in by
+    assert not any(r.asset == "supervisor agent GenieOnly" for r in sc.refs)
+    r = m.readiness([], sc.refs, True, 30, [], {"local_files": "ok", **sc.coverage})
+    blocked = {b["item"] for b in r["blockers"] if b["type"] == "agent_bricks_vector_search"}
+    assert {"knowledge assistant FilesKA", "supervisor agent Super", "knowledge assistant EmptyKA"} <= blocked
+    assert r["status"] == "BLOCKED"
+    assert all("don't work with Enforce on" in b["action"] for b in r["blockers"]
+               if b["type"] == "agent_bricks_vector_search")
+    locked = next(x for x in sc.refs if x.asset == "knowledge assistant LockedKA")
+    assert "couldn't be read" in locked.suggestion and "none yet" not in locked.suggestion
+
+
+def test_supervisor_scan_survives_odd_tools_and_names_each_assistant_once():
+    tool = lambda n, ka: SimpleNamespace(name=n, knowledge_assistant=SimpleNamespace(knowledge_assistant_id=ka))
+    odd = SimpleNamespace(name="no-ka-attribute")  # an SDK object without the attribute must not stop the scan
+    w = _agent_bricks_w({"Docs": []}, {"Super": [odd, tool("a", "Docs"), tool("b", "Docs")], "Other": [tool("c", "Docs")]})
+    sc = m.Scanner([], {}, [])
+    m.scan_agent_bricks(w, sc)
+    sup = [r.asset for r in sc.refs if r.asset_type == "supervisor_agent"]
+    assert sorted(sup) == ["supervisor agent Other", "supervisor agent Super"]
+    assert sc.coverage["supervisor_agents"] == "ok"
+
+
 def test_calls_in_agent_classes_are_model_code():
     text = "\n".join([
         "from mlflow.pyfunc import ResponsesAgent",

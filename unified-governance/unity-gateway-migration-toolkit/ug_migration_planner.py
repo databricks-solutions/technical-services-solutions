@@ -32,7 +32,7 @@ from urllib.parse import urlsplit
 
 from databricks.sdk import WorkspaceClient
 
-__version__ = "0.10.2"
+__version__ = "0.10.3"
 DISCLAIMER = ("Prototype from Databricks Shared Technical Services, provided as is. It only reads unless you run apply or "
               "rollback, or snapshots; review results before acting.")
 
@@ -1333,10 +1333,18 @@ AGENT_TRAFFIC_UNKNOWN = ("traffic unknown: agent endpoints can't turn on usage t
 # Knowledge Assistant and Supervisor Agent endpoints: Databricks builds and runs them, so there is no code to change.
 AGENT_BRICKS_NEED = ("Agent Bricks {what}: not retired by this deadline, and its LLM calls are Databricks-managed, "
                      "so there is no code to change. Knowledge Assistant and Supervisor Agent are legacy offerings "
-                     "with Genie Agents as the replacement: plan the move there. If it uses an AI Search index, it "
-                     "breaks under Enforce (see the AI Search findings)")
+                     "with Genie Agents as the replacement: plan the move there. A Knowledge Assistant depends on AI "
+                     "Search (every source, files included, syncs into an index), so it and the Supervisor agents "
+                     "that use it break under Enforce (see the agent_bricks_vector_search blocker)")
 AGENT_BRICKS_ACTION = ("no code change; plan the move to Genie Agents, the replacement for Knowledge Assistant and "
-                       "Supervisor Agent. Before enforcing, check that it doesn't use an AI Search index")
+                       "Supervisor Agent. Knowledge Assistants, and Supervisor agents that use one, block Enforce")
+# The Enforce limitations: Knowledge Assistant and Supervisor agents that depend on AI Search don't work with Enforce
+# on. A Knowledge Assistant always does: a files or volume source syncs into the assistant's own index (measured
+# Nov 5, 2026: a files-source assistant created its own AI Search endpoint and index). Lower this only if the Agent
+# Bricks team confirms they work with Enforce on.
+AGENT_BRICKS_BLOCK_ACTION = ("keep Enforce off while it's in use: Agent Bricks agents that depend on AI Search don't "
+                             "work with Enforce on, and every Knowledge Assistant does (its sources sync into an AI "
+                             "Search index). Plan the move to Genie Agents")
 
 
 def annotate_agent_bricks(rows: list[PlanRow], agent_bricks: dict[str, str]) -> None:
@@ -1428,6 +1436,26 @@ def scrub(line: str | None) -> str | None:
 
 
 MAX_FIX_LINE = 5000
+
+
+def _in_open_call(text: str, at: int, call_re: re.Pattern) -> bool:
+    """True if position at is inside the arguments of the nearest call_re match before it (within GATEWAY_WINDOW):
+    its "(" isn't closed yet. Calls can span lines, so this reads the text, not the line."""
+    start = max(0, at - GATEWAY_WINDOW)
+    last = None
+    for last in call_re.finditer(text, start, at):
+        pass
+    if last is None:
+        return False
+    depth = 1
+    for c in text[last.end():at]:
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return False
+    return True
 
 
 def _balanced_args(text: str, open_paren: int) -> str:
@@ -1715,14 +1743,22 @@ class Scanner:
                     name = m.group(2)
                     if name in hits:
                         continue
-                    if name in self.generic and not KEY_CONTEXT_RE.search(line[:m.start()]):
-                        continue  # a short or common name needs a key or call context to count
                     at = line_start + m.start()
-                    if SDK_QUERY_RE.search(text[max(0, at - GATEWAY_WINDOW):at]):
+                    in_sdk_query = bool(SDK_QUERY_RE.search(text[max(0, at - GATEWAY_WINDOW):at]))
+                    in_predict = bool(MLFLOW_PREDICT_RE.search(line[:m.start()])) \
+                        or _in_open_call(text, at, PREDICT_CALL_RE)
+                    if name in self.generic and not KEY_CONTEXT_RE.search(line[:m.start()]):
+                        # A short or common name needs a key or call context to count: inside the arguments of a
+                        # serving_endpoints.query(...) call, or of a predict(...) call in a file that uses the
+                        # MLflow deployments client (any model has a .predict).
+                        if not (_in_open_call(text, at, SDK_QUERY_RE)
+                                or (in_predict and DEPLOY_CLIENT_RE.search(text))):
+                            continue
+                    if in_sdk_query:
                         # Never rewritten: the SDK call has no gateway form to map onto (see the suggestion).
                         self._add(asset_type, asset, i, "sdk_serving_query", m.group(0), name,
                                   self._sdk_query_suggestion(name), fixable=False)
-                    elif MLFLOW_PREDICT_RE.search(line[:m.start()]):
+                    elif in_predict:
                         # Never rewritten: the MLflow deployments client only reaches /serving-endpoints/.
                         self._add(asset_type, asset, i, "mlflow_deployments_predict", m.group(0), name,
                                   self._mlflow_predict_suggestion(name), fixable=False)
@@ -2114,40 +2150,52 @@ def scan_local(scanner: Scanner, paths: list[str], max_bytes: int = 2_000_000) -
 
 
 def scan_agent_bricks(w: WorkspaceClient, scanner: Scanner) -> None:
-    """Knowledge Assistants backed by AI Search indexes and Supervisor Agents that use them.
+    """Knowledge Assistants and the Supervisor Agents that use them: all of them depend on AI Search.
 
-    Agent Bricks agents on AI Search break when Unity Gateway is enforced; file and volume
-    sources keep working.
+    Agent Bricks agents that depend on AI Search don't work with Enforce on. Every Knowledge Assistant does: an
+    AI Search index source directly, and a files or volume source through the assistant's own index. So every
+    assistant is a finding (an index source also names its embedding endpoint), and so is every Supervisor Agent
+    with a Knowledge Assistant tool.
     """
-    vs_kas: dict[str, str] = {}
+    kas: dict[str, str] = {}  # every Knowledge Assistant: name -> display name
     n_ka = n_sa = bad_ka = bad_sa = 0
     try:
         for ka in w.knowledge_assistants.list_knowledge_assistants():
             n_ka += 1
             if getattr(ka, "endpoint_name", None):
                 scanner.agent_bricks[ka.endpoint_name] = f"knowledge assistant {ka.display_name or ka.name}"
+            kas[ka.name] = ka.display_name or ka.name
+            readable = True
             try:
                 sources = list(w.knowledge_assistants.list_knowledge_sources(parent=ka.name))
             except Exception:
                 bad_ka += 1
-                continue
-            for src in sources:
-                if src.index and src.index.index_name:
-                    embed = None
-                    try:
-                        spec = w.vector_search_indexes.get_index(src.index.index_name).delta_sync_index_spec
-                        cols = spec.embedding_source_columns if spec and spec.embedding_source_columns else []
-                        embed = next((c.embedding_model_endpoint_name for c in cols if c.embedding_model_endpoint_name), None)
-                    except Exception:
-                        pass
-                    vs_kas[ka.name] = ka.display_name or ka.name
-                    scanner._add("knowledge_assistant", f"knowledge assistant {ka.display_name or ka.name}", None,
-                                 "ka_vector_search_source", src.index.index_name, embed,
-                                 f"source {src.index.index_name} is an AI Search index"
-                                 + (f" embedded with {embed}" if embed else "")
-                                 + ": breaks under Enforce, and at the legacy deadline if the index embeds with a "
-                                   "databricks-* endpoint. Use a UC volume or files source, or plan the move to "
-                                   "Genie Agents")
+                readable, sources = False, []  # still a finding: every Knowledge Assistant depends on AI Search
+            label = f"knowledge assistant {ka.display_name or ka.name}"
+            index_sources = [src for src in sources
+                             if getattr(src, "index", None) and getattr(src.index, "index_name", None)]
+            if not index_sources:
+                kinds = sorted({str(getattr(src, "source_type", None) or "unknown") for src in sources})
+                what = (f"sources ({', '.join(kinds)}) sync" if kinds else "its sources sync" if not readable
+                        else "it has no sources yet; any source it gets syncs")
+                scanner._add("knowledge_assistant", label, None, "ka_ai_search",
+                             getattr(ka, "endpoint_name", None) or ka.name, None,
+                             f"{what} into the assistant's own AI Search index, so it doesn't work with Enforce on"
+                             + ("" if readable else " (its sources couldn't be read)"))
+            for src in index_sources:
+                embed = None
+                try:
+                    spec = w.vector_search_indexes.get_index(src.index.index_name).delta_sync_index_spec
+                    cols = spec.embedding_source_columns if spec and spec.embedding_source_columns else []
+                    embed = next((c.embedding_model_endpoint_name for c in cols if c.embedding_model_endpoint_name), None)
+                except Exception:
+                    pass
+                scanner._add("knowledge_assistant", label, None,
+                             "ka_vector_search_source", src.index.index_name, embed,
+                             f"source {src.index.index_name} is an AI Search index"
+                             + (f" embedded with {embed}" if embed else "")
+                             + ": breaks under Enforce, and at the legacy deadline if the index embeds with a "
+                               "databricks-* endpoint. Plan the move to Genie Agents")
     except Exception as error:
         _log(f"  could not list Knowledge Assistants: {error}")
         scanner.note("knowledge_assistants", f"failed: {str(error)[:120]}")
@@ -2162,14 +2210,21 @@ def scan_agent_bricks(w: WorkspaceClient, scanner: Scanner) -> None:
             except Exception:
                 bad_sa += 1
                 continue
+            named: set[str] = set()  # one finding per Supervisor and Knowledge Assistant, however many tools
             for t in tools:
-                ka_ref = t.knowledge_assistant
+                ka_ref = getattr(t, "knowledge_assistant", None)
                 ka_name = getattr(ka_ref, "knowledge_assistant_id", None) or getattr(ka_ref, "name", None) if ka_ref else None
-                hit = next((v for k, v in vs_kas.items() if ka_name and (ka_name in k or k.endswith(str(ka_name)))), None)
-                if hit:
-                    scanner._add("supervisor_agent", f"supervisor agent {sa.display_name or sa.name}", None,
-                                 "supervisor_uses_vs_ka", hit, None,
-                                 f"tool {t.name} uses knowledge assistant {hit}, which is backed by AI Search")
+                if not ka_ref:
+                    continue
+                hit = next((v for k, v in kas.items() if ka_name and (ka_name in k or k.endswith(str(ka_name)))),
+                           None) or str(ka_name or "a knowledge assistant")
+                if hit in named:
+                    continue
+                named.add(hit)
+                scanner._add("supervisor_agent", f"supervisor agent {sa.display_name or sa.name}", None,
+                             "supervisor_uses_vs_ka", hit, None,
+                             f"tool {getattr(t, 'name', None) or '?'} uses knowledge assistant {hit}, which depends "
+                             "on AI Search")
     except Exception as error:
         _log(f"  could not list Supervisor Agents: {error}")
         scanner.note("supervisor_agents", f"failed: {str(error)[:120]}")
@@ -2575,6 +2630,9 @@ def _gateway_body(ep: LegacyEndpoint) -> dict:
 
 
 NOT_SCANNED = "not scanned"  # coverage values that are notes (what was left out), not gaps
+VOLUMES_NOTE = (f"{NOT_SCANNED}: files in Unity Catalog volumes and DBFS aren't searched. A script there that calls "
+                "a legacy endpoint shows only as traffic (none if it didn't run in the window): check them, or scan a "
+                "copy with --local-path")
 UNATTRIBUTED_NOTE = "unattributed"  # coverage["v1_unattributed"]: v1 requests not matched to an endpoint (a warning)
 # Serving-endpoint resources declared by an app or bundle. Other app references are config values (warnings).
 RESOURCE_PATTERNS = {"app_serving_endpoint_resource", "bundle_serving_endpoint_resource"}
@@ -2617,7 +2675,7 @@ KIND_NAMES = {"system_ppt": "Databricks pay-per-token (system)", "external_model
 ACTION_NAMES = {"use_system_ai": "Use a system.ai model", "create_model_service": "Create a Unity Gateway service",
                 "out_of_scope": "Out of scope (custom model or agent)", "manual": "Manual (see needs)"}
 STATUS_MEANING = {
-    "READY": "no blockers, full scan.",
+    "READY": "no blockers, and no coverage gaps (the notes say what the scan never searches).",
     "READY_WITH_WARNINGS": "no blockers; review warnings first.",
     "BLOCKED": "enforcing now breaks the calls listed below.",
     "INCOMPLETE": "nothing blocking found, but part of the scan didn't run; fix the listed gap and re-run.",
@@ -2868,8 +2926,7 @@ def readiness(rows: list[PlanRow], refs: list[ClientReference], traffic_ok: bool
                                   "AI Search index embeds with a legacy endpoint", AI_SEARCH_KEEP_ACTION))
         elif x.asset_type in ("knowledge_assistant", "supervisor_agent"):
             blockers.append(_flag("agent_bricks_vector_search", x.asset, x.suggestion,
-                                  "Agent Bricks agent uses AI Search",
-                                  "check its AI Search index and embedding model before enforcing"))
+                                  "Agent Bricks agent uses AI Search", AGENT_BRICKS_BLOCK_ACTION))
         elif x.pattern in RESOURCE_PATTERNS:
             blockers.append(_flag("app_resource", x.asset.removeprefix("app "),
                                   f"serving endpoint resource {x.legacy_endpoint}",
@@ -3392,6 +3449,8 @@ def _run(w, out_dir, warehouse_id, days, target_catalog, target_schema, scan_roo
                                       f"(defaults {', '.join(DEFAULT_SCAN_ROOTS)} narrowed)")
         else:
             coverage["scan_roots"] = "ok"
+        # Never walked, whatever the roots: say so, so READY isn't read as "every file was searched".
+        coverage["volumes_dbfs"] = VOLUMES_NOTE
         toolkit_paths: list[str] = []
         toolkit_apps: list[str] = []
         app_roots = app_source_roots(w, coverage, toolkit_paths, toolkit_apps)

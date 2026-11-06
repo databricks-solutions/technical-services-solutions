@@ -17,11 +17,22 @@ import { subPath } from '../pages/ProjectsPage';
 const q = encodeURIComponent;
 
 /** Import a metric view made outside the app into a new or existing project, as a new sub-project. */
-export function ImportModal({ onClose }: { onClose: () => void }) {
+export function ImportModal({
+  onClose,
+  initialView,
+  replaces,
+}: {
+  onClose: () => void;
+  /** catalog.schema.view to preselect. */
+  initialView?: string;
+  /** Views that this one replaces, kept in the audit log. */
+  replaces?: string[];
+}) {
   const navigate = useNavigate();
-  const [catalog, setCatalog] = useState('');
-  const [schema, setSchema] = useState('');
-  const [view, setView] = useState('');
+  const [c0 = '', s0 = '', v0 = ''] = initialView?.split('.') ?? [];
+  const [catalog, setCatalog] = useState(c0);
+  const [schema, setSchema] = useState(s0);
+  const [view, setView] = useState(v0);
   const [mode, setMode] = useState<'new' | 'existing'>('new');
   const [parentId, setParentId] = useState('');
   const [projectName, setProjectName] = useState('');
@@ -47,6 +58,7 @@ export function ImportModal({ onClose }: { onClose: () => void }) {
       parentId: mode === 'existing' ? parentId : null,
       ...(mode === 'new' ? { projectName: projectName.trim() } : {}),
       subProject: sub.trim(),
+      ...(replaces?.length ? { replaces } : {}),
     }).then(
       (r) => {
         window.dispatchEvent(new Event(PROJECTS_CHANGED));
@@ -183,6 +195,11 @@ export function ImportModal({ onClose }: { onClose: () => void }) {
             onChange={(e) => setSubProject(e.target.value)}
           />
         </div>
+        {replaces && replaces.length > 0 && (
+          <Typography.Text>
+            It replaces {replaces.length} view{replaces.length === 1 ? '' : 's'}: {replaces.join(', ')}.
+          </Typography.Text>
+        )}
         {error && <Alert componentId="gsb.import.error" type="error" closable={false} message={error} />}
       </div>
     </Modal>

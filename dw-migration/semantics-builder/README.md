@@ -12,7 +12,7 @@ with an LLM advisor behind every step and a human approval in front of every cha
 | Metric Designer: AI design, YAML editor, join diagram, sandbox validation | Available |
 | Optimize: best practices, stress test, materialization, cost, Ask Genie   | Available |
 | Metric views library, import from UC, promote, restore, owner and grants  | Available |
-| Migration & Drift                                                         | Planned   |
+| Migration & Drift (drift checks, health, discover and consolidate KPIs)   | Partial   |
 
 ## Security model
 

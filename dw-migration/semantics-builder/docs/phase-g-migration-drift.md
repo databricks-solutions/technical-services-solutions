@@ -50,3 +50,21 @@ A Lakeflow job that runs the same checks daily and writes findings to Lakebase. 
   check is older than a limit (default one day), as the user. A bundle job `run_as` the user, writing findings to
   a UC table, comes later if an unattended schedule is needed.
 - Discover in v1: metric views and SQL views only.
+
+## g4 status (2026-11-06)
+
+Done in v1:
+
+- "Discover and consolidate KPIs" on the Metric views page. The user picks up to 10 schemas. The app lists their
+  metric views and SQL views as the user (one UC list call per schema, which includes `view_definition`). It stores
+  nothing.
+- KPIs: the measures of a metric view; the aggregations in the select lists of a SQL view, named by their alias.
+- Groups: same name after normalization (case, `_`, filler words such as "total"), or same expression after
+  normalization (case, quotes, table qualifiers, spaces). Only KPIs in two or more views. A conflict is the same name
+  with two or more formulas.
+- Proposed definition: the formula most views use; a metric view wins a tie.
+- Map: "Import" opens the import modal with the canonical metric view. The views it replaces go into the audit log
+  of the import (`detail.replaces`).
+
+Not yet: a certified dictionary entry from the proposal, and source-table awareness (the same name on different
+tables is shown as a conflict).

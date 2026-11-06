@@ -18,6 +18,8 @@ const importBody = z
     parentId: z.uuid().nullable(),
     projectName: name.optional(),
     subProject: name,
+    /** Views that this one replaces, from discover. Kept in the audit log. */
+    replaces: z.array(z.string().regex(UC_TABLE_NAME)).max(50).optional(),
   })
   .refine((b) => b.parentId !== null || !!b.projectName, { message: 'Name the new project.' });
 
@@ -72,9 +74,9 @@ export function registerImportRoutes(app: Application, db: Db, ucFor: (req: Requ
       });
       await db.query(
         `WITH u AS (UPDATE gsb.project SET promotion_target = $2 WHERE id = $1 RETURNING id)
-         INSERT INTO gsb.audit_log (actor, action, project_id, target, outcome)
-         SELECT $3, 'import_metric_view', id, $2, 'succeeded' FROM u`,
-        [sub.id, table.full_name ?? body.view, actor]
+         INSERT INTO gsb.audit_log (actor, action, project_id, target, outcome, detail)
+         SELECT $3, 'import_metric_view', id, $2, 'succeeded', $4 FROM u`,
+        [sub.id, table.full_name ?? body.view, actor, body.replaces?.length ? { replaces: body.replaces } : null]
       );
       return { parentId: parent.id, projectId: sub.id };
     })

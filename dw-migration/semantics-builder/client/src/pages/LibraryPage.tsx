@@ -4,6 +4,7 @@ import { Button, Empty, Table, TableCell, TableHeader, TableRow, Tag, Typography
 import type { LibraryRow } from '../../../shared/promote';
 import { useResource } from '../api';
 import { DataState } from '../components/DataState';
+import { DiscoverPanel } from '../components/DiscoverPanel';
 import { ImportModal } from '../components/ImportModal';
 import { OpenInCatalog } from '../components/OpenInCatalog';
 import { subPath } from './ProjectsPage';
@@ -38,15 +39,24 @@ export function LibraryPage() {
   const navigate = useNavigate();
   const data = useResource<LibraryRow[]>('/api/library');
   const [importing, setImporting] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
   const rows = data.data ?? [];
   const sandbox = rows.filter((r) => r.sandboxView);
   return (
     <DataState status={data.status} message={data.error} onRetry={data.reload}>
-      <div style={{ marginBottom: 16 }}>
+      <div style={{ marginBottom: 16, display: 'flex', gap: 8 }}>
         <Button componentId="gsb.library.import" type="primary" onClick={() => setImporting(true)}>
           Import a metric view
         </Button>
+        <Button componentId="gsb.library.discover" onClick={() => setDiscovering((d) => !d)}>
+          {discovering ? 'Close discover' : 'Discover and consolidate KPIs'}
+        </Button>
       </div>
+      {discovering && (
+        <div style={{ marginBottom: 24 }}>
+          <DiscoverPanel />
+        </div>
+      )}
       {importing && <ImportModal onClose={() => setImporting(false)} />}
       {rows.length === 0 ? (
         <Empty

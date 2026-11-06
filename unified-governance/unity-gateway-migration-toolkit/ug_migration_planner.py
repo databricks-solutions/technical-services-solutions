@@ -1438,6 +1438,26 @@ def scrub(line: str | None) -> str | None:
 MAX_FIX_LINE = 5000
 
 
+def _in_open_call(text: str, at: int, call_re: re.Pattern) -> bool:
+    """True if position at is inside the arguments of the nearest call_re match before it (within GATEWAY_WINDOW):
+    its "(" isn't closed yet. Calls can span lines, so this reads the text, not the line."""
+    start = max(0, at - GATEWAY_WINDOW)
+    last = None
+    for last in call_re.finditer(text, start, at):
+        pass
+    if last is None:
+        return False
+    depth = 1
+    for c in text[last.end():at]:
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return False
+    return True
+
+
 def _balanced_args(text: str, open_paren: int) -> str:
     """Text between a '(' at open_paren and its matching ')' (or the rest of the text)."""
     depth, i = 0, open_paren
@@ -1725,10 +1745,15 @@ class Scanner:
                         continue
                     at = line_start + m.start()
                     in_sdk_query = bool(SDK_QUERY_RE.search(text[max(0, at - GATEWAY_WINDOW):at]))
-                    in_predict = bool(MLFLOW_PREDICT_RE.search(line[:m.start()]))
-                    if name in self.generic and not KEY_CONTEXT_RE.search(line[:m.start()]) \
-                            and not in_sdk_query and not in_predict:
-                        continue  # a short or common name needs a key or call context to count
+                    in_predict = bool(MLFLOW_PREDICT_RE.search(line[:m.start()])) \
+                        or _in_open_call(text, at, PREDICT_CALL_RE)
+                    if name in self.generic and not KEY_CONTEXT_RE.search(line[:m.start()]):
+                        # A short or common name needs a key or call context to count: inside the arguments of a
+                        # serving_endpoints.query(...) call, or of a predict(...) call in a file that uses the
+                        # MLflow deployments client (any model has a .predict).
+                        if not (_in_open_call(text, at, SDK_QUERY_RE)
+                                or (in_predict and DEPLOY_CLIENT_RE.search(text))):
+                            continue
                     if in_sdk_query:
                         # Never rewritten: the SDK call has no gateway form to map onto (see the suggestion).
                         self._add(asset_type, asset, i, "sdk_serving_query", m.group(0), name,
@@ -2140,18 +2165,23 @@ def scan_agent_bricks(w: WorkspaceClient, scanner: Scanner) -> None:
             if getattr(ka, "endpoint_name", None):
                 scanner.agent_bricks[ka.endpoint_name] = f"knowledge assistant {ka.display_name or ka.name}"
             kas[ka.name] = ka.display_name or ka.name
+            readable = True
             try:
                 sources = list(w.knowledge_assistants.list_knowledge_sources(parent=ka.name))
             except Exception:
                 bad_ka += 1
-                sources = []  # still a finding: every Knowledge Assistant depends on AI Search
+                readable, sources = False, []  # still a finding: every Knowledge Assistant depends on AI Search
             label = f"knowledge assistant {ka.display_name or ka.name}"
-            index_sources = [src for src in sources if src.index and src.index.index_name]
+            index_sources = [src for src in sources
+                             if getattr(src, "index", None) and getattr(src.index, "index_name", None)]
             if not index_sources:
-                kinds = sorted({str(src.source_type or "unknown") for src in sources}) or ["none yet"]
-                scanner._add("knowledge_assistant", label, None, "ka_ai_search", ka.endpoint_name or ka.name, None,
-                             f"sources ({', '.join(kinds)}) sync into the assistant's own AI Search index, so it "
-                             "doesn't work with Enforce on")
+                kinds = sorted({str(getattr(src, "source_type", None) or "unknown") for src in sources})
+                what = (f"sources ({', '.join(kinds)}) sync" if kinds else "its sources sync" if not readable
+                        else "it has no sources yet; any source it gets syncs")
+                scanner._add("knowledge_assistant", label, None, "ka_ai_search",
+                             getattr(ka, "endpoint_name", None) or ka.name, None,
+                             f"{what} into the assistant's own AI Search index, so it doesn't work with Enforce on"
+                             + ("" if readable else " (its sources couldn't be read)"))
             for src in index_sources:
                 embed = None
                 try:
@@ -2180,16 +2210,21 @@ def scan_agent_bricks(w: WorkspaceClient, scanner: Scanner) -> None:
             except Exception:
                 bad_sa += 1
                 continue
+            named: set[str] = set()  # one finding per Supervisor and Knowledge Assistant, however many tools
             for t in tools:
-                ka_ref = t.knowledge_assistant
+                ka_ref = getattr(t, "knowledge_assistant", None)
                 ka_name = getattr(ka_ref, "knowledge_assistant_id", None) or getattr(ka_ref, "name", None) if ka_ref else None
                 if not ka_ref:
                     continue
                 hit = next((v for k, v in kas.items() if ka_name and (ka_name in k or k.endswith(str(ka_name)))),
                            None) or str(ka_name or "a knowledge assistant")
+                if hit in named:
+                    continue
+                named.add(hit)
                 scanner._add("supervisor_agent", f"supervisor agent {sa.display_name or sa.name}", None,
                              "supervisor_uses_vs_ka", hit, None,
-                             f"tool {t.name} uses knowledge assistant {hit}, which depends on AI Search")
+                             f"tool {getattr(t, 'name', None) or '?'} uses knowledge assistant {hit}, which depends "
+                             "on AI Search")
     except Exception as error:
         _log(f"  could not list Supervisor Agents: {error}")
         scanner.note("supervisor_agents", f"failed: {str(error)[:120]}")

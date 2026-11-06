@@ -65,8 +65,9 @@ def make_query(store):
             return store["items"]
         if "ug_migration_apply_items" in sql:
             return store["apply_items"]
-        if "mode = 'rollback'" in sql:
-            return [r for r in store["rollbacks"] if "a" not in p or r["rollback_of"] == p["a"]]
+        if "mode = 'rollback'" in sql:  # rows without a mode are rollbacks; the SQL filters on mode
+            return [r for r in store["rollbacks"] if r.get("mode", "rollback") == "rollback"
+                    and ("a" not in p or r["rollback_of"] == p["a"])]
         if "ug_migration_scans" in sql:
             return [r for r in store["scans"] if "r" not in p or r["run_id"] == p["r"]]
         if "ug_migration_applies" in sql and "dry_run_id = :dry_run_id" in sql:  # single use: an execute of this dry run
@@ -557,6 +558,25 @@ def _rollback_dry_row(rollback_of=EXEC, status="SUCCEEDED", **over):
 ROLLBACK_BODY = {"mode": "rollback", "rollback_of": EXEC, "confirm": "ROLLBACK", "dry_run_id": RB_DRY}
 
 
+def test_a_rollback_dry_run_never_counts_as_rolled_back(env):
+    env.store["applies"].append(_execute_row())
+    env.store["rollbacks"] = [{**_rollback_dry_row(), "summary": "{}"}]
+    rows = {r["apply_id"]: r for r in env.client.get("/api/applies", headers=OP).json()}
+    assert rows[EXEC]["rolled_back"] is False
+    assert env.client.get(f"/api/applies/{EXEC}", headers=OP).json()["meta"]["rolled_back"] is False
+    env.store["applies"].append(_rollback_dry_row())
+    assert env.client.post("/api/applies", json=ROLLBACK_BODY, headers=OP).status_code == 200
+
+
+def test_a_used_rollback_dry_run_says_which_rollback_used_it(env):
+    env.store["applies"] += [_execute_row(), _rollback_dry_row()]
+    assert env.client.get(f"/api/applies/{RB_DRY}", headers=OP).json()["meta"]["used_by"] is None
+    env.store["applies"].append({"apply_id": ROLLBACK, "mode": "rollback", "dry_run_id": RB_DRY, "status": "SUCCEEDED"})
+    assert env.client.get(f"/api/applies/{RB_DRY}", headers=OP).json()["meta"]["used_by"] == ROLLBACK
+    r = env.client.post("/api/applies", json=ROLLBACK_BODY, headers=OP)
+    assert r.status_code == 409 and "rollback dry run was already used by a rollback" in r.json()["detail"]
+
+
 def test_rollback_needs_its_own_dry_run(env):
     env.store["applies"].append(_execute_row())
     # No dry run: refused before any job starts.
@@ -566,7 +586,8 @@ def test_rollback_needs_its_own_dry_run(env):
     r = env.client.post("/api/applies", json={"mode": "rollback_dry_run", "rollback_of": EXEC}, headers=OP)
     assert r.status_code == 200 and env.sdk.jobs.run_now.call_args.kwargs["job_parameters"]["mode"] == "rollback_dry_run"
     env.sdk.jobs.run_now.reset_mock()
-    for bad, why in ((_rollback_dry_row(status="FAILED"), "didn't succeed"),
+    for bad, why in ((_rollback_dry_row(status="FAILED"), "didn't finish"),
+                     (_rollback_dry_row(status="RUNNING"), "didn't finish"),
                      (_rollback_dry_row(rollback_of=DRY_OK), "another execute run"),
                      (_rollback_dry_row(requested_by="someone@else.com"), "someone else"),
                      (_rollback_dry_row(started_at=now_ts(days_ago=2)), "hours old"),
@@ -575,10 +596,12 @@ def test_rollback_needs_its_own_dry_run(env):
         r = env.client.post("/api/applies", json=ROLLBACK_BODY, headers=OP)
         assert r.status_code == 409 and why in r.json()["detail"], (why, r.text)
     assert env.sdk.jobs.run_now.call_count == 0
-    env.store["applies"] = [r for r in env.store["applies"] if r["apply_id"] != RB_DRY] + [_rollback_dry_row()]
-    r = env.client.post("/api/applies", json=ROLLBACK_BODY, headers=OP)
-    params = env.sdk.jobs.run_now.call_args.kwargs["job_parameters"]
-    assert r.status_code == 200 and params["mode"] == "rollback" and params["dry_run_id"] == RB_DRY
+    # A dry run that keeps some objects finishes as NEEDS_ATTENTION ("kept" is a problem action): it still unlocks.
+    for status in ("NEEDS_ATTENTION", "SUCCEEDED"):
+        env.store["applies"] = [r for r in env.store["applies"] if r["apply_id"] != RB_DRY] + [_rollback_dry_row(status=status)]
+        r = env.client.post("/api/applies", json=ROLLBACK_BODY, headers=OP)
+        params = env.sdk.jobs.run_now.call_args.kwargs["job_parameters"]
+        assert r.status_code == 200 and params["mode"] == "rollback" and params["dry_run_id"] == RB_DRY, (status, r.text)
     # Each rollback dry run is good for one rollback.
     env.store["applies"].append({"apply_id": ROLLBACK, "mode": "rollback", "dry_run_id": RB_DRY, "status": "FAILED"})
     r = env.client.post("/api/applies", json=ROLLBACK_BODY, headers=OP)

@@ -584,7 +584,12 @@ function ApplyDetail({ applyId, onRolledBack, onOpen, onFinished, onClose, opera
   const rolledBack = rollbacks.find((r) => r.status === "SUCCEEDED" || r.status === "RUNNING");
   const alreadyRolledBack = !!rolledBack || rolledBackInList;
   const rollbackOffered = operator && m.mode === "execute" && created > 0 && ["SUCCEEDED", "NEEDS_ATTENTION", "FAILED"].includes(m.status);
-  const deleteOffered = operator && rollbackDry && m.status === "SUCCEEDED" && toDelete.length > 0;
+  // A rollback dry run that keeps some objects finishes as NEEDS_ATTENTION ("kept" is a problem action): it still
+  // unlocks the rollback of what it would delete (the server accepts both).
+  const rollbackDryDone = rollbackDry && ["SUCCEEDED", "NEEDS_ATTENTION"].includes(m.status);
+  // Each rollback dry run unlocks one rollback: once a rollback used it, link to that run instead of the button.
+  const usedBy: string | null = rollbackDry ? (m.used_by || null) : null;
+  const deleteOffered = operator && rollbackDryDone && toDelete.length > 0 && !usedBy;
   const rollbackReason = alreadyRolledBack ? "This run was already rolled back." : jobRunning(jobId, job) ? "A rollback is already running." : null;
   const startRollback = async (body: Record<string, string>) => {
     setBusy(true);
@@ -607,7 +612,9 @@ function ApplyDetail({ applyId, onRolledBack, onOpen, onFinished, onClose, opera
     NEEDS_ATTENTION: <Notice tone="warning" title="Finished with items that need attention">Check the rows marked manual, error, mismatch or kept below. <Summary s={m.summary} /></Notice>,
     FAILED: <Notice tone="error" title="Run failed">{m.error || "The job ended without recording a result."}</Notice>,
   }[m.status as string];
-  const next = rollbackDry && m.status === "SUCCEEDED"
+  const next = rollbackDryDone && usedBy
+    ? <>A rollback already used this dry run: <button className="btn link" onClick={() => onOpen(usedBy)}>{usedBy.slice(0, 8)}</button>. To roll back again, run a new rollback dry run from the execute run.</>
+    : rollbackDryDone
     ? (toDelete.length ? "Check what rollback would delete below. If it's right, delete them: that runs the rollback of the same execute run."
       : "Rollback would delete nothing: the objects are gone, changed or still used by another run (see below).")
     : m.mode === "dry_run" && m.status === "SUCCEEDED"

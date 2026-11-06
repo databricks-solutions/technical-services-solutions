@@ -8,7 +8,10 @@
 # MAGIC
 # MAGIC - `apply`, `mode = dry_run`: shows what would be created; changes nothing (default).
 # MAGIC - `apply`, `mode = execute`: creates provider services, model services and grants.
-# MAGIC - `apply`, `mode = rollback`: deletes the objects an earlier execute run created (`rollback_of`).
+# MAGIC - `apply`, `mode = rollback_dry_run`: lists what a rollback of the execute run `rollback_of` would delete; changes
+# MAGIC   nothing.
+# MAGIC - `apply`, `mode = rollback`: deletes the objects an earlier execute run created (`rollback_of`). Needs `dry_run_id`:
+# MAGIC   a finished `rollback_dry_run` of the same execute run, by the same `requested_by`, in the last 24 hours, used once.
 # MAGIC - `test_call`, `mode = dry_run | execute`: one small request per Model Service in `services` (`api_type`,
 # MAGIC   `prompt`). Dry run only validates the services; execute sends one billable request to each.
 # MAGIC - `guardrail_check`, `mode = dry_run | execute`: for each `legacy=catalog.schema.service` pair in `endpoints`,
@@ -20,7 +23,7 @@
 # MAGIC - `resume_legacy`, `mode = dry_run | execute | rollback`: restores what the pause run `rollback_of` changed.
 # MAGIC   `mode = rollback` on a pause run does the same.
 # MAGIC
-# MAGIC Every execute except a resume and an apply rollback needs `dry_run_id`: the apply_id of a successful dry run
+# MAGIC Every execute except a resume needs `dry_run_id`: the apply_id of a successful dry run
 # MAGIC of the same operation and settings, by the same `requested_by`, started in the last 24 hours. The job checks
 # MAGIC this itself, so starting it directly can't skip the dry run. A pause also refuses an endpoint with legacy
 # MAGIC requests in the last 24 hours unless `force` is `true` (the person confirms those callers will get errors).
@@ -213,7 +216,7 @@ if mode == "execute" and operation in apply_mod.DRY_RUN_GATED:
                                            used_by=used_by)
     if problem:
         raise ValueError(f"execute refused: {problem}")
-# An apply rollback follows a successful, recent rollback dry run of the same execute run (the app checks this too).
+# An apply rollback follows a finished, recent rollback dry run of the same execute run (the app checks this too).
 if mode == "rollback" and operation == "apply":
     rb_dry, rb_used = None, None
     if g("dry_run_id"):

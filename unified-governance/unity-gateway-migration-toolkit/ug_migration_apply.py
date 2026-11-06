@@ -1319,19 +1319,24 @@ def dry_run_gate_error(dry: dict | None, operation: str, fingerprint: str | None
     return None
 
 
+ROLLBACK_DRY_RUN_OK = ("SUCCEEDED", "NEEDS_ATTENTION")  # finished rollback dry runs that unlock a rollback
+
+
 def rollback_gate_error(dry: dict | None, rollback_of: str, requested_by: str = "", now: datetime | None = None,
                         used_by: str | None = None) -> str | None:
-    """Why an apply rollback can't delete anything yet: it must follow a successful, recent rollback dry run of the
+    """Why an apply rollback can't delete anything yet: it must follow a finished, recent rollback dry run of the
     same execute run (mode rollback_dry_run), which showed what it would delete. Same rules as dry_run_gate_error:
     the same requester when recorded, at most DRY_RUN_TTL_HOURS old, and good for one rollback."""
     if dry is None:
-        return "rollback needs dry_run_id: the apply_id of a successful rollback dry run of the same execute run"
+        return "rollback needs dry_run_id: the apply_id of a finished rollback dry run of the same execute run"
     if dry.get("mode") != "rollback_dry_run" or (dry.get("operation") or "apply") != "apply":
         return "dry_run_id must be a rollback dry run"
     if (dry.get("rollback_of") or "") != (rollback_of or ""):
         return "that rollback dry run is of another execute run; run a rollback dry run of this one"
-    if dry.get("status") != "SUCCEEDED":
-        return "that rollback dry run didn't succeed; run it again"
+    # NEEDS_ATTENTION is a finished dry run too: rollback marks every object it keeps (another run uses it, it
+    # existed before, it changed since apply) as "kept", which counts as a problem. Only a failed run is refused.
+    if dry.get("status") not in ROLLBACK_DRY_RUN_OK:
+        return "that rollback dry run didn't finish; run it again"
     if (dry.get("requested_by") or "") and (dry.get("requested_by") or "") != (requested_by or ""):
         return "that rollback dry run was started by someone else; run your own first"
     if dry_run_expired(dry.get("started_at"), now):

@@ -151,7 +151,7 @@ Import the newer installer and run it with the same widgets. Results history is 
 
 #### Upgrade notes: 0.10.2 to 0.10.3
 
-Scan again. Tables and jobs don't change.
+Scan again. The results tables don't change. The apply job gains a `rollback_dry_run` mode, and a rollback now needs one first; the installer or bundle updates the job.
 
 - **Short endpoint names.** An endpoint with a short or common name (`llm`, `chat`, `test`, or under 6 characters) is now found inside a `serving_endpoints.query(...)` or MLflow `predict(...)` call. Before, such a call was missed, and an endpoint with no traffic could be listed as one to close.
 - **Rollback has a dry run in the app.** **Roll back: dry run** lists what would be deleted; the rollback itself follows it. A rollback started without a matching rollback dry run is refused by the app and by the job.
@@ -380,7 +380,7 @@ The run ends `SUCCEEDED`, or `NEEDS_ATTENTION` if any item needs a look ([Result
 
 #### Roll back
 
-Click **Roll back: dry run**. It lists exactly what rollback would delete, including provider services, and deletes nothing. On its results, click **Delete these objects** and type `ROLLBACK`. The rollback must follow a successful rollback dry run of the same execute run, started by you in the last 24 hours, and each rollback dry run is good for one rollback. Each execute run can be rolled back once. A rollback that only keeps objects that existed before the apply run (reused, without the toolkit's mark) still counts as rolled back. Rollback deletes only the objects that run created, and only while they still carry the toolkit's mark. It never revokes grants: a deleted service takes its grants with it, and a kept service keeps them, listed as `kept` grant rows so you can revoke them by hand. A provider is deleted only after rollback checks every catalog and schema it can see for services that still use it. If it can't check, it keeps the provider.
+Click **Roll back: dry run**. It lists exactly what rollback would delete, including provider services, and deletes nothing. On its results, click **Delete these objects** and type `ROLLBACK`. The rollback must follow a finished rollback dry run of the same execute run, started by you in the last 24 hours, and each rollback dry run is good for one rollback. A dry run that keeps some objects (another run uses them, they existed before, or they changed since apply) shows **Needs attention**; it still unlocks the rollback of what it would delete. Each execute run can be rolled back once. A rollback that only keeps objects that existed before the apply run (reused, without the toolkit's mark) still counts as rolled back. Rollback deletes only the objects that run created, and only while they still carry the toolkit's mark. It never revokes grants: a deleted service takes its grants with it, and a kept service keeps them, listed as `kept` grant rows so you can revoke them by hand. A provider is deleted only after rollback checks every catalog and schema it can see for services that still use it. If it can't check, it keeps the provider.
 
 **Rolling back after callers have moved breaks their traffic**, because it deletes the services they call. Move the callers back first, or accept the outage. A pause run isn't rolled back here. Resume it in [step 3](#step-3-pause-one-legacy-endpoint).
 

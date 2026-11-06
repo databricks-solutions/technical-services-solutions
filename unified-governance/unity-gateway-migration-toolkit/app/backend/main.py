@@ -1002,18 +1002,27 @@ def _check_dry_run_age(row: dict) -> None:
 DRY_RUN_USED = "That dry run was already used by an execute. Run a new dry run, then execute."
 
 
-def _check_dry_run_unused(request: Request, dry_run_id: str) -> None:
-    """A dry run unlocks one execute: refuse when an execute already recorded this dry_run_id (the job checks the
-    same). Results tables from before the dry_run_id column read as unused (no column, nothing recorded)."""
+ROLLBACK_DRY_RUN_USED = "That rollback dry run was already used by a rollback. Run a new rollback dry run first."
+
+
+def _dry_run_used_by(request: Request, dry_run_id: str) -> str | None:
+    """The execute or rollback run that already followed this dry run, or None. Results tables from before the
+    dry_run_id column read as unused (no column, nothing recorded)."""
     try:
         sql, params = store.dry_run_used(RESULTS_SCHEMA, dry_run_id)
         used = query(request, sql, params)
     except HTTPException as e:
         if "dry_run_id" in str(e.detail) and ("UNRESOLVED_COLUMN" in str(e.detail) or "cannot be resolved" in str(e.detail)):
-            return
+            return None
         raise
-    if used:
-        raise HTTPException(409, DRY_RUN_USED)
+    return str(used[0]["apply_id"]) if used else None
+
+
+def _check_dry_run_unused(request: Request, dry_run_id: str, message: str = DRY_RUN_USED) -> None:
+    """A dry run unlocks one execute (or one rollback): refuse when a run already recorded this dry_run_id (the job
+    checks the same)."""
+    if _dry_run_used_by(request, dry_run_id):
+        raise HTTPException(409, message)
 
 
 def _verify_dry_run(request: Request, dry_run_id: str, scan_run_id: str, params: dict[str, Any]) -> None:
@@ -1051,7 +1060,7 @@ def _verify_dry_run(request: Request, dry_run_id: str, scan_run_id: str, params:
 
 
 def _verify_rollback_dry_run(request: Request, dry_run_id: str, rollback_of: str) -> None:
-    """A rollback deletes only after a successful, recent rollback dry run of the same execute run showed what it
+    """A rollback deletes only after a finished, recent rollback dry run of the same execute run showed what it
     would delete, by the same person, and each rollback dry run unlocks one rollback (the job checks the same)."""
     if not dry_run_id:
         raise HTTPException(400, "Run a rollback dry run of this execute run first")
@@ -1062,7 +1071,7 @@ def _verify_rollback_dry_run(request: Request, dry_run_id: str, rollback_of: str
     row = rows[0] if rows else None
     if row is not None:
         row = {**row, "started_at": _epoch(row.get("started_at"))}
-    _check_dry_run_unused(request, dry_run_id)
+    _check_dry_run_unused(request, dry_run_id, ROLLBACK_DRY_RUN_USED)
     problem = apply_rules.rollback_gate_error(row, rollback_of, who(request))
     if problem:
         raise HTTPException(409, problem[:1].upper() + problem[1:] + ".")
@@ -1125,6 +1134,9 @@ def apply_detail(apply_id: str, request: Request):
     out = reconcile(meta)[0]
     out["rolled_back"] = out.get("mode") == "execute" and any(store.rollback_done(r.get("status"), r.get("summary"))
                                                               for r in rollbacks)
+    if out.get("mode") == "rollback_dry_run":
+        # Each rollback dry run unlocks one rollback: the page shows the rollback that used it instead of the button.
+        out["used_by"] = _dry_run_used_by(request, apply_id)
     return {"meta": out, "items": [_load(i["payload"]) for i in items],
             "rollbacks": [{"apply_id": r["apply_id"], "status": r["status"]} for r in rollbacks]}
 

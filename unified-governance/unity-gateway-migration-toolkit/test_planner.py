@@ -1487,7 +1487,9 @@ def test_system_ai_uc_models_list_and_failure():
     ("llm", 'w.serving_endpoints.query(name="llm", messages=m)', "sdk_serving_query"),
     ("llm", 'w.serving_endpoints.query(\n    name="llm",\n    messages=m)', "sdk_serving_query"),
     ("chat", 'client.predict(endpoint="chat", inputs={})', "mlflow_deployments_predict"),
-    ("chat", 'dc.predict("chat", inputs={})', "mlflow_deployments_predict"),
+    ("chat", 'dc = get_deploy_client("databricks")\ndc.predict("chat", inputs={})', "mlflow_deployments_predict"),
+    ("chat", 'dc = get_deploy_client("databricks")\ndc.predict(\n    "chat",\n    inputs={})',
+     "mlflow_deployments_predict"),
 ])
 def test_short_or_common_names_count_inside_a_call(name, code, pattern):
     s = m.Scanner([name], {}, [])
@@ -1496,6 +1498,17 @@ def test_short_or_common_names_count_inside_a_call(name, code, pattern):
     unrelated = m.Scanner([name], {}, [])
     unrelated.scan_text("notebook", "/n", f'x = "{name}"  # not a call')
     assert unrelated.refs == []
+
+
+@pytest.mark.parametrize("code", [
+    'w.serving_endpoints.query(name=ep, messages=x)\nprint("test")',   # after the call closed
+    'r = w.serving_endpoints.query(name=ep)\ncfg = {"name": "test"}',
+    'model.predict("test")',                                           # any model has .predict
+])
+def test_a_short_name_outside_a_call_doesnt_count(code):
+    s = m.Scanner(["test"], {}, [])
+    s.scan_text("notebook", "/n", code)
+    assert not [r for r in s.refs if r.legacy_endpoint == "test"]
 
 
 def test_a_short_name_called_by_code_isnt_a_close_candidate():
@@ -1561,6 +1574,19 @@ def test_every_knowledge_assistant_blocks_enforce_files_sources_included():
     assert r["status"] == "BLOCKED"
     assert all("don't work with Enforce on" in b["action"] for b in r["blockers"]
                if b["type"] == "agent_bricks_vector_search")
+    locked = next(x for x in sc.refs if x.asset == "knowledge assistant LockedKA")
+    assert "couldn't be read" in locked.suggestion and "none yet" not in locked.suggestion
+
+
+def test_supervisor_scan_survives_odd_tools_and_names_each_assistant_once():
+    tool = lambda n, ka: SimpleNamespace(name=n, knowledge_assistant=SimpleNamespace(knowledge_assistant_id=ka))
+    odd = SimpleNamespace(name="no-ka-attribute")  # an SDK object without the attribute must not stop the scan
+    w = _agent_bricks_w({"Docs": []}, {"Super": [odd, tool("a", "Docs"), tool("b", "Docs")], "Other": [tool("c", "Docs")]})
+    sc = m.Scanner([], {}, [])
+    m.scan_agent_bricks(w, sc)
+    sup = [r.asset for r in sc.refs if r.asset_type == "supervisor_agent"]
+    assert sorted(sup) == ["supervisor agent Other", "supervisor agent Super"]
+    assert sc.coverage["supervisor_agents"] == "ok"
 
 
 def test_calls_in_agent_classes_are_model_code():

@@ -1,18 +1,79 @@
 # STS Semantics Builder
 
-A Databricks App that helps teams design, validate, optimize and govern Unity Catalog metric views,
-with an LLM advisor behind every step and a human approval in front of every change.
+A Databricks App that helps data teams design, validate, optimize, publish and govern Unity Catalog
+**metric views**. An LLM advisor helps at each step. A person reviews and approves each change before it runs.
+
+- **Who it is for:** data engineers, analytics engineers and BI leads who own business KPIs.
+- **What you get:** one governed metric view per KPI area (for example Revenue or Returns), validated in a
+  sandbox, tested with Genie, promoted to Unity Catalog with its owner and grants, and checked for drift.
+- **How it runs:** every data read and every change runs as the signed-in user (on-behalf-of), never as the app.
+
+## Contents
+
+- [Modules](#modules)
+- [How to use the app](#how-to-use-the-app)
+- [Security model](#security-model)
+- [Architecture](#architecture)
+- [Prerequisites](#prerequisites)
+- [Configure and deploy](#configure-and-deploy)
+- [Local development](#local-development)
+- [Tests](#tests)
+- [Project structure](#project-structure)
+- [Limits and known gaps](#limits-and-known-gaps)
+- [Design notes](#design-notes)
 
 ## Modules
 
-| Module                                                                    | Status    |
-| ------------------------------------------------------------------------- | --------- |
-| Intent & Context: Semantic Brief draft, refine, confirm                   | Available |
-| Source Readiness: checks, AI scoring, approval-gated metadata fixes       | Available |
-| Metric Designer: AI design, YAML editor, join diagram, sandbox validation | Available |
-| Optimize: best practices, stress test, materialization, cost, Ask Genie   | Available |
-| Metric views library, import from UC, promote, restore, owner and grants  | Available |
-| Migration & Drift (drift checks, health, discover and consolidate KPIs)   | Partial   |
+| Module                    | What it does                                                                                                                                                                          | Status    |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| Projects and sub-projects | A project groups related KPI areas. A sub-project builds one metric view.                                                                                                             | Available |
+| Sources & Readiness       | Pick UC tables, find how they relate, score readiness, review and apply metadata fixes (comments, keys, tags) as SQL you approve.                                                     | Available |
+| Intent & Context          | Draft a Semantic Brief (goal, audience, questions, measures, dimensions) with AI, edit it, and confirm it.                                                                            | Available |
+| Metric dictionary         | Import certified definitions (Excel, CSV, Markdown, or a UC volume file) that every sub-project reuses.                                                                               | Available |
+| Modeling patterns         | Try common metric patterns (ratios, windows, semi-additive) on your tables.                                                                                                           | Available |
+| Metric Designer           | Generate a design with AI or start from a template, edit fields in tables or as YAML, see the join diagram, write tests, validate in the sandbox, and keep every change as a version. | Available |
+| Optimize                  | Best-practice checks, stress test, materialization suggestions with a sandbox try, cost and a monthly budget, and Ask Genie (a Genie space, or Genie One).                            | Available |
+| Unity Catalog tab         | Promote a validated version to a UC view, restore an older version, set the owner and read grants, and check drift.                                                                   | Available |
+| Metric views library      | All your metric views, their promoted and latest versions, and health. Import a metric view made outside the app.                                                                     | Available |
+| Discover and consolidate  | Scan schemas for metric views and SQL views, group the same KPI across views, show formula conflicts, propose one definition, import it, or add it to a dictionary as certified.      | Available |
+| Drift and health          | Schema, definition, governance, usage and data (opt-in totals) drift. Runs on demand and once a day when you open the app.                                                            | Available |
+
+## How to use the app
+
+A typical path for one KPI area. Each page shows the next step.
+
+1. **Projects > New project.** Name it and describe the business goal.
+2. **New sub-project.** One sub-project is one metric view, for example "Revenue".
+3. **Sources & Readiness.** Pick the tables in the Unity Catalog tree. Click **Assess sources**. Review the
+   improvement plan. To apply a fix, review the exact SQL and approve it. It runs as you.
+4. **Intent & Context.** Click **Generate brief**, ask for changes in the chat, then **Confirm brief**.
+   Use **Suggest the empty sections with AI** to fill gaps.
+5. **Metric Designer.** Click **Generate design** (AI), or **Start from a template** (no AI). Then:
+   - **Edit fields** to change measures and dimensions in tables, or add a field by hand.
+   - **Tests**: the questions the view must answer. **Edit tests by hand** if needed.
+   - **Validate** creates the view in the sandbox schema and runs the tests. **Fix with AI** helps when a
+     test fails.
+   - **History** lists every version. **Restore** copies an old version as a new one.
+6. **Optimize.** Fix best-practice findings, run a stress test, try materialization in the sandbox, and set
+   a monthly budget. In **Ask Genie**, create a Genie space on the sandbox view, pick the expected fields for
+   each business question, and click **Ask Genie** or **Ask Genie One**. The app checks the fields in the SQL.
+7. **Unity Catalog tab (in Metric Designer).** Set the target view (`catalog.schema.view`, not the sandbox),
+   then **Promote**. Set the owner and read grants. **Check drift** compares UC with the promoted version.
+8. **Metric views (left nav).** See every view and its health. **Import a metric view** made outside the app,
+   or **Discover and consolidate KPIs** across schemas.
+
+To roll back: restore an older version in History, validate it, then promote it.
+
+### Demo data
+
+The dev target uses copies of `samples.tpch`, `samples.bakehouse`, `samples.tpcds_sf1` and `samples.wanderbricks`
+in a catalog you own, because `samples` is read-only and metadata fixes fail there with `PERMISSION_DENIED`:
+
+```sql
+CREATE TABLE <catalog>.<schema>.orders AS SELECT * FROM samples.tpch.orders;
+```
+
+Apply primary keys before the foreign keys that reference them.
 
 ## Security model
 
@@ -35,219 +96,143 @@ with an LLM advisor behind every step and a human approval in front of every cha
 - **Untrusted input stays data.** User text and catalog metadata go to the model inside delimited
   `untrusted_data` blocks. Model output is validated against a schema and repaired once at most.
 
-## Demo: TPC-H (phase a)
+## Architecture
 
-1. **Projects > New project.** Pick the target catalog and schema from the dropdowns.
-2. **Intent & Context.** Describe the goal, for example: net revenue (extended price minus discount,
-   without tax), order count and average order value by month, quarter and year, by customer market
-   segment, nation and region. Pick `samples.tpch` tables: `lineitem`, `orders`, `customer`, `nation`, `region`.
-3. **Generate brief**, ask for a change if needed, then **Confirm brief**. Confirming registers the tables.
-4. **Source Readiness > Assess sources.** Each table gets deterministic checks, a role, a readiness
-   score and AI findings. Proposed fixes show the exact SQL.
-5. **Review and apply** a fix. `samples` is read-only, so the fix fails with `PERMISSION_DENIED` and
-   nothing changes. To see fixes succeed, copy the tables into a schema you own and assess that copy:
+```mermaid
+flowchart LR
+  U[User browser] -->|Databricks Apps proxy, user token| A[App: Express + React]
+  A -->|OBO: SQL allowlist| W[SQL warehouse]
+  A -->|OBO: read-only| UC[Unity Catalog API]
+  A -->|OBO| G[Genie space and Genie One]
+  A -->|OBO| M[Model serving endpoint]
+  A -->|app service principal| L[(Lakebase: gsb schema)]
+  A -->|app service principal, metadata only| X[MLflow traces]
+  W --> S[Sandbox schema: validation views]
+  W --> T[Target UC views: promote, owner, grants]
+```
 
-   ```sql
-   CREATE TABLE <catalog>.<schema>.orders AS SELECT * FROM samples.tpch.orders;
-   ```
-
-   Apply primary keys before the foreign keys that reference them.
-
-## Demo: TPC-H (phase b)
-
-Start from a project with a confirmed brief and assessed sources (phase a).
-
-1. **Metric Designer > Generate design.** The AI reads the brief and the live table metadata. It returns
-   a structure, and the app writes the YAML. Expect `lineitem` as the fact table and the snowflake
-   `orders > customer > nation > region`. Measures: Net Revenue, Order Count, and Average Order Value as a ratio
-   of the two.
-2. **Review.** The join tree flags joins whose target has no declared primary key, because those joins can
-   count rows twice. Each measure shows its type (additive, not additive, ratio) and a plain explanation.
-3. **Edit.** Change a column name in the YAML and select **Save version**. The server checks every
-   column against the tables and reports the line. Ask the AI for a change, for example "add Gross Revenue
-   without discount". Every change adds a version.
-4. **Validate in sandbox.** Review the exact `CREATE OR REPLACE VIEW ... WITH METRICS` statement and run it.
-   Each test case runs as a `MEASURE()` query and as plain SQL that the app derives from the YAML. Open a test
-   to see both queries. The version becomes **Validated** when every test matches.
+- **Frontend:** React, TypeScript, Vite, React Router, Du Bois (`@databricks/design-system`).
+- **Backend:** Node.js, Express, Databricks AppKit (`@databricks/appkit`), Zod for every request body.
+- **State:** Lakebase Postgres, schema `gsb` (projects, briefs, designs and versions, checks, audit log).
+  Migrations in `server/db/migrations` run on start.
+- **AI:** one serving endpoint (default `databricks-claude-sonnet-5-5`). Prompts and outputs are validated
+  against schemas. Traces hold metadata only.
 
 ## Prerequisites
 
-- Node.js v22+ and pnpm
-- Databricks CLI (for deployment)
-- Access to a Databricks workspace
+- Node.js 22 or later, and pnpm.
+- Databricks CLI 1.0 or later, signed in with OAuth (`databricks auth login --profile <PROFILE>`).
+- A workspace with Unity Catalog, a serverless SQL warehouse, a Lakebase project, and a model serving endpoint.
+- A sandbox schema (`catalog.schema`) where app users have `USE SCHEMA` and `CREATE TABLE`.
+- To promote: `CREATE TABLE` and `USE SCHEMA` in the target schema, and `SELECT` on the source tables.
 
-## Databricks Authentication
+### App scopes (user authorization)
 
-### Local Development
+The app calls Databricks as the user. The bundle sets these scopes in `user_api_scopes`:
 
-For local development, configure your environment variables by creating a `.env` file:
+| Scope                                                                  | Used for                                       |
+| ---------------------------------------------------------------------- | ---------------------------------------------- |
+| `sql`                                                                  | Warehouse queries, approved DDL, Query History |
+| `serving.serving-endpoints`                                            | Model calls                                    |
+| `catalog.catalogs:read`, `catalog.schemas:read`, `catalog.tables:read` | UC pickers and metadata                        |
+| `dashboards.genie`                                                     | Ask Genie (Genie space)                        |
+| `genie`                                                                | Ask Genie One (OneChat)                        |
 
-```bash
-cp .env.example .env
-```
+Each `databricks apps deploy` (bundle) **replaces** the scopes with the list in `databricks.yml`. Add a scope
+there, not only with `databricks apps create-update`, or the next deploy removes it. After a scope change,
+each user consents again on their next visit.
 
-Edit `.env` and set the environment variables you need:
+## Configure and deploy
 
-```env
-DATABRICKS_HOST=https://your-workspace.cloud.databricks.com
-DATABRICKS_APP_PORT=8000
-# ... other environment variables, depending on the plugins you use
-```
+The app command, environment and resources live in `databricks.yml` (`resources.apps.app.config`). A bundle
+config replaces `app.yaml`.
 
-#### Lakebase Configuration
+| Variable                               | Meaning                                                                         |
+| -------------------------------------- | ------------------------------------------------------------------------------- |
+| `sql_warehouse_id`                     | Serverless SQL warehouse the app uses                                           |
+| `postgres_branch`, `postgres_database` | Lakebase resource names (`databricks postgres list-branches`, `list-databases`) |
+| `serving_endpoint_name`                | Model serving endpoint                                                          |
+| `sandbox_schema`                       | `catalog.schema` for validation views                                           |
 
-The Lakebase plugin requires additional environment variables for PostgreSQL connectivity. To learn how to configure the Lakebase plugin, see the [Lakebase plugin documentation](https://developers.databricks.com/docs/appkit/v0/plugins/lakebase).
-
-### CLI Authentication
-
-The Databricks CLI requires authentication to deploy and manage apps. Configure authentication using one of these methods:
-
-#### OAuth U2M
-
-Interactive browser-based authentication with short-lived tokens:
-
-```bash
-databricks auth login --host https://your-workspace.cloud.databricks.com
-```
-
-This will open your browser to complete authentication. The CLI saves credentials to `~/.databrickscfg`.
-
-#### Configuration Profiles
-
-Use multiple profiles for different workspaces:
-
-```ini
-[DEFAULT]
-host = https://dev-workspace.cloud.databricks.com
-
-[production]
-host = https://prod-workspace.cloud.databricks.com
-client_id = prod-client-id
-client_secret = prod-client-secret
-```
-
-Deploy using a specific profile:
-
-```bash
-databricks bundle deploy --profile production
-```
-
-**Note:** Personal Access Tokens (PATs) are legacy authentication. OAuth is strongly recommended for better security.
-
-## Getting Started
-
-### Install Dependencies
+Deploy (the workspace host comes from the CLI profile):
 
 ```bash
 pnpm install
+pnpm run build
+databricks apps deploy --target dev --profile <PROFILE> --var sql_warehouse_id=<WAREHOUSE_ID>
 ```
 
-### Development
+For production, set the `prod` target variables, then deploy with `--target prod`. The first deploy creates
+the app service principal. It owns the `gsb` schema in Lakebase, so deploy before you run the app locally.
 
-Run the app in development mode with hot reload:
+To start a stopped app without a deploy: `databricks apps start semantics-builder --profile <PROFILE>`.
+
+## Local development
 
 ```bash
+cp .env.example .env   # set DATABRICKS_HOST, the Lakebase settings and the variables above
+pnpm install
 pnpm run dev
 ```
 
-The app will be available at the URL shown in the console output.
+Production fails closed without the user headers from the Apps proxy, so local runs use your own CLI identity.
 
-### Build
-
-Build both client and server for production:
+## Tests
 
 ```bash
-pnpm run build
-```
-
-This creates:
-
-- `dist/server.js` - Compiled server bundle
-- `client/dist/` - Bundled client assets
-
-### Production
-
-Run the production build:
-
-```bash
-pnpm start
-```
-
-## Code Quality
-
-There are a few commands to help you with code quality:
-
-```bash
-# Type checking
 pnpm run typecheck
-
-# Linting
 pnpm run lint
-pnpm run lint:fix
-
-# Formatting
-pnpm run format
-pnpm run format:fix
+pnpm test                 # unit tests (Vitest)
 ```
 
-## Deployment with Databricks Asset Bundles
-
-The app command and environment are set in `databricks.yml` (`resources.apps.app.config`), not in
-`app.yaml`. Set `sandbox_schema` per target to a `catalog.schema` where app users can create views.
-
-### 1. Configure Bundle
-
-Update `databricks.yml` with your workspace settings:
-
-```yaml
-targets:
-  default:
-    workspace:
-      host: https://your-workspace.cloud.databricks.com
-```
-
-Make sure to replace all placeholder values in `databricks.yml` with your actual resource IDs.
-
-### 2. Deploy
-
-Deploy and start the app with a single command:
+End-to-end tests (Playwright) run against a deployed app in a signed-in Chrome:
 
 ```bash
-databricks apps deploy
+pnpm e2e:profile          # opens Chrome with a test profile on port 9333; sign in and leave it open
+E2E_BASE_URL=https://<app-url> pnpm exec playwright test
 ```
 
-`databricks apps deploy` validates the project, deploys it, starts the app, and prints its URL.
+Playwright attaches over CDP because a Chrome that Playwright starts cannot pass the workspace sign-in. The
+tests create projects named `E2E ...` and delete them at the end.
 
-### Deploy to Production
-
-1. Configure the production target in `databricks.yml`
-2. Deploy to production:
-
-```bash
-databricks apps deploy -t prod
-```
-
-> **Restarting a stopped app:** apps stop after a period of inactivity. To start one again without redeploying, run `databricks apps start <APP_NAME>`.
-
-## Project Structure
+## Project structure
 
 ```
-* client/          # React frontend
-  * src/           # Source code
-  * public/        # Static assets
-* server/          # Express backend
-  * server.ts      # Server entry point
-  * routes/        # Routes
-* shared/          # Shared types
-* config/          # Configuration
-  * queries/       # SQL query files
-* databricks.yml   # Bundle and app configuration (command, env, resources)
-* .env.example     # Environment variables example
+client/src/
+  App.tsx            Shell, left nav, routes
+  pages/             Projects, project, Sources, Intent, Modeling patterns, Designer, Optimize, Library
+  components/        Panels (promote, govern, drift, Genie, discover, dictionary, ...)
+server/
+  server.ts          AppKit setup, route registration
+  api/               Express routes, one file per area
+  db/migrations/     Lakebase schema (gsb), applied on start
+  sql/               Statement allowlist and runner (as the user)
+  uc/                Unity Catalog reads (as the user)
+  readiness/ designer/ optimize/ dictionary/ discover/ drift/ genie/ llm/ patterns/ permissions/
+shared/              Types and Zod schemas used by client and server
+tests/e2e/           Playwright scenarios
+docs/                Phase plans and decisions
+databricks.yml       Bundle: app, resources, scopes, targets
 ```
 
-## Tech Stack
+## Limits and known gaps
 
-- **Backend**: Node.js, Express
-- **Frontend**: React.js, TypeScript, Vite, Tailwind CSS, React Router
-- **UI Components**: Radix UI, shadcn/ui
-- **Databricks**: AppKit SDK
+- Ask Genie checks the fields that Genie's SQL uses. It does not yet compare result values.
+- Genie One is not bound to a space. The app names the sandbox view in each question, and the answer shows if
+  Genie One also searched workspace knowledge snippets that other users wrote.
+- Discover reads metric views and SQL views only. Dashboards, Genie instructions, dbt and LookML come later.
+- Drift checks run on demand and once a day when you open the app. No unattended scheduled job yet.
+- Owner transfer is blocked for a materialized view (set the owner before you materialize).
+
+## Design notes
+
+The phase plans and their decisions are in [`docs/`](docs):
+[metric designer](docs/phase-b-metric-designer.md),
+[playground](docs/phase-c-playground.md),
+[experience](docs/phase-c2-experience.md),
+[sources first](docs/phase-c3-sources-first.md),
+[dictionary](docs/phase-c4-dictionary.md),
+[manual paths and Genie](docs/phase-c5-manual-genie.md),
+[optimizer](docs/phase-d-optimizer.md),
+[library, import, promote](docs/phase-e-library-import-promote.md),
+[migration and drift](docs/phase-g-migration-drift.md).

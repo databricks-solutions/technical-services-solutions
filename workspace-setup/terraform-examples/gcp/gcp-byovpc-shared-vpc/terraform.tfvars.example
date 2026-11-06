@@ -10,9 +10,7 @@ vpc_network_project_id = "<vpc-host-project>"
 vpc_name               = "<existing-vpc-name>"
 subnet_name            = "<existing-subnet-name>"
 
-# Unity Catalog Metastore configuration (optional)
-# Leave metastore_id empty if Databricks auto-creates/auto-assigns the metastore
-metastore_id = ""
-
-# Provide a metastore ID only if you need to explicitly assign a specific metastore
-# metastore_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+# Unity Catalog: leave metastore_id empty to create a new metastore.
+# metastore_id   = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+metastore_id   = ""
+metastore_name = ""

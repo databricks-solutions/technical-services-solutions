@@ -120,13 +120,106 @@ variable "databricks_account_id" {
   type        = string
 }
 
+# =============================================================================
+# Unity Catalog
+# =============================================================================
+# Metastore: set metastore_id (assign existing) OR new_metastore_name (create one),
+# or neither to attach a metastore manually. Catalog: see new_catalog below.
+# =============================================================================
+
 variable "metastore_id" {
-  description = "Unity Catalog metastore ID (UUID) of an existing metastore to assign to this workspace via the account API. Leave empty to skip—attach manually after deploy or use account/regional defaults if your org configures them."
+  description = "Unity Catalog metastore ID (UUID) of an existing metastore to assign to this workspace via the account API. Azure allows one metastore per region per account, so the regional metastore usually already exists (list with: databricks account metastores list). Leave empty to skip—attach manually after deploy, use account/regional defaults, or set new_metastore_name to create one. Mutually exclusive with new_metastore_name."
   type        = string
   default     = ""
   validation {
     condition     = var.metastore_id == "" || can(regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", var.metastore_id))
     error_message = "metastore_id must be empty or a valid UUID (e.g. aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee). Find IDs with: databricks account metastores list."
+  }
+}
+
+variable "new_metastore_name" {
+  description = "Name of a new Unity Catalog metastore to create in the workspace region and assign to the workspace. Requires admin_user (becomes a member of the new metastore's admins group). Leave empty to not create a metastore. Mutually exclusive with metastore_id."
+  type        = string
+  default     = ""
+  validation {
+    condition     = can(regex("^[a-zA-Z0-9_-]*$", var.new_metastore_name))
+    error_message = "new_metastore_name can only contain alphanumerical characters, hyphens, and underscores."
+  }
+}
+
+variable "admin_user" {
+  description = "Databricks account user (email / user name) to make workspace admin. Required when new_metastore_name is set (added to the metastore admins group). Also granted ALL PRIVILEGES on the user-defined catalog (new_catalog), since otherwise only the Terraform principal (the catalog owner) can see it. Leave empty otherwise."
+  type        = string
+  default     = ""
+}
+
+variable "new_catalog" {
+  description = "Set to true to create a user-defined catalog on a dedicated storage account with public network access disabled (access connector allowed by a resource instance rule) (private endpoints for classic compute, NCC private endpoint rules for serverless), together with its access connector, storage credential and external location. Requires a metastore (metastore_id or new_metastore_name). Needs Owner or User Access Administrator on the resource group to create the role assignment."
+  type        = bool
+  default     = false
+}
+
+variable "uc_storage_account_name" {
+  description = "Name of the storage account for the Unity Catalog catalog (3-24 chars, lowercase letters and numbers, globally unique). Leave empty to derive it from resource_prefix (\"uc\" + up to 22 alphanumeric characters), which may collide with an existing account. Only used when new_catalog is true."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.uc_storage_account_name == "" || can(regex("^[a-z0-9]{3,24}$", var.uc_storage_account_name))
+    error_message = "uc_storage_account_name must be 3-24 characters, lowercase letters and numbers only."
+  }
+}
+
+variable "uc_container_name" {
+  description = "Name of the storage container used as the catalog storage root. Only used when new_catalog is true."
+  type        = string
+  default     = "uc-catalog"
+  validation {
+    condition     = can(regex("^[a-z0-9]([a-z0-9]|-[a-z0-9]){2,62}$", var.uc_container_name))
+    error_message = "uc_container_name must be 3-63 characters: lowercase letters, numbers and single hyphens, starting and ending with a letter or number."
+  }
+}
+
+variable "catalog_name" {
+  description = "Name of the Unity Catalog catalog. Leave empty to use \"<resource_prefix>_catalog\" (hyphens and dots replaced by underscores)."
+  type        = string
+  default     = ""
+}
+
+variable "storage_credential_name" {
+  description = "Name of the Unity Catalog storage credential. Leave empty to use \"<resource_prefix>-storage-credential\"."
+  type        = string
+  default     = ""
+}
+
+variable "external_location_name" {
+  description = "Name of the Unity Catalog external location. Leave empty to use \"<resource_prefix>-external-location\"."
+  type        = string
+  default     = ""
+}
+
+# =============================================================================
+# Cluster Configuration (optional)
+# =============================================================================
+
+variable "create_cluster" {
+  description = "Set to true to create a UC-compatible single-node classic cluster to validate the deployment. Requires a metastore."
+  type        = bool
+  default     = false
+}
+
+variable "node_type_id" {
+  description = "Azure VM SKU for the single-node UC cluster driver."
+  type        = string
+  default     = "Standard_DS3_v2"
+}
+
+variable "cluster_autotermination_minutes" {
+  description = "Idle minutes before the single-node UC cluster auto-terminates."
+  type        = number
+  default     = 10
+  validation {
+    condition     = var.cluster_autotermination_minutes >= 10
+    error_message = "cluster_autotermination_minutes must be at least 10 (Databricks minimum for auto-termination)."
   }
 }
 
@@ -139,4 +232,3 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
-

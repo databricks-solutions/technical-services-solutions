@@ -68,11 +68,39 @@ nat_gateway_zones = []
 databricks_account_id = "your-databricks-account-id"
 
 # =============================================================================
-# Unity Catalog (optional)
+# Unity Catalog (Optional)
 # =============================================================================
-# Assign an existing metastore (requires account admin); "" to skip. This template
-# only assigns — use azure-vnet-injection-uc to create catalogs. IDs: databricks account metastores list
-metastore_id = ""
+
+# Attach an existing metastore (recommended) or create one (leave metastore_id = "" 
+# and set new_metastore_name). Azure allows one metastore per region per account.
+metastore_id = "REPLACE-WITH-EXISTING-METASTORE-UUID"
+new_metastore_name    = ""
+
+# Databricks account user (email) made workspace admin and granted ALL PRIVILEGES on the
+# catalog, external location and storage credential. Required with new_metastore_name,
+# and run Terraform as this user in that case.
+admin_user = "you@company.com"
+
+# User-defined catalog on a firewalled storage account (private endpoints for classic
+# compute, NCC private endpoint rules for serverless). Needs a metastore, and Owner or
+# User Access Administrator on the resource group for the role assignment.
+new_catalog = false
+
+# Optional overrides, only used when new_catalog = true:
+uc_storage_account_name = ""     # 3-24 lowercase letters/numbers, globally unique
+uc_container_name       = "uc-catalog"
+catalog_name            = ""     # default: <resource_prefix>_catalog
+storage_credential_name = ""     # default: <resource_prefix>-storage-credential
+external_location_name  = ""     # default: <resource_prefix>-external-location
+
+# =============================================================================
+# Validation Cluster (Optional)
+# =============================================================================
+
+# Shared single-node classic cluster to validate the deployment. Needs a metastore.
+create_cluster = false
+# node_type_id                    = "Standard_DS3_v2"
+# cluster_autotermination_minutes = 10   # minimum 10
 
 # =============================================================================
 # Tags

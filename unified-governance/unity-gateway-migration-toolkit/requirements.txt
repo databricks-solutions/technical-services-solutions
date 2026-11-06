@@ -1,0 +1,2 @@
+# The app's dependencies, for a bundle deploy (the bundle deploys the app from this folder; see databricks.yml).
+-r app/requirements.txt

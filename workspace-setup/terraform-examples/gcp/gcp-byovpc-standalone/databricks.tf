@@ -33,6 +33,23 @@ resource "databricks_mws_workspaces" "databricks_workspace" {
 }
 
 ######################################################
+# Unity Catalog Metastore (create or attach)
+######################################################
+resource "databricks_metastore" "this" {
+  count    = var.metastore_id == "" ? 1 : 0
+  provider = databricks.accounts
+  name     = var.metastore_name != "" ? var.metastore_name : "${var.databricks_workspace_name}-metastore"
+  region   = var.google_region
+}
+
+resource "databricks_metastore_assignment" "this" {
+  provider     = databricks.accounts
+  depends_on   = [databricks_mws_workspaces.databricks_workspace]
+  workspace_id = databricks_mws_workspaces.databricks_workspace.workspace_id
+  metastore_id = var.metastore_id == "" ? databricks_metastore.this[0].id : var.metastore_id
+}
+
+######################################################
 # Add Admin User
 ######################################################
 data "databricks_group" "admins" {

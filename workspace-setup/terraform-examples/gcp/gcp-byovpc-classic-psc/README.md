@@ -28,9 +28,9 @@ Reference: [Enable Private Service Connect for your workspace (classic compute)]
 - An MWS network config (`databricks_mws_networks`) wiring the endpoints via `vpc_endpoints { rest_api / dataplane_relay }`
 - The workspace (`databricks_mws_workspaces`) attached to the network + private access settings
 - Admin user added to the workspace `admins` group
-- *(Optional)* Unity Catalog metastore assignment, if `metastore_id` is provided
+- Unity Catalog metastore (created when `metastore_id` is empty, or an existing metastore is assigned)
 
-> **Not created:** the metastore — it is referenced as-is (when `metastore_id` is set) and left untouched on `terraform destroy`.
+> **Not created:** an existing metastore referenced via `metastore_id` — it is left untouched on `terraform destroy`.
 
 ---
 
@@ -174,7 +174,8 @@ cp terraform.tfvars.example terraform.tfvars
 | `workspace_pe_name` | string | No | Name of the REST API PSC endpoint (default `dbx-backend-rest-ep`) |
 | `relay_pe_name` | string | No | Name of the SCC relay PSC endpoint (default `dbx-backend-relay-ep`) |
 | `public_access_enabled` | bool | No | Keep front-end/public access on (default `true` for backend-only PSC) |
-| `metastore_id` | string | No | UC metastore ID. Leave empty (`""`) for auto-create/auto-assign |
+| `metastore_id` | string | No | Existing Unity Catalog metastore ID. Leave empty to create a new metastore |
+| `metastore_name` | string | No | Name for a new metastore. Defaults to `<workspace>-metastore` |
 | `create_private_dns` | bool | No | Create the private DNS zone + records (default `true`) |
 | `private_zone_name` | string | No | Private zone name (default `databricks-psc`) |
 | `dns_name` | string | No | Must be `gcp.databricks.com.` with trailing dot (default) |
@@ -269,9 +270,8 @@ After a successful apply:
 
 Metastores are **region-specific** — one per region per Databricks account.
 
-- **First workspace in a region:** Databricks auto-creates a metastore and assigns it. Leave `metastore_id` empty.
-- **Auto-assign enabled:** If *"Automatically assign new workspaces to this metastore"* is on, the metastore is assigned automatically. Leave `metastore_id` empty.
-- **Manual assignment needed:** If auto-assign is off, or you need a specific metastore, provide its ID in `metastore_id`.
+- **Create a new metastore:** Leave `metastore_id` empty. Terraform creates a metastore named `metastore_name` (or `<workspace>-metastore`) and assigns it to the workspace. This fails if a metastore already exists for the region.
+- **Attach an existing metastore:** Set `metastore_id` to that metastore's ID. Terraform only assigns it; destroy does not delete the metastore.
 
 ---
 
@@ -282,7 +282,7 @@ cd tf/
 terraform destroy
 ```
 
-This removes the workspace, the Databricks network / private access settings / VPC endpoint registrations, the GCP PSC endpoints, the VPC / subnets / router / NAT, and the private DNS zone/records (if created). An existing metastore (referenced via `metastore_id`) is **not affected**.
+This removes the workspace, the Databricks network / private access settings / VPC endpoint registrations, the GCP PSC endpoints, the VPC / subnets / router / NAT, the private DNS zone/records (if created), and any metastore created by this project. An existing metastore (referenced via `metastore_id`) is **not affected**.
 
 > Destroy the Terraform-managed resources rather than deleting PSC endpoints manually in the console, so the Databricks-side registrations are cleaned up in the right order.
 

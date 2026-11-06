@@ -24,6 +24,20 @@ Configuration values (Databricks account ID, AWS region, VPC and subnet CIDRs, a
 
 You can either create a new VPC (leave `vpc_id` empty and provide the CIDR/AZ values) or reuse an existing VPC by setting `vpc_id` and `subnet_ids`. The user-defined catalog (`new_catalog`) is created by default; the optional single-node cluster (`new_cluster`) is disabled by default.
 
+## Existing metastore prerequisites
+
+Skip this section if you let the template create the metastore: the identity running Terraform then owns it and can create everything it needs.
+
+When you attach to an **existing** metastore, the identity running Terraform (typically the service principal) is usually not a metastore admin, so it cannot create the storage credential, external location and catalog. Before deploying, have a **metastore admin** run this SQL in a workspace attached to that metastore (a SQL warehouse or notebook), replacing the principal with the identity's application (client) ID:
+
+```sql
+GRANT CREATE STORAGE CREDENTIAL ON METASTORE TO `<application-id>`;
+GRANT CREATE EXTERNAL LOCATION ON METASTORE TO `<application-id>`;
+GRANT CREATE CATALOG ON METASTORE TO `<application-id>`;
+```
+
+These are only needed when the user-defined catalog is created (`new_catalog = true`). Without them the apply fails with a `PERMISSION_DENIED` error on the first Unity Catalog object. The identity keeps ownership of the objects it creates and then grants the admin user `ALL PRIVILEGES` on the catalog, external location and storage credential.
+
 ## Authenticate
 
 ### AWS Authentication
@@ -78,8 +92,8 @@ The code provisions:
 8. **Unity Catalog metastore** -- Either creates a new metastore (when `metastore_id` is empty) or uses an existing one. The metastore is assigned to the workspace.
 9. **Unity Catalog IAM role and S3 bucket** _(optional, when `new_catalog = true`)_ -- A dedicated IAM role and S3 bucket for the Unity Catalog external location, with appropriate trust and access policies.
 10. **Storage credential and external location** _(optional, when `new_catalog = true`)_ -- A Unity Catalog storage credential backed by the IAM role, and an external location pointing to the catalog S3 bucket.
-11. **User-defined catalog** _(optional, when `new_catalog = true`)_ -- A Unity Catalog catalog backed by the external location's storage.
-12. **Single-node cluster** _(optional, when `new_cluster = true`)_ -- A UC-compatible single-node cluster (`SINGLE_USER` mode) using the latest LTS runtime, intended to validate the deployment.
+11. **User-defined catalog** _(optional, when `new_catalog = true`)_ -- A Unity Catalog catalog backed by the external location's storage. When `workspace_admin_email` is set, that user is also made workspace admin and granted `ALL PRIVILEGES` on the catalog, external location and storage credential.
+12. **Single-node cluster** _(optional, when `new_cluster = true`)_ -- A UC-compatible single-node cluster in standard (shared) access mode using the latest LTS runtime, intended to validate the deployment.
 
 ### Variables
 
@@ -109,11 +123,12 @@ Copy `terraform.tfvars.example` to `terraform.tfvars` in the `tf/` directory and
 | `aws_account_id` | **(Required)** AWS account ID where resources are deployed (used to construct IAM role ARNs for Unity Catalog). |
 | `metastore_id` | **(Optional)** Existing Unity Catalog metastore ID. Leave empty to create a new one. Default: `""`. |
 | `metastore_name` | **(Optional)** Name for the Unity Catalog metastore. Required when `metastore_id` is empty. Default: `""`. |
+| `workspace_admin_email` | **(Optional)** Email of a Databricks account user to make workspace admin and grant `ALL PRIVILEGES` on the user-defined catalog, external location and storage credential. Without it the Terraform principal owns them and nobody else can see them until granted access. Default: `""` (skipped). |
 | `new_catalog` | **(Optional)** Whether to create a user-defined catalog (storage credential, IAM role, S3 bucket, external location, and catalog). Default: `true`. |
 | `catalog_name` | **(Optional)** Unity Catalog catalog name. Default `""` uses `{prefix}-catalog`. |
 | `external_location_name` | **(Optional)** Unity Catalog external location name. Default `""` uses `{resource_prefix}-external-location`. |
 | `storage_credential_name` | **(Optional)** Unity Catalog storage credential name. Default `""` uses `{resource_prefix}-storage-credential`. |
-| `new_cluster` | **(Optional)** Whether to create a UC-compatible single-node cluster. Default: `false`. |
+| `new_cluster` | **(Optional)** Whether to create a UC-compatible single-node cluster. Standard (shared) access mode, so workspace users can attach to it. Default: `false`. |
 | `cluster_autotermination_minutes` | **(Optional)** Idle minutes before the cluster auto-terminates (minimum 10). Default: `10`. |
 
 

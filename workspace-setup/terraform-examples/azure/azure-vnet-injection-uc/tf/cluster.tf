@@ -10,28 +10,18 @@ data "databricks_spark_version" "latest_lts" {
   ]
 }
 
-// Built-in Personal Compute policy enforces SINGLE_USER access mode, the
-// single-node cluster profile, and other UC-compatible defaults.
-data "databricks_cluster_policy" "personal" {
-  count = var.create_cluster ? 1 : 0
-  name  = "Personal Compute"
-
-  depends_on = [
-    databricks_metastore_assignment.this,
-    databricks_mws_permission_assignment.workspace_access,
-  ]
-}
-
-// UC-compatible single-node cluster governed by the Personal Compute policy.
+// UC-compatible single-node cluster in standard (shared) access mode, so workspace users can attach to it.
+// No cluster policy: the settings the built-in Personal Compute policy would enforce are set explicitly.
 resource "databricks_cluster" "uc_single_node" {
   count                   = var.create_cluster ? 1 : 0
   cluster_name            = "${var.workspace_name}-uc-cluster"
-  policy_id               = data.databricks_cluster_policy.personal[0].id
   spark_version           = data.databricks_spark_version.latest_lts[0].id
   node_type_id            = var.node_type_id
   autotermination_minutes = var.cluster_autotermination_minutes
-  data_security_mode      = "SINGLE_USER"
-  single_user_name        = var.admin_user
+  data_security_mode      = "USER_ISOLATION"
+  # Single node: Databricks sets num_workers and the single-node spark_conf itself.
+  is_single_node = true
+  kind           = "CLASSIC_PREVIEW"
 
   custom_tags = {
     "ClusterType" = "TerraformDeploymentTesting"

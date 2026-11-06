@@ -1,6 +1,6 @@
 ## GCP BYOVPC Terraform Deployment — Backend Private Service Connect (PSC)
 
-Provisions a Databricks workspace on GCP in a **customer-managed VPC created by this module**, with **backend Private Service Connect** — private connectivity from the classic compute plane (your VPC) to the Databricks control plane. This creates the **two backend PSC endpoints** required for classic compute:
+Provisions a Databricks workspace on GCP in a **customer-managed VPC** (created by this module, or an existing/Shared VPC you already manage), with **backend Private Service Connect** — private connectivity from the classic compute plane (your VPC) to the Databricks control plane. This creates the **two backend PSC endpoints** required for classic compute:
 
 | # | Endpoint | Targets | Purpose |
 |---|----------|---------|---------|
@@ -14,9 +14,8 @@ Reference: [Enable Private Service Connect for your workspace (classic compute)]
 ### What Gets Created
 
 **In GCP:**
-- A custom-mode **VPC** (`google_compute_network`)
-- A **node subnet** for the Databricks GCE data plane (`private_ip_google_access = true`)
-- A **PSC subnet** for the two backend endpoint IPs
+- A custom-mode **VPC** and **node subnet**, unless `vpc_name` / `subnet_name` reuse an existing network
+- A **PSC subnet** for the two backend endpoint IPs (always created)
 - A **Cloud Router + Cloud NAT** for node egress (nodes have no public IPs under SCC)
 - Two internal IP addresses (`google_compute_address`) — one per backend endpoint
 - Two PSC endpoints (`google_compute_forwarding_rule` with a service-attachment `target`)
@@ -65,7 +64,7 @@ gcp-byovpc-classic-psc/
                          └──────▲───────────────────────────▲────────────┘
                                 │ PSC                         │ PSC
    ┌────────────────────────────┼─────────────────────────────┼─────────┐
-   │  VPC (created by this module)                             │         │
+   │  VPC (new or existing)                                    │         │
    │                             │                             │         │
    │   PSC subnet                │                             │         │
    │   ┌─────────────────────────┴───┐   ┌─────────────────────┴──────┐  │
@@ -162,10 +161,13 @@ cp terraform.tfvars.example terraform.tfvars
 | Variable | Type | Required | Description |
 |----------|------|----------|-------------|
 | `google_service_account_email` | string | Yes | GSA email used by providers |
-| `google_project_name` | string | Yes | GCP project ID where everything is created |
+| `google_project_name` | string | Yes | GCP project ID for the workspace data plane |
 | `google_region` | string | Yes | GCP region — must match the service attachment region |
-| `subnet_cidr` | string | No | Node subnet CIDR (default `10.10.0.0/22`) |
-| `psc_subnet_cidr` | string | No | PSC endpoint subnet CIDR (default `10.10.4.0/28`; must not overlap `subnet_cidr`) |
+| `subnet_cidr` | string | No | Node subnet CIDR when creating a VPC (default `10.10.0.0/22`) |
+| `psc_subnet_cidr` | string | No | PSC endpoint subnet CIDR (default `10.10.4.0/28`; must not overlap the node subnet) |
+| `vpc_name` | string | No | Existing VPC name. Leave empty to create a new VPC |
+| `subnet_name` | string | No | Existing node subnet name. Required when `vpc_name` is set |
+| `vpc_network_project_id` | string | No | Host project for the VPC. Defaults to `google_project_name` |
 | `databricks_account_id` | string | Yes | Databricks Account ID |
 | `databricks_workspace_name` | string | Yes | Name for the new workspace |
 | `databricks_admin_user` | string | Yes | Admin user email — must exist at the Account level |

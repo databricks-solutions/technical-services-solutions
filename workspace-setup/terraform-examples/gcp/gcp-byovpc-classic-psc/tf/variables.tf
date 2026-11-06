@@ -17,18 +17,36 @@ variable "google_region" {
 }
 
 ######################################################
-# Network (created by this module)
+# Network
 ######################################################
 variable "subnet_cidr" {
-  description = "Primary CIDR range for the Databricks node subnet (GCE data plane)."
+  description = "Primary CIDR range for the Databricks node subnet (GCE data plane). Used only when creating a new VPC."
   type        = string
   default     = "10.10.0.0/22"
 }
 
 variable "psc_subnet_cidr" {
-  description = "CIDR range for the subnet that holds the two backend PSC endpoint IP addresses. Must not overlap subnet_cidr."
+  description = "CIDR range for the subnet that holds the two backend PSC endpoint IP addresses. Must not overlap the node subnet."
   type        = string
   default     = "10.10.4.0/28"
+}
+
+variable "vpc_network_project_id" {
+  description = "GCP project ID where the VPC resides (host project). Defaults to google_project_name. Set this when reusing a Shared VPC or a VPC in another project."
+  type        = string
+  default     = ""
+}
+
+variable "vpc_name" {
+  description = "Name of an existing VPC to reuse. Leave empty to create a new VPC and node subnet. A dedicated PSC subnet is always created."
+  type        = string
+  default     = ""
+}
+
+variable "subnet_name" {
+  description = "Name of an existing node subnet in vpc_name. Required when vpc_name is set; ignored when creating a new VPC."
+  type        = string
+  default     = ""
 }
 
 variable "create_nat_gateway" {

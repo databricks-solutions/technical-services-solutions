@@ -1,7 +1,7 @@
-import { NewWindowIcon, Typography } from '@databricks/design-system';
+import { Typography } from '@databricks/design-system';
 import { useResource } from '../api';
 
-/** Opens a table or view in Catalog Explorer. Hidden until the workspace URL is known. */
+/** Opens a table or view in Catalog Explorer. Hidden until the workspace URL is known. The link adds its own new-window icon. */
 export function OpenInCatalog({ fullName, label = 'Open in Unity Catalog' }: { fullName: string; label?: string }) {
   const base = useResource<{ workspaceUrl: string | null }>('/api/config').data?.workspaceUrl;
   const parts = fullName.split('.');
@@ -15,7 +15,7 @@ export function OpenInCatalog({ fullName, label = 'Open in Unity Catalog' }: { f
       aria-label={`${label}: ${fullName}`}
       style={{ display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}
     >
-      {label} <NewWindowIcon />
+      {label}
     </Typography.Link>
   );
 }

@@ -16,6 +16,7 @@ import {
 import type { PromotionView } from '../../../shared/promote';
 import { api, useResource } from '../api';
 import { DataState } from './DataState';
+import { GovernPanel } from './GovernPanel';
 import { OpenInCatalog } from './OpenInCatalog';
 import { SqlBlock } from './SqlBlock';
 
@@ -132,6 +133,8 @@ export function PromotePanel({ projectId, onPromoted }: { projectId: string; onP
               ))}
             </Table>
           )}
+
+          <GovernPanel key={last?.id ?? 'none'} projectId={projectId} />
 
           {plan && (
             <Modal

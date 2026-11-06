@@ -10,7 +10,9 @@ with an LLM advisor behind every step and a human approval in front of every cha
 | Intent & Context: Semantic Brief draft, refine, confirm                   | Available |
 | Source Readiness: checks, AI scoring, approval-gated metadata fixes       | Available |
 | Metric Designer: AI design, YAML editor, join diagram, sandbox validation | Available |
-| Optimizer, Migration & Drift, Playground, Publish & Govern                | Planned   |
+| Optimize: best practices, stress test, materialization, cost, Ask Genie   | Available |
+| Metric views library, import from UC, promote, restore, owner and grants  | Available |
+| Migration & Drift                                                         | Planned   |
 
 ## Security model
 
@@ -20,7 +22,7 @@ with an LLM advisor behind every step and a human approval in front of every cha
 - **App identity for metadata only.** The app service principal owns the Lakebase `gsb` schema
   (projects, briefs, reports, fixes, audit log) and writes MLflow traces. It never reads customer data.
 - **One path to the warehouse.** Every statement passes an allowlist (reads, `DESCRIBE`, and a fixed set
-  of metadata DDL: comments, keys, tags, metric views, read grants). One statement at a time, no comments.
+  of metadata DDL: comments, keys, tags, metric views, read grants and revokes, and the owner of a view). One statement at a time, no comments.
 - **The model never writes SQL.** It proposes names and text. The server checks names against the real
   table, quotes every identifier and literal, and builds the statement.
 - **Exact SQL, human approval.** A fix runs only with the statements the user reviewed. It runs once,

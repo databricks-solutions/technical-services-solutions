@@ -66,6 +66,9 @@ const DDL_PATTERNS = [
   `UNSET\\s+TAG\\s+ON\\s+${TAG_SECURABLE}\\s+${COLUMN}\\s+${TAG_VALUE}`,
   `CREATE\\s+(?:OR\\s+REPLACE\\s+)?VIEW\\s+${OBJ}\\s+WITH\\s+METRICS\\s+LANGUAGE\\s+YAML(?:\\s+COMMENT\\s+${STR})?\\s+AS\\s+\\$\\$x*\\$\\$`,
   `GRANT\\s+${PRIVILEGE}(?:\\s*,\\s*${PRIVILEGE})*\\s+ON\\s+${SECURABLE}\\s+${OBJ}\\s+TO\\s+\`x+\``,
+  // Phase f: take back read access, and hand a promoted view to another owner.
+  `REVOKE\\s+${PRIVILEGE}(?:\\s*,\\s*${PRIVILEGE})*\\s+ON\\s+${SECURABLE}\\s+${OBJ}\\s+FROM\\s+\`x+\``,
+  `ALTER\\s+VIEW\\s+${OBJ}\\s+OWNER\\s+TO\\s+\`x+\``,
 ].map((p) => new RegExp(`^${p}$`, 'i'));
 
 // Drops are limited to the app's own sandbox views, named <view>__gsb_<8 hex>.
@@ -79,6 +82,7 @@ const DESCRIBE = new RegExp(
   `^DESCRIBE\\s+(?:(?:TABLE\\s+)?(?:EXTENDED\\s+)?${OBJ}|CATALOG\\s+(?:EXTENDED\\s+)?${ID})$`,
   'i'
 );
+const SHOW_GRANTS = new RegExp(`^SHOW\\s+GRANTS\\s+ON\\s+(?:TABLE|VIEW)\\s+${OBJ}$`, 'i');
 const WRITE_KEYWORD =
   /\b(?:INSERT|UPDATE|DELETE|MERGE|CREATE|DROP|ALTER|TRUNCATE|GRANT|REVOKE|COPY|OPTIMIZE|VACUUM|REFRESH)\b/i;
 
@@ -98,7 +102,7 @@ export function checkStatement(sql: string): CheckedStatement {
     if (WRITE_KEYWORD.test(core)) throw new StatementRejected('read statements cannot write');
     return { kind: 'read', statement };
   }
-  if (DESCRIBE.test(core)) return { kind: 'read', statement };
+  if (DESCRIBE.test(core) || SHOW_GRANTS.test(core)) return { kind: 'read', statement };
   if (DDL_PATTERNS.some((p) => p.test(core))) return { kind: 'ddl', statement };
   const drop = DROP_VIEW.exec(core);
   if (drop) {

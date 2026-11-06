@@ -111,7 +111,8 @@ flowchart LR
   W --> T[Target UC views: promote, owner, grants]
 ```
 
-- **Frontend:** React, TypeScript, Vite, React Router, Du Bois (`@databricks/design-system`).
+- **Frontend:** React, TypeScript, Vite, React Router, Du Bois (`@databricks/design-system`), and React Flow
+  (`@xyflow/react`, MIT, by webkid GmbH) for the lineage canvas.
 - **Backend:** Node.js, Express, Databricks AppKit (`@databricks/appkit`), Zod for every request body.
 - **State:** Lakebase Postgres, schema `gsb` (projects, briefs, designs and versions, checks, audit log).
   Migrations in `server/db/migrations` run on start.
@@ -214,6 +215,12 @@ tests/e2e/           Playwright scenarios
 docs/                Phase plans and decisions
 databricks.yml       Bundle: app, resources, scopes, targets
 ```
+
+## Third-party software
+
+The app builds on open-source packages under their own licenses (Apache-2.0, MIT, ISC). The list, with credits,
+is in the repository [`LICENSE-THIRD-PARTY.md`](../../LICENSE-THIRD-PARTY.md#dw-migrationsemantics-builder). The
+lineage canvas uses React Flow and keeps its attribution link.
 
 ## Limits and known gaps
 

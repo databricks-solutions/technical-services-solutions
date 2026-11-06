@@ -10,6 +10,8 @@ export interface UcTableInfo {
   table_type?: string;
   comment?: string;
   owner?: string;
+  /** The YAML of a metric view, or the SQL of a view. */
+  view_definition?: string;
   columns?: { name?: string; type_text?: string; comment?: string }[];
   table_constraints?: {
     primary_key_constraint?: { child_columns: string[] };

@@ -12,6 +12,7 @@ import { loadPatterns } from './patterns/library';
 import { registerReadinessRoutes } from './api/readiness';
 import { ucDeps } from './uc/metadata';
 import { registerGenieRoutes } from './api/genie';
+import { registerPromoteRoutes } from './api/promote';
 import { genieDeps } from './genie/client';
 import { servingDeps } from './llm/llm';
 import { warehouseDeps } from './sql/runner';
@@ -43,6 +44,7 @@ createApp({
       registerPatternRoutes(app, pool, patterns, runFor);
       registerOptimizeRoutes(app, pool, runFor, ucFor);
       registerDictionaryRoutes(app, pool, runFor);
+      registerPromoteRoutes(app, pool, runFor, ucFor);
       registerGenieRoutes(app, pool, runFor, (req) => genieDeps(asUser(req)));
       // The workspace URL for Catalog Explorer links. Apps set DATABRICKS_HOST; nothing is hardcoded.
       const host = process.env.DATABRICKS_HOST?.trim().replace(/\/+$/, '') ?? '';

@@ -162,6 +162,27 @@ export function designerRepo(db: Db) {
       );
     },
 
+    /** Copies an older version as the next version. A validated YAML stays validated. */
+    async restore(actor: string, projectId: string, version: number): Promise<void> {
+      const { rows } = await db.query(
+        `WITH d AS (
+           INSERT INTO gsb.metric_view_draft
+             (project_id, version, name, yaml, explanations, tests, issues, origin, status, created_by)
+           SELECT $1, (SELECT MAX(version) FROM gsb.metric_view_draft WHERE project_id = $1) + 1,
+             name, yaml, explanations, tests, issues, 'restored', status, $3
+           FROM gsb.metric_view_draft WHERE project_id = $1 AND version = $2
+           RETURNING version
+         ), a AS (
+           INSERT INTO gsb.audit_log (actor, action, project_id, outcome, detail)
+           SELECT $3, 'restore_metric_view_draft', $1, 'succeeded',
+             jsonb_build_object('version', version, 'from', $2::int) FROM d
+         )
+         SELECT version FROM d`,
+        [projectId, version, actor]
+      );
+      if (!rows[0]) throw new HttpError(404, 'Version not found.');
+    },
+
     /** Adds the next version. With baseVersion, fails unless that version is still the latest. */
     async add(actor: string, projectId: string, d: NewDraft, baseVersion?: number): Promise<void> {
       const { rows } = await db.query(
@@ -282,6 +303,16 @@ export function registerDesignerRoutes(
       );
       await repo.add(ctx.actor, ctx.project.id, { ...fromModel(out, ctx), origin: 'generated' });
       return repo.view(ctx.project.id);
+    })
+  );
+
+  app.post(
+    '/api/projects/:id/designs/:version/restore',
+    handle(async (req) => {
+      const { id, version } = versionParam.parse(req.params);
+      const project = await projects.get(actorOf(req), id);
+      await repo.restore(actorOf(req), project.id, version);
+      return repo.view(project.id);
     })
   );
 

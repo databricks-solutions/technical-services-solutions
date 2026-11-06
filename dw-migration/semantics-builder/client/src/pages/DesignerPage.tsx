@@ -31,6 +31,7 @@ import { OpenInCatalog } from '../components/OpenInCatalog';
 import { DataState } from '../components/DataState';
 import { FieldBuilder } from '../components/FieldBuilder';
 import { TestEditor } from '../components/TestEditor';
+import { PromotePanel } from '../components/PromotePanel';
 import { JoinDiagram } from '../components/JoinDiagram';
 import { MONO, SqlBlock } from '../components/SqlBlock';
 
@@ -47,6 +48,8 @@ const ORIGIN: Record<DesignDraft['origin'], string> = {
   edited: 'Edited',
   pattern: 'From a pattern',
   template: 'From the template',
+  restored: 'Restored',
+  imported: 'Imported from Unity Catalog',
 };
 
 function YamlEditor({ value, onChange }: { value: string; onChange: (v: string) => void }) {
@@ -531,6 +534,7 @@ function Designer({
           <Tabs.Trigger value="yaml">YAML{errors ? ` (${errors} errors)` : dirty ? ' (unsaved)' : ''}</Tabs.Trigger>
           <Tabs.Trigger value="tests">Tests ({draft.tests.length})</Tabs.Trigger>
           <Tabs.Trigger value="history">History ({data.history.length})</Tabs.Trigger>
+          <Tabs.Trigger value="promote">Unity Catalog</Tabs.Trigger>
         </Tabs.List>
 
         <Tabs.Content value="model">
@@ -706,15 +710,17 @@ function Designer({
           </section>
         </Tabs.Content>
 
+        <Tabs.Content value="promote">
+          <PromotePanel key={draft.version} projectId={projectId} />
+        </Tabs.Content>
+
         <Tabs.Content value="history">
           <History
             projectId={projectId}
             history={data.history}
             current={draft.version}
             busy={!!busy}
-            onRestore={(old) =>
-              run('save', `/api/projects/${projectId}/designs`, { baseVersion: draft.version, yaml: old })
-            }
+            onRestore={(v) => run('save', `/api/projects/${projectId}/designs/${v}/restore`, {})}
           />
         </Tabs.Content>
       </Tabs.Root>
@@ -752,7 +758,7 @@ function Designer({
   );
 }
 
-type DesignerTab = 'model' | 'yaml' | 'tests' | 'history';
+type DesignerTab = 'model' | 'yaml' | 'tests' | 'history' | 'promote';
 
 function VersionYaml({
   projectId,
@@ -765,7 +771,7 @@ function VersionYaml({
   version: number;
   current: number;
   busy: boolean;
-  onRestore: (yaml: string) => void;
+  onRestore: (version: number) => void;
 }) {
   const res = useResource<DesignerView>(`/api/projects/${projectId}/designs?version=${version}`);
   const shown = res.data?.draft;
@@ -776,7 +782,7 @@ function VersionYaml({
           <SqlBlock label={`Version ${shown.version} YAML (read-only)`} sql={shown.yaml} />
           {shown.version !== current && (
             <div>
-              <Button componentId="gsb.designer.restore" disabled={busy} onClick={() => onRestore(shown.yaml)}>
+              <Button componentId="gsb.designer.restore" disabled={busy} onClick={() => onRestore(version)}>
                 Restore as a new version
               </Button>
             </div>
@@ -787,7 +793,7 @@ function VersionYaml({
   );
 }
 
-/** Every version, newest first. A version opens read-only; Restore saves its YAML as a new version. */
+/** Every version, newest first. A version opens read-only; Restore copies it as a new version, validated if it was. */
 function History({
   projectId,
   history,
@@ -799,7 +805,7 @@ function History({
   history: DesignerView['history'];
   current: number;
   busy: boolean;
-  onRestore: (yaml: string) => void;
+  onRestore: (version: number) => void;
 }) {
   const [open, setOpen] = useState<number>();
   return (

@@ -916,25 +916,52 @@ def provider_status(dest: dict) -> str:
 
 
 PPT_BACKED_NEED = ("forwards to the pay-per-token endpoint {model} through the databricks-model-serving provider, so it "
-                   "stops working when Enforce is on: move its callers to {target}, or to the model service apply "
-                   "creates (a pay-per-token destination on the same model, keeping the rate limits and inference "
-                   "table)")
+                   "stops working when Enforce is on: move its callers to {target}{service}")
+PPT_BACKED_SERVICE = (", or to the model service apply creates (a pay-per-token destination on the same model, keeping "
+                      "the rate limits and inference table)")
 
 
-def ppt_uc_model(dest: dict) -> str | None:
-    """The system.ai UC model behind an external-model destination that forwards to a databricks-* pay-per-token
-    endpoint (databricks-model-serving provider), else None. The UC model has the endpoint's name
-    (system.ai.databricks-claude-haiku-4-5), and a model service can route to it with a pay-per-token destination."""
+def ppt_shape(dest: dict) -> str | None:
+    """The databricks-* endpoint an external-model destination forwards to through the databricks-model-serving
+    provider, else None. Such a destination needs no provider service."""
     model = str(dest.get("model") or "")
     if dest.get("type") == "external_model" and dest.get("provider") == "databricks-model-serving" \
             and model.startswith("databricks-"):
-        return f"system.ai.{model}"
+        return model
     return None
+
+
+def ppt_uc_model(dest: dict, uc_models: Iterable[str] | None) -> str | None:
+    """The system.ai UC model a model service can route to for this destination (pay-per-token destination), or
+    None. The UC model carries the endpoint's name (system.ai.databricks-claude-haiku-4-5), and it must be in
+    uc_models (system_ai_uc_models): a model nobody confirmed exists is never automated."""
+    model = ppt_shape(dest)
+    uc = f"system.ai.{model}" if model else None
+    return uc if uc and uc in set(uc_models or ()) else None
+
+
+def system_ai_uc_models(w: WorkspaceClient, coverage: dict[str, str] | None = None) -> set[str]:
+    """The UC models in system.ai (system.ai.<name>), which pay-per-token destinations route to.
+
+    Measured Nov 5, 2026: system.ai model services don't show their own destinations, so the UC model list is
+    what confirms a pay-per-token destination exists. A failed listing returns an empty set (nothing is
+    automated) and is recorded in coverage."""
+    try:
+        found = {f"system.ai.{m.name}" for m in w.registered_models.list(catalog_name="system", schema_name="ai")
+                 if m.name}
+    except Exception as error:
+        _log(f"Could not list the system.ai models: {error}")
+        if coverage is not None:
+            coverage["system_ai_models"] = f"failed: {str(error)[:120]}"
+        return set()
+    if coverage is not None:
+        coverage["system_ai_models"] = "ok"
+    return found
 
 
 def needs_provider_service(dest: dict) -> bool:
     """External-model destinations that need a provider service (not the ones on a databricks-* endpoint)."""
-    return dest.get("type") == "external_model" and not ppt_uc_model(dest)
+    return dest.get("type") == "external_model" and not ppt_shape(dest)
 
 
 def ppt_backed_models(ep: "LegacyEndpoint") -> list[str]:
@@ -1020,8 +1047,8 @@ def _route_check(target: str | None, observed: list[str], supported: list[str] |
 
 def plan(endpoints: list[LegacyEndpoint], sys_map: dict[str, str], usage: dict[str, dict],
          target_catalog: str, target_schema: str, traffic_known: bool = True,
-         ack_guardrails: bool = False, target_api_types: dict[str, list[str]] | None = None
-         ) -> tuple[list[PlanRow], list[dict]]:
+         ack_guardrails: bool = False, target_api_types: dict[str, list[str]] | None = None,
+         uc_models: Iterable[str] | None = None) -> tuple[list[PlanRow], list[dict]]:
     rows: list[PlanRow] = []
     providers: dict[str, dict] = {}
     used_targets: set[str] = set()
@@ -1128,15 +1155,18 @@ def plan(endpoints: list[LegacyEndpoint], sys_map: dict[str, str], usage: dict[s
                      for r in ep.traffic_routes}
         destinations, provider_names, statuses = [], [], []
         for model in ppt_backed_models(ep):
-            needs.append(PPT_BACKED_NEED.format(model=model, target=sys_map.get(model) or "a system.ai model"))
+            confirmed = f"system.ai.{model}" in set(uc_models or ())
+            needs.append(PPT_BACKED_NEED.format(model=model, target=sys_map.get(model) or "a system.ai model",
+                                                service=PPT_BACKED_SERVICE if confirmed else ""))
         for d in ep.destinations:
-            uc_model = ppt_uc_model(d)
-            if uc_model and (not sys_map or d.get("model") in sys_map):
+            if ppt_shape(d):
                 # Same model, no provider service: a pay-per-token destination keeps the endpoint's rate limits
-                # and inference table on a model service.
-                statuses.append("automated")
+                # and inference table on a model service. Only when the system.ai UC model is confirmed.
+                uc_model = ppt_uc_model(d, uc_models)
+                statuses.append("automated" if uc_model else "unconfirmed_model")
                 destinations.append({"destination_type": "DESTINATION_TYPE_PAY_PER_TOKEN_FOUNDATION_MODEL",
-                                     "pay_per_token_model": uc_model,
+                                     "served_entity": d.get("served_entity"),
+                                     "pay_per_token_model": uc_model,  # None until the UC model is confirmed
                                      "traffic_percentage": route_pct.get(d.get("served_entity"))})
             elif d["type"] == "external_model":
                 pkey = _provider_key(d)
@@ -1187,6 +1217,10 @@ def plan(endpoints: list[LegacyEndpoint], sys_map: dict[str, str], usage: dict[s
                                               "create the provider and model services by hand",
                           "no_ug_provider": "Unity Gateway has no provider for this model: keep the endpoint or "
                                             "move the callers to a supported model",
+                          "unconfirmed_model": "the system.ai model this endpoint forwards to wasn't found (or the "
+                                               "system.ai model list couldn't be read): move the callers to its "
+                                               "system.ai service, or create the model service by hand with a "
+                                               "pay-per-token destination",
                           }.get(status, "provider name not recognised: check it by hand"))
         rows.append(PlanRow(ep.name, ep.kind, action, target,
                             ", ".join(sorted(set(provider_names))) or None,
@@ -1829,6 +1863,7 @@ class Scanner:
 
 TOOLKIT_MARKERS = {"ug_migration_planner.py", "ug_migration_toolkit.marker"}
 TOOLKIT_APP_DESCRIPTION = "Unity Gateway Migration Toolkit"  # every toolkit app's description starts with this
+TOOLKIT_BUNDLE = "unity-gateway-migration-toolkit"  # bundle.name in databricks.yml
 TOOLKIT_NOTE = "the toolkit's own install (its files name legacy endpoints on purpose)"
 # Binary and media files: never source code, so leaving them out is not reported as a coverage note.
 BINARY_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp", ".bmp", ".pdf", ".zip", ".gz", ".tgz",
@@ -1886,6 +1921,7 @@ def _walk_workspace(w: WorkspaceClient, roots: list[str], max_objects: int, thre
 
     roots = list(dict.fromkeys(roots))
     skipped = [r for r in roots if toolkit_path(r)]
+    unverified: list[str] = []  # folders with toolkit files that no verified toolkit app uses
     roots = [r for r in roots if not toolkit_path(r)]
     found, level, seen_dirs = [], [(r, r) for r in roots], set()
     skipped_dirs: list[str] = []  # dependency and build folders not entered
@@ -1896,10 +1932,13 @@ def _walk_workspace(w: WorkspaceClient, roots: list[str], max_objects: int, thre
             live = [(root, path) for root, path in level if counts[root] < max_objects]
             next_level = []
             for (root, path), objects in zip(live, pool.map(ls, [p for _, p in live])):
-                # The toolkit's own install (its files mention legacy endpoint names on purpose): skip it.
+                # The toolkit's own install (its files mention legacy endpoint names on purpose): skip it. A folder
+                # with toolkit files that no verified toolkit app uses (is_toolkit_app) is skipped too, but as a
+                # coverage gap: those file names prove nothing, so a caller could hide there.
                 names = {o.get("path", "").rsplit("/", 1)[-1] for o in objects}
                 if names & TOOLKIT_MARKERS:
-                    skipped.append(path)
+                    (skipped if any(p == path or p.startswith(path + "/") for p in skip_prefixes)
+                     else unverified).append(path)
                     continue
                 for o in objects:
                     t = o.get("object_type")
@@ -1922,6 +1961,7 @@ def _walk_workspace(w: WorkspaceClient, roots: list[str], max_objects: int, thre
             level = next_level
     _walk_workspace.last_failures = failures
     _walk_workspace.skipped = skipped
+    _walk_workspace.unverified = unverified
     _walk_workspace.skipped_dirs = skipped_dirs
     _walk_workspace.skipped_types = skipped_types
     if skipped:
@@ -1962,10 +2002,16 @@ def scan_workspace(w: WorkspaceClient, scanner: Scanner, roots: list[str], max_o
         scanner.note("workspace_files", f"truncated at {max_objects} objects per root")
     if getattr(_walk_workspace, "last_failures", None):
         scanner.note("workspace_files", f"partial: {len(_walk_workspace.last_failures)} folders unreadable")
+    if getattr(_walk_workspace, "unverified", None):
+        folders = sorted(_walk_workspace.unverified)
+        scanner.note("workspace_files", f"partial: {_n(len(folders), 'folder')} skipped: they hold toolkit files, but "
+                                        "no toolkit app installed here uses them, so check them by hand: "
+                                        + ", ".join(folders[:5]) + (" ..." if len(folders) > 5 else ""))
     if getattr(_walk_workspace, "skipped", None):
-        # Skipped on purpose, like dependency folders: a note, not a coverage gap.
-        scanner.note("toolkit_install", f"{NOT_SCANNED}: {_n(len(_walk_workspace.skipped), 'folder')}, "
-                                        + TOOLKIT_NOTE)
+        # A verified toolkit install, skipped on purpose like dependency folders: a note, not a coverage gap.
+        folders = sorted(_walk_workspace.skipped)
+        scanner.note("toolkit_install", f"{NOT_SCANNED}: {_n(len(folders), 'folder')}, {TOOLKIT_NOTE}: "
+                                        + ", ".join(folders[:5]) + (" ..." if len(folders) > 5 else ""))
     left_out = _skipped_note(getattr(_walk_workspace, "skipped_dirs", []), getattr(_walk_workspace, "skipped_types", {}))
     if left_out:
         scanner.note("workspace_files_skipped", left_out)
@@ -2304,15 +2350,48 @@ def scan_dashboards(w: WorkspaceClient, scanner: Scanner) -> None:
     _log(f"  scanned {n} dashboards")
 
 
-def is_toolkit_app(app) -> bool:
-    return (getattr(app, "description", None) or "").startswith(TOOLKIT_APP_DESCRIPTION)
+def _workspace_text(w: WorkspaceClient, path: str) -> str | None:
+    try:
+        data = _get(w, "/api/2.0/workspace/export", {"path": path, "format": "AUTO"}).get("content")
+        return base64.b64decode(data or "").decode("utf-8", errors="ignore")
+    except Exception:
+        return None
 
 
-def scan_apps(w: WorkspaceClient, scanner: Scanner) -> None:
+def is_toolkit_app(w: WorkspaceClient, app) -> bool:
+    """A toolkit app: its description starts with the toolkit's, and its source is a toolkit install.
+
+    The description alone is a field any app creator sets, so the source must also be bound to this app or to the
+    toolkit's bundle. Installer installs: <folder>/ug_migration_toolkit.marker next to files/app names this app.
+    Bundle installs (the app's source is the bundle root): the path is under .bundle/<TOOLKIT_BUNDLE>/ and the
+    root holds the bundle's databricks.yml and ug_migration_planner.py. Neither is proof, so every skipped app is
+    named in the coverage note.
+    """
+    if not (getattr(app, "description", None) or "").startswith(TOOLKIT_APP_DESCRIPTION):
+        return False
+    for p in {app.source_code_path, app.default_source_code_path} - {None}:
+        p = p.removeprefix("/Workspace").rstrip("/")
+        if p.endswith("/files/app"):
+            marker = _workspace_text(w, p[: -len("/files/app")] + "/ug_migration_toolkit.marker")
+            try:
+                if marker and json.loads(marker).get("app") == app.name:
+                    return True
+            except (ValueError, AttributeError):
+                pass
+        if f"/.bundle/{TOOLKIT_BUNDLE}/" in p + "/":
+            yml = _workspace_text(w, p + "/databricks.yml") or ""
+            if re.search(rf"^bundle:\s*\n\s+name:\s*{re.escape(TOOLKIT_BUNDLE)}\s*$", yml, re.M) \
+                    and _workspace_text(w, p + "/ug_migration_planner.py"):
+                return True
+    return False
+
+
+def scan_apps(w: WorkspaceClient, scanner: Scanner, toolkit_apps: Iterable[str] = ()) -> None:
     n = 0
+    skip = set(toolkit_apps)
     try:
         for app in w.apps.list():
-            if is_toolkit_app(app):
+            if app.name in skip:
                 continue
             n += 1
             for r in app.resources or []:
@@ -2329,21 +2408,25 @@ def scan_apps(w: WorkspaceClient, scanner: Scanner) -> None:
     _log(f"  scanned {n} apps")
 
 
-def app_source_roots(w: WorkspaceClient, coverage: dict[str, str], toolkit: list[str] | None = None) -> list[str]:
+def app_source_roots(w: WorkspaceClient, coverage: dict[str, str], toolkit: list[str] | None = None,
+                     toolkit_apps: list[str] | None = None) -> list[str]:
     """Workspace folders that hold each app's source (current and default deployment), as scan roots.
 
-    Toolkit apps are left out: their folders, and their service principal's deployment copies
-    (/Users/<sp>/src), are added to toolkit so the workspace walk skips them too.
+    Toolkit apps (is_toolkit_app) are left out: their names go to toolkit_apps, and their folders and their
+    service principal's deployment copies (/Users/<application ID>/src) go to toolkit, so the workspace walk
+    skips them too. Coverage names each skipped app, so the skip is visible in the readiness report.
     """
-    roots = []
+    roots, skipped = [], []
     try:
         for app in w.apps.list():
             paths = [p[len("/Workspace"):] for p in (app.source_code_path, app.default_source_code_path)
                      if p and p.startswith("/Workspace/")]
-            if is_toolkit_app(app):
+            if is_toolkit_app(w, app):
+                skipped.append(app.name)
                 if toolkit is not None:
-                    toolkit += paths + [f"/Users/{sp}/src" for sp in {app.service_principal_client_id,
-                                                                    app.service_principal_name} if sp]
+                    # Service principal homes use the application ID; the display name is never a folder.
+                    toolkit += paths + ([f"/Users/{app.service_principal_client_id}/src"]
+                                        if app.service_principal_client_id else [])
                 continue
             roots += paths
     except Exception as error:
@@ -2351,6 +2434,10 @@ def app_source_roots(w: WorkspaceClient, coverage: dict[str, str], toolkit: list
         coverage["app_sources"] = f"failed: {str(error)[:120]}"
         return roots
     coverage["app_sources"] = "ok"
+    if skipped:
+        coverage["toolkit_apps"] = f"{NOT_SCANNED}: toolkit app {', '.join(sorted(skipped))}, {TOOLKIT_NOTE}"
+    if toolkit_apps is not None:
+        toolkit_apps += skipped
     return sorted(set(roots))
 
 
@@ -2718,8 +2805,9 @@ def readiness(rows: list[PlanRow], refs: list[ClientReference], traffic_ok: bool
                     flag["user_agents"] = agents
                 traffic_blockers[r.legacy_endpoint] = flag
         if r.kind == "agent":
-            # The endpoint isn't retired; what can break is the LLM calls inside it (blocked where the scan finds
-            # them: code, inner-call traffic). So the endpoint itself is a warning, with or without traffic.
+            # The endpoint isn't retired; what can break is the LLM calls inside it. Their traffic to an endpoint
+            # Enforce stops is a blocker (custom_endpoint_inner_call), and so is their code where the scan sees it.
+            # The model code itself is often a logged UC model the scan can't read, so the traffic is what counts.
             bricks = any(n.startswith("Agent Bricks") for n in r.needs_human)
             used = (f"{r.requests_window:,} requests in {days} days" if r.requests_window
                     else AGENT_TRAFFIC_UNKNOWN)
@@ -2737,19 +2825,25 @@ def readiness(rows: list[PlanRow], refs: list[ClientReference], traffic_ok: bool
         # A PT endpoint behind a Unity Gateway model service keeps serving after the deadline (the service routes to
         # its capacity), so the wrapper itself needs no warning; direct callers of the endpoint are flagged as traffic.
     # Measured Nov 3, 2026: a custom agent endpoint's automatic-auth identity shows up as "System Service Principal".
-    custom = sorted(r.legacy_endpoint for r in rows if r.kind == "custom_model")
+    custom = sorted(r.legacy_endpoint for r in rows if r.kind in ("custom_model", "agent"))
     inner: dict[str, int] = {}
     for c in callers or []:
         ep = c.get("endpoint_name")
         if c.get("requester_name") == SYSTEM_SP_NAME and ep in row_by and row_by[ep].action != "out_of_scope":
             inner[ep] = inner.get(ep, 0) + int(c.get("requests") or 0)
     for ep, n in sorted(inner.items()):
-        warnings.append(_flag(
+        # Enforce stops databricks-* endpoints (and external models that forward to one): an agent calling them
+        # from its model code breaks then, even when the code scan can't see that code (a logged UC model).
+        stops = row_by[ep].kind == "system_ppt" or bool(ep in by_name and ppt_backed_models(by_name[ep]))
+        (blockers if stops else warnings).append(_flag(
             "custom_endpoint_inner_call", ep,
             f"{n:,} requests from a {SYSTEM_SP_NAME}: usually a serving endpoint calling {ep} with automatic "
-            "authentication, such as a custom agent" + (f". Custom endpoints here: {', '.join(custom[:5])}" if custom else ""),
+            "authentication, such as a custom agent"
+            + ("; Enforce stops this endpoint, so those calls fail once it's on" if stops else "")
+            + (f". Custom model and agent endpoints here: {', '.join(custom[:5])}" if custom else ""),
+            "A serving endpoint calls this endpoint from its model code" if stops else
             "A serving endpoint may call this endpoint from its model code",
-            "find the custom endpoint whose model code calls it: re-log the model with explicit credentials to call "
+            "find the custom model or agent endpoint whose model code calls it: re-log the model with explicit credentials to call "
             "the model service (see CODE_FIXES.md). If it's a custom model endpoint, turn on its usage tracking (agent "
             "endpoints can't). Its own callers need no change"))
     for x in refs:
@@ -3240,6 +3334,7 @@ def _run(w, out_dir, warehouse_id, days, target_catalog, target_schema, scan_roo
     _log("1. Inventory")
     endpoints = inventory(w)
     sys_map = system_ai_map(w, coverage, target_api_types)
+    uc_models = system_ai_uc_models(w, coverage)
 
     _log("2. Traffic")
     usage, by_req, traffic_ok, traffic_status = {}, [], True, "ok"
@@ -3284,7 +3379,7 @@ def _run(w, out_dir, warehouse_id, days, target_catalog, target_schema, scan_roo
 
     _log("3. Plan")
     rows, providers = plan(endpoints, sys_map, usage, target_catalog, target_schema, traffic_ok, ack_guardrails,
-                           target_api_types)
+                           target_api_types, uc_models)
     check_targets(w, rows)
 
     refs: list[ClientReference] = []
@@ -3298,7 +3393,8 @@ def _run(w, out_dir, warehouse_id, days, target_catalog, target_schema, scan_roo
         else:
             coverage["scan_roots"] = "ok"
         toolkit_paths: list[str] = []
-        app_roots = app_source_roots(w, coverage, toolkit_paths)
+        toolkit_apps: list[str] = []
+        app_roots = app_source_roots(w, coverage, toolkit_paths, toolkit_apps)
         roots += [r for r in app_roots if r not in roots]
         scanner = Scanner((e.name for e in endpoints), sys_map, rows,
                           {e.endpoint_url: e.name for e in endpoints if e.endpoint_url},
@@ -3311,7 +3407,7 @@ def _run(w, out_dir, warehouse_id, days, target_catalog, target_schema, scan_roo
         scan_jobs(w, scanner)
         scan_sql_queries(w, scanner, threads)
         scan_dashboards(w, scanner)
-        scan_apps(w, scanner)
+        scan_apps(w, scanner, toolkit_apps)
         scan_vector_search(w, scanner)
         scan_agent_bricks(w, scanner)
         scan_genie(w, scanner, threads)

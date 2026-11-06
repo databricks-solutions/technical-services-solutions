@@ -53,6 +53,7 @@ interface SummaryRow extends ProjectRow {
   brief_status: 'draft' | 'confirmed' | null;
   draft_status: 'draft' | 'validated' | null;
   sources: number;
+  promoted: boolean;
   last_activity: Date;
 }
 
@@ -86,13 +87,15 @@ const PROJECT_COLUMNS = 'id, parent_id, name, description, created_by, created_a
 
 // Sources come first, then the brief, then the design.
 const stageOf = (r: SummaryRow): SubProjectStage =>
-  r.draft_status === 'validated'
-    ? 'validated'
-    : r.draft_status || r.brief_status === 'confirmed'
-      ? 'design'
-      : r.sources > 0
-        ? 'intent'
-        : 'sources';
+  r.promoted
+    ? 'promoted'
+    : r.draft_status === 'validated'
+      ? 'validated'
+      : r.draft_status || r.brief_status === 'confirmed'
+        ? 'design'
+        : r.sources > 0
+          ? 'intent'
+          : 'sources';
 
 /** Projects are private to their creator. Every query filters on created_by. */
 export function projectRepo(db: Db) {
@@ -264,6 +267,7 @@ export function projectRepo(db: Db) {
            (SELECT status FROM gsb.semantic_brief b WHERE b.project_id = p.id ORDER BY version DESC LIMIT 1) AS brief_status,
            (SELECT status FROM gsb.metric_view_draft d WHERE d.project_id = p.id ORDER BY version DESC LIMIT 1) AS draft_status,
            (SELECT count(*)::int FROM gsb.source s WHERE s.project_id = p.id) AS sources,
+           EXISTS (SELECT 1 FROM gsb.promotion pr WHERE pr.project_id = p.id AND pr.status = 'succeeded') AS promoted,
            GREATEST(p.created_at,
              (SELECT MAX(at) FROM gsb.audit_log a WHERE a.project_id = p.id)) AS last_activity
          FROM gsb.project p WHERE p.created_by = $1 ORDER BY p.created_at DESC LIMIT 500`,

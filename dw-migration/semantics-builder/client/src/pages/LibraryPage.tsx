@@ -113,7 +113,7 @@ export function LibraryPage() {
                       <Button
                         componentId="gsb.library.health_open"
                         size="small"
-                        onClick={() => void navigate(`${subPath(r.parentId, r.projectId, 'designer')}?tab=promote`)}
+                        onClick={() => void navigate(subPath(r.parentId, r.projectId, 'publish'))}
                       >
                         Health and drift
                       </Button>

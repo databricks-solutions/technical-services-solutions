@@ -120,13 +120,13 @@ test('stress test two queries', async ({ page }) => {
   await expect(page.getByLabel('Runs and their cost')).toContainText('Stress test');
 
   // Ask Genie: one Genie space on the sandbox view, one question. Before the restore, while the latest version is validated.
-  await page.getByRole('tab', { name: 'Ask Genie' }).click();
+  await page.getByRole('tab', { name: 'Test with Genie' }).click();
   await page.getByRole('button', { name: 'Create the Genie space' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Run SQL' }).click();
   await expect(page.getByRole('link', { name: 'Open in Genie' })).toBeVisible({ timeout: 120_000 });
   const remove = page.getByRole('button', { name: /^Remove question/ });
   while ((await remove.count()) > 1) await remove.last().click();
-  await page.getByRole('button', { name: 'Ask Genie' }).click();
+  await page.getByRole('button', { name: 'Ask Genie', exact: true }).click();
   await expect(page.getByRole('region', { name: 'Answers' })).toContainText(
     /Matches|Different fields|No answer|Needs review/,
     {
@@ -134,13 +134,13 @@ test('stress test two queries', async ({ page }) => {
     }
   );
 
-  // Roll back: restore version 1 (the template, the oldest row) as a new version; then the Unity Catalog tab asks for a target.
+  // Roll back: restore version 1 (the template, the oldest row) as a new version; then Publish asks for a target.
   await openModule(page, 'Metric Designer');
   await page.getByRole('tab', { name: /^History/ }).click();
   await page.getByRole('button', { name: 'Open' }).last().click();
   await page.getByRole('button', { name: 'Restore as a new version' }).click();
   await expect(page.getByText('Restored', { exact: true }).first()).toBeVisible({ timeout: 60_000 });
-  await page.getByRole('tab', { name: 'Unity Catalog' }).click();
+  await openModule(page, 'Publish');
   await expect(page.getByText('Set the Unity Catalog view to promote to.')).toBeVisible({ timeout: 60_000 });
 });
 

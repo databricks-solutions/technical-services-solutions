@@ -1,20 +1,24 @@
 import { useEffect } from 'react';
 import type { MouseEvent, ReactNode } from 'react';
-import { createBrowserRouter, Outlet, RouterProvider, useLocation, useMatch, useNavigate } from 'react-router';
+import {
+  createBrowserRouter,
+  Navigate,
+  Outlet,
+  RouterProvider,
+  useLocation,
+  useMatch,
+  useNavigate,
+} from 'react-router';
 import type { ProjectSummary } from '../../shared/brief';
 import { api, DRIFT_CHECKED, PROJECTS_CHANGED, useResource } from './api';
 import {
-  BeakerIcon,
   CatalogIcon,
-  ChartLineIcon,
-  LightningIcon,
   FolderIcon,
   HomeIcon,
   NavList,
   NavListSidebar,
   SimpleSelect,
   SimpleSelectOption,
-  SparkleIcon,
   Typography,
 } from '@databricks/design-system';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -27,16 +31,10 @@ import { PlaygroundPage } from './pages/PlaygroundPage';
 import { ProjectPage } from './pages/ProjectPage';
 import { ProjectsPage, subPath } from './pages/ProjectsPage';
 import { SourcesPage } from './pages/SourcesPage';
+import { OverviewPage } from './pages/OverviewPage';
+import { PublishPage } from './pages/PublishPage';
+import { SubProjectLayout } from './pages/SubProjectLayout';
 import { LibraryPage } from './pages/LibraryPage';
-
-// Sub-project modules appear here as each phase ships.
-const projectModules = [
-  { slug: 'sources', label: 'Sources & Readiness', icon: <CatalogIcon />, page: <SourcesPage /> },
-  { slug: 'intake', label: 'Intent & Context', icon: <SparkleIcon />, page: <IntakePage /> },
-  { slug: 'patterns', label: 'Modeling patterns', icon: <BeakerIcon />, page: <PlaygroundPage /> },
-  { slug: 'designer', label: 'Metric Designer', icon: <ChartLineIcon />, page: <DesignerPage /> },
-  { slug: 'optimize', label: 'Optimize', icon: <LightningIcon />, page: <OptimizePage /> },
-];
 
 function ThemeSelect() {
   const { preference, setPreference } = useThemePreference();
@@ -77,8 +75,6 @@ function Shell() {
     window.addEventListener(PROJECTS_CHANGED, refresh);
     return () => window.removeEventListener(PROJECTS_CHANGED, refresh);
   }, [refresh]);
-  const current = projects.data?.find((p) => p.id === inProject);
-  const subName = current?.subProjects.find((s) => s.id === sub?.projectId)?.name ?? 'Sub-project';
   const go = (path: string) => (e: MouseEvent) => {
     e.preventDefault();
     void navigate(path);
@@ -134,7 +130,7 @@ function Shell() {
                           {p.id === inProject && p.subProjects.length > 0 && (
                             <NavList.SubList aria-label={`${p.name} sub-projects`}>
                               {p.subProjects.map((s) => {
-                                const path = subPath(p.id, s.id, 'sources');
+                                const path = subPath(p.id, s.id, 'overview');
                                 return (
                                   <NavList.SubItem key={s.id}>
                                     <NavList.SubLink
@@ -150,30 +146,6 @@ function Shell() {
                           )}
                         </NavList.Item>
                       ))}
-                    </NavList.List>
-                  </NavList.GroupContent>
-                </NavList.Group>
-              )}
-              {sub && (
-                <NavList.Group>
-                  {showExpandedContent && <NavList.GroupLabel>{subName}</NavList.GroupLabel>}
-                  <NavList.GroupContent>
-                    <NavList.List>
-                      {projectModules.map((m) => {
-                        const path = subPath(sub.parentId!, sub.projectId!, m.slug);
-                        return (
-                          <NavList.Item key={m.slug}>
-                            <NavList.Link
-                              href={path}
-                              active={pathname === path}
-                              icon={m.icon}
-                              iconPosition={side}
-                              label={m.label}
-                              onClick={go(path)}
-                            />
-                          </NavList.Item>
-                        );
-                      })}
                     </NavList.List>
                   </NavList.GroupContent>
                 </NavList.Group>
@@ -200,7 +172,7 @@ function Shell() {
         </header>
         <main style={{ flex: 1, overflow: 'auto', padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
           <ErrorBoundary>
-            <Outlet />
+            <Outlet context={projects} />
           </ErrorBoundary>
         </main>
       </div>
@@ -243,10 +215,20 @@ const router = createBrowserRouter([
         path: '/projects/:parentId',
         element: <ProjectPage />,
       },
-      ...projectModules.map((m) => ({
-        path: `/projects/:parentId/sub/:projectId/${m.slug}`,
-        element: <Page title={m.label}>{m.page}</Page>,
-      })),
+      {
+        path: '/projects/:parentId/sub/:projectId',
+        element: <SubProjectLayout />,
+        children: [
+          { index: true, element: <Navigate to="overview" replace /> },
+          { path: 'overview', element: <OverviewPage /> },
+          { path: 'sources', element: <SourcesPage /> },
+          { path: 'intake', element: <IntakePage /> },
+          { path: 'patterns', element: <PlaygroundPage /> },
+          { path: 'designer', element: <DesignerPage /> },
+          { path: 'optimize', element: <OptimizePage /> },
+          { path: 'publish', element: <PublishPage /> },
+        ],
+      },
       { path: '*', element: <Page title="Not found">{null}</Page> },
     ],
   },

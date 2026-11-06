@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import {
   Alert,
+  ArrowRightIcon,
   Button,
   FormUI,
   Input,
@@ -137,6 +138,22 @@ function BriefView({ brief }: { brief: Partial<SemanticBrief> }) {
   );
 }
 
+/** After the brief is confirmed, the next step is the design. */
+function NextToDesigner() {
+  const { projectId = '', parentId = '' } = useParams();
+  const navigate = useNavigate();
+  return (
+    <Button
+      componentId="gsb.brief.next"
+      type="primary"
+      endIcon={<ArrowRightIcon />}
+      onClick={() => void navigate(`/projects/${parentId}/sub/${projectId}/designer`)}
+    >
+      Next: Metric Designer
+    </Button>
+  );
+}
+
 function BriefPanel({
   projectId,
   version,
@@ -242,6 +259,7 @@ function BriefPanel({
           >
             {confirmed ? 'Brief confirmed' : 'Confirm brief'}
           </Button>
+          {confirmed && <NextToDesigner />}
           <Button componentId="gsb.brief.edit" disabled={!!busy || editing} onClick={() => setEditing(true)}>
             Edit by hand
           </Button>

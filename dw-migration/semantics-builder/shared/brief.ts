@@ -61,7 +61,7 @@ export interface Project {
   createdAt: string;
 }
 
-export type SubProjectStage = 'intent' | 'sources' | 'design' | 'validated';
+export type SubProjectStage = 'intent' | 'sources' | 'design' | 'validated' | 'promoted';
 
 export interface SubProjectSummary extends Project {
   stage: SubProjectStage;

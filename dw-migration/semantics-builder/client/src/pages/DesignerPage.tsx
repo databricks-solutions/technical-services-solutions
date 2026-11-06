@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router';
+import { useNavigate, useParams } from 'react-router';
+import { useTab } from '../useTab';
 import {
   Alert,
   Button,
@@ -23,7 +24,6 @@ import { OpenInCatalog } from '../components/OpenInCatalog';
 import { DataState } from '../components/DataState';
 import { FieldTables } from '../components/FieldTables';
 import { TestEditor } from '../components/TestEditor';
-import { PromotePanel } from '../components/PromotePanel';
 import { JoinDiagram } from '../components/JoinDiagram';
 import { MONO, SqlBlock } from '../components/SqlBlock';
 
@@ -325,7 +325,7 @@ function Designer({
             action: { label: 'Validate in sandbox', onClick: askPlan, disabled: !draft.tests.length },
           }
         : {
-            text: 'Validated. Next, stress test it and get materialization suggestions.',
+            text: 'Validated. Optimize it if you want (stress test, materialization, Genie), then publish it.',
             action: {
               label: 'Next: Optimize',
               onClick: () => void navigate(`/projects/${parentId}/sub/${projectId}/optimize`),
@@ -405,7 +405,6 @@ function Designer({
           <Tabs.Trigger value="yaml">YAML{errors ? ` (${errors} errors)` : dirty ? ' (unsaved)' : ''}</Tabs.Trigger>
           <Tabs.Trigger value="tests">Tests ({draft.tests.length})</Tabs.Trigger>
           <Tabs.Trigger value="history">History ({data.history.length})</Tabs.Trigger>
-          <Tabs.Trigger value="promote">Unity Catalog</Tabs.Trigger>
         </Tabs.List>
 
         <Tabs.Content value="model">
@@ -469,6 +468,13 @@ function Designer({
                   onClick={() => run('save', `/api/projects/${projectId}/designs/template`, {})}
                 >
                   Start from a template
+                </Button>
+                <Button
+                  componentId="gsb.designer.patterns"
+                  disabled={dirty || !!busy}
+                  onClick={() => void navigate(`/projects/${parentId}/sub/${projectId}/patterns`)}
+                >
+                  Start from a pattern
                 </Button>
               </div>
               {(busy === 'refine' || busy === 'generate') && (
@@ -579,10 +585,6 @@ function Designer({
           </section>
         </Tabs.Content>
 
-        <Tabs.Content value="promote">
-          <PromotePanel key={draft.version} projectId={projectId} />
-        </Tabs.Content>
-
         <Tabs.Content value="history">
           <History
             projectId={projectId}
@@ -627,7 +629,8 @@ function Designer({
   );
 }
 
-type DesignerTab = 'model' | 'yaml' | 'tests' | 'history' | 'promote';
+type DesignerTab = 'model' | 'yaml' | 'tests' | 'history';
+const DESIGNER_TABS: DesignerTab[] = ['model', 'yaml', 'tests', 'history'];
 
 function VersionYaml({
   projectId,
@@ -728,10 +731,10 @@ function History({
 }
 
 export function DesignerPage() {
-  const { projectId = '' } = useParams();
+  const { projectId = '', parentId = '' } = useParams();
+  const navigate = useNavigate();
   const view = useResource<DesignerView>(`/api/projects/${projectId}/designs`);
-  const [search] = useSearchParams();
-  const [tab, setTab] = useState<DesignerTab>(search.get('tab') === 'promote' ? 'promote' : 'model');
+  const [tab, setTab] = useTab(DESIGNER_TABS, 'model');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const data = view.data;
@@ -778,6 +781,13 @@ export function DesignerPage() {
                 </Button>
                 <Button componentId="gsb.designer.template" disabled={busy} onClick={() => start('template')}>
                   Start from a template
+                </Button>
+                <Button
+                  componentId="gsb.designer.empty_patterns"
+                  disabled={busy}
+                  onClick={() => void navigate(`/projects/${parentId}/sub/${projectId}/patterns`)}
+                >
+                  Start from a pattern
                 </Button>
               </div>
             }

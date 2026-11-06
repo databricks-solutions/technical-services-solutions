@@ -4,78 +4,20 @@ import {
   ArrowRightIcon,
   Button,
   Card,
-  CheckCircleFillIcon,
-  CircleIcon,
-  CircleOutlineIcon,
+  DropdownMenu,
+  OverflowIcon,
   PlusIcon,
   TrashIcon,
   Tag,
   Typography,
 } from '@databricks/design-system';
-import type { ProjectSummary, SubProjectStage, SubProjectSummary } from '../../../shared/brief';
+import type { ProjectSummary, SubProjectSummary } from '../../../shared/brief';
+import { Journey, NEXT, STAGE } from '../journey';
 import { PROJECTS_CHANGED, useResource } from '../api';
 import { DataState } from '../components/DataState';
 import { DictionaryPanel } from '../components/DictionaryPanel';
 import { DeleteProjectModal } from '../components/DeleteProjectModal';
-import { NewProjectModal, STAGE, subPath } from './ProjectsPage';
-
-const JOURNEY: { stage: SubProjectStage; label: string }[] = [
-  { stage: 'sources', label: 'Sources' },
-  { stage: 'intent', label: 'Goal' },
-  { stage: 'design', label: 'Design' },
-  { stage: 'validated', label: 'Validated' },
-];
-
-const NEXT: Record<SubProjectStage, { text: string; action: string }> = {
-  sources: { text: 'Choose the tables to model, then check and fix them.', action: 'Choose sources' },
-  intent: { text: 'See what the AI suggests from your tables, then confirm the brief.', action: 'Define the goal' },
-  design: { text: 'Design the metric view and validate it against the data.', action: 'Open designer' },
-  validated: { text: 'The metric view passed validation. Review or refine it.', action: 'Open designer' },
-};
-
-function Journey({ stage }: { stage: SubProjectStage }) {
-  const at = JOURNEY.findIndex((j) => j.stage === stage);
-  return (
-    <ol
-      aria-label="Progress"
-      style={{ display: 'flex', gap: 16, flexWrap: 'wrap', margin: 0, padding: 0, listStyle: 'none' }}
-    >
-      {JOURNEY.map((j, i) => {
-        const done = i < at || stage === 'validated';
-        const current = i === at && !done;
-        return (
-          <li
-            key={j.stage}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 4,
-              color: done
-                ? 'var(--db-alert-icon-color-success)'
-                : current
-                  ? 'var(--db-accent-text)'
-                  : 'var(--db-text-subtle)',
-              fontWeight: current ? 600 : undefined,
-            }}
-          >
-            {done ? <CheckCircleFillIcon /> : current ? <CircleIcon /> : <CircleOutlineIcon />}
-            <span>{j.label}</span>
-            <span style={SR_ONLY}>{done ? ', done' : current ? ', current step' : ', not started'}</span>
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
-
-const SR_ONLY = {
-  position: 'absolute',
-  width: 1,
-  height: 1,
-  overflow: 'hidden',
-  clip: 'rect(0 0 0 0)',
-  whiteSpace: 'nowrap',
-} as const;
+import { NewProjectModal, subPath } from './ProjectsPage';
 
 function SubProjectCard({
   parentId,
@@ -87,17 +29,28 @@ function SubProjectCard({
   onDelete: () => void;
 }) {
   const navigate = useNavigate();
-  // Opening a sub-project starts on its sources; the Next button goes to the step that is due.
-  const open = () => void navigate(subPath(parentId, sub.id, 'sources'));
-  const goNext = () => void navigate(subPath(parentId, sub.id, STAGE[sub.stage].module));
+  // Opening a sub-project starts on its overview; the Next button goes to the step that is due.
+  const overview = subPath(parentId, sub.id, 'overview');
+  const open = () => void navigate(overview);
   const next = NEXT[sub.stage];
+  const goNext = () => void navigate(subPath(parentId, sub.id, next.module));
   return (
     <Card componentId="gsb.project.sub_card" width="100%" onClick={open}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
           <div>
             <Typography.Title level={4} withoutMargins>
-              {sub.name}
+              <Typography.Link
+                componentId="gsb.project.sub_open"
+                href={overview}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  open();
+                }}
+              >
+                {sub.name}
+              </Typography.Link>
             </Typography.Title>
             <Typography.Text color="secondary">{sub.description ?? 'No goal yet.'}</Typography.Text>
           </div>
@@ -184,15 +137,24 @@ export function ProjectPage() {
               <Typography.Text color="secondary">{project.description ?? 'No business goal yet.'}</Typography.Text>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
-              <Button
-                componentId="gsb.project.delete"
-                danger
-                icon={<TrashIcon />}
-                onClick={() => setDeleting({ id: project.id, kind: 'project' })}
-              >
-                Delete project
-              </Button>
               {newButton}
+              <DropdownMenu.Root modal={false}>
+                <DropdownMenu.Trigger asChild>
+                  <Button componentId="gsb.project.more" icon={<OverflowIcon />} aria-label="More actions" />
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Content align="end">
+                  <DropdownMenu.Item
+                    componentId="gsb.project.delete"
+                    danger
+                    onClick={() => setDeleting({ id: project.id, kind: 'project' })}
+                  >
+                    <DropdownMenu.IconWrapper>
+                      <TrashIcon />
+                    </DropdownMenu.IconWrapper>
+                    Delete project
+                  </DropdownMenu.Item>
+                </DropdownMenu.Content>
+              </DropdownMenu.Root>
             </div>
           </div>
           {project.subProjects.length ? (
@@ -209,6 +171,7 @@ export function ProjectPage() {
           ) : (
             <DataState
               status="empty"
+              emptyTitle="No sub-projects yet"
               message="A sub-project builds one metric view, for example Revenue or Returns. The AI guides you from intent to a validated design."
               emptyAction={newButton}
             />

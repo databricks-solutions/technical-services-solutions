@@ -54,8 +54,9 @@ export function PromotePanel({ projectId, onPromoted }: { projectId: string; onP
       {v && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingTop: 16, maxWidth: 960 }}>
           <Typography.Text color="secondary">
-            Promote replaces the view in Unity Catalog with the latest validated version, as you. To roll back, restore
-            an older version in History, then promote it.
+            Promote puts the latest validated version in Unity Catalog, where dashboards, Genie and SQL users find it.
+            It creates or replaces the view, as you. To roll back, restore an older version in Metric Designer, History,
+            validate it, then promote it.
           </Typography.Text>
           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
             <div style={{ minWidth: 420 }}>
@@ -135,8 +136,17 @@ export function PromotePanel({ projectId, onPromoted }: { projectId: string; onP
             </Table>
           )}
 
-          <GovernPanel key={last?.id ?? 'none'} projectId={projectId} />
-          <DriftPanel key={`drift-${last?.id ?? 'none'}`} projectId={projectId} />
+          {last ? (
+            <>
+              <GovernPanel key={last.id} projectId={projectId} />
+              <DriftPanel key={`drift-${last.id}`} projectId={projectId} />
+            </>
+          ) : (
+            <Typography.Text color="secondary">
+              After the first promotion, you set the owner and who can read the view here, and check it for drift
+              (changes made outside the app, or in the source tables).
+            </Typography.Text>
+          )}
 
           {plan && (
             <Modal

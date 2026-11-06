@@ -71,7 +71,9 @@ function KeyEditor({ row, edits, onChange }: { row: KeyRow; edits: FixEdits; onC
         // eslint-disable-next-line react/no-array-index-key
         <TableRow key={i}>
           <TableCell>
-            <code style={MONO}>{row.table}</code>
+            <code style={MONO} title={row.table}>
+              {row.table.split('.').pop()}
+            </code>
           </TableCell>
           <TableCell>
             <ColumnSelect
@@ -90,21 +92,23 @@ function KeyEditor({ row, edits, onChange }: { row: KeyRow; edits: FixEdits; onC
           <TableCell>{typeOf(row.options, c)}</TableCell>
           {fk && (
             <TableCell>
-              <Typography.Text color="secondary" size="sm">
-                {row.references}
-              </Typography.Text>
-              <ColumnSelect
-                id={`fix-ref-${i}`}
-                label={`Referenced column ${i + 1}`}
-                value={refColumns[i] ?? ''}
-                options={row.refOptions}
-                onChange={(v) =>
-                  set(
-                    columns,
-                    columns.map((_, j) => (j === i ? v : (refColumns[j] ?? '')))
-                  )
-                }
-              />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <code style={MONO} title={row.references ?? ''}>
+                  {row.references?.split('.').pop()}
+                </code>
+                <ColumnSelect
+                  id={`fix-ref-${i}`}
+                  label={`Referenced column ${i + 1}`}
+                  value={refColumns[i] ?? ''}
+                  options={row.refOptions}
+                  onChange={(v) =>
+                    set(
+                      columns,
+                      columns.map((_, j) => (j === i ? v : (refColumns[j] ?? '')))
+                    )
+                  }
+                />
+              </div>
             </TableCell>
           )}
           {fk && <TableCell>{typeOf(row.refOptions, refColumns[i] ?? '')}</TableCell>}
@@ -178,55 +182,90 @@ export function FixEditor({
     next[index] = value;
     onChange?.({ ...edits, comments: next });
   };
-  return (
-    <Table aria-label="Proposed changes" scrollable>
-      <TableRow isHeader>
-        {onChange && <TableHeader componentId="gsb.fix.h_include">Include</TableHeader>}
-        <TableHeader componentId="gsb.fix.h_table">Table</TableHeader>
-        <TableHeader componentId="gsb.fix.h_column">Column</TableHeader>
-        <TableHeader componentId="gsb.fix.h_type">Data type</TableHeader>
-        <TableHeader componentId="gsb.fix.h_current">Current description</TableHeader>
-        <TableHeader componentId="gsb.fix.h_proposed">Proposed description (AI)</TableHeader>
-      </TableRow>
-      {comments.map((r) => (
-        <TableRow key={r.index}>
-          {onChange && (
-            <TableCell>
-              <Checkbox
-                componentId="gsb.fix.include"
-                aria-label={`Include ${r.column ?? r.table}`}
-                isChecked={!skip.has(r.index)}
-                onChange={(on) =>
-                  onChange({
-                    ...edits,
-                    skip: on ? [...skip].filter((i) => i !== r.index) : [...skip, r.index],
-                  })
-                }
-              />
-            </TableCell>
-          )}
-          <TableCell>
-            <code style={{ ...MONO, overflowWrap: 'anywhere' }}>{r.table.split('.').pop()}</code>
-          </TableCell>
-          <TableCell>{r.column ? <code style={MONO}>{r.column}</code> : <i>Table</i>}</TableCell>
-          <TableCell>{r.type ?? ''}</TableCell>
-          <TableCell>
-            <Typography.Text color="secondary">{r.current || 'None'}</Typography.Text>
-          </TableCell>
-          <TableCell>
-            {onChange ? (
+  // In review, one block per column with a full-width text box, so long proposals are easy to read and edit.
+  if (onChange)
+    return (
+      <ol
+        aria-label="Proposed changes"
+        style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 8 }}
+      >
+        {comments.map((r) => {
+          const name = r.column ?? r.table.split('.').pop() ?? r.table;
+          const off = skip.has(r.index);
+          return (
+            <li
+              key={r.index}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 6,
+                padding: 12,
+                border: '1px solid var(--db-border-base)',
+                borderRadius: 8,
+                opacity: off ? 0.6 : 1,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <Checkbox
+                  componentId="gsb.fix.include"
+                  aria-label={`Include ${name}`}
+                  isChecked={!off}
+                  onChange={(on) =>
+                    onChange({
+                      ...edits,
+                      skip: on ? [...skip].filter((i) => i !== r.index) : [...skip, r.index],
+                    })
+                  }
+                />
+                <code style={MONO}>{name}</code>
+                <Typography.Text color="secondary">{r.column ? (r.type ?? '') : 'Table description'}</Typography.Text>
+              </div>
+              <Typography.Text color="secondary" size="sm">
+                Current: {r.current || 'None'}
+              </Typography.Text>
               <Input.TextArea
                 componentId="gsb.fix.text"
-                aria-label={`Proposed description of ${r.column ?? r.table}`}
-                autoSize={{ minRows: 1, maxRows: 4 }}
+                aria-label={`Proposed description of ${name}`}
+                autoSize={{ minRows: 3, maxRows: 10 }}
                 maxLength={1000}
-                disabled={skip.has(r.index)}
+                disabled={off}
                 value={text(r)}
                 onChange={(e) => put(r.index, e.target.value)}
               />
-            ) : (
-              <Typography.Text>{r.proposed}</Typography.Text>
-            )}
+            </li>
+          );
+        })}
+      </ol>
+    );
+  // Read-only: a fix covers one table, so the table is in the title; the proposal gets the most room.
+  const W = { column: { flex: '0 0 22%' }, type: { flex: '0 0 12%' }, current: { flex: 2 }, proposed: { flex: 4 } };
+  return (
+    <Table aria-label="Proposed changes" scrollable>
+      <TableRow isHeader>
+        <TableHeader componentId="gsb.fix.h_column" style={W.column}>
+          Column
+        </TableHeader>
+        <TableHeader componentId="gsb.fix.h_type" style={W.type}>
+          Data type
+        </TableHeader>
+        <TableHeader componentId="gsb.fix.h_current" style={W.current}>
+          Current description
+        </TableHeader>
+        <TableHeader componentId="gsb.fix.h_proposed" style={W.proposed}>
+          Proposed description (AI)
+        </TableHeader>
+      </TableRow>
+      {comments.map((r) => (
+        <TableRow key={r.index}>
+          <TableCell style={W.column}>
+            <code style={MONO}>{r.column ?? r.table.split('.').pop()}</code>
+          </TableCell>
+          <TableCell style={W.type}>{r.column ? (r.type ?? '') : 'Table'}</TableCell>
+          <TableCell multiline style={W.current}>
+            <Typography.Text color="secondary">{r.current || 'None'}</Typography.Text>
+          </TableCell>
+          <TableCell multiline style={W.proposed}>
+            <Typography.Text>{r.proposed}</Typography.Text>
           </TableCell>
         </TableRow>
       ))}

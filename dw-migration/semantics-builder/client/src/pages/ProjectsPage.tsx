@@ -12,19 +12,10 @@ import {
   Tag,
   Typography,
 } from '@databricks/design-system';
-import type { NewProject, Project, ProjectSummary, SubProjectStage } from '../../../shared/brief';
+import type { NewProject, Project, ProjectSummary } from '../../../shared/brief';
+import { STAGE } from '../journey';
 import { api, useResource } from '../api';
 import { DataState } from '../components/DataState';
-
-export const STAGE: Record<
-  SubProjectStage,
-  { label: string; color: 'default' | 'lemon' | 'indigo' | 'teal'; module: string }
-> = {
-  sources: { label: 'Choosing sources', color: 'default', module: 'sources' },
-  intent: { label: 'Defining intent', color: 'lemon', module: 'intake' },
-  design: { label: 'Designing', color: 'indigo', module: 'designer' },
-  validated: { label: 'Validated', color: 'teal', module: 'designer' },
-};
 
 export const subPath = (parentId: string, id: string, module: string) => `/projects/${parentId}/sub/${id}/${module}`;
 

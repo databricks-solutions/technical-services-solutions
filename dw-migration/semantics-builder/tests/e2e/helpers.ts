@@ -30,7 +30,7 @@ export async function createSubProject(page: Page, name: string) {
   await dialog.getByLabel(/Name/).fill(name);
   await dialog.getByRole('button', { name: 'Create sub-project' }).click();
   // A new sub-project opens on Sources & Readiness.
-  await expect(page.getByRole('heading', { name: 'Sources & Readiness' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: /^Sources & Readiness/, selected: true })).toBeVisible();
 }
 
 /** Ticks tables in the Unity Catalog tree: catalog, then schema, then each table. */
@@ -43,15 +43,17 @@ export async function pickTables(page: Page, catalog: string, schema: string, ta
 }
 
 export async function openModule(page: Page, label: string) {
-  await page.getByRole('navigation', { name: 'STS Semantics Builder' }).getByRole('link', { name: label }).click();
-  await expect(page.getByRole('heading', { name: label, level: 2 })).toBeVisible();
+  const tab = page.getByRole('tab', { name: new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`) });
+  await tab.click();
+  await expect(tab).toHaveAttribute('aria-selected', 'true');
 }
 
 /** Deletes a project through its page, with the sandbox cleanup ticked. */
 export async function deleteProject(page: Page, name: string) {
   await page.goto('/');
   await page.getByRole('heading', { name }).click();
-  await page.getByRole('button', { name: 'Delete project' }).click();
+  await page.getByRole('button', { name: 'More actions' }).click();
+  await page.getByRole('menuitem', { name: 'Delete project' }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByRole('textbox').fill(name);
   const cleanup = dialog.getByRole('checkbox');

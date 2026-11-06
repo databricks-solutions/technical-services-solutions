@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
+import { useTab } from '../useTab';
 import {
   Alert,
   ArrowRightIcon,
@@ -436,6 +437,7 @@ export function SourcesPage() {
   const [edits, setEdits] = useState<FixEdits>({});
   const [sql, setSql] = useState<string[]>();
   const [adding, setAdding] = useState<'pick' | 'related'>();
+  const [tab, setTab] = useTab(['plan', 'lineage', 'tables', 'permissions'] as const, 'plan');
 
   const post = (key: string, path: string, body: unknown = {}) => {
     setBusy(key);
@@ -564,7 +566,7 @@ export function SourcesPage() {
               refreshKey={data.sources.map((x) => `${x.fullName}:${x.report?.score ?? ''}`).join('|')}
             />
 
-            <Tabs.Root componentId="gsb.sources.tabs" defaultValue="plan">
+            <Tabs.Root componentId="gsb.sources.tabs" value={tab} onValueChange={setTab}>
               <Tabs.List>
                 <Tabs.Trigger value="plan">Improvement plan ({openFixes.length})</Tabs.Trigger>
                 <Tabs.Trigger value="lineage">Lineage</Tabs.Trigger>
@@ -656,6 +658,7 @@ export function SourcesPage() {
 
             <Modal
               componentId="gsb.sources.apply_modal"
+              size="wide"
               title={reviewing ? `Apply: ${reviewing.title}` : ''}
               visible={!!reviewing}
               okText="Apply"

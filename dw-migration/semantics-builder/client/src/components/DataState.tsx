@@ -7,13 +7,15 @@ interface DataStateProps {
   status: DataStateStatus;
   /** Shown for loading (spinner label), empty, error, and forbidden. */
   message?: ReactNode;
+  /** Heading of the empty state. */
+  emptyTitle?: string;
   emptyAction?: ReactNode;
   onRetry?: () => void;
   children?: ReactNode;
 }
 
 /** One place for the four required states of every data screen. */
-export function DataState({ status, message, emptyAction, onRetry, children }: DataStateProps) {
+export function DataState({ status, message, emptyTitle, emptyAction, onRetry, children }: DataStateProps) {
   switch (status) {
     case 'loading':
       return (
@@ -22,7 +24,13 @@ export function DataState({ status, message, emptyAction, onRetry, children }: D
         </div>
       );
     case 'empty':
-      return <Empty title="Nothing here yet" description={message ?? 'No items to show.'} button={emptyAction} />;
+      return (
+        <Empty
+          title={emptyTitle ?? 'Nothing here yet'}
+          description={message ?? 'No items to show.'}
+          button={emptyAction}
+        />
+      );
     case 'forbidden':
       return (
         <Empty

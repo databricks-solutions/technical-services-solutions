@@ -57,9 +57,9 @@ Sandbox views (validation and stress tests) are listed apart, so they are not mi
   of a validated YAML keeps the validated status, so it can be promoted at once.
 - **Roll back in UC** = Restore an older version, then Promote it. History shows which versions were promoted.
 
-## Questions
+## Decisions (2026-11-05)
 
-1. Brief of an imported view: a draft that the user confirms (recommended), or confirmed at once?
-2. Promotion target: set per sub-project (recommended), or chosen each time?
-3. Roll back: restore as a new version, then promote (recommended), or promote an old version directly?
-4. Order: Ask Genie (approved) first, then this phase? Or this phase first?
+- Imported view brief: a draft that the user confirms.
+- Promotion target: set once per sub-project.
+- Roll back: restore as a new version, then promote.
+- Order: Ask Genie (c5.3) first, then this phase.

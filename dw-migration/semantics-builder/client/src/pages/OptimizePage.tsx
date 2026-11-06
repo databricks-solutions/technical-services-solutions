@@ -21,6 +21,7 @@ import { DataState } from '../components/DataState';
 import { MaterializePanel } from '../components/MaterializePanel';
 import { PracticesPanel } from '../components/PracticesPanel';
 import { CostPanel } from '../components/CostPanel';
+import { GeniePanel } from '../components/GeniePanel';
 import { SqlBlock } from '../components/SqlBlock';
 
 const FLAG: Record<StressFlag, { color: 'coral' | 'lemon'; label: string }> = {
@@ -321,7 +322,13 @@ export function OptimizePage() {
                   Materialization{data.suggestion?.views.length ? ` (${data.suggestion.views.length})` : ''}
                 </Tabs.Trigger>
                 <Tabs.Trigger value="cost">Cost</Tabs.Trigger>
+                <Tabs.Trigger value="genie">Ask Genie</Tabs.Trigger>
               </Tabs.List>
+              <Tabs.Content value="genie">
+                <div style={{ paddingTop: 16 }}>
+                  {data.view && <GeniePanel projectId={projectId} fields={data.view} />}
+                </div>
+              </Tabs.Content>
               <Tabs.Content value="practices">
                 <div style={{ paddingTop: 16 }}>
                   <PracticesPanel checks={data.practices} />

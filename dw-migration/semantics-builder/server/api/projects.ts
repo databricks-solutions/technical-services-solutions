@@ -1,3 +1,4 @@
+import type { GenieDeps } from '../genie/client';
 import type { Application, Request } from 'express';
 import { z } from 'zod';
 import type { LakebasePool } from '@databricks/appkit';
@@ -361,7 +362,8 @@ export function registerProjectRoutes(
   app: Application,
   db: Db,
   llmFor: (req: Request) => LlmDeps,
-  runFor: (req: Request) => RunDeps
+  runFor: (req: Request) => RunDeps,
+  genieFor?: (req: Request) => Pick<GenieDeps, 'trashSpace'>
 ) {
   const repo = projectRepo(db);
 
@@ -403,6 +405,16 @@ export function registerProjectRoutes(
           );
         }
       }
+      // Genie spaces of the project and its sub-projects point at the dropped views; trash them, best effort.
+      const spaces = await db.query<{ space_id: string }>(
+        `SELECT s.space_id FROM gsb.genie_space s JOIN gsb.project p ON p.id = s.project_id
+         WHERE p.id = $1 OR p.parent_id = $1`,
+        [id]
+      );
+      for (const s of spaces.rows)
+        await genieFor?.(req)
+          .trashSpace(s.space_id)
+          .catch(() => undefined);
       await repo.remove(actor, id);
       return { deleted: true };
     })

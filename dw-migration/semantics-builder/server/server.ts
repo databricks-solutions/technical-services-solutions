@@ -11,6 +11,8 @@ import { registerPatternRoutes } from './api/patterns';
 import { loadPatterns } from './patterns/library';
 import { registerReadinessRoutes } from './api/readiness';
 import { ucDeps } from './uc/metadata';
+import { registerGenieRoutes } from './api/genie';
+import { genieDeps } from './genie/client';
 import { servingDeps } from './llm/llm';
 import { warehouseDeps } from './sql/runner';
 
@@ -34,13 +36,14 @@ createApp({
     appkit.server.extend((app) => {
       const runFor = (req: Request) => warehouseDeps(pool, asUser(req));
       const ucFor = (req: Request) => ucDeps(asUser(req));
-      registerProjectRoutes(app, pool, llmFor, runFor);
+      registerProjectRoutes(app, pool, llmFor, runFor, (req) => genieDeps(asUser(req)));
       registerCatalogRoutes(app, ucFor);
       registerReadinessRoutes(app, pool, llmFor, runFor, ucFor);
       registerDesignerRoutes(app, pool, llmFor, runFor, ucFor, patterns);
       registerPatternRoutes(app, pool, patterns, runFor);
       registerOptimizeRoutes(app, pool, runFor, ucFor);
       registerDictionaryRoutes(app, pool, runFor);
+      registerGenieRoutes(app, pool, runFor, (req) => genieDeps(asUser(req)));
       // The workspace URL for Catalog Explorer links. Apps set DATABRICKS_HOST; nothing is hardcoded.
       const host = process.env.DATABRICKS_HOST?.trim().replace(/\/+$/, '') ?? '';
       const workspaceUrl = host ? (host.startsWith('http') ? host : `https://${host}`) : null;

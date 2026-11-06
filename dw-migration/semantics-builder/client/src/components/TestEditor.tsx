@@ -4,7 +4,7 @@ import { saveDraftSchema } from '../../../shared/designer';
 import type { TestCase } from '../../../shared/designer';
 import type { MetricView } from '../../../shared/metricView';
 
-function Pick({
+export function FieldPick({
   label,
   names,
   value,
@@ -106,13 +106,13 @@ export function TestEditor({
               onClick={() => setRows((r) => r.filter((_, j) => j !== i))}
             />
           </div>
-          <Pick
+          <FieldPick
             label="Measures (1 to 4)"
             names={measures}
             value={t.measures}
             onChange={(v) => put(i, { ...t, measures: v })}
           />
-          <Pick
+          <FieldPick
             label="By dimensions (up to 3)"
             names={dims}
             value={t.dimensions}

@@ -840,6 +840,12 @@ def main(argv=None):
 
     def post(d: dict) -> dict:
         d = sts_lb_uc.enrich(d, a.uc_catalog, a.uc_pattern, volumes)
+        if n := d["insights"]["trust"]["ucTargetCollisions"]:
+            print(
+                f"warning: {n} suggested UC targets are shared by several legacy tables; "
+                "see uc_mapping.csv (shared_with) or change --uc-pattern",
+                file=sys.stderr,
+            )
         if a.columns:
             d["columns"] = col_edges
             d["insights"]["trust"]["columnStatements"] = col_stats["parsed"]

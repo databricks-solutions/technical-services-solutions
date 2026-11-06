@@ -143,6 +143,11 @@ function ObjectDetails({
             <span className="lbl-row">
               <Typography.Text code>{node.uc.target}</Typography.Text>
               <Tag componentId="sts-lb-lineage.details.layer">{node.uc.layer}</Tag>
+              {node.uc.sharedWith && (
+                <Tag componentId="sts-lb-lineage.details.shared-target" color="lemon" title={node.uc.sharedWith.join(', ')}>
+                  {`Shared target: also ${node.uc.sharedWith.join(', ')}`}
+                </Tag>
+              )}
             </span>
           </KeyValueListItem>
         )}

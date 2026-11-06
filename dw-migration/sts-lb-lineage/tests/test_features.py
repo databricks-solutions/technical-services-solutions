@@ -206,3 +206,19 @@ def test_column_lineage_skips_oversized_sql():
 
     huge = "INSERT INTO t SELECT a FROM s WHERE a IN (" + "1," * MAX_SQL + "1)"
     assert column_edges([{"job": "j", "sql": huge}])[1]["skipped"] == 1
+
+
+def test_shared_uc_targets_are_flagged(tmp_path):
+    d = load("sql_retail", "ssis_shifted").to_dict()
+    d = sts_lb_uc.enrich(d, "main", "{catalog}.bronze.{table}")
+    shared = {
+        n["name"]: n["uc"]["sharedWith"]
+        for n in d["nodes"]
+        if "sharedWith" in n.get("uc", {})
+    }
+    assert shared["raw.orders"] == ["dst.orders", "src.orders"]
+    assert d["insights"]["trust"]["ucTargetCollisions"] == 1
+    sts_lb_uc.write_mapping(d, tmp_path)
+    assert "dst.orders|src.orders" in (tmp_path / "uc_mapping.csv").read_text()
+    clean = sts_lb_uc.enrich(load("sql_retail").to_dict(), "main")
+    assert clean["insights"]["trust"]["ucTargetCollisions"] == 0

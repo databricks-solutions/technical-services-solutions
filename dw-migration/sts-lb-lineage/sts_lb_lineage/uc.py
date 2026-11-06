@@ -82,6 +82,15 @@ def enrich(
         if key in volumes:
             n["volume"] = volumes[key]
             matched += 1
+    by_target: dict[str, list[dict]] = {}
+    for n in d["nodes"]:
+        if n.get("uc"):
+            by_target.setdefault(n["uc"]["target"].lower(), []).append(n)
+    shared = [ns for ns in by_target.values() if len(ns) > 1]
+    for ns in shared:
+        for n in ns:
+            n["uc"]["sharedWith"] = sorted(o["name"] for o in ns if o is not n)
+    d["insights"]["trust"]["ucTargetCollisions"] = len(shared)
     if volumes:
         vol = {n["id"]: n["volume"] for n in d["nodes"] if "volume" in n}
         for p in d["insights"]["processes"]:
@@ -110,6 +119,7 @@ def write_mapping(d: dict, out: Path):
                 "suggested_target",
                 "rows",
                 "bytes",
+                "shared_with",
             ]
         )
         for n in d["nodes"]:
@@ -124,6 +134,7 @@ def write_mapping(d: dict, out: Path):
                         uc.get("target", ""),
                         vol.get("rows", ""),
                         vol.get("bytes", ""),
+                        "|".join(uc.get("sharedWith", [])),
                     ]
                 )
 

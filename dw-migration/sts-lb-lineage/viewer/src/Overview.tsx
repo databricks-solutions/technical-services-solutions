@@ -5,13 +5,18 @@ import { LEVELS, type Model, schemaOf, shortName } from './data';
 import type { Route } from './url';
 import { LevelTag, ROLE_HELP, fmt, plural, roleLabel } from './ui';
 
-const TRUST: { key: string; label: string; help: string }[] = [
+const TRUST: { key: string; label: string; help: string; optional?: boolean }[] = [
   { key: 'statementGrainEdges', label: 'Statement-level edges', help: 'Derived from one SQL statement. High confidence.' },
   { key: 'jobGrainEdges', label: 'Job-level edges', help: 'All inputs x all outputs of a job. May over-link multi-flow jobs.' },
   { key: 'unqualifiedTables', label: 'Unqualified table names', help: 'No schema prefix. May be aliases, variables, or ETL instance names.' },
   { key: 'tempTables', label: 'Temporary tables', help: '@ or # names, kept to preserve chains.' },
   { key: 'programsWithoutLineage', label: 'Programs without lineage', help: 'Scanned, but no read or write relations found.' },
   { key: 'offSchemaComplexity', label: 'Off-schema complexity values', help: 'The analyzer emitted a level outside its schema (for example COMPLEX).' },
+  { key: 'ucTargetCollisions', label: 'Shared UC targets', help: 'Suggested UC tables that several legacy tables map to. Check the --uc-pattern, or confirm the merge.' },
+  { key: 'merged_searchPath', label: 'Names qualified by --search-path', help: 'Unqualified names merged into the one matching schema.', optional: true },
+  { key: 'merged_instances', label: 'Instances folded', help: 'ETL instance names (SQ_X, X_1) merged into table X.', optional: true },
+  { key: 'columnStatements', label: 'SQL parsed for columns', help: 'Embedded statements that gave column lineage.', optional: true },
+  { key: 'columnStatementsSkipped', label: 'SQL skipped for columns', help: 'Embedded statements that did not parse or are not INSERT/CREATE AS SELECT.', optional: true },
 ];
 
 export function Overview({ model, go }: { model: Model; go: (r: Partial<Route>) => void }) {
@@ -155,7 +160,7 @@ export function Overview({ model, go }: { model: Model; go: (r: Partial<Route>) 
               <TableHeader componentId="sts-lb-lineage.ov.t-n" align="right" style={{ maxWidth: 100 }}>Count</TableHeader>
               <TableHeader componentId="sts-lb-lineage.ov.t-h">Meaning</TableHeader>
             </TableRow>
-            {TRUST.map((t) => (
+            {TRUST.filter((t) => !t.optional || t.key in model.ins.trust).map((t) => (
               <TableRow key={t.key}>
                 <TableCell>{t.label}</TableCell>
                 <TableCell align="right" style={{ maxWidth: 100 }}>{fmt(model.ins.trust[t.key] ?? 0)}</TableCell>

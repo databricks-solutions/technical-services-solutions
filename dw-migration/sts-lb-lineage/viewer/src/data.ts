@@ -9,7 +9,7 @@ export interface LNode {
   tags: string[];
   process?: string;
   role?: Role;
-  uc?: { layer: string; target: string };
+  uc?: { layer: string; target: string; sharedWith?: string[] };
   volume?: { rows?: number; bytes?: number };
 }
 export interface LEdge {

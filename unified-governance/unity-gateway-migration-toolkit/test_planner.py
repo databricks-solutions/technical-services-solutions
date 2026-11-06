@@ -1514,6 +1514,55 @@ def test_readiness_says_volumes_and_dbfs_arent_searched():
     assert "volumes_dbfs" not in r["coverage_gaps"] and "volumes" in m.readiness_md("https://x", r, 30).lower()
 
 
+def _agent_bricks_w(sources_by_ka, tools_by_sa=None, unreadable=()):
+    w = mock.MagicMock()
+    w.knowledge_assistants.list_knowledge_assistants.return_value = [
+        SimpleNamespace(name=f"knowledge-assistants/{k}", display_name=k, endpoint_name=f"ka-{k}-endpoint")
+        for k in sources_by_ka]
+
+    def sources(parent):
+        k = parent.rsplit("/", 1)[-1]
+        if k in unreadable:
+            raise RuntimeError("PERMISSION_DENIED")
+        return sources_by_ka[k]
+    w.knowledge_assistants.list_knowledge_sources.side_effect = sources
+    w.supervisor_agents.list_supervisor_agents.return_value = [
+        SimpleNamespace(name=f"supervisor-agents/{n}", display_name=n, endpoint_name=f"sa-{n}-endpoint")
+        for n in (tools_by_sa or {})]
+    w.supervisor_agents.list_tools.side_effect = lambda parent: (tools_by_sa or {})[parent.rsplit("/", 1)[-1]]
+    col = SimpleNamespace(embedding_model_endpoint_name="databricks-gte-large-en")
+    w.vector_search_indexes.get_index.return_value = SimpleNamespace(
+        delta_sync_index_spec=SimpleNamespace(embedding_source_columns=[col]))
+    return w
+
+
+def test_every_knowledge_assistant_blocks_enforce_files_sources_included():
+    """A files-source Knowledge Assistant syncs into its own AI Search index, and the Enforce limitations say Agent
+    Bricks agents that depend on AI Search don't work: it must block, not only warn (review of 0.10.2)."""
+    files = SimpleNamespace(source_type="files", index=None)
+    index = SimpleNamespace(source_type="index", index=SimpleNamespace(index_name="c.s.docs_index"))
+    tool = lambda ka: SimpleNamespace(name="docs", knowledge_assistant=SimpleNamespace(knowledge_assistant_id=ka))
+    genie = SimpleNamespace(name="sales", knowledge_assistant=None)
+    w = _agent_bricks_w({"FilesKA": [files], "IndexKA": [index], "EmptyKA": [], "LockedKA": []},
+                        {"Super": [tool("FilesKA"), genie], "GenieOnly": [genie]}, unreadable={"LockedKA"})
+    sc = m.Scanner([], {}, [])
+    m.scan_agent_bricks(w, sc)
+    by = {(r.asset, r.pattern) for r in sc.refs}
+    assert ("knowledge assistant FilesKA", "ka_ai_search") in by
+    assert ("knowledge assistant IndexKA", "ka_vector_search_source") in by
+    assert ("knowledge assistant IndexKA", "ka_ai_search") not in by  # one finding per index source is enough
+    assert ("knowledge assistant EmptyKA", "ka_ai_search") in by
+    assert ("knowledge assistant LockedKA", "ka_ai_search") in by  # unreadable sources: still blocks
+    assert ("supervisor agent Super", "supervisor_uses_vs_ka") in by
+    assert not any(r.asset == "supervisor agent GenieOnly" for r in sc.refs)
+    r = m.readiness([], sc.refs, True, 30, [], {"local_files": "ok", **sc.coverage})
+    blocked = {b["item"] for b in r["blockers"] if b["type"] == "agent_bricks_vector_search"}
+    assert {"knowledge assistant FilesKA", "supervisor agent Super", "knowledge assistant EmptyKA"} <= blocked
+    assert r["status"] == "BLOCKED"
+    assert all("don't work with Enforce on" in b["action"] for b in r["blockers"]
+               if b["type"] == "agent_bricks_vector_search")
+
+
 def test_calls_in_agent_classes_are_model_code():
     text = "\n".join([
         "from mlflow.pyfunc import ResponsesAgent",

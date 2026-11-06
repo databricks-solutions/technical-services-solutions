@@ -418,7 +418,7 @@ def test_traffic_sql_counts_unmatched_v1_requests_so_pause_fails_closed():
 
 def test_dry_run_used_lookup_is_bound():
     sql, params = store.dry_run_used("c.s", "11111111-1111-1111-1111-111111111111")
-    assert "`c`.`s`.ug_migration_applies" in sql and "dry_run_id = :dry_run_id" in sql and "mode = 'execute'" in sql
+    assert "`c`.`s`.ug_migration_applies" in sql and "dry_run_id = :dry_run_id" in sql and "mode IN ('execute', 'rollback')" in sql
     assert params == {"dry_run_id": "11111111-1111-1111-1111-111111111111"}
     assert store.APPLY_COLUMNS["dry_run_id"] == "STRING"  # ensure_tables adds it to older tables
 

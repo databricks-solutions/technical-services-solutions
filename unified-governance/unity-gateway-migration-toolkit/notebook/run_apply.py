@@ -88,10 +88,13 @@ schema, mode = g("results_schema"), g("mode")
 operation = g("operation").strip() or "apply"
 if operation not in apply_mod.OPERATIONS:
     raise ValueError(f"operation must be one of {', '.join(apply_mod.OPERATIONS)}, not {operation!r}")
-if mode not in ("dry_run", "execute", "rollback"):
-    raise ValueError(f"mode must be dry_run, execute or rollback, not {mode!r}")
+if mode not in ("dry_run", "execute", "rollback", "rollback_dry_run"):
+    raise ValueError(f"mode must be dry_run, execute, rollback or rollback_dry_run, not {mode!r}")
 if operation not in ("apply", "resume_legacy") and mode == "rollback":
     raise ValueError(f"{operation} runs as dry_run or execute; rollback is for apply runs and pause runs")
+if operation != "apply" and mode == "rollback_dry_run":
+    raise ValueError("rollback_dry_run is for apply runs; a pause is resumed with its own dry run")
+ROLLING_BACK = mode in ("rollback", "rollback_dry_run")
 apply_id = g("apply_id") or str(uuid.uuid4())
 ID_RE = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 for v in (apply_id, g("rollback_of"), g("scan_run_id"), g("dry_run_id")):
@@ -104,7 +107,7 @@ if not re.fullmatch(rf"{NAME}\.{NAME}", schema):
     raise ValueError("results_schema must be catalog.schema")
 services, api_type, prompt = [], "", ""
 if operation == "apply":
-    if mode != "rollback":
+    if not ROLLING_BACK:
         bad = [e for e in endpoints if not re.fullmatch(NAME, e)]
         if bad or not re.fullmatch(NAME, g("target_catalog")) or not re.fullmatch(NAME, g("target_schema")):
             raise ValueError(f"bad endpoint, target catalog or target schema name {bad}")
@@ -145,12 +148,14 @@ target_req = norm_ws(g("target_workspace_id"))
 store.ensure_tables(spark, schema)
 if store.run_exists(spark, schema, "ug_migration_applies", "apply_id", apply_id):
     raise ValueError(f"apply_id {apply_id} already exists; each run needs a new id")
-if mode == "rollback" and operation == "apply":
+if ROLLING_BACK and operation == "apply":
     # A rollback of a pause run is a resume (rollback of a pause = resume).
     src_for_kind = store.apply_run(spark, schema, g("rollback_of")) if g("rollback_of") else None
     if src_for_kind and src_for_kind["operation"] == "pause_legacy":
+        if mode == "rollback_dry_run":
+            raise ValueError("that is a pause run: resume it from Verify & cut over")
         operation = "resume_legacy"
-if operation == "resume_legacy" or (operation == "apply" and mode == "rollback"):
+if operation == "resume_legacy" or (operation == "apply" and ROLLING_BACK):
     # Undo acts on the workspace the original run changed, never on one the request names.
     undo_src = store.apply_run(spark, schema, g("rollback_of")) if g("rollback_of") else None
     src_ws = norm_ws((undo_src or {}).get("workspace_id"))
@@ -183,7 +188,7 @@ if operation == "test_call":  # only services the toolkit planned or created, or
 # The selection and options as this run received them. A dry run keeps this on its row; an execute compares it
 # with the dry run's row (the app does), so the check doesn't depend on the job's stored parameter values.
 # Apply rollbacks have no fingerprint, as before.
-fingerprint = None if (operation == "apply" and mode == "rollback") else store.run_fingerprint({
+fingerprint = None if (operation == "apply" and ROLLING_BACK) else store.run_fingerprint({
     "operation": operation, "scan_run_id": g("scan_run_id"), "endpoints": g("endpoints"),
     "target_catalog": g("target_catalog"), "target_schema": g("target_schema"), "uc_secret_map": g("uc_secret_map"),
     "allow_secret_read": g("allow_secret_read"), "grants": g("grants"), "ack_guardrails": g("ack_guardrails"),
@@ -208,6 +213,21 @@ if mode == "execute" and operation in apply_mod.DRY_RUN_GATED:
                                            used_by=used_by)
     if problem:
         raise ValueError(f"execute refused: {problem}")
+# An apply rollback follows a successful, recent rollback dry run of the same execute run (the app checks this too).
+if mode == "rollback" and operation == "apply":
+    rb_dry, rb_used = None, None
+    if g("dry_run_id"):
+        found = spark.sql(
+            f"SELECT mode, operation, status, rollback_of, requested_by, unix_timestamp(started_at) AS started_at "
+            f"FROM {store.q(schema)}.ug_migration_applies WHERE apply_id = '{g('dry_run_id')}'").collect()
+        rb_dry = found[0].asDict() if found else None  # dry_run_id matched ID_RE above
+        if rb_dry is not None:
+            used_sql, used_args = store.dry_run_used(schema, g("dry_run_id"))
+            used = spark.sql(used_sql, args=used_args).collect()
+            rb_used = used[0].asDict().get("apply_id") if used else None
+    problem = apply_mod.rollback_gate_error(rb_dry, g("rollback_of"), g("requested_by"), used_by=rb_used)
+    if problem:
+        raise ValueError(f"rollback refused: {problem}")
 # A resume that executes is stored as a rollback row, so the rollback rules (already rolled back, protection) apply.
 stored_mode = "rollback" if (operation == "resume_legacy" and mode == "execute") else mode
 store.upsert(spark, schema, "ug_migration_applies", store.APPLY_COLUMNS, "apply_id", {
@@ -215,7 +235,7 @@ store.upsert(spark, schema, "ug_migration_applies", store.APPLY_COLUMNS, "apply_
     "scan_run_id": g("scan_run_id"), "mode": stored_mode, "operation": operation,
     "endpoints": ",".join(endpoints), "services": ",".join(services), "api_type": api_type,
     "target_catalog": g("target_catalog"), "target_schema": g("target_schema"), "rollback_of": g("rollback_of"),
-    "dry_run_id": g("dry_run_id") if mode == "execute" else "", "workspace_id": target_req,
+    "dry_run_id": g("dry_run_id") if mode in ("execute", "rollback") else "", "workspace_id": target_req,
     "toolkit_version": planner.__version__, "fingerprint": fingerprint, "status": "RUNNING",
     "started_at": store.now()})
 
@@ -320,7 +340,7 @@ try:
         if execute:
             _check_no_other_legacy_write(hub_client)
         results = apply_mod.enable_tracking(w, endpoints, execute, log_path, apply_id)
-    elif mode == "rollback":
+    elif ROLLING_BACK:  # rollback_dry_run shows what rollback would delete; rollback deletes it
         src_id = g("rollback_of")
         if not src_id:
             raise ValueError("rollback needs rollback_of (the apply_id of an execute run)")
@@ -338,7 +358,7 @@ try:
         n = store.apply_log_from_items(spark, schema, src_id, work, os.path.join(LOG_DIR, f"{src_id}.jsonl"))
         if n:
             protect, released = apply_mod.protection_from_runs(store.protection_runs(spark, schema, LOG_DIR), src_id)
-            results = apply_mod.rollback(w, work, execute=True, protect=protect, released=released,
+            results = apply_mod.rollback(w, work, execute=execute, protect=protect, released=released,
                                          apply_id=src_id, force=flag("force"), audit_path=log_path)
         else:
             results = [{"type": "log", "name": src_id, "action": "manual",

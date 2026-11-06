@@ -72,11 +72,11 @@ export default function Apply({ scanRunId, setScanRunId, operator, active = true
           <div className="stack-sm">{runView.controls}
           <Table label="Apply history" rowKey={(r) => r.apply_id} rows={runView.shown} pageSize={runView.view === "all" ? 15 : 25} search={runView.view === "all"} rowCurrent={(r) => r.apply_id === openApply}
                  empty={<Empty title="No apply runs yet">Dry runs, executes and rollbacks appear here.</Empty>} columns={[
-            { key: "started_at", label: "Started", render: (r) => <button className="btn link" onClick={() => openRun(r.apply_id)} aria-label={`Open ${r.mode.replace("_", " ")} run from ${String(r.started_at).slice(0, 16)}`}>{String(r.started_at).slice(0, 16)}</button> },
-            { key: "mode", label: "Mode", render: (r) => <Badge value={r.mode} tone={r.mode === "execute" ? "bad" : r.mode === "rollback" ? "warn" : "info"} /> },
+            { key: "started_at", label: "Started", render: (r) => <button className="btn link" onClick={() => openRun(r.apply_id)} aria-label={`Open ${r.mode.replace(/_/g, " ")} run from ${String(r.started_at).slice(0, 16)}`}>{String(r.started_at).slice(0, 16)}</button> },
+            { key: "mode", label: "Mode", render: (r) => <Badge value={r.mode.replace(/_/g, " ")} tone={r.mode === "execute" ? "bad" : r.mode === "rollback" ? "warn" : "info"} /> },
             { key: "status", label: "Status", render: (r) => <>
               <Badge value={r.status} />{r.rolled_back && <div className="small muted">Rolled back</div>}</> },
-            { key: "endpoints", label: "Endpoints", clamp: true, render: (r) => <span className="small">{r.mode === "rollback" ? `rollback of ${String(r.rollback_of).slice(0, 8)}` : String(r.endpoints || "").split(",").join(", ")}</span> },
+            { key: "endpoints", label: "Endpoints", clamp: true, render: (r) => <span className="small">{r.mode === "rollback" || r.mode === "rollback_dry_run" ? `rollback of ${String(r.rollback_of).slice(0, 8)}` : String(r.endpoints || "").split(",").join(", ")}</span> },
             { key: "summary", label: "Result", sortable: false, clamp: true, render: (r) => <Summary s={r.summary} /> },
             ...(workspace ? [{ key: "workspace_id", label: "Workspace", hideOnPhone: true, render: (r: any) => <span className="small">{r.workspace_id || "-"}</span> }] : []),
             { key: "requested_by", label: "By" },
@@ -281,7 +281,7 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
   });
   // Reload during a dry run or execute: resume its progress. Its result counts for the selection shown now (the server checks it again).
   useEffect(() => {
-    if (!runningApply || jobId || runningApply.scan_run_id !== scanRunId || runningApply.mode === "rollback") return;
+    if (!runningApply || jobId || runningApply.scan_run_id !== scanRunId || String(runningApply.mode).startsWith("rollback")) return;
     setJobId(runningApply.job_run_id);
     setLastMode(runningApply.mode);
     pending.current = { applyId: runningApply.apply_id, sig: sigRef.current, mode: runningApply.mode };
@@ -507,7 +507,7 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
               {conflict.job?.url && <a className="btn link sm" href={conflict.job.url} target="_blank" rel="noreferrer">View job run</a>}
             </>}>
               {conflict.run
-                ? `${conflict.run.mode === "execute" ? "An execute" : conflict.run.mode === "rollback" ? "A rollback" : "A dry run"} is already running, started ${relativeAge(conflict.run.started_at)} by ${conflict.run.requested_by}.`
+                ? `${conflict.run.mode === "execute" ? "An execute" : conflict.run.mode === "rollback" ? "A rollback" : conflict.run.mode === "rollback_dry_run" ? "A rollback dry run" : "A dry run"} is already running, started ${relativeAge(conflict.run.started_at)} by ${conflict.run.requested_by}.`
                 : "Another apply run is already running."}
             </Notice>
           )}
@@ -577,17 +577,20 @@ function ApplyDetail({ applyId, onRolledBack, onOpen, onFinished, onClose, opera
   if (error) return <Card title={title} headingRef={heading}><ErrorState error={error} onRetry={reload} title="Couldn't load this run" /></Card>;
   const m = data.meta;
   const created = data.items.filter((i: any) => i.action === "created").length;
+  // A rollback first runs as a dry run (what it would delete); its results page offers the rollback itself.
+  const toDelete = data.items.filter((i: any) => i.action === "would_delete");
+  const rollbackDry = m.mode === "rollback_dry_run";
   const rollbacks: any[] = data.rollbacks || [];
   const rolledBack = rollbacks.find((r) => r.status === "SUCCEEDED" || r.status === "RUNNING");
   const alreadyRolledBack = !!rolledBack || rolledBackInList;
   const rollbackOffered = operator && m.mode === "execute" && created > 0 && ["SUCCEEDED", "NEEDS_ATTENTION", "FAILED"].includes(m.status);
+  const deleteOffered = operator && rollbackDry && m.status === "SUCCEEDED" && toDelete.length > 0;
   const rollbackReason = alreadyRolledBack ? "This run was already rolled back." : jobRunning(jobId, job) ? "A rollback is already running." : null;
-  const rollback = async () => {
-    if (rollbackReason) return;
+  const startRollback = async (body: Record<string, string>) => {
     setBusy(true);
     setErr(null);
     try {
-      const r: any = await api("/api/applies", { method: "POST", body: JSON.stringify({ mode: "rollback", rollback_of: applyId, confirm: "ROLLBACK" }) });
+      const r: any = await api("/api/applies", { method: "POST", body: JSON.stringify(body) });
       setJobId(r.job_run_id);
       onOpen(r.apply_id, true);
     } catch (e: any) {
@@ -597,30 +600,39 @@ function ApplyDetail({ applyId, onRolledBack, onOpen, onFinished, onClose, opera
       setConfirming(false);
     }
   };
+  const rollbackDryRun = () => { if (!rollbackReason) startRollback({ mode: "rollback_dry_run", rollback_of: applyId }); };
+  const rollback = () => startRollback({ mode: "rollback", rollback_of: String(m.rollback_of), dry_run_id: applyId, confirm: "ROLLBACK" });
   const outcome = {
-    SUCCEEDED: <Notice tone="success" title={`${m.mode === "dry_run" ? "Dry run" : m.mode === "rollback" ? "Rollback" : "Execute"} succeeded`}><Summary s={m.summary} /></Notice>,
+    SUCCEEDED: <Notice tone="success" title={`${m.mode === "dry_run" ? "Dry run" : m.mode === "rollback" ? "Rollback" : rollbackDry ? "Rollback dry run" : "Execute"} succeeded`}><Summary s={m.summary} /></Notice>,
     NEEDS_ATTENTION: <Notice tone="warning" title="Finished with items that need attention">Check the rows marked manual, error, mismatch or kept below. <Summary s={m.summary} /></Notice>,
     FAILED: <Notice tone="error" title="Run failed">{m.error || "The job ended without recording a result."}</Notice>,
   }[m.status as string];
-  const next = m.mode === "dry_run" && m.status === "SUCCEEDED"
+  const next = rollbackDry && m.status === "SUCCEEDED"
+    ? (toDelete.length ? "Check what rollback would delete below. If it's right, delete them: that runs the rollback of the same execute run."
+      : "Rollback would delete nothing: the objects are gone, changed or still used by another run (see below).")
+    : m.mode === "dry_run" && m.status === "SUCCEEDED"
     ? "If the plan looks right, execute the same selection. Execute creates the objects, and you can roll back from this history."
     : m.mode === "execute" && ["SUCCEEDED", "NEEDS_ATTENTION"].includes(m.status)
       ? <>Move callers to the new Unity Gateway endpoints, then scan again to confirm readiness. <NavButton tab="scans" label="Go to Scans" /></>
       : null;
   return (
-    <Card title={title} headingRef={heading} note={`${m.mode.replace("_", " ")} by ${m.requested_by} · ${String(m.started_at).slice(0, 16)} UTC`}
+    <Card title={title} headingRef={heading} note={`${m.mode.replace(/_/g, " ")} by ${m.requested_by} · ${String(m.started_at).slice(0, 16)} UTC`}
           actions={<>
             <ExportLink href={`/api/applies/${applyId}/export`} label="Export results (CSV)" />
             {rollbackOffered && (
-              <button className="btn danger sm" aria-disabled={!!rollbackReason || undefined} aria-describedby={rollbackReason ? "rollback-reason" : undefined}
-                      onClick={() => { if (!rollbackReason) setConfirming(true); }}>Roll back…</button>
+              <button className="btn secondary sm" aria-disabled={!!rollbackReason || busy || undefined} aria-describedby={rollbackReason ? "rollback-reason" : undefined}
+                      onClick={() => { if (!busy) rollbackDryRun(); }}>Roll back: dry run</button>
+            )}
+            {deleteOffered && (
+              <button className="btn danger sm" aria-disabled={busy || undefined}
+                      onClick={() => { if (!busy) setConfirming(true); }}>Delete these objects…</button>
             )}
           </>}>
       {outcome}
       {next && <p className="small"><b>Next:</b> {next}</p>}
       {rolledBack && <p className="small">Rolled back by run <button className="btn link" onClick={() => onOpen(rolledBack.apply_id)}>{String(rolledBack.apply_id).slice(0, 8)}</button> ({String(rolledBack.status).toLowerCase()}).</p>}
       {rollbackOffered && rollbackReason && <Reason id="rollback-reason">Roll back is unavailable. {rollbackReason}</Reason>}
-      {jobId && <JobLine state={job} label="Rollback" />}
+      {jobId && <JobLine state={job} label={rollbackDry ? "Rollback" : "Rollback dry run"} />}
       {err && <ErrorBox error={err} title="Couldn't start the rollback" />}
       <Table label="Apply results" rows={data.items} pageSize={50} empty={<Empty title="No objects">This run didn't create, change or check anything.</Empty>} columns={[
         { key: "type", label: "Object", render: (i) => i.type?.replace(/_/g, " ") },
@@ -629,12 +641,12 @@ function ApplyDetail({ applyId, onRolledBack, onOpen, onFinished, onClose, opera
         { key: "reason", label: "Details", sortable: false, render: (i) => <span className="small">{itemDetails(i)}</span> },
       ]} />
       {confirming && (
-        <Confirm word="ROLLBACK" title="Roll back" action={`Delete ${plural(created, "object")}`} busy={busy}
+        <Confirm word="ROLLBACK" title="Roll back" action={`Delete ${plural(toDelete.length, "object")}`} busy={busy}
                  onCancel={() => setConfirming(false)} onConfirm={rollback}
                  body={<>
-                   {data.meta?.workspace_id && <p>In workspace <b>{data.meta.workspace_id}</b> (where this run created them).</p>}
-                   <p>Delete the {plural(created, "object")} this run created:</p>
-                   <ul className="small">{data.items.filter((i: any) => i.action === "created").slice(0, 12).map((i: any) => <li key={i.type + i.name}><code>{i.name}</code> ({String(i.type).replace(/_/g, " ")})</li>)}</ul>
+                   {data.meta?.workspace_id && <p>In workspace <b>{data.meta.workspace_id}</b> (where the execute run created them).</p>}
+                   <p>Delete the {plural(toDelete.length, "object")} this dry run listed:</p>
+                   <ul className="small">{toDelete.slice(0, 12).map((i: any) => <li key={i.type + i.name}><code>{i.name}</code> ({String(i.type).replace(/_/g, " ")})</li>)}</ul>
                    <p className="small">Objects another run still uses are kept. Inference tables stay. Grants are never revoked: a deleted service takes its grants with it, and a kept service keeps them (the results list them).</p>
                    <Notice tone="warning">If callers have already moved to these endpoints, rolling back breaks their traffic. Move them back first.</Notice>
                  </>} />

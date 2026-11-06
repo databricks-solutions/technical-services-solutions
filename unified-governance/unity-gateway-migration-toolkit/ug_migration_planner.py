@@ -32,7 +32,7 @@ from urllib.parse import urlsplit
 
 from databricks.sdk import WorkspaceClient
 
-__version__ = "0.10.2"
+__version__ = "0.10.3"
 DISCLAIMER = ("Prototype from Databricks Shared Technical Services, provided as is. It only reads unless you run apply or "
               "rollback, or snapshots; review results before acting.")
 
@@ -1715,14 +1715,17 @@ class Scanner:
                     name = m.group(2)
                     if name in hits:
                         continue
-                    if name in self.generic and not KEY_CONTEXT_RE.search(line[:m.start()]):
-                        continue  # a short or common name needs a key or call context to count
                     at = line_start + m.start()
-                    if SDK_QUERY_RE.search(text[max(0, at - GATEWAY_WINDOW):at]):
+                    in_sdk_query = bool(SDK_QUERY_RE.search(text[max(0, at - GATEWAY_WINDOW):at]))
+                    in_predict = bool(MLFLOW_PREDICT_RE.search(line[:m.start()]))
+                    if name in self.generic and not KEY_CONTEXT_RE.search(line[:m.start()]) \
+                            and not in_sdk_query and not in_predict:
+                        continue  # a short or common name needs a key or call context to count
+                    if in_sdk_query:
                         # Never rewritten: the SDK call has no gateway form to map onto (see the suggestion).
                         self._add(asset_type, asset, i, "sdk_serving_query", m.group(0), name,
                                   self._sdk_query_suggestion(name), fixable=False)
-                    elif MLFLOW_PREDICT_RE.search(line[:m.start()]):
+                    elif in_predict:
                         # Never rewritten: the MLflow deployments client only reaches /serving-endpoints/.
                         self._add(asset_type, asset, i, "mlflow_deployments_predict", m.group(0), name,
                                   self._mlflow_predict_suggestion(name), fixable=False)
@@ -2575,6 +2578,9 @@ def _gateway_body(ep: LegacyEndpoint) -> dict:
 
 
 NOT_SCANNED = "not scanned"  # coverage values that are notes (what was left out), not gaps
+VOLUMES_NOTE = (f"{NOT_SCANNED}: files in Unity Catalog volumes and DBFS aren't searched. A script there that calls "
+                "a legacy endpoint shows only as traffic (none if it didn't run in the window): check them, or scan a "
+                "copy with --local-path")
 UNATTRIBUTED_NOTE = "unattributed"  # coverage["v1_unattributed"]: v1 requests not matched to an endpoint (a warning)
 # Serving-endpoint resources declared by an app or bundle. Other app references are config values (warnings).
 RESOURCE_PATTERNS = {"app_serving_endpoint_resource", "bundle_serving_endpoint_resource"}
@@ -2617,7 +2623,7 @@ KIND_NAMES = {"system_ppt": "Databricks pay-per-token (system)", "external_model
 ACTION_NAMES = {"use_system_ai": "Use a system.ai model", "create_model_service": "Create a Unity Gateway service",
                 "out_of_scope": "Out of scope (custom model or agent)", "manual": "Manual (see needs)"}
 STATUS_MEANING = {
-    "READY": "no blockers, full scan.",
+    "READY": "no blockers, and no coverage gaps (the notes say what the scan never searches).",
     "READY_WITH_WARNINGS": "no blockers; review warnings first.",
     "BLOCKED": "enforcing now breaks the calls listed below.",
     "INCOMPLETE": "nothing blocking found, but part of the scan didn't run; fix the listed gap and re-run.",
@@ -3392,6 +3398,8 @@ def _run(w, out_dir, warehouse_id, days, target_catalog, target_schema, scan_roo
                                       f"(defaults {', '.join(DEFAULT_SCAN_ROOTS)} narrowed)")
         else:
             coverage["scan_roots"] = "ok"
+        # Never walked, whatever the roots: say so, so READY isn't read as "every file was searched".
+        coverage["volumes_dbfs"] = VOLUMES_NOTE
         toolkit_paths: list[str] = []
         toolkit_apps: list[str] = []
         app_roots = app_source_roots(w, coverage, toolkit_paths, toolkit_apps)

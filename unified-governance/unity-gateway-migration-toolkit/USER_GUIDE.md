@@ -1,6 +1,6 @@
 # Unity Gateway Migration Toolkit: User Guide
 
-Version 0.10.2 (prototype)
+Version 0.10.3 (prototype)
 
 > Prototype from Databricks Shared Technical Services, provided as is. Planning and scans only read. Writes happen only when you start them. Review every result before you act on it.
 
@@ -11,6 +11,7 @@ Version 0.10.2 (prototype)
   - [Before you start](#before-you-start)
   - [Install the toolkit](#install-the-toolkit)
   - [Update and upgrade](#update-and-upgrade)
+  - [Upgrade notes: 0.10.2 to 0.10.3](#upgrade-notes-0102-to-0103)
   - [Upgrade notes: 0.10.1 to 0.10.2](#upgrade-notes-0101-to-0102)
   - [Upgrade notes: 0.10.0 to 0.10.1](#upgrade-notes-0100-to-0101)
   - [Upgrade notes: 0.9.0 to 0.10.0](#upgrade-notes-090-to-0100)
@@ -105,7 +106,7 @@ A **legacy endpoint** is a v1 serving endpoint (`/serving-endpoints/<name>/invoc
 
 The installer notebook is the only file you import. It creates everything inside the workspace in about 5 minutes.
 
-1. Download `unity-gateway-migration-toolkit.zip` from the [release page](https://github.com/databricks-solutions/technical-services-solutions/releases/tag/unity-gateway-migration-toolkit-latest) and unzip it. In the workspace, go to your home folder, choose **Import**, and import `INSTALL_unity_gateway_migration_toolkit_0_10_2.py` from the zip's top folder.
+1. Download `unity-gateway-migration-toolkit.zip` from the [release page](https://github.com/databricks-solutions/technical-services-solutions/releases/tag/unity-gateway-migration-toolkit-latest) and unzip it. In the workspace, go to your home folder, choose **Import**, and import `INSTALL_unity_gateway_migration_toolkit_0_10_3.py` from the zip's top folder.
 2. Open the notebook. Set **Install: Results catalog** (a catalog where you can create a schema) and **Install: SQL warehouse**. Leave the other widgets at their defaults ([Installer widgets](#installer-widgets)). If the widget panel shows widgets from an older installer, remove them once, then run again.
 3. Click **Run all**.
 
@@ -147,6 +148,14 @@ Import the newer installer and run it with the same widgets. Results history is 
 - **From 0.7.0** (app `ug-migration`): the same two choices apply.
 - **Bundle:** the app is now `ug-migration-bundle`. Run `databricks bundle plan` first. It creates a new app, so delete the old one by hand.
 - **Since 0.7.0:** grants are off by default, Execute needs a matching dry run, and scans older than 14 days and endpoints with legacy guardrails need confirmation or an acknowledgement. Account wave 0 is now `0: no legacy traffic`.
+
+#### Upgrade notes: 0.10.2 to 0.10.3
+
+Scan again. Tables and jobs don't change.
+
+- **Short endpoint names.** An endpoint with a short or common name (`llm`, `chat`, `test`, or under 6 characters) is now found inside a `serving_endpoints.query(...)` or MLflow `predict(...)` call. Before, such a call was missed, and an endpoint with no traffic could be listed as one to close.
+- **Rollback has a dry run in the app.** **Roll back: dry run** lists what would be deleted; the rollback itself follows it. A rollback started without a matching rollback dry run is refused by the app and by the job.
+- **Volumes and DBFS.** Readiness now says that files in Unity Catalog volumes and DBFS aren't searched (a note, `volumes_dbfs`).
 
 #### Upgrade notes: 0.10.1 to 0.10.2
 
@@ -370,7 +379,7 @@ The run ends `SUCCEEDED`, or `NEEDS_ATTENTION` if any item needs a look ([Result
 
 #### Roll back
 
-Click **Roll back** and type `ROLLBACK`. Each execute run can be rolled back once. The rollback dry run shows exactly what execute will delete, including provider services. A rollback that only keeps objects that existed before the apply run (reused, without the toolkit's mark) still counts as rolled back. Rollback deletes only the objects that run created, and only while they still carry the toolkit's mark. It never revokes grants: a deleted service takes its grants with it, and a kept service keeps them, listed as `kept` grant rows so you can revoke them by hand. A provider is deleted only after rollback checks every catalog and schema it can see for services that still use it. If it can't check, it keeps the provider.
+Click **Roll back: dry run**. It lists exactly what rollback would delete, including provider services, and deletes nothing. On its results, click **Delete these objects** and type `ROLLBACK`. The rollback must follow a successful rollback dry run of the same execute run, started by you in the last 24 hours, and each rollback dry run is good for one rollback. Each execute run can be rolled back once. A rollback that only keeps objects that existed before the apply run (reused, without the toolkit's mark) still counts as rolled back. Rollback deletes only the objects that run created, and only while they still carry the toolkit's mark. It never revokes grants: a deleted service takes its grants with it, and a kept service keeps them, listed as `kept` grant rows so you can revoke them by hand. A provider is deleted only after rollback checks every catalog and schema it can see for services that still use it. If it can't check, it keeps the provider.
 
 **Rolling back after callers have moved breaks their traffic**, because it deletes the services they call. Move the callers back first, or accept the outage. A pause run isn't rolled back here. Resume it in [step 3](#step-3-pause-one-legacy-endpoint).
 
@@ -891,7 +900,7 @@ Grouped by where the problem shows up.
   - v2 workspace endpoints aren't paused or tracked in the app. Their traffic shows in step 1, and their callers move with the code fix.
   - `databricks-*` endpoints can't be tracked in the app, and the API may refuse a pause of one.
   - One endpoint per pause run, and no batch pause.
-  - Pause refusals match names, tags and tasks. The job doesn't check traffic before a pause, so the acknowledgement is the only gate.
+  - Pause refusals match names, tags and tasks. The job also checks the last 24 hours of traffic before a pause: it refuses an endpoint that still has requests, or whose traffic can't be read, unless `force` is set from the command line.
   - Usage tracking can't be turned off in the app. Resume has no dry run and no force.
   - Test call services come from the scan's targets or from names you type. The app can't list `system.ai` services with your token.
   - Rate limits and policies on `system.ai` targets aren't copied or set.

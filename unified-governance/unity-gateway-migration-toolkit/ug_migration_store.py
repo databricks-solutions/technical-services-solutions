@@ -581,10 +581,10 @@ def ug_request_lookup(request_id) -> tuple[str, dict]:
 
 
 def dry_run_used(schema: str, dry_run_id: str) -> tuple[str, dict]:
-    """The execute runs that already followed a dry run (column apply_id). Each dry run is good for one execute, so
+    """The execute (or rollback) runs that already followed a dry run (column apply_id). Each dry run is good for one, so
     a non-empty result refuses the next one. Rows written before dry_run_id existed have it NULL and match nothing."""
     return (f"SELECT apply_id FROM {q(schema)}.ug_migration_applies "
-            "WHERE dry_run_id = :dry_run_id AND mode = 'execute' ORDER BY started_at LIMIT 1",
+            "WHERE dry_run_id = :dry_run_id AND mode IN ('execute', 'rollback') ORDER BY started_at LIMIT 1",
             {"dry_run_id": str(dry_run_id or "")})
 
 

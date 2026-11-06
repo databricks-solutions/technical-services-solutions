@@ -936,7 +936,7 @@ def scan_refs(run_id: str, request: Request, kind: str = "all", q: str = Query("
 
 
 class ApplyRequest(BaseModel):
-    mode: str = "dry_run"  # dry_run | execute | rollback
+    mode: str = "dry_run"  # dry_run | execute | rollback_dry_run | rollback
     scan_run_id: str = ""
     endpoints: list[str] = Field([], max_length=500)
     target_catalog: str = ""
@@ -1050,6 +1050,24 @@ def _verify_dry_run(request: Request, dry_run_id: str, scan_run_id: str, params:
         raise HTTPException(409, "The endpoints or options changed since that dry run; run a dry run with these settings")
 
 
+def _verify_rollback_dry_run(request: Request, dry_run_id: str, rollback_of: str) -> None:
+    """A rollback deletes only after a successful, recent rollback dry run of the same execute run showed what it
+    would delete, by the same person, and each rollback dry run unlocks one rollback (the job checks the same)."""
+    if not dry_run_id:
+        raise HTTPException(400, "Run a rollback dry run of this execute run first")
+    check_id(dry_run_id, "dry run id")
+    rows = reconcile(query(request, f"SELECT mode, operation, status, job_run_id, rollback_of, requested_by, "
+                                    f"unix_timestamp(started_at) AS started_at "
+                                    f"FROM {table('ug_migration_applies')} WHERE apply_id = :a", {"a": dry_run_id}))
+    row = rows[0] if rows else None
+    if row is not None:
+        row = {**row, "started_at": _epoch(row.get("started_at"))}
+    _check_dry_run_unused(request, dry_run_id)
+    problem = apply_rules.rollback_gate_error(row, rollback_of, who(request))
+    if problem:
+        raise HTTPException(409, problem[:1].upper() + problem[1:] + ".")
+
+
 def _rollback_rows(request: Request, rollback_of: str | None = None) -> list[dict]:
     """Rollback rows (optionally for one execute run) with what the rolled-back rule needs."""
     where = "mode = 'rollback'" + (" AND rollback_of = :a" if rollback_of else "")
@@ -1114,13 +1132,15 @@ def apply_detail(apply_id: str, request: Request):
 @app.post("/api/applies")
 def start_apply(body: ApplyRequest, request: Request) -> dict:
     require_operator(request)
-    if body.mode not in ("dry_run", "execute", "rollback"):
-        raise HTTPException(400, "mode must be dry_run, execute or rollback")
+    if body.mode not in ("dry_run", "execute", "rollback_dry_run", "rollback"):
+        raise HTTPException(400, "mode must be dry_run, execute, rollback_dry_run or rollback")
     if body.mode == "execute" and body.confirm != "EXECUTE":
         raise HTTPException(400, "type EXECUTE to confirm creating objects")
-    if body.mode == "rollback":
-        if body.confirm != "ROLLBACK" or not body.rollback_of:
-            raise HTTPException(400, "type ROLLBACK and choose the execute run to roll back")
+    if body.mode in ("rollback_dry_run", "rollback"):
+        if not body.rollback_of:
+            raise HTTPException(400, "choose the execute run to roll back")
+        if body.mode == "rollback" and body.confirm != "ROLLBACK":
+            raise HTTPException(400, "type ROLLBACK to confirm deleting what the rollback dry run listed")
         check_id(body.rollback_of, "rollback_of")
         src = reconcile(query(request, f"SELECT mode, status, job_run_id, operation FROM {table('ug_migration_applies')} "
                                        "WHERE apply_id = :a", {"a": body.rollback_of}))
@@ -1136,6 +1156,8 @@ def start_apply(body: ApplyRequest, request: Request) -> dict:
         body.endpoints, body.target_catalog, body.target_schema, body.uc_secret_map = [], "", "", {}
         body.allow_secret_read = body.create_uc_secrets = False
         target_ws = run_workspace(request, body.rollback_of)
+        if body.mode == "rollback":
+            _verify_rollback_dry_run(request, body.dry_run_id, body.rollback_of)
     else:
         if not body.scan_run_id:
             raise HTTPException(400, "choose a scan: apply uses its plan")
@@ -1199,7 +1221,7 @@ def start_apply(body: ApplyRequest, request: Request) -> dict:
         raise RunActive("An apply run", run)
     apply_id = str(uuid.uuid4())
     # The job checks the dry run again itself (same fingerprint, same requester, not expired), so it needs its id.
-    gate = {"dry_run_id": body.dry_run_id} if body.mode == "execute" else {}
+    gate = {"dry_run_id": body.dry_run_id} if body.mode in ("execute", "rollback") else {}
     job_run_id = run_job("apply", {"apply_id": apply_id, **params, **gate, "requested_by": who(request)},
                          item_id=apply_id)
     return {"apply_id": apply_id, "job_run_id": job_run_id}

@@ -1262,7 +1262,8 @@ TEST_TIMEOUT_SECONDS = 120
 SERVICE_NAME_RE = re.compile(r"[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+")
 ENDPOINT_NAME_RE = re.compile(r"[A-Za-z0-9_\-]+")
 DRY_RUN_TTL_HOURS = 24  # an execute must follow a successful dry run of the same settings started this recently
-DRY_RUN_GATED = ("apply", "test_call", "pause_legacy", "enable_tracking", "guardrail_check")  # resume and apply rollback have no dry run
+DRY_RUN_GATED = ("apply", "test_call", "pause_legacy", "enable_tracking", "guardrail_check")  # resume has no dry run
+# An apply rollback follows its own dry run (mode rollback_dry_run, rollback_gate_error).
 PAUSE_TRAFFIC_HOURS = 24  # pause refuses an endpoint with legacy requests this recent, unless force is set
 # AI Gateway settings that PUT /ai-gateway re-sends: the companion script's list plus usage tracking.
 # An endpoint with any other setting set is refused, because the PUT would drop it.
@@ -1315,6 +1316,28 @@ def dry_run_gate_error(dry: dict | None, operation: str, fingerprint: str | None
         return f"that dry run is more than {DRY_RUN_TTL_HOURS} hours old; run a dry run again"
     if used_by:
         return f"that dry run was already used by execute {used_by}; run a new dry run"
+    return None
+
+
+def rollback_gate_error(dry: dict | None, rollback_of: str, requested_by: str = "", now: datetime | None = None,
+                        used_by: str | None = None) -> str | None:
+    """Why an apply rollback can't delete anything yet: it must follow a successful, recent rollback dry run of the
+    same execute run (mode rollback_dry_run), which showed what it would delete. Same rules as dry_run_gate_error:
+    the same requester when recorded, at most DRY_RUN_TTL_HOURS old, and good for one rollback."""
+    if dry is None:
+        return "rollback needs dry_run_id: the apply_id of a successful rollback dry run of the same execute run"
+    if dry.get("mode") != "rollback_dry_run" or (dry.get("operation") or "apply") != "apply":
+        return "dry_run_id must be a rollback dry run"
+    if (dry.get("rollback_of") or "") != (rollback_of or ""):
+        return "that rollback dry run is of another execute run; run a rollback dry run of this one"
+    if dry.get("status") != "SUCCEEDED":
+        return "that rollback dry run didn't succeed; run it again"
+    if (dry.get("requested_by") or "") and (dry.get("requested_by") or "") != (requested_by or ""):
+        return "that rollback dry run was started by someone else; run your own first"
+    if dry_run_expired(dry.get("started_at"), now):
+        return f"that rollback dry run is more than {DRY_RUN_TTL_HOURS} hours old; run it again"
+    if used_by:
+        return f"that rollback dry run was already used by rollback {used_by}; run a new one"
     return None
 
 

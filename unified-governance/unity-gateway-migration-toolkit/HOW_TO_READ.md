@@ -25,7 +25,7 @@ The first line is `Status: <STATUS>`, then whether Enforce Unity Gateway is curr
 
 | Status | Legend in the file |
 |---|---|
-| `READY` | no blockers, full scan. |
+| `READY` | no blockers, and no coverage gaps. The notes say what the scan never searches (for example files in Unity Catalog volumes and DBFS). |
 | `READY_WITH_WARNINGS` | no blockers; review warnings first. |
 | `BLOCKED` | enforcing now breaks the calls listed below. |
 | `INCOMPLETE` | nothing blocking found, but part of the scan didn't run; fix the listed gap and re-run. |

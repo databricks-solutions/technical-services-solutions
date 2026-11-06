@@ -1483,6 +1483,37 @@ def test_system_ai_uc_models_list_and_failure():
     assert m.system_ai_uc_models(w, cov) == set() and cov["system_ai_models"].startswith("failed")
 
 
+@pytest.mark.parametrize("name, code, pattern", [
+    ("llm", 'w.serving_endpoints.query(name="llm", messages=m)', "sdk_serving_query"),
+    ("llm", 'w.serving_endpoints.query(\n    name="llm",\n    messages=m)', "sdk_serving_query"),
+    ("chat", 'client.predict(endpoint="chat", inputs={})', "mlflow_deployments_predict"),
+    ("chat", 'dc.predict("chat", inputs={})', "mlflow_deployments_predict"),
+])
+def test_short_or_common_names_count_inside_a_call(name, code, pattern):
+    s = m.Scanner([name], {}, [])
+    s.scan_text("notebook", "/n", code)
+    assert [r.pattern for r in s.refs] == [pattern]
+    unrelated = m.Scanner([name], {}, [])
+    unrelated.scan_text("notebook", "/n", f'x = "{name}"  # not a call')
+    assert unrelated.refs == []
+
+
+def test_a_short_name_called_by_code_isnt_a_close_candidate():
+    ext = _ep({**EXTERNAL, "name": "llm"})
+    rows, _ = m.plan([ext], {}, {}, "c", "s")
+    s = m.Scanner(["llm"], {}, rows)
+    s.scan_text("notebook", "/monthly", 'w.serving_endpoints.query(name="llm", messages=m)')
+    r = m.readiness(rows, s.refs, True, 30, [ext], {"local_files": "ok"})
+    assert "rate_limit_zero_candidates" in r and "llm" not in json.dumps(r["rate_limit_zero_candidates"])
+    assert "sdk_serving_query" in [w["type"] for w in r["warnings"]]
+
+
+def test_readiness_says_volumes_and_dbfs_arent_searched():
+    assert m.VOLUMES_NOTE.startswith(m.NOT_SCANNED)
+    r = m.readiness([], [], True, 30, [], {"local_files": "ok", "volumes_dbfs": m.VOLUMES_NOTE})
+    assert "volumes_dbfs" not in r["coverage_gaps"] and "volumes" in m.readiness_md("https://x", r, 30).lower()
+
+
 def test_calls_in_agent_classes_are_model_code():
     text = "\n".join([
         "from mlflow.pyfunc import ResponsesAgent",

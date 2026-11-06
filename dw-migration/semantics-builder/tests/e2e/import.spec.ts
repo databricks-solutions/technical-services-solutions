@@ -17,6 +17,7 @@ test('import a metric view made outside the app, then find it in the library', a
   await dialog.getByRole('button', { name: 'Import' }).click();
   await expect(page.getByText('Built from a metric view imported from Unity Catalog.')).toBeVisible({ timeout: 60_000 });
   await page.goto('/metric-views');
-  await expect(page.getByLabel('Metric views')).toContainText(project, { timeout: 30_000 });
+  // The nav link has the same label as the table, so find the row by its project cell text.
+  await expect(page.getByText(`${project} /`)).toBeVisible({ timeout: 30_000 });
   await deleteProjectByApi(page, project);
 });

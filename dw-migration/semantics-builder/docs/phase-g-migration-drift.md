@@ -41,11 +41,9 @@ A Lakeflow job that runs the same checks daily and writes findings to Lakebase. 
 - Later: AI/BI dashboard datasets and Genie space instructions (more app scopes), dbt, LookML, Power BI files
   (through the dictionary import formats).
 
-## Questions
+## Decisions (2026-11-06)
 
-1. Order: g1, g2, g3, g4 (recommended), or g4 (discover and consolidate) first?
-2. Data drift needs a baseline: row counts and measure totals of the test queries, stored in Lakebase. Today the app
-   stores no result values. Store totals only, opt-in per view (recommended), or skip data drift?
-3. The scheduled job reads customer metadata and data. Run it as the user who turns on the schedule (recommended,
-   same identity as the checks), or as the app service principal with grants on each view?
-4. Discover in v1: metric views and SQL views only (recommended), or also dashboards and Genie spaces?
+- Order: g1, g2, g3, g4.
+- Data drift: store measure totals only, opt-in per view.
+- Schedule: the job runs as the user who turns on the schedule.
+- Discover in v1: metric views and SQL views only.

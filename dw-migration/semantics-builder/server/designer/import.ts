@@ -1,11 +1,15 @@
 import type { SemanticBrief } from '../../shared/brief';
 import type { TestCase } from '../../shared/designer';
 import { validateMetricView } from '../../shared/metricView';
-import type { Join } from '../../shared/metricView';
+import type { Join, MetricView } from '../../shared/metricView';
 
 const TABLE = /^[^\s().]+\.[^\s().]+\.[^\s().]+$/;
 const sourcesOf = (joins: Join[] | undefined): string[] =>
   (joins ?? []).flatMap((j) => [j.source, ...sourcesOf(j.joins)]);
+
+/** The tables a metric view reads: its source and every join source that is a table name. */
+export const tablesOf = (view: MetricView) =>
+  [...new Set([view.source, ...sourcesOf(view.joins)].filter((s) => TABLE.test(s.trim())))].slice(0, 30);
 
 function aggregationOf(expr: string): SemanticBrief['measures'][number]['aggregation'] {
   const e = expr.trim().toUpperCase();
@@ -32,10 +36,7 @@ export function importDesign(fullName: string, yaml: string) {
       .replace(/[^a-z0-9_]/g, '_')
       .replace(/^[^a-z]+/, '')
       .slice(0, 100) || 'imported_metrics';
-  const sources = [...new Set([view.source, ...sourcesOf(view.joins)].filter((s) => TABLE.test(s.trim())))].slice(
-    0,
-    30
-  );
+  const sources = tablesOf(view);
   const first = view.measures[0].name;
   const tests: TestCase[] = [
     { name: `${first} in total`, dimensions: [], measures: [first] },

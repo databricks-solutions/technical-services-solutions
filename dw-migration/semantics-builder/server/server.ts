@@ -16,6 +16,7 @@ import { registerPromoteRoutes } from './api/promote';
 import { registerLibraryRoutes } from './api/library';
 import { registerImportRoutes } from './api/import';
 import { registerGovernRoutes } from './api/govern';
+import { registerDriftRoutes } from './api/drift';
 import { genieDeps } from './genie/client';
 import { servingDeps } from './llm/llm';
 import { warehouseDeps } from './sql/runner';
@@ -51,6 +52,7 @@ createApp({
       registerLibraryRoutes(app, pool);
       registerImportRoutes(app, pool, ucFor);
       registerGovernRoutes(app, pool, runFor, ucFor);
+      registerDriftRoutes(app, pool, runFor, ucFor);
       registerGenieRoutes(app, pool, runFor, (req) => genieDeps(asUser(req)));
       // The workspace URL for Catalog Explorer links. Apps set DATABRICKS_HOST; nothing is hardcoded.
       const host = process.env.DATABRICKS_HOST?.trim().replace(/\/+$/, '') ?? '';

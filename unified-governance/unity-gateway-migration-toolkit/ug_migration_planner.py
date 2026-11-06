@@ -32,7 +32,7 @@ from urllib.parse import urlsplit
 
 from databricks.sdk import WorkspaceClient
 
-__version__ = "0.10.1"
+__version__ = "0.10.2"
 DISCLAIMER = ("Prototype from Databricks Shared Technical Services, provided as is. It only reads unless you run apply or "
               "rollback, or snapshots; review results before acting.")
 
@@ -916,8 +916,52 @@ def provider_status(dest: dict) -> str:
 
 
 PPT_BACKED_NEED = ("forwards to the pay-per-token endpoint {model} through the databricks-model-serving provider, so it "
-                   "stops working when Enforce is on: move its callers to {target}, or to a model service with that "
-                   "system.ai destination to keep the rate limit and inference table")
+                   "stops working when Enforce is on: move its callers to {target}{service}")
+PPT_BACKED_SERVICE = (", or to the model service apply creates (a pay-per-token destination on the same model, keeping "
+                      "the rate limits and inference table)")
+
+
+def ppt_shape(dest: dict) -> str | None:
+    """The databricks-* endpoint an external-model destination forwards to through the databricks-model-serving
+    provider, else None. Such a destination needs no provider service."""
+    model = str(dest.get("model") or "")
+    if dest.get("type") == "external_model" and dest.get("provider") == "databricks-model-serving" \
+            and model.startswith("databricks-"):
+        return model
+    return None
+
+
+def ppt_uc_model(dest: dict, uc_models: Iterable[str] | None) -> str | None:
+    """The system.ai UC model a model service can route to for this destination (pay-per-token destination), or
+    None. The UC model carries the endpoint's name (system.ai.databricks-claude-haiku-4-5), and it must be in
+    uc_models (system_ai_uc_models): a model nobody confirmed exists is never automated."""
+    model = ppt_shape(dest)
+    uc = f"system.ai.{model}" if model else None
+    return uc if uc and uc in set(uc_models or ()) else None
+
+
+def system_ai_uc_models(w: WorkspaceClient, coverage: dict[str, str] | None = None) -> set[str]:
+    """The UC models in system.ai (system.ai.<name>), which pay-per-token destinations route to.
+
+    Measured Nov 5, 2026: system.ai model services don't show their own destinations, so the UC model list is
+    what confirms a pay-per-token destination exists. A failed listing returns an empty set (nothing is
+    automated) and is recorded in coverage."""
+    try:
+        found = {f"system.ai.{m.name}" for m in w.registered_models.list(catalog_name="system", schema_name="ai")
+                 if m.name}
+    except Exception as error:
+        _log(f"Could not list the system.ai models: {error}")
+        if coverage is not None:
+            coverage["system_ai_models"] = f"failed: {str(error)[:120]}"
+        return set()
+    if coverage is not None:
+        coverage["system_ai_models"] = "ok"
+    return found
+
+
+def needs_provider_service(dest: dict) -> bool:
+    """External-model destinations that need a provider service (not the ones on a databricks-* endpoint)."""
+    return dest.get("type") == "external_model" and not ppt_shape(dest)
 
 
 def ppt_backed_models(ep: "LegacyEndpoint") -> list[str]:
@@ -1003,8 +1047,8 @@ def _route_check(target: str | None, observed: list[str], supported: list[str] |
 
 def plan(endpoints: list[LegacyEndpoint], sys_map: dict[str, str], usage: dict[str, dict],
          target_catalog: str, target_schema: str, traffic_known: bool = True,
-         ack_guardrails: bool = False, target_api_types: dict[str, list[str]] | None = None
-         ) -> tuple[list[PlanRow], list[dict]]:
+         ack_guardrails: bool = False, target_api_types: dict[str, list[str]] | None = None,
+         uc_models: Iterable[str] | None = None) -> tuple[list[PlanRow], list[dict]]:
     rows: list[PlanRow] = []
     providers: dict[str, dict] = {}
     used_targets: set[str] = set()
@@ -1101,9 +1145,9 @@ def plan(endpoints: list[LegacyEndpoint], sys_map: dict[str, str], usage: dict[s
             continue
 
         if ep.kind == "agent":
-            rows.append(PlanRow(ep.name, ep.kind, "manual", None, None, None, [], None, None, [], ep.tags,
-                                ["agent endpoint: redeploy on Databricks Apps or rebuild; "
-                                 "AI Search-backed agents break under Enforce"], **base))
+            # Agent endpoints aren't retired: only the LLM calls inside them move, so their callers need no change.
+            rows.append(PlanRow(ep.name, ep.kind, "out_of_scope", None, None, None, [], None, None, [], ep.tags,
+                                [AGENT_NEED], **base))
             continue
 
         target = _unique(f"{target_catalog}.{target_schema}.{_uc_name(ep.name)}", used_targets, needs)
@@ -1111,9 +1155,20 @@ def plan(endpoints: list[LegacyEndpoint], sys_map: dict[str, str], usage: dict[s
                      for r in ep.traffic_routes}
         destinations, provider_names, statuses = [], [], []
         for model in ppt_backed_models(ep):
-            needs.append(PPT_BACKED_NEED.format(model=model, target=sys_map.get(model) or "a system.ai model"))
+            confirmed = f"system.ai.{model}" in set(uc_models or ())
+            needs.append(PPT_BACKED_NEED.format(model=model, target=sys_map.get(model) or "a system.ai model",
+                                                service=PPT_BACKED_SERVICE if confirmed else ""))
         for d in ep.destinations:
-            if d["type"] == "external_model":
+            if ppt_shape(d):
+                # Same model, no provider service: a pay-per-token destination keeps the endpoint's rate limits
+                # and inference table on a model service. Only when the system.ai UC model is confirmed.
+                uc_model = ppt_uc_model(d, uc_models)
+                statuses.append("automated" if uc_model else "unconfirmed_model")
+                destinations.append({"destination_type": "DESTINATION_TYPE_PAY_PER_TOKEN_FOUNDATION_MODEL",
+                                     "served_entity": d.get("served_entity"),
+                                     "pay_per_token_model": uc_model,  # None until the UC model is confirmed
+                                     "traffic_percentage": route_pct.get(d.get("served_entity"))})
+            elif d["type"] == "external_model":
                 pkey = _provider_key(d)
                 if pkey not in providers:
                     secrets = sorted({f"{a}/{b}" for a, b in SECRET_RE.findall(json.dumps(d.get("provider_config")))})
@@ -1162,6 +1217,10 @@ def plan(endpoints: list[LegacyEndpoint], sys_map: dict[str, str], usage: dict[s
                                               "create the provider and model services by hand",
                           "no_ug_provider": "Unity Gateway has no provider for this model: keep the endpoint or "
                                             "move the callers to a supported model",
+                          "unconfirmed_model": "the system.ai model this endpoint forwards to wasn't found (or the "
+                                               "system.ai model list couldn't be read): move the callers to its "
+                                               "system.ai service, or create the model service by hand with a "
+                                               "pay-per-token destination",
                           }.get(status, "provider name not recognised: check it by hand"))
         rows.append(PlanRow(ep.name, ep.kind, action, target,
                             ", ".join(sorted(set(provider_names))) or None,
@@ -1215,12 +1274,15 @@ CUSTOM_CALL_PATTERNS = ("legacy_endpoint_name", "sdk_serving_query", "ai_query",
                         "mlflow_deployments_predict", "config_value", "ChatDatabricks")
 
 
-MODEL_CLASS_RE = re.compile(r"^([ \t]*)class\s+(\w+)\s*\([^)\n]*PythonModel[^)\n]*\)\s*:", re.M)
+# MLflow model code: PythonModel and the agent base classes (agents.deploy serves ResponsesAgent and ChatAgent).
+MODEL_BASES = r"(?:PythonModel|ResponsesAgent|ChatAgent|ChatModel)"
+MODEL_CLASS_RE = re.compile(r"^([ \t]*)class\s+(\w+)\s*\([^)\n]*\b" + MODEL_BASES + r"\b[^)\n]*\)\s*:", re.M)
 LOG_MODEL_RE = re.compile(r"\blog_model\s*\(")
 
 
 def model_classes(text: str) -> dict[str, tuple[int, int]]:
-    """MLflow PythonModel classes in the text: class name -> (first line, last line) of its body."""
+    """MLflow model classes (PythonModel, ResponsesAgent, ChatAgent, ChatModel) in the text: class name -> (first
+    line, last line) of its body."""
     lines = text.split("\n")
     out = {}
     for m in MODEL_CLASS_RE.finditer(text):
@@ -1256,13 +1318,42 @@ CREDENTIALS_ADVICE = ("Credentials: service principal OAuth (M2M) first; a PAT w
                       "(for example in the endpoint's environment_vars), never as a literal value")
 
 
+# Agent endpoints (agents.deploy and other agent/v1 endpoints) are custom serving endpoints: not retired.
+AGENT_NEED = ("agent endpoint: not retired, and its callers need no change. Only the LLM calls inside it move to "
+              "Unity Gateway services. Model Serving's automatic authentication can't call Unity Gateway services, "
+              "so re-log the agent to call them with explicit credentials, or move it to Databricks Apps (the "
+              "documented path)")
+AGENT_ACTION = ("move the LLM calls inside the agent to system.ai or model services: re-log it with explicit "
+                "credentials (automatic authentication can't call Unity Gateway services), or move it to Databricks "
+                "Apps. Its callers need no change")
+# Measured Nov 5, 2026: agent endpoints (agents.deploy, Knowledge Assistant) can't turn on usage tracking, so their
+# requests aren't in system.serving.endpoint_usage. Zero requests there says nothing about whether the agent is used.
+AGENT_TRAFFIC_UNKNOWN = ("traffic unknown: agent endpoints can't turn on usage tracking, so their requests aren't in "
+                         "system.serving.endpoint_usage. Check the agent's inference table or MLflow traces")
+# Knowledge Assistant and Supervisor Agent endpoints: Databricks builds and runs them, so there is no code to change.
+AGENT_BRICKS_NEED = ("Agent Bricks {what}: not retired by this deadline, and its LLM calls are Databricks-managed, "
+                     "so there is no code to change. Knowledge Assistant and Supervisor Agent are legacy offerings "
+                     "with Genie Agents as the replacement: plan the move there. If it uses an AI Search index, it "
+                     "breaks under Enforce (see the AI Search findings)")
+AGENT_BRICKS_ACTION = ("no code change; plan the move to Genie Agents, the replacement for Knowledge Assistant and "
+                       "Supervisor Agent. Before enforcing, check that it doesn't use an AI Search index")
+
+
+def annotate_agent_bricks(rows: list[PlanRow], agent_bricks: dict[str, str]) -> None:
+    """Replace the custom agent advice on Knowledge Assistant and Supervisor Agent endpoints."""
+    for row in rows:
+        what = agent_bricks.get(row.legacy_endpoint)
+        if what and row.kind == "agent":
+            row.needs_human = [AGENT_BRICKS_NEED.format(what=what) if n == AGENT_NEED else n for n in row.needs_human]
+
+
 def model_code_note(cls: str, endpoints: list[str] | None) -> str:
     where = (f"custom endpoint {', '.join(endpoints)}" if endpoints else "a custom serving endpoint, if one serves it")
     return (f"; this call is in MLflow model code (class {cls}), so it runs inside {where}. Under automatic "
             "authentication a Unity Gateway call from an endpoint fails with a misleading NotFound: re-log the model "
             "to call <workspace>/ai-gateway/mlflow/v1/chat/completions with explicit credentials and redeploy, or move "
-            "the agent to a Databricks App. " + CREDENTIALS_ADVICE + ". Also turn on the endpoint's usage tracking; its "
-            "own callers need no change")
+            "the agent to a Databricks App. " + CREDENTIALS_ADVICE + ". On a custom model endpoint, also turn on usage "
+            "tracking (agent endpoints can't); the endpoint's own callers need no change")
 
 
 # The advice for an unnamed call that reaches a custom model or feature serving endpoint (same text in both guides).
@@ -1386,7 +1477,8 @@ class Scanner:
         self.sys_map = sys_map
         self.targets = {r.legacy_endpoint: r.target_service for r in plan_rows if r.target_service}
         # Custom model endpoints stay on legacy serving: their callers need no change.
-        self.custom = {r.legacy_endpoint for r in plan_rows if r.kind == "custom_model"}
+        self.custom = {r.legacy_endpoint for r in plan_rows if r.kind in ("custom_model", "agent")}
+        self.agent_bricks: dict[str, str] = {}  # serving endpoint -> "knowledge assistant X" / "supervisor agent Y"
         alt = "|".join(sorted((re.escape(n) for n in self.names), key=len, reverse=True))
         # Quoted legacy endpoint names; longest first so similar names don't shadow each other.
         self.name_re = re.compile(r"(['\"])(" + alt + r")\1") if self.names else None
@@ -1490,7 +1582,7 @@ class Scanner:
         self._mark_model_code(text, self.refs[first:])
 
     def _mark_model_code(self, text: str, refs: list) -> None:
-        """Calls inside MLflow model code (a PythonModel class) run inside the serving endpoint that serves it.
+        """Calls inside MLflow model code (a PythonModel or agent class) run inside the serving endpoint that serves it.
 
         Under automatic authentication a Unity Gateway call from there fails with a misleading NotFound, so the fix
         is a re-logged model with explicit credentials (or an app), and the endpoint's own callers don't change."""
@@ -1770,6 +1862,9 @@ class Scanner:
 
 
 TOOLKIT_MARKERS = {"ug_migration_planner.py", "ug_migration_toolkit.marker"}
+TOOLKIT_APP_DESCRIPTION = "Unity Gateway Migration Toolkit"  # every toolkit app's description starts with this
+TOOLKIT_BUNDLE = "unity-gateway-migration-toolkit"  # bundle.name in databricks.yml
+TOOLKIT_NOTE = "the toolkit's own install (its files name legacy endpoints on purpose)"
 # Binary and media files: never source code, so leaving them out is not reported as a coverage note.
 BINARY_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp", ".bmp", ".pdf", ".zip", ".gz", ".tgz",
                ".tar", ".whl", ".jar", ".egg", ".so", ".dylib", ".dll", ".exe", ".bin", ".pyc", ".class", ".parquet",
@@ -1800,12 +1895,18 @@ def _skipped_note(dirs: list[str], types: dict[str, int]) -> str | None:
 
 
 def _walk_workspace(w: WorkspaceClient, roots: list[str], max_objects: int, threads: int = 16,
-                    accept=None) -> list[dict]:
+                    accept=None, skip_prefixes: Iterable[str] = ()) -> list[dict]:
     """List notebooks and files under the roots, one directory level at a time in parallel.
 
     Dependency and build folders (SKIP_DIRS) are not entered, and only objects that accept() takes count
-    toward max_objects. The budget applies per root, so one big folder can't use up the others.
+    toward max_objects. The budget applies per root, so one big folder can't use up the others. Folders
+    under skip_prefixes (the toolkit apps' source and deployment copies) are skipped like the install.
     """
+    skip_prefixes = tuple(p.rstrip("/") for p in skip_prefixes if p)
+
+    def toolkit_path(path: str) -> bool:
+        return any(path == p or path.startswith(p + "/") for p in skip_prefixes)
+
     from concurrent.futures import ThreadPoolExecutor
 
     failures: list[str] = []
@@ -1819,7 +1920,10 @@ def _walk_workspace(w: WorkspaceClient, roots: list[str], max_objects: int, thre
             return []
 
     roots = list(dict.fromkeys(roots))
-    found, level, seen_dirs, skipped = [], [(r, r) for r in roots], set(), []
+    skipped = [r for r in roots if toolkit_path(r)]
+    unverified: list[str] = []  # folders with toolkit files that no verified toolkit app uses
+    roots = [r for r in roots if not toolkit_path(r)]
+    found, level, seen_dirs = [], [(r, r) for r in roots], set()
     skipped_dirs: list[str] = []  # dependency and build folders not entered
     skipped_types: dict[str, int] = {}  # extension -> files left out because accept() refused them
     counts = {r: 0 for r in roots}  # accepted objects per root
@@ -1828,15 +1932,21 @@ def _walk_workspace(w: WorkspaceClient, roots: list[str], max_objects: int, thre
             live = [(root, path) for root, path in level if counts[root] < max_objects]
             next_level = []
             for (root, path), objects in zip(live, pool.map(ls, [p for _, p in live])):
-                # The toolkit's own install (its files mention legacy endpoint names on purpose): skip it.
+                # The toolkit's own install (its files mention legacy endpoint names on purpose): skip it. A folder
+                # with toolkit files that no verified toolkit app uses (is_toolkit_app) is skipped too, but as a
+                # coverage gap: those file names prove nothing, so a caller could hide there.
                 names = {o.get("path", "").rsplit("/", 1)[-1] for o in objects}
                 if names & TOOLKIT_MARKERS:
-                    skipped.append(path)
+                    (skipped if any(p == path or p.startswith(path + "/") for p in skip_prefixes)
+                     else unverified).append(path)
                     continue
                 for o in objects:
                     t = o.get("object_type")
                     if t in ("DIRECTORY", "REPO"):
                         if o["path"] in seen_dirs:
+                            continue
+                        if toolkit_path(o["path"]):
+                            skipped.append(o["path"])
                             continue
                         if o["path"].rsplit("/", 1)[-1] in SKIP_DIRS:
                             skipped_dirs.append(o["path"])
@@ -1851,6 +1961,7 @@ def _walk_workspace(w: WorkspaceClient, roots: list[str], max_objects: int, thre
             level = next_level
     _walk_workspace.last_failures = failures
     _walk_workspace.skipped = skipped
+    _walk_workspace.unverified = unverified
     _walk_workspace.skipped_dirs = skipped_dirs
     _walk_workspace.skipped_types = skipped_types
     if skipped:
@@ -1872,7 +1983,8 @@ def _decode(raw: bytes) -> str | None:
     return raw.decode("utf-8", errors="ignore")
 
 
-def scan_workspace(w: WorkspaceClient, scanner: Scanner, roots: list[str], max_objects: int, threads: int = 16) -> None:
+def scan_workspace(w: WorkspaceClient, scanner: Scanner, roots: list[str], max_objects: int, threads: int = 16,
+                   skip_prefixes: Iterable[str] = ()) -> None:
     """Export notebooks and text files in parallel and scan each distinct content once.
 
     Databricks Apps keep a copy of the source per deployment under
@@ -1883,15 +1995,23 @@ def scan_workspace(w: WorkspaceClient, scanner: Scanner, roots: list[str], max_o
     from concurrent.futures import ThreadPoolExecutor
 
     objs = _walk_workspace(w, roots, max_objects, threads,
-                           accept=lambda o: o["object_type"] == "NOTEBOOK" or o["path"].lower().endswith(WORKSPACE_EXTS))
+                           accept=lambda o: o["object_type"] == "NOTEBOOK" or o["path"].lower().endswith(WORKSPACE_EXTS),
+                           skip_prefixes=skip_prefixes)
 
     if getattr(_walk_workspace, "truncated", False):
         scanner.note("workspace_files", f"truncated at {max_objects} objects per root")
     if getattr(_walk_workspace, "last_failures", None):
         scanner.note("workspace_files", f"partial: {len(_walk_workspace.last_failures)} folders unreadable")
+    if getattr(_walk_workspace, "unverified", None):
+        folders = sorted(_walk_workspace.unverified)
+        scanner.note("workspace_files", f"partial: {_n(len(folders), 'folder')} skipped: they hold toolkit files, but "
+                                        "no toolkit app installed here uses them, so check them by hand: "
+                                        + ", ".join(folders[:5]) + (" ..." if len(folders) > 5 else ""))
     if getattr(_walk_workspace, "skipped", None):
-        scanner.note("workspace_files", f"partial: {len(_walk_workspace.skipped)} folders skipped "
-                                        "(the toolkit's own install)")
+        # A verified toolkit install, skipped on purpose like dependency folders: a note, not a coverage gap.
+        folders = sorted(_walk_workspace.skipped)
+        scanner.note("toolkit_install", f"{NOT_SCANNED}: {_n(len(folders), 'folder')}, {TOOLKIT_NOTE}: "
+                                        + ", ".join(folders[:5]) + (" ..." if len(folders) > 5 else ""))
     left_out = _skipped_note(getattr(_walk_workspace, "skipped_dirs", []), getattr(_walk_workspace, "skipped_types", {}))
     if left_out:
         scanner.note("workspace_files_skipped", left_out)
@@ -2004,6 +2124,8 @@ def scan_agent_bricks(w: WorkspaceClient, scanner: Scanner) -> None:
     try:
         for ka in w.knowledge_assistants.list_knowledge_assistants():
             n_ka += 1
+            if getattr(ka, "endpoint_name", None):
+                scanner.agent_bricks[ka.endpoint_name] = f"knowledge assistant {ka.display_name or ka.name}"
             try:
                 sources = list(w.knowledge_assistants.list_knowledge_sources(parent=ka.name))
             except Exception:
@@ -2023,8 +2145,9 @@ def scan_agent_bricks(w: WorkspaceClient, scanner: Scanner) -> None:
                                  "ka_vector_search_source", src.index.index_name, embed,
                                  f"source {src.index.index_name} is an AI Search index"
                                  + (f" embedded with {embed}" if embed else "")
-                                 + ": breaks under Enforce; use a UC volume / files source or wait for AI Search "
-                                   "support on Unity Gateway")
+                                 + ": breaks under Enforce, and at the legacy deadline if the index embeds with a "
+                                   "databricks-* endpoint. Use a UC volume or files source, or plan the move to "
+                                   "Genie Agents")
     except Exception as error:
         _log(f"  could not list Knowledge Assistants: {error}")
         scanner.note("knowledge_assistants", f"failed: {str(error)[:120]}")
@@ -2032,6 +2155,8 @@ def scan_agent_bricks(w: WorkspaceClient, scanner: Scanner) -> None:
     try:
         for sa in w.supervisor_agents.list_supervisor_agents():
             n_sa += 1
+            if getattr(sa, "endpoint_name", None):
+                scanner.agent_bricks[sa.endpoint_name] = f"supervisor agent {sa.display_name or sa.name}"
             try:
                 tools = list(w.supervisor_agents.list_tools(parent=sa.name))
             except Exception:
@@ -2225,10 +2350,49 @@ def scan_dashboards(w: WorkspaceClient, scanner: Scanner) -> None:
     _log(f"  scanned {n} dashboards")
 
 
-def scan_apps(w: WorkspaceClient, scanner: Scanner) -> None:
+def _workspace_text(w: WorkspaceClient, path: str) -> str | None:
+    try:
+        data = _get(w, "/api/2.0/workspace/export", {"path": path, "format": "AUTO"}).get("content")
+        return base64.b64decode(data or "").decode("utf-8", errors="ignore")
+    except Exception:
+        return None
+
+
+def is_toolkit_app(w: WorkspaceClient, app) -> bool:
+    """A toolkit app: its description starts with the toolkit's, and its source is a toolkit install.
+
+    The description alone is a field any app creator sets, so the source must also be bound to this app or to the
+    toolkit's bundle. Installer installs: <folder>/ug_migration_toolkit.marker next to files/app names this app.
+    Bundle installs (the app's source is the bundle root): the path is under .bundle/<TOOLKIT_BUNDLE>/ and the
+    root holds the bundle's databricks.yml and ug_migration_planner.py. Neither is proof, so every skipped app is
+    named in the coverage note.
+    """
+    if not (getattr(app, "description", None) or "").startswith(TOOLKIT_APP_DESCRIPTION):
+        return False
+    for p in {app.source_code_path, app.default_source_code_path} - {None}:
+        p = p.removeprefix("/Workspace").rstrip("/")
+        if p.endswith("/files/app"):
+            marker = _workspace_text(w, p[: -len("/files/app")] + "/ug_migration_toolkit.marker")
+            try:
+                if marker and json.loads(marker).get("app") == app.name:
+                    return True
+            except (ValueError, AttributeError):
+                pass
+        if f"/.bundle/{TOOLKIT_BUNDLE}/" in p + "/":
+            yml = _workspace_text(w, p + "/databricks.yml") or ""
+            if re.search(rf"^bundle:\s*\n\s+name:\s*{re.escape(TOOLKIT_BUNDLE)}\s*$", yml, re.M) \
+                    and _workspace_text(w, p + "/ug_migration_planner.py"):
+                return True
+    return False
+
+
+def scan_apps(w: WorkspaceClient, scanner: Scanner, toolkit_apps: Iterable[str] = ()) -> None:
     n = 0
+    skip = set(toolkit_apps)
     try:
         for app in w.apps.list():
+            if app.name in skip:
+                continue
             n += 1
             for r in app.resources or []:
                 ep = r.serving_endpoint
@@ -2244,19 +2408,36 @@ def scan_apps(w: WorkspaceClient, scanner: Scanner) -> None:
     _log(f"  scanned {n} apps")
 
 
-def app_source_roots(w: WorkspaceClient, coverage: dict[str, str]) -> list[str]:
-    """Workspace folders that hold each app's source (current and default deployment), as scan roots."""
-    roots = []
+def app_source_roots(w: WorkspaceClient, coverage: dict[str, str], toolkit: list[str] | None = None,
+                     toolkit_apps: list[str] | None = None) -> list[str]:
+    """Workspace folders that hold each app's source (current and default deployment), as scan roots.
+
+    Toolkit apps (is_toolkit_app) are left out: their names go to toolkit_apps, and their folders and their
+    service principal's deployment copies (/Users/<application ID>/src) go to toolkit, so the workspace walk
+    skips them too. Coverage names each skipped app, so the skip is visible in the readiness report.
+    """
+    roots, skipped = [], []
     try:
         for app in w.apps.list():
-            for p in (app.source_code_path, app.default_source_code_path):
-                if p and p.startswith("/Workspace/"):
-                    roots.append(p[len("/Workspace"):])
+            paths = [p[len("/Workspace"):] for p in (app.source_code_path, app.default_source_code_path)
+                     if p and p.startswith("/Workspace/")]
+            if is_toolkit_app(w, app):
+                skipped.append(app.name)
+                if toolkit is not None:
+                    # Service principal homes use the application ID; the display name is never a folder.
+                    toolkit += paths + ([f"/Users/{app.service_principal_client_id}/src"]
+                                        if app.service_principal_client_id else [])
+                continue
+            roots += paths
     except Exception as error:
         _log(f"  could not list apps for their source folders: {error}")
         coverage["app_sources"] = f"failed: {str(error)[:120]}"
         return roots
     coverage["app_sources"] = "ok"
+    if skipped:
+        coverage["toolkit_apps"] = f"{NOT_SCANNED}: toolkit app {', '.join(sorted(skipped))}, {TOOLKIT_NOTE}"
+    if toolkit_apps is not None:
+        toolkit_apps += skipped
     return sorted(set(roots))
 
 
@@ -2284,14 +2465,20 @@ def scan_vector_search(w: WorkspaceClient, scanner: Scanner) -> None:
     _log(f"  scanned {n} AI Search indexes")
 
 
+# AI Search can't embed with a Unity Gateway service yet, and no date is announced. An index can't switch its
+# embedding endpoint, and the databricks-* embedding endpoints retire with every legacy endpoint, Enforce or not.
+AI_SEARCH_LIMITS = ("AI Search can't embed with a Unity Gateway service yet, and no date is announced. An index can't "
+                    "switch its embedding endpoint: it has to be recreated on a supported embedding service. An index "
+                    "on a databricks-* embedding endpoint stops working when legacy endpoints retire, even if Enforce "
+                    "is never turned on")
 AI_SEARCH_KEEP_TEXT = ("keep this embedding endpoint while the index uses it: don't enforce Unity Gateway or "
-                       "rate-limit the endpoint to 0. AI Search support for system.ai embedding services is rolling "
-                       "out model by model, so check the current AI Search docs for whether your model is supported "
-                       "before you re-index on one. Self-managed embeddings are a possible workaround: check the docs "
-                       "before relying on one")
-AI_SEARCH_KEEP_ACTION = ("keep the endpoint and don't enforce Unity Gateway until the index can re-embed with a "
-                         "supported system.ai embedding service (support is rolling out model by model; check the "
-                         "current AI Search docs)")
+                       "rate-limit the endpoint to 0. " + AI_SEARCH_LIMITS + ", so plan the rebuild. An index with "
+                       "self-managed embeddings (vectors you compute and store) doesn't depend on the endpoint: check "
+                       "the AI Search docs before relying on one")
+AI_SEARCH_KEEP_ACTION = ("keep the endpoint and don't enforce Unity Gateway yet. AI Search can't embed with a Unity "
+                         "Gateway service (no date announced), an index can't switch its embedding endpoint, and an "
+                         "index on a databricks-* embedding stops at the legacy deadline even with Enforce off: plan "
+                         "to recreate the index once support arrives, or move it to self-managed embeddings")
 
 
 def annotate_dependencies(rows: list[PlanRow], refs: list[ClientReference], days: int = 30) -> None:
@@ -2310,8 +2497,8 @@ def annotate_dependencies(rows: list[PlanRow], refs: list[ClientReference], days
         apps = [d.asset.removeprefix("app ") for d in deps if d.asset_type == "app"]
         if indexes:
             row.needs_human.append(f"embedding model for {len(indexes)} AI Search index(es) "
-                                   f"({', '.join(indexes[:3])}): keep the endpoint; blocks Enforce until the index "
-                                   "can re-embed with a supported system.ai embedding service")
+                                   f"({', '.join(indexes[:3])}): keep the endpoint; blocks Enforce, and the index has to "
+                                   "be recreated once AI Search supports Unity Gateway embedding services")
         if apps:
             row.needs_human.append(f"app resource in {', '.join(apps[:3])}: update the app before Enforce")
         if row.requests_window == 0 and any(n.startswith(NO_TRAFFIC_NEED) for n in row.needs_human):
@@ -2428,7 +2615,7 @@ KIND_NAMES = {"system_ppt": "Databricks pay-per-token (system)", "external_model
               "agent": "Agent", "unknown": "Unknown", "out_of_scope": "Out of scope",
               "v2_workspace_endpoint": "AI Gateway v2 (workspace-bound)"}
 ACTION_NAMES = {"use_system_ai": "Use a system.ai model", "create_model_service": "Create a Unity Gateway service",
-                "out_of_scope": "Out of scope (custom ML)", "manual": "Manual (see needs)"}
+                "out_of_scope": "Out of scope (custom model or agent)", "manual": "Manual (see needs)"}
 STATUS_MEANING = {
     "READY": "no blockers, full scan.",
     "READY_WITH_WARNINGS": "no blockers; review warnings first.",
@@ -2618,35 +2805,47 @@ def readiness(rows: list[PlanRow], refs: list[ClientReference], traffic_ok: bool
                     flag["user_agents"] = agents
                 traffic_blockers[r.legacy_endpoint] = flag
         if r.kind == "agent":
-            if r.requests_window:
-                blockers.append(_flag("agent", r.legacy_endpoint, "; ".join(r.needs_human),
-                                      "Agent endpoint runs on legacy serving",
-                                      "redeploy the agent on Databricks Apps or rebuild it, then re-plan"))
+            # The endpoint isn't retired; what can break is the LLM calls inside it. Their traffic to an endpoint
+            # Enforce stops is a blocker (custom_endpoint_inner_call), and so is their code where the scan sees it.
+            # The model code itself is often a logged UC model the scan can't read, so the traffic is what counts.
+            bricks = any(n.startswith("Agent Bricks") for n in r.needs_human)
+            used = (f"{r.requests_window:,} requests in {days} days" if r.requests_window
+                    else AGENT_TRAFFIC_UNKNOWN)
+            if bricks:
+                warnings.append(_flag("agent_bricks_endpoint", r.legacy_endpoint,
+                                      f"{used}; " + "; ".join(r.needs_human),
+                                      "Agent Bricks agent: a legacy offering, replaced by Genie Agents",
+                                      AGENT_BRICKS_ACTION))
             else:
-                # A dormant agent is a question for its owner, not a reason to block enforcement.
-                warnings.append(_flag("dormant_agent_endpoint", r.legacy_endpoint,
-                                      "no requests in the window; " + "; ".join(r.needs_human),
-                                      "Agent endpoint has no traffic in the window",
-                                      "confirm with the owner that it is unused; if it is still used, redeploy it on "
-                                      "Databricks Apps before enforcing"))
+                warnings.append(_flag("agent_endpoint", r.legacy_endpoint, f"{used}; " + "; ".join(r.needs_human),
+                                      "Agent endpoint: the LLM calls inside it must move",
+                                      AGENT_ACTION if r.requests_window else
+                                      "confirm with the owner whether it is still used (its traffic isn't recorded); "
+                                      "if it is, " + AGENT_ACTION))
         # A PT endpoint behind a Unity Gateway model service keeps serving after the deadline (the service routes to
         # its capacity), so the wrapper itself needs no warning; direct callers of the endpoint are flagged as traffic.
     # Measured Nov 3, 2026: a custom agent endpoint's automatic-auth identity shows up as "System Service Principal".
-    custom = sorted(r.legacy_endpoint for r in rows if r.kind == "custom_model")
+    custom = sorted(r.legacy_endpoint for r in rows if r.kind in ("custom_model", "agent"))
     inner: dict[str, int] = {}
     for c in callers or []:
         ep = c.get("endpoint_name")
         if c.get("requester_name") == SYSTEM_SP_NAME and ep in row_by and row_by[ep].action != "out_of_scope":
             inner[ep] = inner.get(ep, 0) + int(c.get("requests") or 0)
     for ep, n in sorted(inner.items()):
-        warnings.append(_flag(
+        # Enforce stops databricks-* endpoints (and external models that forward to one): an agent calling them
+        # from its model code breaks then, even when the code scan can't see that code (a logged UC model).
+        stops = row_by[ep].kind == "system_ppt" or bool(ep in by_name and ppt_backed_models(by_name[ep]))
+        (blockers if stops else warnings).append(_flag(
             "custom_endpoint_inner_call", ep,
             f"{n:,} requests from a {SYSTEM_SP_NAME}: usually a serving endpoint calling {ep} with automatic "
-            "authentication, such as a custom agent" + (f". Custom endpoints here: {', '.join(custom[:5])}" if custom else ""),
+            "authentication, such as a custom agent"
+            + ("; Enforce stops this endpoint, so those calls fail once it's on" if stops else "")
+            + (f". Custom model and agent endpoints here: {', '.join(custom[:5])}" if custom else ""),
+            "A serving endpoint calls this endpoint from its model code" if stops else
             "A serving endpoint may call this endpoint from its model code",
-            "find the custom endpoint whose model code calls it: re-log the model with explicit credentials to call "
-            "the model service (see CODE_FIXES.md), and turn on that endpoint's usage tracking. Its own callers need "
-            "no change"))
+            "find the custom model or agent endpoint whose model code calls it: re-log the model with explicit credentials to call "
+            "the model service (see CODE_FIXES.md). If it's a custom model endpoint, turn on its usage tracking (agent "
+            "endpoints can't). Its own callers need no change"))
     for x in refs:
         loc = x.asset + (f":{x.line}" if x.line else "")
         if x.pattern == "custom_endpoint_call":
@@ -2665,8 +2864,7 @@ def readiness(rows: list[PlanRow], refs: list[ClientReference], traffic_ok: bool
             continue
         if x.asset_type == "vector_search_index":
             blockers.append(_flag("vector_search", x.asset.removeprefix("index "),
-                                  f"embeds with {x.legacy_endpoint}; AI Search can't embed with a system.ai service "
-                                  "yet",
+                                  f"embeds with {x.legacy_endpoint}; " + AI_SEARCH_LIMITS,
                                   "AI Search index embeds with a legacy endpoint", AI_SEARCH_KEEP_ACTION))
         elif x.asset_type in ("knowledge_assistant", "supervisor_agent"):
             blockers.append(_flag("agent_bricks_vector_search", x.asset, x.suggestion,
@@ -3136,6 +3334,7 @@ def _run(w, out_dir, warehouse_id, days, target_catalog, target_schema, scan_roo
     _log("1. Inventory")
     endpoints = inventory(w)
     sys_map = system_ai_map(w, coverage, target_api_types)
+    uc_models = system_ai_uc_models(w, coverage)
 
     _log("2. Traffic")
     usage, by_req, traffic_ok, traffic_status = {}, [], True, "ok"
@@ -3180,7 +3379,7 @@ def _run(w, out_dir, warehouse_id, days, target_catalog, target_schema, scan_roo
 
     _log("3. Plan")
     rows, providers = plan(endpoints, sys_map, usage, target_catalog, target_schema, traffic_ok, ack_guardrails,
-                           target_api_types)
+                           target_api_types, uc_models)
     check_targets(w, rows)
 
     refs: list[ClientReference] = []
@@ -3193,20 +3392,22 @@ def _run(w, out_dir, warehouse_id, days, target_catalog, target_schema, scan_roo
                                       f"(defaults {', '.join(DEFAULT_SCAN_ROOTS)} narrowed)")
         else:
             coverage["scan_roots"] = "ok"
-        app_roots = app_source_roots(w, coverage)
+        toolkit_paths: list[str] = []
+        toolkit_apps: list[str] = []
+        app_roots = app_source_roots(w, coverage, toolkit_paths, toolkit_apps)
         roots += [r for r in app_roots if r not in roots]
         scanner = Scanner((e.name for e in endpoints), sys_map, rows,
                           {e.endpoint_url: e.name for e in endpoints if e.endpoint_url},
-                          custom_models={e.name: d.get("model") for e in endpoints if e.kind == "custom_model"
+                          custom_models={e.name: d.get("model") for e in endpoints if e.kind in ("custom_model", "agent")
                                          for d in e.destinations if d.get("model")},
                           v2_names=[e.name for e in endpoints if e.kind == "v2_workspace_endpoint"]
                           + [n for n, u in usage.items() if int(u.get("v2_requests") or 0)],
                           target_api_types=target_api_types)
-        scan_workspace(w, scanner, roots, max_objects, threads)
+        scan_workspace(w, scanner, roots, max_objects, threads, toolkit_paths)
         scan_jobs(w, scanner)
         scan_sql_queries(w, scanner, threads)
         scan_dashboards(w, scanner)
-        scan_apps(w, scanner)
+        scan_apps(w, scanner, toolkit_apps)
         scan_vector_search(w, scanner)
         scan_agent_bricks(w, scanner)
         scan_genie(w, scanner, threads)
@@ -3221,6 +3422,7 @@ def _run(w, out_dir, warehouse_id, days, target_catalog, target_schema, scan_roo
         coverage.update(scanner.coverage)
         refs = scanner.refs
         annotate_dependencies(rows, refs, days)
+        annotate_agent_bricks(rows, scanner.agent_bricks)
 
     _write_csv(os.path.join(out_dir, "legacy_endpoints.csv"), [asdict(e) for e in endpoints])
     _write_csv(os.path.join(out_dir, "migration_plan.csv"), [asdict(r) for r in rows])

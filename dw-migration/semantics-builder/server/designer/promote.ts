@@ -1,12 +1,20 @@
 import { UC_NAME_PART } from '../../shared/brief';
 import { renderMetricView, validateMetricView } from '../../shared/metricView';
 
-const canonical = (yaml: string) => {
-  const view = validateMetricView(yaml).view;
-  return view ? renderMetricView(view) : yaml.replace(/\s+/g, ' ').trim();
+// Unity Catalog keeps these apart from view_definition, so they never count as a change.
+const strip = <T extends { comment?: unknown; synonyms?: unknown; display_name?: unknown; format?: unknown }>(f: T) => {
+  const { comment: _c, synonyms: _s, display_name: _d, format: _f, ...rest } = f;
+  return rest;
 };
 
-/** True when two metric view YAMLs define the same view, whatever their layout. */
+const canonical = (yaml: string) => {
+  const view = validateMetricView(yaml).view;
+  if (!view) return yaml.replace(/\s+/g, ' ').trim();
+  const { comment: _c, ...head } = view;
+  return renderMetricView({ ...head, dimensions: view.dimensions.map(strip), measures: view.measures.map(strip) });
+};
+
+/** True when two metric view YAMLs define the same view, whatever their layout and semantic metadata. */
 export const sameYaml = (a: string, b: string) => canonical(a) === canonical(b);
 
 /** Why a promotion target is not allowed, or null. The sandbox schema is for checks, not for real views. */

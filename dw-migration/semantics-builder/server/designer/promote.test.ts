@@ -11,6 +11,17 @@ describe('sameYaml', () => {
     expect(sameYaml(yaml, relaid)).toBe(true);
     expect(sameYaml(yaml, yaml.replace('COUNT(1)', 'COUNT(*)'))).toBe(false);
   });
+
+  it('ignores the semantic metadata that Unity Catalog keeps apart from view_definition', () => {
+    const rich = yaml
+      .replace('source: c.s.t\n', 'comment: Orders\nsource: c.s.t\n')
+      .replace(
+        '    expr: a\n',
+        '    expr: a\n    comment: The A\n    display_name: A name\n    synonyms:\n      - aa\n    format:\n      type: number\n'
+      );
+    expect(rich).not.toBe(yaml);
+    expect(sameYaml(rich, yaml)).toBe(true);
+  });
 });
 
 describe('checkTarget', () => {

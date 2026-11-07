@@ -1,0 +1,1 @@
+{"name":"ls_sql","properties":{"type":"AzureSqlDatabase","typeProperties":{"connectionString":"Server=srv;Database=db"}}}

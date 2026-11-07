@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odiexport>
+<Admin RepositoryVersion="04.02.00" Version="12.2.1"/>
+<Object class="com.sunopsis.dwg.dbobj.SnpScen">
+<Field name="ScenNo" type="com.sunopsis.sql.DbInt"><![CDATA[1]]></Field>
+<Field name="ScenName" type="java.lang.String"><![CDATA[PKG_ORDERS]]></Field>
+<Field name="ScenVersion" type="java.lang.String"><![CDATA[001]]></Field>
+</Object>
+<Object class="com.sunopsis.dwg.dbobj.SnpScenTask">
+<Field name="ScenNo" type="com.sunopsis.sql.DbInt"><![CDATA[1]]></Field>
+<Field name="TaskName1" type="java.lang.String"><![CDATA[Load orders_clean]]></Field>
+<Field name="TaskType" type="java.lang.String"><![CDATA[S]]></Field>
+<Field name="TxtTaskTrg" type="java.lang.String"><![CDATA[INSERT INTO STG.ORDERS_CLEAN (ORDER_ID, AMOUNT) SELECT ORDER_ID, AMOUNT FROM RAW.ORDERS]]></Field>
+</Object>
+</odiexport>

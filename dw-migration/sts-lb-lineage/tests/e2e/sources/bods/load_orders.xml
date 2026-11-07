@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<DataIntegratorExport>
+  <DIJob name="JOB_LOAD_ORDERS">
+    <DIDataFlowCall name="DF_LOAD_ORDERS"/>
+  </DIJob>
+  <DIDataFlow name="DF_LOAD_ORDERS">
+    <DISource name="RAW_ORDERS"><DITable name="ORDERS" owner="RAW" datastore="DS_DWH"/></DISource>
+    <DIQuery name="Q1"><DISelect>SELECT order_id, amount FROM RAW.ORDERS</DISelect></DIQuery>
+    <DITarget name="STG_ORDERS_CLEAN"><DITable name="ORDERS_CLEAN" owner="STG" datastore="DS_DWH"/></DITarget>
+  </DIDataFlow>
+</DataIntegratorExport>

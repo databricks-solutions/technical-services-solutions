@@ -761,6 +761,11 @@ def main(argv=None):
     ap.add_argument("-o", "--out", type=Path, default=Path("lineage"))
     ap.add_argument("--format", default="json,csv,mermaid,html")
     ap.add_argument(
+        "--slices",
+        action="store_true",
+        help="write slices/: one CSV per process with its tables, shared contracts, and UC targets",
+    )
+    ap.add_argument(
         "--focus", help="keep only upstream + downstream of this table or job"
     )
     ap.add_argument(
@@ -885,6 +890,10 @@ def main(argv=None):
         )
     if a.collapse_instances:
         merged["instances"] = normalize.merge(lin, normalize.instance_aliases(lin))
+    texts = [st["sql"] for st in lin.statements]
+    if a.run:
+        texts = [*texts, *normalize.source_texts(a.run)]
+    ctes = normalize.flag_ctes(lin, texts)
     if a.focus:
         lin = lin.focus(a.focus)
     from . import uc as sts_lb_uc
@@ -915,6 +924,7 @@ def main(argv=None):
             d["columns"] = col_edges
             d["insights"]["trust"]["columnStatements"] = col_stats["parsed"]
             d["insights"]["trust"]["columnStatementsSkipped"] = col_stats["skipped"]
+        d["insights"]["trust"].update(ctes)
         for k, v in merged.items():
             d["insights"]["trust"][f"merged_{k}"] = v
         if a.compare:
@@ -927,6 +937,10 @@ def main(argv=None):
     d = lin.write(a.out, formats)
     if "csv" in formats:
         sts_lb_uc.write_mapping(d, a.out)
+    if a.slices:
+        from .slices import write_slices
+
+        print(f"migration slices -> {write_slices(d, a.out)}")
     p = sts_lb_uc.payload(
         d, sts_lb_uc.system_type_for(a.platform, a.source_system), a.uc_prefix
     )

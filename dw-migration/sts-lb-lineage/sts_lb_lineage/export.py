@@ -10,6 +10,9 @@ import re
 import sys
 import time
 
+from .slices import HEADER as SLICE_KEYS
+from .slices import slice_rows
+
 VOLUME = "sts_lb_lineage_files"
 IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 
@@ -86,6 +89,11 @@ def rows(d: dict) -> dict[str, list[dict]]:
         "columns": [
             {"source": c["from"], "target": c["to"], "via": c["via"]}
             for c in d.get("columns", [])
+        ],
+        "slices": [
+            {"process": proc, **dict(zip(SLICE_KEYS, row))}
+            for proc, rs in slice_rows(d).items()
+            for row in rs
         ],
         "summary": [
             {

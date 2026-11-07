@@ -543,3 +543,10 @@ body {
   stroke: var(--db-alert-icon-color-error);
   stroke-dasharray: 6 4;
 }
+
+/* keyboard focus in graphs */
+.react-flow__node:focus-visible {
+  outline: 2px solid var(--db-accent-border);
+  outline-offset: 2px;
+  border-radius: var(--db-radius-md);
+}

@@ -63,7 +63,7 @@ python -m sts_lb_lineage --help                             # all options
 | Analyze | Impact analysis | Downstream impact, upstream sources, or the path between two objects or processes, with a CSV report. Opens with suggested starting points. With `--serve`, an AI assistant explains the impact, flags risks, and answers follow-up questions. |
 | Compare | Changes | Only with `--compare`: new and removed processes, objects, and relationships, and objects that moved to another process. |
 
-**Where the graphs are**: the Overview map, the Process map, the Objects graph, and the details drawer of every table, job, and process, which opens with its lineage graph. Use the search box at the top of every page to jump to any process, table, or job. Drawers show the details of an object (role, process, upstream, downstream, programs, columns with `--columns`, suggested UC target) or a process (programs and the analyzer drivers behind their complexity, objects, shared tables, dependencies). Every view is in the URL hash, so you can share a link to it. Scoped graphs show at most 1,500 objects; focus on an object to explore beyond that.
+**Where the graphs are**: the Overview map, the Process map, the Objects graph, and the details drawer of every table, job, and process, which opens with its lineage graph. Use the search box at the top of every page to jump to any process, table, or job. Drawers show the details of an object (role, process, upstream, downstream, programs, columns with `--columns`, suggested UC target) or a process (programs and the analyzer drivers behind their complexity, objects, shared tables, dependencies). Every view is in the URL hash, so you can share a link to it. Graphs work from the keyboard: Tab to a node, arrow keys to move to the nearest node, Enter to open it. Scoped graphs show at most 1,500 objects; focus on an object to explore beyond that.
 
 The tool reports facts from the scan. It does not estimate effort or plan migration waves.
 
@@ -80,6 +80,7 @@ sts-lb-lineage report.json --compare old/lineage.json    # what changed since a 
 - **Instances**: folded only into a base table that exists in the scan. Both rewrites tag the result `merged` and count it in the trust checks.
 - **Columns**: parses `INSERT INTO ... SELECT` and `CREATE TABLE ... AS SELECT` with sqlglot. Statements that do not parse are skipped and counted.
 - **Compare**: keeps only the file name of the previous scan in the output.
+- **CTE names** (always on): the Lakebridge Analyzer can report a common table expression or an alias as a table (`latest`, `online`, `s`). Names defined by `WITH ... AS (` in the embedded SQL, or in the source files with `--run`, get the tag `cte`; unqualified, never-written tables read only next to schema-qualified tables get `maybe-cte`. Both are counted in the trust checks and shown in the slices.
 
 ## AI-assisted impact analysis (optional)
 
@@ -97,6 +98,14 @@ This builds the lineage, then serves the viewer at `http://127.0.0.1:8765/` (`--
 - The model is told to use only the context it receives. AI output can still be wrong; check it against the lineage.
 - Without `--serve`, the HTML file works as before, with no AI panel and no network access.
 
+## Migration slices
+
+```sh
+sts-lb-lineage report.json --uc-catalog main --slices
+```
+
+`slices/` gets one CSV per top-level process, a self-contained unit of migration work, and `slices/index.csv` lists them with technology, program and table counts, dependencies, and cycles. Each slice row is one table the process touches: `access` (reads, writes, or both), `role`, `shared` and `shared_with` (the other processes that use it: the contracts to keep or cut over together), `suggested_target`, `layer`, volumes, the programs, and tags (`temp`, `cte`, `maybe-cte`, `merged`). The process drawer in the viewer has **Download migration slice** with the same columns, and `--uc-export` writes them to `lineage_slices`.
+
 ## Outputs
 
 | File | Content |
@@ -107,6 +116,7 @@ This builds the lineage, then serves the viewer at `http://127.0.0.1:8765/` (`--
 | `uc_mapping.csv` | Suggested Unity Catalog target per table |
 | `uc_external_lineage.json` | Unity Catalog external lineage payload (dry run) |
 | `lineage.mmd` | Mermaid flowchart, one subgraph per process |
+| `slices/` | With `--slices`: one CSV per process plus `index.csv` |
 | `lineage.html` | The viewer |
 
 CSV cells that start with `=`, `+`, `-`, or `@` get a leading `'` so spreadsheets do not run them as formulas.
@@ -148,7 +158,7 @@ sts-lb-lineage report.json --uc-export <catalog>.<schema> --profile <profile> --
 - **Mapping**: a suggestion only. Temp tables and orphans get no target. When several legacy tables map to one target, the CLI warns, `uc_mapping.csv` fills `shared_with`, the object drawer shows the other tables, and the trust checks count it.
 - **Volumes**: matched on the full name. A bare name matches only when one side has no schema. `--profiler` scans the extract for a table with a table-name column and a row-count or size column, and prints the table it used. CSV values win over Profiler values.
 - **External lineage**: one external metadata object per legacy table (`<prefix>__<name>`, with the legacy name, role, process, and suggested target as properties) and one relationship per table-to-table edge. `--uc-link` also links each legacy table to its suggested UC table, when that table exists, so the Catalog Explorer lineage of the migrated table shows its legacy upstream. `--uc-push` prints the workspace and a plan (new and existing objects), asks you to type `yes` (`--yes` skips the prompt), checks the per-metastore limits (10,000 objects, 100,000 relationships), and skips objects that already exist, so reruns are safe. Needs `CREATE EXTERNAL METADATA` on the metastore. See [external lineage](https://docs.databricks.com/aws/en/data-governance/unity-catalog/external-lineage).
-- **Delta export**: creates the schema and a volume `sts_lb_lineage_files` if missing, uploads the rows as JSON lines, and creates or replaces the tables `lineage_nodes`, `lineage_edges`, `lineage_processes`, `lineage_shared_tables`, `lineage_programs`, `lineage_columns`, and `lineage_summary`. Object names are data in the files, never SQL text; the catalog and schema must be plain identifiers.
+- **Delta export**: creates the schema and a volume `sts_lb_lineage_files` if missing, uploads the rows as JSON lines, and creates or replaces the tables `lineage_nodes`, `lineage_edges`, `lineage_processes`, `lineage_shared_tables`, `lineage_programs`, `lineage_columns`, `lineage_slices`, and `lineage_summary`. Object names are data in the files, never SQL text; the catalog and schema must be plain identifiers.
 
 ## Supported technologies
 
@@ -211,7 +221,8 @@ uv run -p 3.12 --no-project --with-editable '.[test,analyzer]' pytest -q -m e2e
 (cd viewer && npm ci --legacy-peer-deps && npm run build)
 
 # UI smoke test in headless Chrome (set CHROME_PATH if Chrome is not in the default macOS place):
-# every page renders, graphs show without extra clicks, process map toggles keep a graph
+# light and dark mode with contrast, every page renders, graphs show without extra clicks,
+# process map toggles keep a graph, keyboard navigation in graphs
 python tests/estate.py /tmp/estate && sts-lb-lineage /tmp/estate/*.json -o /tmp/estate/out
 (cd viewer && npm run e2e -- /tmp/estate/out/lineage.html table:dw.fact_sales_01 wf_sales_01)
 

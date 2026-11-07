@@ -15,6 +15,8 @@ const TRUST: { key: string; label: string; help: string; optional?: boolean }[] 
   { key: 'tempTables', label: 'Temporary tables', help: '@ or # names, kept to preserve chains.' },
   { key: 'programsWithoutLineage', label: 'Programs without lineage', help: 'Scanned, but no read or write relations found.' },
   { key: 'offSchemaComplexity', label: 'Off-schema complexity values', help: 'The analyzer emitted a level outside its schema (for example COMPLEX).' },
+  { key: 'cteTables', label: 'CTE names reported as tables', help: 'Found as WITH ... AS in the SQL text (embedded SQL, or the sources with --run). Not real tables.', optional: true },
+  { key: 'possibleCteTables', label: 'Possible CTE or alias names', help: 'Unqualified, never written, and read only next to schema-qualified tables. Often a CTE or an alias the analyzer did not resolve.', optional: true },
   { key: 'ucTargetCollisions', label: 'Shared UC targets', help: 'Suggested UC tables that several legacy tables map to. Check the --uc-pattern, or confirm the merge.' },
   { key: 'merged_searchPath', label: 'Names qualified by --search-path', help: 'Unqualified names merged into the one matching schema.', optional: true },
   { key: 'merged_instances', label: 'Instances folded', help: 'ETL instance names (SQ_X, X_1) merged into table X.', optional: true },

@@ -316,3 +316,66 @@ def test_ai_context_names_the_cycle_members():
     ctx = ai.impact_context(d, "proc:wf_customer", "down")
     p = next(x for x in ctx["processes"] if x["name"] == "wf_customer")
     assert p["in_cycle"] and p["cycle_with"] == ["wf_sales"] and "feeds" in p
+
+
+def test_cte_names_are_flagged():
+    lin = Lineage()
+    lin.add_report(
+        {
+            "runInfo": {"sourceTechnology": "SQL"},
+            "object_lineage": [
+                {
+                    "target": "stg.seg",
+                    "writes": [{"file": "a.sql", "sources": ["latest", "raw.x"]}],
+                },
+                {
+                    "target": "dw.f",
+                    "writes": [{"file": "b.sql", "sources": ["s", "stg.seg"]}],
+                },
+                {
+                    "target": "dw.g",
+                    "writes": [{"file": "c.sql", "sources": ["lookup_codes"]}],
+                },
+            ],
+        }
+    )
+    sql = "WITH latest AS (SELECT 1), other (a) AS (SELECT 2) SELECT * FROM latest"
+    assert normalize.cte_names([sql]) == {"latest", "other"}
+    counts = normalize.flag_ctes(lin, [sql])
+    assert "cte" in lin.nodes["table:latest"]["tags"]
+    assert "maybe-cte" in lin.nodes["table:s"]["tags"]  # alias next to qualified tables
+    assert (
+        "maybe-cte" not in lin.nodes["table:lookup_codes"]["tags"]
+    )  # used alone: a real table
+    assert counts == {"cteTables": 1, "possibleCteTables": 1}
+
+
+def test_migration_slices_per_process(tmp_path):
+    from sts_lb_lineage.slices import file_name, slice_rows, write_slices
+
+    d = sts_lb_uc.enrich(load("sql_retail", "infa_customer").to_dict(), "main")
+    rows = slice_rows(d)
+    assert set(rows) == {p["name"] for p in d["insights"]["processes"]}
+    sales = {r[0]: r for r in rows["wf_sales"]}
+    assert (
+        sales["CUSTOMER_SCORE"][3] == "yes"
+        and "wf_customer" in sales["CUSTOMER_SCORE"][4]
+    )
+    assert sales["CUSTOMER_SCORE"][5].startswith("main.")
+    folder = write_slices(d, tmp_path)
+    index = (folder / "index.csv").read_text().splitlines()
+    index = [r.split(",") for r in index]
+    assert index[0][0] == "process" and len(index) == len(rows) + 1
+    assert all((folder / r[1]).exists() for r in index[1:])
+    used = set()
+    assert file_name("../../etc/passwd", used) == "etc_passwd.csv"
+    assert file_name("ETC/passwd", used) != "etc_passwd.csv"  # case-insensitive dedupe
+    assert export.rows(d)["slices"][0]["process"]
+
+
+def test_slice_never_lists_its_own_process_as_a_partner():
+    from sts_lb_lineage.slices import slice_rows
+
+    d = load("sql_retail", "infa_customer").to_dict()
+    for proc, rows in slice_rows(d).items():
+        assert all(proc not in r[4].split("|") for r in rows), proc

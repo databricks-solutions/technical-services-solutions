@@ -249,6 +249,46 @@ export function groupOf(model: Model, by: GroupBy, id: string): string {
 
 export const groupLabel = (by: GroupBy, key: string) => (by === 'process' ? shortName(key) : key);
 
+export const SLICE_HEADER = ['table', 'access', 'role', 'shared', 'shared_with', 'suggested_target', 'layer', 'rows', 'bytes', 'programs', 'tags'];
+
+/** Same rows as `sts-lb-lineage --slices`: every table the process touches, how, and its UC target. */
+export function sliceRows(model: Model, proc: string): (string | number)[][] {
+  const p = model.procByName.get(proc);
+  if (!p) return [];
+  const use = new Map<string, { reads: boolean; writes: boolean; programs: Set<string> }>();
+  for (const name of p.programs) {
+    const prog = model.programs.get(name);
+    for (const side of ['reads', 'writes'] as const)
+      for (const t of prog?.[side] ?? []) {
+        if (model.byId.get(t)?.kind !== 'table') continue;
+        const u = use.get(t) ?? { reads: false, writes: false, programs: new Set<string>() };
+        u[side] = true;
+        u.programs.add(name);
+        use.set(t, u);
+      }
+  }
+  return [...use.entries()]
+    .map(([t, u]) => {
+      const n = model.byId.get(t)!;
+      const h = model.hubById.get(t);
+      const others = h ? [...new Set([...h.writers, ...h.readers])].filter((x) => x !== proc).sort() : [];
+      return [
+        n.name,
+        u.reads && u.writes ? 'reads and writes' : u.writes ? 'writes' : 'reads',
+        n.role ?? '',
+        h ? 'yes' : 'no',
+        others.join('|'),
+        n.uc?.target ?? '',
+        n.uc?.layer ?? '',
+        n.volume?.rows ?? '',
+        n.volume?.bytes ?? '',
+        [...u.programs].sort().join('|'),
+        n.tags.filter((x) => ['temp', 'cte', 'maybe-cte', 'merged'].includes(x)).sort().join('|'),
+      ];
+    })
+    .sort((a, b) => String(a[0]).toLowerCase().localeCompare(String(b[0]).toLowerCase()));
+}
+
 export function downloadCsv(filename: string, header: string[], rows: (string | number)[][]) {
   const cell = (v: string | number) => {
     // neutralize spreadsheet formulas (CSV injection) in text cells

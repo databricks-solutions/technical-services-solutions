@@ -1,6 +1,7 @@
-// UI smoke test: opens a generated lineage.html in headless Chrome and checks that every page
-// renders, that graphs appear without extra clicks, and that the process map toggles keep a graph
-// on screen. Usage: CHROME_PATH=/path/to/chrome node e2e/smoke.mjs <lineage.html> [object-id] [process]
+// UI smoke test: opens a generated lineage.html in headless Chrome, in light and dark mode, and
+// checks that every page renders with readable contrast, that graphs appear without extra clicks,
+// that the process map toggles keep a graph on screen, and that graphs work from the keyboard.
+// Usage: CHROME_PATH=/path/to/chrome node e2e/smoke.mjs <lineage.html> [object-id] [process]
 import { pathToFileURL } from 'node:url';
 import puppeteer from 'puppeteer-core';
 
@@ -30,6 +31,34 @@ const graphNodes = (scope = '') =>
     .catch(() => 0);
 const toggle = (id) => page.$eval(`[data-component-id="${id}"]`, (s) => s.click()).then(() => new Promise((r) => setTimeout(r, 400)));
 
+// WCAG relative-luminance contrast between the page title and the page background
+const contrast = () =>
+  page.evaluate(() => {
+    const rgb = (c) => (c.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
+    const lum = ([r, g, b]) =>
+      [r, g, b].map((v) => ((v /= 255) <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)).reduce((a, v, i) => a + v * [0.2126, 0.7152, 0.0722][i], 0);
+    let bgEl = document.querySelector('.lbl-main');
+    let bg = getComputedStyle(bgEl).backgroundColor;
+    while (bgEl && /rgba\(0, 0, 0, 0\)|transparent/.test(bg)) {
+      bgEl = bgEl.parentElement;
+      bg = bgEl ? getComputedStyle(bgEl).backgroundColor : 'rgb(255, 255, 255)';
+    }
+    const fg = getComputedStyle(document.querySelector('.lbl-main h1, .lbl-main h2') ?? document.body).color;
+    const [a, b] = [lum(rgb(fg)), lum(rgb(bg))].sort((x, y) => y - x);
+    return { ratio: (a + 0.05) / (b + 0.05), background: lum(rgb(bg)) };
+  });
+
+for (const scheme of ['light', 'dark']) {
+  await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: scheme }]);
+  await open('tab=overview');
+  const c = await contrast();
+  check(scheme === 'light' ? c.background > 0.5 : c.background < 0.5, `${scheme} mode applies (background luminance ${c.background.toFixed(2)})`);
+  check(c.ratio >= 4.5, `${scheme} mode title contrast ${c.ratio.toFixed(1)}:1 (needs 4.5:1)`);
+  await open('tab=processes');
+  check((await graphNodes()) > 0, `${scheme} mode process map shows a graph`);
+}
+await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }]);
+
 for (const tab of ['overview', 'statistics', 'processes', 'objects', 'impact']) {
   await open(`tab=${tab}`);
   check(await page.$('.lbl-main h1, .lbl-main h2, .lbl-main header'), `${tab} page renders`);
@@ -46,6 +75,22 @@ for (const id of ['sts-lb-lineage.map.hubs', 'sts-lb-lineage.map.connected']) {
   await toggle(id);
   check((await graphNodes()) > 0, `process map keeps a graph after toggling ${id.split('.').pop()} off`);
 }
+
+// keyboard: focus a node, move with an arrow key, open with Enter
+await open('tab=processes');
+await graphNodes();
+await page.$eval('.react-flow__node[tabindex="0"]', (n) => n.focus());
+const first = await page.evaluate(() => document.activeElement?.getAttribute('data-id'));
+for (const key of ['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp']) {
+  await page.keyboard.press(key);
+  if ((await page.evaluate(() => document.activeElement?.getAttribute('data-id'))) !== first) break;
+}
+const moved = await page.evaluate(() => document.activeElement?.getAttribute('data-id'));
+check(moved && moved !== first, 'arrow keys move the focus to another graph node');
+check(await page.evaluate(() => !!document.activeElement?.getAttribute('aria-label')), 'focused graph node has an accessible name');
+await page.keyboard.press('Enter');
+await new Promise((r) => setTimeout(r, 400));
+check(/[#&](proc|obj)=/.test(page.url()), 'Enter opens the focused node');
 
 await open('tab=objects');
 const objectGraph = (await graphNodes()) > 0;

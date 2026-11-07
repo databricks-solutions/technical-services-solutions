@@ -1,5 +1,6 @@
 import {
   Button,
+  DownloadIcon,
   Drawer,
   Empty,
   FileCodeIcon,
@@ -16,7 +17,7 @@ import {
   WorkflowsIcon,
 } from '@databricks/design-system';
 
-import { type LEdge, type LNode, type LProgram, type Model, SHARED, fmtBytes, shortName, techList } from './data';
+import { type LEdge, type LNode, type LProgram, type Model, SHARED, SLICE_HEADER, downloadCsv, fmtBytes, shortName, sliceRows, techList } from './data';
 import { GraphView } from './Graph';
 import { KindIcon, LevelMix, LevelTag, ROLE_HELP, kindLabel, levelLabel, plural, roleLabel } from './ui';
 
@@ -360,6 +361,13 @@ export function ProcessDrawer({
               </Button>
               <Button componentId="sts-lb-lineage.process.impact" onClick={() => onImpact(p.name)}>
                 Impact analysis
+              </Button>
+              <Button
+                componentId="sts-lb-lineage.process.slice"
+                icon={<DownloadIcon />}
+                onClick={() => downloadCsv(`${p.name.replace(/[^A-Za-z0-9_.-]+/g, '_')}.csv`, SLICE_HEADER, sliceRows(model, p.name))}
+              >
+                Download migration slice
               </Button>
             </div>
             {scope.length > 0 && scope.length <= 200 ? (

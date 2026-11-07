@@ -29,7 +29,7 @@ import {
   ReactFlowProvider,
   useReactFlow,
 } from '@xyflow/react';
-import { type ReactNode, memo, useEffect, useMemo, useState } from 'react';
+import { type KeyboardEvent, type ReactNode, memo, useEffect, useMemo, useState } from 'react';
 
 import { type GroupBy, type LEdge, type LNode, type Model, SHARED, groupLabel, groupOf, shortName, techList } from './data';
 import { KindIcon, levelLabel, roleLabel } from './ui';
@@ -332,6 +332,7 @@ function Canvas({ model, groupBy, focusId = null, scope, boundary, emphasis, onO
     const groupNodes: Node<GroupData>[] = boxes.map((b) => ({
       id: `grp:${b.key}`,
       type: 'group',
+      focusable: false,
       position: { x: b.x, y: b.y },
       style: { width: b.w, height: b.h },
       selectable: false,
@@ -341,6 +342,7 @@ function Canvas({ model, groupBy, focusId = null, scope, boundary, emphasis, onO
     const cards: Node<CardData>[] = [...visible].map((id) => ({
       id,
       type: 'card',
+      ariaLabel: `${model.byId.get(id)!.kind === 'job' ? 'Job' : 'Table'} ${model.byId.get(id)!.name}. Press Enter for details.`,
       position: pos.get(id)!,
       ...parent(id),
       selected: id === selNode,
@@ -357,6 +359,7 @@ function Canvas({ model, groupBy, focusId = null, scope, boundary, emphasis, onO
     const stubNodes: Node<StubData>[] = [...stubs.entries()].map(([sid, count]) => ({
       id: sid,
       type: 'stub',
+      ariaLabel: `Connected process ${sid.slice(5)}`,
       position: pos.get(sid)!,
       ...parent(sid),
       data: { label: shortName(sid.slice(5)), title: sid.slice(5), count },
@@ -364,6 +367,7 @@ function Canvas({ model, groupBy, focusId = null, scope, boundary, emphasis, onO
     const moreNodes: Node<MoreData>[] = [...more.entries()].map(([mid, m]) => ({
       id: mid,
       type: 'more',
+      ariaLabel: `${m.ids.length} more objects. Press Enter to show them.`,
       position: pos.get(mid)!,
       ...parent(mid),
       data: { label: `${m.ids.length} more ${m.side === 'up' ? 'upstream' : 'downstream'} at hop ${m.hop}` },
@@ -425,6 +429,7 @@ function Canvas({ model, groupBy, focusId = null, scope, boundary, emphasis, onO
 
   return (
     <ReactFlow
+      onKeyDownCapture={onGraphKey}
       nodes={nodes}
       edges={edges}
       nodeTypes={nodeTypes}
@@ -595,6 +600,39 @@ export function LineageModal({
       </div>
     </Modal>
   );
+}
+
+const STEP: Record<string, [number, number]> = { ArrowRight: [1, 0], ArrowLeft: [-1, 0], ArrowDown: [0, 1], ArrowUp: [0, -1] };
+
+/** Keyboard access for every graph: Tab reaches the nodes, arrow keys move to the nearest node in
+ *  that direction (the view follows), Enter or Space acts like a click on the focused node. */
+export function onGraphKey(e: KeyboardEvent<HTMLDivElement>) {
+  const el = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>('.react-flow__node');
+  if (!el || !e.currentTarget.contains(el)) return;
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    e.stopPropagation();
+    el.click();
+    return;
+  }
+  const dir = STEP[e.key];
+  if (!dir) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const r = el.getBoundingClientRect();
+  let best: HTMLElement | null = null;
+  let bestScore = Infinity;
+  for (const n of e.currentTarget.querySelectorAll<HTMLElement>('.react-flow__node')) {
+    if (n === el || n.tabIndex < 0) continue;
+    const q = n.getBoundingClientRect();
+    const dx = q.x + q.width / 2 - (r.x + r.width / 2);
+    const dy = q.y + q.height / 2 - (r.y + r.height / 2);
+    const along = dx * dir[0] + dy * dir[1];
+    if (along <= 1) continue;
+    const score = along + 2 * Math.abs(dx * dir[1] - dy * dir[0]);
+    if (score < bestScore) [best, bestScore] = [n, score];
+  }
+  best?.focus();
 }
 
 /** `inline` is the short preview inside a drawer. */

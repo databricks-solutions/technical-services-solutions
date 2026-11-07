@@ -38,7 +38,7 @@ import {
 import { memo, useEffect, useMemo, useState } from 'react';
 
 import { type Model, type ProcessInfo, shortName } from './data';
-import { H, W, layoutComponents } from './Graph';
+import { H, W, layoutComponents, onGraphKey } from './Graph';
 import { LevelTag, plural } from './ui';
 
 type ProcData = { p: ProcessInfo; selected: boolean };
@@ -165,12 +165,14 @@ function MapCanvas({
       ...procs.map((p) => ({
         id: `p:${p.name}`,
         type: 'proc',
+        ariaLabel: `Process ${p.name}, ${p.objects.length} objects. Press Enter for details.`,
         position: pos.get(`p:${p.name}`)!,
         data: { p, selected: active(`p:${p.name}`) },
       })),
       ...hubIds.map((h) => ({
         id: `h:${h}`,
         type: 'hub',
+        ariaLabel: `Shared table ${model.byId.get(h)?.name ?? h}. Press Enter for details.`,
         position: pos.get(`h:${h}`)!,
         data: { name: model.byId.get(h)?.name ?? h, count: model.hubById.get(h)!.processCount, selected: active(`h:${h}`) },
       })),
@@ -207,6 +209,7 @@ function MapCanvas({
     );
   return (
     <ReactFlow
+      onKeyDownCapture={onGraphKey}
       nodes={nodes}
       edges={edges}
       nodeTypes={nodeTypes}

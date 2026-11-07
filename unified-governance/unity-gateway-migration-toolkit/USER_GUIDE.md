@@ -1,6 +1,6 @@
 # Unity Gateway Migration Toolkit: User Guide
 
-Version 0.10.1 (prototype)
+Version 0.10.2 (prototype)
 
 > Prototype from Databricks Shared Technical Services, provided as is. Planning and scans only read. Writes happen only when you start them. Review every result before you act on it.
 
@@ -11,6 +11,7 @@ Version 0.10.1 (prototype)
   - [Before you start](#before-you-start)
   - [Install the toolkit](#install-the-toolkit)
   - [Update and upgrade](#update-and-upgrade)
+  - [Upgrade notes: 0.10.1 to 0.10.2](#upgrade-notes-0101-to-0102)
   - [Upgrade notes: 0.10.0 to 0.10.1](#upgrade-notes-0100-to-0101)
   - [Upgrade notes: 0.9.0 to 0.10.0](#upgrade-notes-090-to-0100)
   - [Other install methods](#other-install-methods)
@@ -104,7 +105,7 @@ A **legacy endpoint** is a v1 serving endpoint (`/serving-endpoints/<name>/invoc
 
 The installer notebook is the only file you import. It creates everything inside the workspace in about 5 minutes.
 
-1. Download `unity-gateway-migration-toolkit.zip` from the [release page](https://github.com/databricks-solutions/technical-services-solutions/releases/tag/unity-gateway-migration-toolkit-latest) and unzip it. In the workspace, go to your home folder, choose **Import**, and import `INSTALL_unity_gateway_migration_toolkit_0_10_1.py` from the zip's top folder.
+1. Download `unity-gateway-migration-toolkit.zip` from the [release page](https://github.com/databricks-solutions/technical-services-solutions/releases/tag/unity-gateway-migration-toolkit-latest) and unzip it. In the workspace, go to your home folder, choose **Import**, and import `INSTALL_unity_gateway_migration_toolkit_0_10_2.py` from the zip's top folder.
 2. Open the notebook. Set **Install: Results catalog** (a catalog where you can create a schema) and **Install: SQL warehouse**. Leave the other widgets at their defaults ([Installer widgets](#installer-widgets)). If the widget panel shows widgets from an older installer, remove them once, then run again.
 3. Click **Run all**.
 
@@ -146,6 +147,18 @@ Import the newer installer and run it with the same widgets. Results history is 
 - **From 0.7.0** (app `ug-migration`): the same two choices apply.
 - **Bundle:** the app is now `ug-migration-bundle`. Run `databricks bundle plan` first. It creates a new app, so delete the old one by hand.
 - **Since 0.7.0:** grants are off by default, Execute needs a matching dry run, and scans older than 14 days and endpoints with legacy guardrails need confirmation or an acknowledgement. Account wave 0 is now `0: no legacy traffic`.
+
+#### Upgrade notes: 0.10.1 to 0.10.2
+
+Scan again. Tables and jobs don't change.
+
+- **Agent endpoints** aren't retired, so they are now out of scope (no change for their callers) with an `agent_endpoint` warning about the LLM calls inside them, instead of an `agent` blocker. `dormant_agent_endpoint` is folded into it. Knowledge Assistant and Supervisor Agent endpoints get `agent_bricks_endpoint`, which points to Genie Agents.
+- **AI Search** advice says what's known: no date for Unity Gateway embedding services, an index has to be recreated to change its embedding endpoint, and an index on a `databricks-*` embedding stops at the deadline even with Enforce off.
+- **Agent traffic.** Agent endpoints can't turn on usage tracking, so their findings say traffic unknown instead of "no requests".
+- **Agent model code.** Calls inside `ResponsesAgent`, `ChatAgent` and `ChatModel` classes (the classes `agents.deploy` serves) now get the same model-code note as `PythonModel` classes: they run inside the agent's endpoint, so re-log it with explicit credentials.
+- **The toolkit's own app** (source folder and its service principal's deployment copies) is no longer scanned. An app counts as the toolkit's only when its description starts with "Unity Gateway Migration Toolkit" *and* its source is bound to it: the install marker next to `files/app` names the app (installer), or the source is the toolkit's bundle root (`.bundle/unity-gateway-migration-toolkit/...` with its `databricks.yml`). Skipping it is a note, not a coverage gap, and the note names each skipped app and folder. A folder that holds toolkit files but isn't used by such an app is still skipped, as a coverage gap that names the folder: check it by hand.
+- **Apply** now creates a model service for an external model endpoint that forwards to a `databricks-*` endpoint: a pay-per-token destination on the same model, keeping the rate limits and inference table. No provider service is needed. It does so only when the `system.ai` UC model is confirmed in the `system.ai` model list; otherwise the plan is manual (`unconfirmed_model`).
+- **Agents' inner calls block.** `custom_endpoint_inner_call` (requests from a `System Service Principal`) is now a blocker when the endpoint is one Enforce stops (`databricks-*`, or an external model that forwards to one). An agent's model code is often a logged model the code scan can't read, so its traffic is what shows the break.
 
 #### Upgrade notes: 0.10.0 to 0.10.1
 
@@ -281,7 +294,7 @@ Caveats that matter:
 - Never move a Responses client to Chat Completions. A change of API type needs application-level testing first.
 - Some clients only call `/serving-endpoints`, so changing only the endpoint name gives a 404: `w.serving_endpoints.get_open_ai_client()`, `w.serving_endpoints.query`, the MLflow deployments client, and `ChatDatabricks` without `use_ai_gateway=True`. Change the client, as each finding says.
 - Calls to custom model endpoints (your own ML models) need no change. They stay on `/serving-endpoints`, and Enforce doesn't affect them.
-- A custom agent that calls an LLM from its model code fails on Unity Gateway with automatic authentication (a misleading `NotFound`). Re-log it with explicit credentials, or move it to a Databricks App. Then turn on its usage tracking.
+- A custom agent that calls an LLM from its model code fails on Unity Gateway with automatic authentication (a misleading `NotFound`). Re-log it with explicit credentials, or move it to a Databricks App. On a custom model endpoint, then turn on its usage tracking. Agent endpoints (`agents.deploy`, Agent Bricks) can't turn it on, so their requests aren't in the usage tables: check the agent's inference table or MLflow traces.
 - **Credentials for `/ai-gateway/`:** use service principal OAuth (M2M) first, and a PAT with the `ai-gateway` scope only as a fallback. Keep either one in a secret scope and pass it as a `{{secrets/<scope>/<key>}}` reference (for example in a serving endpoint's `environment_vars`). Never paste a literal secret value.
 
 **Workspace-bound v2 endpoints.** Keep the route and change only the model name, from the flat name to the three-part `system.ai` name in the plan (the `target` in CODE_FIXES.md):
@@ -663,23 +676,23 @@ The `type` is the stable name in `readiness.json`. The label and action are what
 | `legacy_traffic` | Blocker | Callers still use a legacy endpoint | Move the callers to `<target>` before enforcing. Coding agents: use `ucode` |
 | `pay_per_token_call` | Blocker | Code calls a Databricks pay-per-token endpoint | Switch the calls to `<target>`, then re-scan. If the endpoint also embeds for an AI Search index, switch only the direct calls and keep the endpoint |
 | `v2_workspace_call` | Blocker | Code calls a v2 workspace endpoint | Set the model to `<target>`, keep the `/ai-gateway/` route, then re-scan |
-| `vector_search` | Blocker | AI Search index embeds with a legacy endpoint | Keep the endpoint, and don't enforce Unity Gateway until the index can re-embed with a supported `system.ai` embedding service. Support is rolling out model by model: check the AI Search docs |
+| `vector_search` | Blocker | AI Search index embeds with a legacy endpoint | Keep the endpoint and don't enforce Unity Gateway yet. AI Search can't embed with a Unity Gateway service (no date announced), and an index can't switch its embedding endpoint: plan to recreate it once support arrives, or move it to self-managed embeddings. An index on a `databricks-*` embedding stops at the deadline even if Enforce is never turned on |
 | `unresolved_endpoint_call` | Blocker | Code calls a serving endpoint the scan can't name | Find which endpoint the call reaches at run time. A legacy one: rewrite the client as the finding says (changing only the name gives a 404). A custom model or feature serving one: no change, and putting its name in the code or a config value lets the next scan confirm it |
 | `tabular_endpoint_call` | Warning | Code sends tabular input to an endpoint the scan can't name | Usually a custom model endpoint, which needs no change. Confirm which endpoint it calls |
-| `external_model_on_ppt` | Blocker | External model endpoint forwards to a pay-per-token endpoint | Move its callers to the `system.ai` model (or a model service with that destination) before enforcing |
+| `external_model_on_ppt` | Blocker | External model endpoint forwards to a pay-per-token endpoint | Move its callers to the `system.ai` model, or to the model service Apply creates (a pay-per-token destination on the same model, keeping rate limits and the inference table), before enforcing |
 | `agent_bricks_vector_search` | Blocker | Agent Bricks agent uses AI Search | Check its index and embedding model before enforcing |
 | `app_resource` | Blocker | App declares a legacy serving endpoint resource | Replace it with the Unity Gateway service, grant `EXECUTE`, call `/ai-gateway/` |
 | `ai_query_custom` | Blocker | ai_query calls a model with no Unity Gateway service yet | Keep the call, or switch it to a `system.ai` model |
-| `agent` | Blocker | Agent endpoint runs on legacy serving | Redeploy on Databricks Apps or rebuild, then re-plan |
 | `platform_managed_traffic` | Warning | Databricks-managed callers use this endpoint | You can't change these callers. Confirm with your account team |
 | `legacy_traffic_kept_after_enforce` | Warning | Callers use an external or PT endpoint that outlives Enforce | Move them before the deadline |
 | `local_folders_not_scanned` | Warning | Local folders were not scanned | Re-run with `--local-path`, or confirm no local code calls a legacy endpoint. Caps the status at `READY_WITH_WARNINGS` |
 | `skipped_paths_not_scanned` | Warning | Some folders or file types were not scanned | Check the listed folders and file types for calls to legacy endpoints, or confirm they hold none (vendored packages and build output usually don't). Caps the status at `READY_WITH_WARNINGS` |
 | `unattributed_legacy_traffic` | Warning | Legacy requests couldn't be matched to an endpoint | Some v1 requests have no `system.serving.served_entities` row, so the scan can't tell which endpoint they used. Check `SELECT` on `system.serving.served_entities` and confirm with the owners. Caps the status at `READY_WITH_WARNINGS` |
 | `confirm_infrequent_callers` | Warning | Pay-per-token or v2 endpoint has no traffic and no known callers | Confirm monthly or quarterly jobs with owners. Pay-per-token endpoints come as one warning that lists them (built-in endpoints nobody calls need no action). v2 endpoints seen in the last year count, even with no traffic in the window |
-| `custom_endpoint_inner_call` | Warning | A serving endpoint may call this endpoint from its model code | A `System Service Principal` caller is usually a custom agent's automatic authentication. Re-log that agent with explicit credentials to call the model service, and turn on its usage tracking |
+| `custom_endpoint_inner_call` | Blocker on a `databricks-*` endpoint (or an external model that forwards to one), else Warning | A serving endpoint calls this endpoint from its model code | A `System Service Principal` caller is usually a custom agent's automatic authentication. Enforce stops `databricks-*` endpoints, so those calls fail once it's on. Re-log that agent with explicit credentials to call the model service. If it's a custom model endpoint, turn on its usage tracking (agent endpoints can't) |
 | `no_traffic_in_window` | Warning | No requests in the window and usage tracking is off | Confirm with owners that no infrequent job calls it |
-| `dormant_agent_endpoint` | Warning | Agent endpoint has no traffic in the window | Confirm it is unused. If it is still used, redeploy it before enforcing |
+| `agent_endpoint` | Warning | Agent endpoint: the LLM calls inside it must move | The endpoint isn't retired and its callers need no change. Move the LLM calls inside it to `system.ai` or model services: Model Serving's automatic authentication can't call Unity Gateway services, so re-log the agent with explicit credentials, or move it to Databricks Apps. Agent endpoints can't turn on usage tracking, so their traffic is usually unknown: confirm with the owner that it is still used, or check its inference table or MLflow traces |
+| `agent_bricks_endpoint` | Warning | Agent Bricks agent: a legacy offering, replaced by Genie Agents | A Knowledge Assistant or Supervisor Agent endpoint. No code to change: plan the move to Genie Agents, and check that it doesn't use an AI Search index before enforcing |
 
 Code-reference warnings (for example `sdk_serving_query`) carry their fix in CODE_FIXES.md. Traffic from Databricks-managed callers only is a warning. Traffic that also has customer-owned callers is a `legacy_traffic` blocker. `v2_off_failing_calls` replaces the plain v2 blocker for an endpoint (its traffic and call sites are folded in, so nothing is counted twice). It needs at least 10 v2 requests in the window, and at least 95% of them failed (no status code, status 0, or status 501, which is what a turned-off v2 gateway returns; 403 and 404 aren't counted, because they usually come from the caller). The readiness blockers come in this order: `unity_gateway_unavailable`, `v2_off_failing_calls`, then the rest.
 

@@ -535,13 +535,33 @@ def test_walk_skips_dependency_folders_and_budgets_per_root(monkeypatch):
     assert "/Users/node_modules" not in listed
 
 
-def test_toolkit_folder_skip_is_partial_coverage(monkeypatch):
+def test_toolkit_folder_skip_is_a_note_only_for_a_verified_install(monkeypatch):
     objects = {"/Users": [{"path": "/Users/kit", "object_type": "DIRECTORY"}],
                "/Users/kit": [{"path": "/Users/kit/ug_migration_planner.py", "object_type": "FILE"}]}
     monkeypatch.setattr(m, "_get", lambda w, path, query=None: {"objects": objects.get(query["path"], [])})
+    # A verified toolkit app's source is under the folder: a note, not a gap.
+    s = m.Scanner(["proj-a-gpt"], {}, [])
+    m.scan_workspace(mock.MagicMock(), s, ["/Users"], 100, threads=2, skip_prefixes=["/Users/kit/files/app"])
+    assert s.coverage["toolkit_install"] == f"{m.NOT_SCANNED}: 1 folder, {m.TOOLKIT_NOTE}: /Users/kit"
+    assert s.coverage["workspace_files"] == "ok"
+    # No toolkit app uses it: still skipped, but a coverage gap that names the folder.
     s = m.Scanner(["proj-a-gpt"], {}, [])
     m.scan_workspace(mock.MagicMock(), s, ["/Users"], 100, threads=2)
-    assert s.coverage["workspace_files"] == "partial: 1 folders skipped (the toolkit's own install)"
+    assert "toolkit_install" not in s.coverage
+    assert s.coverage["workspace_files"].startswith("partial: 1 folder skipped") and "/Users/kit" in s.coverage["workspace_files"]
+
+
+def test_a_toolkit_file_name_cant_hide_a_caller(monkeypatch):
+    """A folder with a file named ug_migration_planner.py and a real call next to it must not look clean."""
+    objects = {"/Users": [{"path": "/Users/shady", "object_type": "DIRECTORY"}],
+               "/Users/shady": [{"path": "/Users/shady/ug_migration_planner.py", "object_type": "FILE"},
+                                {"path": "/Users/shady/job.py", "object_type": "FILE"}]}
+    monkeypatch.setattr(m, "_get", lambda w, path, query=None: {"objects": objects.get(query["path"], [])})
+    rows, _ = m.plan([_ep(SYSTEM_PPT)], SYS_GPT, {}, "c", "s")
+    s = m.Scanner(["databricks-gpt-5-5"], SYS_GPT, rows)
+    m.scan_workspace(mock.MagicMock(), s, ["/Users"], 100, threads=2)
+    r = m.readiness(rows, s.refs, True, 30, [_ep(SYSTEM_PPT)], {"local_files": "ok", **s.coverage})
+    assert "workspace_files" in r["coverage_gaps"] and r["status"] != "READY_WITH_WARNINGS"
 
 
 def test_genie_space_without_definition_is_unreadable():
@@ -585,6 +605,77 @@ def test_app_source_folders_become_scan_roots():
     cov = {}
     assert m.app_source_roots(w, cov) == ["/Users/a@x.com/app", "/Users/a@x.com/app/src"]
     assert cov == {"app_sources": "ok"}
+
+
+def _app(name, path, description, sp=None):
+    return SimpleNamespace(name=name, source_code_path=path, default_source_code_path=None,
+                           service_principal_client_id=sp, service_principal_name=f"app-xyz {name}",
+                           description=description)
+
+
+def _files(monkeypatch, files: dict[str, str]):
+    """Fake workspace export: path -> text."""
+    def get(w, path, params):
+        if path.endswith("/export"):
+            if params["path"] not in files:
+                raise m.NotFound("no such file") if hasattr(m, "NotFound") else Exception("RESOURCE_DOES_NOT_EXIST")
+            return {"content": base64.b64encode(files[params["path"]].encode()).decode()}
+        return {"objects": []}
+    monkeypatch.setattr(m, "_get", get)
+
+
+def test_toolkit_apps_need_a_toolkit_file_not_only_the_description(monkeypatch):
+    desc = "Unity Gateway Migration Toolkit: account overview"
+    w = mock.MagicMock()
+    w.apps.list.return_value = [
+        _app("customer-app", "/Workspace/Users/a@x.com/app", "Customer app"),
+        _app("ug-migration-toolkit", "/Workspace/Users/admin@x.com/ugmig/files/app", desc, sp="sp-123"),
+        _app("ug-migration-bundle", "/Workspace/Users/admin@x.com/.bundle/unity-gateway-migration-toolkit/dev/files",
+             desc, sp="sp-456"),
+        # Same description, but no toolkit file: scanned like any app.
+        _app("look-alike", "/Workspace/Users/b@x.com/shady/files/app", desc, sp="sp-789"),
+        # Same description and the public planner file, but not bound to this app or the toolkit's bundle.
+        _app("copycat", "/Workspace/Users/d@x.com/copy", desc),
+        # A marker that names another app doesn't count.
+        _app("other-marker", "/Workspace/Users/c@x.com/kit/files/app", desc)]
+    _files(monkeypatch, {
+        "/Users/admin@x.com/ugmig/ug_migration_toolkit.marker": json.dumps({"app": "ug-migration-toolkit"}),
+        "/Users/admin@x.com/.bundle/unity-gateway-migration-toolkit/dev/files/databricks.yml":
+            "bundle:\n  name: unity-gateway-migration-toolkit\n",
+        "/Users/admin@x.com/.bundle/unity-gateway-migration-toolkit/dev/files/ug_migration_planner.py": "x = 1",
+        "/Users/d@x.com/copy/ug_migration_planner.py": "x = 1",
+        "/Users/d@x.com/copy/backend/ug_migration_planner.py": "x = 1",
+        "/Users/c@x.com/kit/ug_migration_toolkit.marker": json.dumps({"app": "ug-migration-toolkit"})})
+    toolkit, apps, cov = [], [], {}
+    roots = m.app_source_roots(w, cov, toolkit, apps)
+    assert roots == ["/Users/a@x.com/app", "/Users/b@x.com/shady/files/app", "/Users/c@x.com/kit/files/app",
+                     "/Users/d@x.com/copy"]
+    assert sorted(apps) == ["ug-migration-bundle", "ug-migration-toolkit"]
+    # Service principal homes use the application ID only.
+    assert "/Users/sp-123/src" in toolkit and "/Users/sp-456/src" in toolkit
+    assert not any("app-xyz" in p for p in toolkit) and "/Users/sp-789/src" not in toolkit
+    # Each skipped app is named, as a note (not a gap).
+    assert cov["toolkit_apps"].startswith(m.NOT_SCANNED) and "ug-migration-bundle, ug-migration-toolkit" in cov["toolkit_apps"]
+    assert "toolkit_apps" not in m.readiness([], [], True, 30, [], cov)["coverage_gaps"]
+
+
+def test_toolkit_folders_are_skipped_and_named_in_the_note(monkeypatch):
+    toolkit = ["/Users/sp-123/src"]
+    tree = {"/Users": [{"path": "/Users/sp-123", "object_type": "DIRECTORY"},
+                       {"path": "/Users/a@x.com", "object_type": "DIRECTORY"}],
+            "/Users/sp-123": [{"path": "/Users/sp-123/src", "object_type": "DIRECTORY"}],
+            "/Users/sp-123/src": [{"path": "/Users/sp-123/src/index.js", "object_type": "FILE"}],
+            "/Users/a@x.com": [{"path": "/Users/a@x.com/job.py", "object_type": "FILE"}]}
+    monkeypatch.setattr(m, "_get", lambda w, path, params: {"objects": tree.get(params["path"], [])})
+    sc = m.Scanner([], {}, [])
+    found = m._walk_workspace(None, ["/Users"], 100, 2, skip_prefixes=toolkit)
+    assert [o["path"] for o in found] == ["/Users/a@x.com/job.py"]
+    assert m._walk_workspace.skipped == ["/Users/sp-123/src"]
+    m.scan_workspace(None, sc, ["/Users"], 100, 2, toolkit)
+    assert sc.coverage["toolkit_install"].startswith(m.NOT_SCANNED) and "/Users/sp-123/src" in sc.coverage["toolkit_install"]
+    r = m.readiness([], [], True, 30, [], dict(sc.coverage))
+    assert "toolkit_install" not in r["coverage_gaps"]
+    assert "skipped_paths_not_scanned" not in [x["type"] for x in r["warnings"]]
 
 
 def test_local_scan_marks_oversize_files_partial(tmp_path):
@@ -939,16 +1030,45 @@ def test_multiline_chatdatabricks_gets_use_ai_gateway_guidance():
     assert "spans lines" not in one.suggestion
 
 
-def test_dormant_agent_warns_and_an_active_agent_blocks():
+def test_agent_endpoints_are_not_retired_only_their_inner_calls_move():
     agent = _ep({"name": "agent-x", "id": "a1", "task": "agent/v1/responses",
                  "config": {"served_entities": [{"name": "a", "entity_name": "main.ml.agent", "entity_version": "1"}]}})
     rows, _ = m.plan([agent], {}, {}, "c", "s")
+    assert rows[0].action == "out_of_scope" and rows[0].needs_human == [m.AGENT_NEED]
+    assert "redeploy" not in m.AGENT_NEED and "explicit credentials" in m.AGENT_NEED
     dormant = m.readiness(rows, [], True, 30, [agent], {})
     assert dormant["status"] == "READY_WITH_WARNINGS" and not dormant["blockers"]
-    assert "dormant_agent_endpoint" in [w["type"] for w in dormant["warnings"]]
+    w = next(x for x in dormant["warnings"] if x["type"] == "agent_endpoint")
+    assert w["action"].startswith("confirm with the owner") and "isn't recorded" in w["action"]
+    # Agent endpoints can't turn on usage tracking: zero requests is unknown traffic, not "no requests".
+    assert w["detail"].startswith(m.AGENT_TRAFFIC_UNKNOWN) and "no requests" not in w["detail"]
+    assert "usage tracking" not in m.AGENT_ACTION
     rows2, _ = m.plan([agent], {}, {"agent-x": {"requests": 5, "requesters": 1, "last_request": "x"}}, "c", "s")
     active = m.readiness(rows2, [], True, 30, [agent], {})
-    assert "agent" in [b["type"] for b in active["blockers"]] and active["status"] == "BLOCKED"
+    # Its callers need no change: no blocker for the agent or its traffic.
+    assert not active["blockers"] and active["status"] == "READY_WITH_WARNINGS"
+    w = next(x for x in active["warnings"] if x["type"] == "agent_endpoint")
+    assert w["action"] == m.AGENT_ACTION and "5 requests" in w["detail"]
+
+
+def test_agent_bricks_endpoints_point_to_genie_agents():
+    ka = _ep({"name": "ka-1234-endpoint", "id": "k1", "task": "agent/v1/responses",
+              "config": {"served_entities": [{"name": "a", "entity_name": "main.ml.ka", "entity_version": "1"}]}})
+    rows, _ = m.plan([ka], {}, {"ka-1234-endpoint": {"requests": 3, "requesters": 1, "last_request": "x"}}, "c", "s")
+    m.annotate_agent_bricks(rows, {"ka-1234-endpoint": "knowledge assistant Docs"})
+    assert rows[0].needs_human[0].startswith("Agent Bricks knowledge assistant Docs")
+    r = m.readiness(rows, [], True, 30, [ka], {})
+    w = next(x for x in r["warnings"] if x["type"] == "agent_bricks_endpoint")
+    assert "Genie Agents" in w["action"] and not r["blockers"]
+
+
+def test_calls_to_an_agent_endpoint_need_no_change():
+    agent = _ep({"name": "agent-x", "id": "a1", "task": "agent/v1/responses",
+                 "config": {"served_entities": [{"name": "a", "entity_name": "main.ml.agent", "entity_version": "1"}]}})
+    rows, _ = m.plan([agent], {}, {}, "c", "s")
+    sc = m.Scanner(["agent-x"], {}, rows)
+    sc.scan_text("notebook", "nb", 'w.serving_endpoints.query(name="agent-x", input={"q": 1})')
+    assert [r.pattern for r in sc.refs] == ["custom_endpoint_call"]
 
 
 def test_zero_traffic_pay_per_token_with_no_known_caller_caps_ready():
@@ -1317,6 +1437,70 @@ def test_external_model_on_pay_per_token_blocks_enforce():
     assert m.ppt_backed_models(_ep(EXTERNAL)) == []
 
 
+def test_apply_creates_a_pay_per_token_model_service_for_an_external_model_on_databricks():
+    import ug_migration_apply as a
+    gw = {"rate_limits": [{"calls": 5, "key": "endpoint", "renewal_period": "minute"}],
+          "inference_table_config": {"catalog_name": "c", "schema_name": "s", "table_name_prefix": "sa",
+                                     "enabled": True}}
+    ep = _ep({**PPT_BACKED, "ai_gateway": gw})
+    uc = {"system.ai.databricks-claude-haiku-4-5"}
+    rows, providers = m.plan([ep], SIM_SYS, {}, "c", "s", uc_models=uc)
+    row = rows[0]
+    assert row.action == "create_model_service" and row.provider_status == "automated"
+    assert not providers and row.routing["destinations"][0]["pay_per_token_model"] == \
+        "system.ai.databricks-claude-haiku-4-5"
+    body = a.build_model_service(ep, row, {})
+    assert body["config"]["routing"]["destinations"] == [
+        {"name": "support_assistant", "destination_type": "DESTINATION_TYPE_PAY_PER_TOKEN_FOUNDATION_MODEL",
+         "pay_per_token_config": {"model": "models/system.ai.databricks-claude-haiku-4-5"}}]
+    assert body["config"].get("rate_limits") and body["config"].get("inference_table")
+    # Scan and Apply agree: the readiness blocker points at the model service apply creates.
+    r = m.readiness(m.plan([ep], SIM_SYS, {"support-assistant": {"requests": 4, "requesters": 1,
+                                                                    "last_request": "x"}}, "c", "s", uc_models=uc)[0],
+                    [], True, 30, [ep])
+    assert r["blockers"][0]["type"] == "external_model_on_ppt" and "c.s.support_assistant" in r["blockers"][0]["action"]
+    # A databricks-* model with no system.ai service stays manual.
+    other = _ep({**PPT_BACKED, "config": {"served_entities": [{"name": "x", "external_model": {
+        "name": "databricks-old-model", "provider": "databricks-model-serving", "task": "llm/v1/chat"}}]}})
+    assert m.plan([other], SIM_SYS, {}, "c", "s", uc_models=uc)[0][0].action == "manual"
+    # An empty or failed system.ai model list never automates (it used to, when the system.ai map was empty).
+    for models in (set(), None):
+        unconfirmed = m.plan([ep], {}, {}, "c", "s", uc_models=models)[0][0]
+        assert unconfirmed.action == "manual" and unconfirmed.provider_status == "unconfirmed_model"
+        assert any("wasn't found" in n for n in unconfirmed.needs_human)
+        with pytest.raises(a.Manual):
+            a.build_model_service(ep, unconfirmed, {}, ack_guardrails=True)
+    # The UC model comes from the plan's confirmed model, not from the service name (system.ai.claude-haiku-4-5).
+    assert "models/system.ai.claude-haiku-4-5" not in json.dumps(body)
+
+
+def test_system_ai_uc_models_list_and_failure():
+    w = mock.MagicMock()
+    w.registered_models.list.return_value = [SimpleNamespace(name="databricks-claude-haiku-4-5"), SimpleNamespace(name=None)]
+    cov = {}
+    assert m.system_ai_uc_models(w, cov) == {"system.ai.databricks-claude-haiku-4-5"} and cov["system_ai_models"] == "ok"
+    w.registered_models.list.side_effect = RuntimeError("PERMISSION_DENIED")
+    assert m.system_ai_uc_models(w, cov) == set() and cov["system_ai_models"].startswith("failed")
+
+
+def test_calls_in_agent_classes_are_model_code():
+    text = "\n".join([
+        "from mlflow.pyfunc import ResponsesAgent",
+        "class TestAgent(ResponsesAgent):",
+        "    def predict(self, request):",
+        '        return requests.post(f"{host}/serving-endpoints/databricks-claude-haiku-4-5/invocations")',
+        "",
+        "mlflow.models.set_model(TestAgent())"])
+    assert set(m.model_classes(text)) == {"TestAgent"}
+    assert m.model_classes("class Chat(mlflow.pyfunc.ChatAgent):\n    pass\n") and \
+        not m.model_classes("class Handler(BaseChatAgentHelper):\n    pass\n")
+    rows, _ = m.plan([_ep(SYSTEM_PPT)], SIM_SYS, {}, "c", "s")
+    sc = m.Scanner(["databricks-claude-haiku-4-5"], SIM_SYS, rows)
+    sc.scan_text("file", "/Shared/a/agent.py", text)
+    ref = next(r for r in sc.refs if r.line == 4)
+    assert "MLflow model code (class TestAgent)" in ref.suggestion and "explicit credentials" in ref.suggestion
+
+
 def test_calls_in_mlflow_model_code_point_at_the_custom_endpoint():
     eps = [_ep(SYSTEM_PPT), _ep(CUSTOM)]  # churn-model serves main.ml.churn
     rows, _ = m.plan(eps, SIM_SYS, {}, "c", "s")
@@ -1348,8 +1532,57 @@ def test_system_service_principal_callers_hint_at_a_custom_agent():
     callers = [{"endpoint_name": "databricks-gpt-5-5", "requester": "bf54", "requester_name": "System Service Principal",
                 "requests": 2, "caller_class": "service_principal"}]
     r = m.readiness(rows, [], True, 30, eps, callers=callers)
-    hint = next(w for w in r["warnings"] if w["type"] == "custom_endpoint_inner_call")
-    assert hint["item"] == "databricks-gpt-5-5" and "churn-model" in hint["detail"]
+    # Enforce stops databricks-* endpoints, so the agent's inner calls block (not only warn).
+    hint = next(b for b in r["blockers"] if b["type"] == "custom_endpoint_inner_call")
+    assert hint["item"] == "databricks-gpt-5-5" and "churn-model" in hint["detail"] and "Enforce stops" in hint["detail"]
+    assert r["status"] == "BLOCKED"
+
+
+def test_unresolved_or_own_identity_inner_calls_still_block():
+    """If the requester doesn't resolve to "System Service Principal" (or the agent runs as its own service
+    principal), the inner-call blocker can't fire, but the traffic itself still blocks: Enforce stops the endpoint."""
+    agent = _ep({"name": "agent-x", "id": "a1", "task": "agent/v1/responses",
+                 "config": {"served_entities": [{"name": "a", "entity_name": "main.ml.agent", "entity_version": "1"}]}})
+    eps = [agent, _ep(SYSTEM_PPT)]
+    rows, _ = m.plan(eps, SYS_GPT, {"databricks-gpt-5-5": {"requests": 5, "requesters": 1, "last_request": "x"}},
+                     "c", "s")
+    for name in ("bf54d318-024a-4253-9195-b8bd39ce98f6", "agent-runner-sp"):
+        callers = [{"endpoint_name": "databricks-gpt-5-5", "requester": name, "requester_name": name,
+                    "requests": 5, "caller_class": "service_principal"}]
+        r = m.readiness(rows, [], True, 30, eps, {"local_files": "ok"}, callers=callers)
+        assert r["status"] == "BLOCKED" and "legacy_traffic" in [b["type"] for b in r["blockers"]]
+
+
+def test_external_on_pay_per_token_only_promises_a_service_apply_creates():
+    ep = _ep(PPT_BACKED)
+    unconfirmed = m.plan([ep], SIM_SYS, {}, "c", "s", uc_models=set())[0][0]
+    assert not any("apply creates" in n for n in unconfirmed.needs_human)
+    confirmed = m.plan([ep], SIM_SYS, {}, "c", "s", uc_models={"system.ai.databricks-claude-haiku-4-5"})[0][0]
+    assert any("apply creates" in n for n in confirmed.needs_human)
+
+
+def test_active_agent_with_inner_calls_to_pay_per_token_is_blocked():
+    """An agent whose model code isn't in a scanned file (a logged UC model) and that calls a databricks-*
+    endpoint with automatic authentication: its traffic must block, not leave READY_WITH_WARNINGS."""
+    agent = _ep({"name": "agent-x", "id": "a1", "task": "agent/v1/responses",
+                 "config": {"served_entities": [{"name": "a", "entity_name": "main.ml.agent", "entity_version": "1"}]}})
+    eps = [agent, _ep(SYSTEM_PPT)]
+    usage = {"agent-x": {"requests": 5, "requesters": 1, "last_request": "x"},
+             "databricks-gpt-5-5": {"requests": 5, "requesters": 1, "last_request": "x"}}
+    rows, _ = m.plan(eps, SYS_GPT, usage, "c", "s")
+    callers = [{"endpoint_name": "databricks-gpt-5-5", "requester": "bf54", "requester_name": m.SYSTEM_SP_NAME,
+                "requests": 5, "caller_class": "service_principal"}]
+    r = m.readiness(rows, [], True, 30, eps, {"local_files": "ok"}, callers=callers)
+    assert r["status"] == "BLOCKED"
+    inner = next(b for b in r["blockers"] if b["type"] == "custom_endpoint_inner_call")
+    assert "agent-x" in inner["detail"]  # the agent is named as a likely caller
+    assert "agent_endpoint" in [w["type"] for w in r["warnings"]]
+    # On an external model endpoint (outlives Enforce) the inner calls stay a warning.
+    rows2, _ = m.plan([agent, _ep(EXTERNAL)], {}, {}, "c", "s")
+    ext = rows2[1].legacy_endpoint
+    r2 = m.readiness(rows2, [], True, 30, [agent, _ep(EXTERNAL)], callers=[{**callers[0], "endpoint_name": ext}])
+    assert "custom_endpoint_inner_call" in [w["type"] for w in r2["warnings"]]
+    assert "custom_endpoint_inner_call" not in [b["type"] for b in r2["blockers"]]
 
 
 def test_quiet_pay_per_token_endpoints_fold_into_one_warning():

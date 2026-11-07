@@ -369,7 +369,7 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
 
   return (
     <Card title="2. Choose endpoints and options" note={<>Scan readiness: <Badge value={data.readiness?.status || "unknown"} /> · scanned {relativeAge(meta.finished_at)}.</>}>
-      {candidates.length === 0 ? <Empty title="Nothing to create">This scan has no external model or Provisioned Throughput endpoints.</Empty> : (
+      {candidates.length === 0 ? <Empty title="Nothing to create">Nothing in this scan can be created automatically. Apply creates model services for external model endpoints (OpenAI, Anthropic, Azure OpenAI, or a databricks-* endpoint behind the databricks-model-serving provider) and Provisioned Throughput endpoints. Endpoints marked Manual in the plan list their steps in the notes.</Empty> : (
         <>
           <fieldset className="panel">
             <legend>Target schema for the new services</legend>

@@ -164,11 +164,11 @@ def test_classify_mixed_entities_become_manual_row():
     assert rows[0].action == "manual"
 
 
-def test_agent_task_becomes_manual_row():
+def test_agent_task_is_out_of_scope_not_retired():
     payload = {"name": "agent-x", "id": "g1", "task": "agent/v1/chat",
                "config": {"served_entities": [{"name": "x", "entity_name": "main.ml.agent", "entity_version": "1"}]}}
     rows, _ = m.plan([_ep(payload)], {}, {}, "c", "s", traffic_known=False)
-    assert rows[0].action == "manual"
+    assert rows[0].action == "out_of_scope"
 
 
 def test_guardrail_pii_non_dict_does_not_crash():

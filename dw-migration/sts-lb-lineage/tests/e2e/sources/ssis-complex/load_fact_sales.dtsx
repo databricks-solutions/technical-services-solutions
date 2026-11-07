@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<DTS:Executable xmlns:DTS="www.microsoft.com/SqlServer/Dts" DTS:refId="Package" DTS:CreationName="Microsoft.Package" DTS:DTSID="{c1be4399-943b-4120-ba14-3f8e73a45f9b}" DTS:ExecutableType="Microsoft.Package" DTS:ObjectName="load_fact_sales" DTS:VersionBuild="1">
+  <DTS:ConnectionManagers>
+    <DTS:ConnectionManager DTS:refId="Package.ConnectionManagers[Conn]" DTS:CreationName="OLEDB" DTS:DTSID="{22222222-2222-2222-2222-222222222222}" DTS:ObjectName="Conn">
+      <DTS:ObjectData><DTS:ConnectionManager DTS:ConnectionString="Data Source=srv;Initial Catalog=dwh;Provider=SQLNCLI11.1;Integrated Security=SSPI;"/></DTS:ObjectData>
+    </DTS:ConnectionManager>
+  </DTS:ConnectionManagers>
+  <DTS:Executables>
+    <DTS:Executable DTS:refId="Package\Insert Fact" DTS:CreationName="Microsoft.ExecuteSQLTask" DTS:DTSID="{a5d896bd-4f1c-41c4-bbeb-8c0ac3096aeb}" DTS:ExecutableType="Microsoft.ExecuteSQLTask" DTS:ObjectName="Insert Fact">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask" SQLTask:Connection="{22222222-2222-2222-2222-222222222222}" SQLTask:SqlStatementSource="INSERT INTO dw.fact_sales (sale_id, customer_key, amount) SELECT s.sale_id, d.customer_id, s.amount FROM stg.sales_clean s JOIN dw.dim_customer d ON s.customer_id = d.customer_id"/>
+      </DTS:ObjectData>
+    </DTS:Executable>
+    <DTS:Executable DTS:refId="Package\Build Mart" DTS:CreationName="Microsoft.ExecuteSQLTask" DTS:DTSID="{de4ce0aa-7dba-492a-8c3e-8448d4db4f3d}" DTS:ExecutableType="Microsoft.ExecuteSQLTask" DTS:ObjectName="Build Mart">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask" SQLTask:Connection="{22222222-2222-2222-2222-222222222222}" SQLTask:SqlStatementSource="INSERT INTO mart.sales_summary (customer_id, total) SELECT customer_id, SUM(amount) FROM dw.fact_sales GROUP BY customer_id"/>
+      </DTS:ObjectData>
+    </DTS:Executable>
+  </DTS:Executables>
+</DTS:Executable>

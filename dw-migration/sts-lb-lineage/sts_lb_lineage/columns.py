@@ -28,8 +28,14 @@ def _table_name(t) -> str:
 def column_edges(statements: list[dict]) -> tuple[list[dict], dict]:
     """Returns (edges, stats). Each edge: {from: 'tbl.col', to: 'tbl.col', via: job}."""
     try:
+        import logging
+
         import sqlglot
         from sqlglot import exp
+
+        logging.getLogger("sqlglot").setLevel(
+            logging.CRITICAL
+        )  # skips are counted in the stats
     except ImportError as e:  # optional extra
         raise SystemExit(
             "--columns needs sqlglot: install with the [columns] extra"

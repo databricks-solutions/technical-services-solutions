@@ -17,6 +17,7 @@ import {
 } from '@databricks/design-system';
 
 import { type LEdge, type LNode, type LProgram, type Model, SHARED, fmtBytes, shortName, techList } from './data';
+import { GraphView } from './Graph';
 import { KindIcon, LevelMix, LevelTag, ROLE_HELP, kindLabel, levelLabel, plural, roleLabel } from './ui';
 
 const ProcLink = ({ name, onOpenProcess }: { name: string; onOpenProcess: (p: string) => void }) => (
@@ -185,12 +186,17 @@ function ObjectDetails({
       )}
       <div className="lbl-row">
         <Button componentId="sts-lb-lineage.details.graph" type="primary" icon={<ShareNodesIcon />} onClick={() => onGraph(node.id)} disabled={up.length + down.length === 0}>
-          See lineage graph
+          Open full-screen graph
         </Button>
         <Button componentId="sts-lb-lineage.details.impact" onClick={() => onImpact(node.id)} disabled={down.length === 0}>
           Impact analysis
         </Button>
       </div>
+      {up.length + down.length > 0 ? (
+        <GraphView key={node.id} inline model={model} focusId={node.id} groupBy="process" onOpenDetails={onOpen} onOpenProcess={onOpenProcess} />
+      ) : (
+        <Typography.Hint>No lineage: no program reads from or writes to this object.</Typography.Hint>
+      )}
       <Tabs.Root componentId="sts-lb-lineage.details.tabs" defaultValue={up.length ? 'up' : 'down'}>
         <Tabs.List>
           <Tabs.Trigger value="up">{`Upstream (${up.length})`}</Tabs.Trigger>
@@ -316,6 +322,7 @@ export function ProcessDrawer({
 }) {
   const p = name ? model.procByName.get(name) : undefined;
   const shared = p ? model.ins.hubs.filter((h) => h.writers.includes(p.name) || h.readers.includes(p.name)) : [];
+  const scope = p ? [...p.objects, ...shared.map((h) => h.id)] : [];
   return (
     <Drawer.Root open={!!p} onOpenChange={(open) => !open && onClose()}>
       <Drawer.Content
@@ -349,12 +356,17 @@ export function ProcessDrawer({
             </KeyValueList>
             <div className="lbl-row">
               <Button componentId="sts-lb-lineage.process.lineage" type="primary" icon={<ShareNodesIcon />} onClick={() => onLineage(p.name)} disabled={p.objects.length + shared.length === 0}>
-                Open process lineage
+                Open full-screen lineage
               </Button>
               <Button componentId="sts-lb-lineage.process.impact" onClick={() => onImpact(p.name)}>
                 Impact analysis
               </Button>
             </div>
+            {scope.length > 0 && scope.length <= 200 ? (
+              <GraphView key={p.name} inline model={model} scope={scope} boundary groupBy="none" onOpenDetails={onOpen} onOpenProcess={onOpenProcess} />
+            ) : scope.length > 200 ? (
+              <Typography.Hint>{`${scope.length} objects: open the full-screen lineage to explore them.`}</Typography.Hint>
+            ) : null}
             <Tabs.Root componentId="sts-lb-lineage.process.tabs" defaultValue="programs">
               <Tabs.List>
                 <Tabs.Trigger value="programs">{`Programs (${p.programs.length})`}</Tabs.Trigger>

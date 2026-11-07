@@ -372,7 +372,7 @@ function AiPanel({ model, target, mode, to, onOpen, onOpenProcess }: { model: Mo
     setError(null);
     try {
       const r = await aiAsk({ target, mode, to, question: q, history: q ? turns.slice(-3) : undefined });
-      setTurns((t) => (q ? [...t, { q, a: r.answer }] : [{ q: 'Explain impact and risks', a: r.answer }]));
+      setTurns((t) => (q ? [...t, { q, a: String(r.answer) }] : [{ q: "Explain impact and risks", a: String(r.answer) }]));
       setNote(`${r.objects} objects sent${r.truncated ? ' (truncated)' : ''}`);
       setQuestion('');
     } catch (e) {

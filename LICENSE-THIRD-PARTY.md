@@ -173,3 +173,4 @@ Build-time only (not shipped): [Vite](https://github.com/vitejs/vite) (MIT),
 [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react) (MIT),
 [vite-plugin-singlefile](https://github.com/richardtallent/vite-plugin-singlefile) (MIT),
 [TypeScript](https://github.com/microsoft/TypeScript) (Apache-2.0).
+UI smoke test only: [Puppeteer](https://github.com/puppeteer/puppeteer) (`puppeteer-core`, Apache-2.0).

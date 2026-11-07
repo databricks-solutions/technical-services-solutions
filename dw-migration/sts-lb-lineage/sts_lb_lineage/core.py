@@ -191,7 +191,7 @@ class Lineage:
                 self.node("job", child, s.get("childType")),
             )
             self.edge(p, c, "orchestration", s["parent"], "job", tech)
-            self.parents[child].add(s["parent"])
+            self.parents[child.lower()].add(s["parent"])
 
     def _link(self, rels, job: str, grain: str, tech: str):
         rels = [fix_rel(r) for r in rels or []]
@@ -209,7 +209,7 @@ class Lineage:
                     "job",
                     tech,
                 )
-                self.parents[r["object"]].add(job)
+                self.parents[r["object"].lower()].add(job)
         for src in ins:
             for dst in outs:
                 if src != dst:
@@ -246,7 +246,9 @@ class Lineage:
 
     def root(self, name: str, seen: frozenset = frozenset()) -> set[str]:
         """Top-level process(es) of a program: walk subJobInfo/execute parents up."""
-        ups = self.parents.get(name, set()) - seen - {name}
+        ups = {
+            p for p in self.parents.get(name.lower(), ()) if p.lower() != name.lower()
+        } - seen
         if not ups:
             return {name}
         return set().union(*(self.root(p, seen | {name}) for p in ups))
@@ -772,7 +774,7 @@ def main(argv=None):
     nm.add_argument(
         "--collapse-instances",
         action="store_true",
-        help="fold ETL instance names (SQ_X, X_1) into table X",
+        help="fold ETL instance names (SQ_X, LKP_X, X_1) into table X",
     )
     nm.add_argument(
         "--columns",

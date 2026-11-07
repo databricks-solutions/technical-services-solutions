@@ -22,7 +22,9 @@ import {
 import {
   Background,
   BackgroundVariant,
+  BaseEdge,
   type Edge,
+  type EdgeProps,
   Handle,
   MarkerType,
   type Node,
@@ -75,11 +77,37 @@ const HubNode = memo(({ data }: NodeProps<Node<HubData>>) => (
 
 const nodeTypes = { proc: ProcNode, hub: HubNode };
 
+/** An edge that closes a dependency cycle runs right to left. Route it under the graph so it
+ *  never hides behind the cards. */
+function BackEdge({ sourceX, sourceY, targetX, targetY, data, markerEnd, label, style }: EdgeProps<Edge<{ below: number }>>) {
+  const y = data?.below ?? Math.max(sourceY, targetY) + 60;
+  const path = `M ${sourceX} ${sourceY} H ${sourceX + 24} V ${y} H ${targetX - 24} V ${targetY} H ${targetX}`;
+  return <BaseEdge path={path} markerEnd={markerEnd} style={style} label={label} labelX={(sourceX + targetX) / 2} labelY={y} labelBgPadding={[4, 2]} />;
+}
+
+const edgeTypes = { back: BackEdge };
+
 interface Filters {
   q: string;
   tech: string;
   hubs: boolean;
   connectedOnly: boolean;
+  cyclesOnly: boolean;
+  all: boolean;
+  cap?: number;
+}
+
+/** Above this many processes the map shows the most connected ones first, so labels stay readable. */
+export const MAP_CAP = 15;
+const MIN_ZOOM = 0.5;
+
+/** Shared tables and process links per process, used to rank "most connected". */
+export function degrees(model: Model) {
+  const deg = new Map<string, number>();
+  const add = (p: string) => deg.set(p, (deg.get(p) ?? 0) + 1);
+  model.ins.hubs.forEach((h) => [...h.writers, ...h.readers].forEach(add));
+  model.ins.processEdges.forEach((e) => (add(e.from), add(e.to)));
+  return deg;
 }
 
 function MapCanvas({
@@ -96,16 +124,22 @@ function MapCanvas({
   const flow = useReactFlow();
   const [sel, setSel] = useState<string | null>(null);
 
-  const { nodes, edges, count, hidden } = useMemo(() => {
+  const { nodes, edges, count, total, hidden } = useMemo(() => {
     const q = filters.q.trim().toLowerCase();
     const linked = new Set<string>();
     model.ins.hubs.forEach((h) => [...h.writers, ...h.readers].forEach((p) => linked.add(p)));
-    const procs = model.ins.processes.filter(
+    const matching = model.ins.processes.filter(
       (p) =>
         (!q || p.name.toLowerCase().includes(q)) &&
         (filters.tech === 'all' || p.tech.includes(filters.tech)) &&
-        (!filters.connectedOnly || linked.has(p.name)),
+        (!filters.connectedOnly || linked.has(p.name)) &&
+        (!filters.cyclesOnly || p.cycle !== null),
     );
+    const deg = degrees(model);
+    const procs =
+      filters.all || matching.length <= (filters.cap ?? MAP_CAP)
+        ? matching
+        : [...matching].sort((a, b) => (deg.get(b.name) ?? 0) - (deg.get(a.name) ?? 0)).slice(0, filters.cap ?? MAP_CAP);
     const hidden = filters.connectedOnly ? model.ins.processes.filter((p) => !linked.has(p.name) && p.objects.length > 0).length : 0;
     const keep = new Set(procs.map((p) => p.name));
     const links: { from: string; to: string; label?: string }[] = [];
@@ -121,7 +155,7 @@ function MapCanvas({
       }
     } else {
       for (const e of model.ins.processEdges) {
-        if (keep.has(e.from) && keep.has(e.to)) links.push({ from: `p:${e.from}`, to: `p:${e.to}`, label: `${e.tables.length} tables` });
+        if (keep.has(e.from) && keep.has(e.to)) links.push({ from: `p:${e.from}`, to: `p:${e.to}`, label: plural(e.tables.length, 'table') });
       }
     }
     const ids = [...procs.map((p) => `p:${p.name}`), ...hubIds.map((h) => `h:${h}`)];
@@ -141,28 +175,42 @@ function MapCanvas({
         data: { name: model.byId.get(h)?.name ?? h, count: model.hubById.get(h)!.processCount, selected: active(`h:${h}`) },
       })),
     ];
-    const edges: Edge[] = links.map((l) => ({
-      id: `${l.from}>${l.to}`,
-      source: l.from,
-      target: l.to,
-      label: l.label,
-      className: `lbl-edge${sel && (l.from === sel || l.to === sel) ? ' is-active' : ''}`,
-      markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
-    }));
-    return { nodes, edges, count: procs.length, hidden };
+    const bottom = Math.max(0, ...[...pos.values()].map((v) => v.y)) + H + 8;
+    let backs = 0;
+    const edges: Edge[] = links.map((l) => {
+      const back = (pos.get(l.to)?.x ?? 0) < (pos.get(l.from)?.x ?? 0);
+      return {
+        id: `${l.from}>${l.to}`,
+        source: l.from,
+        target: l.to,
+        type: back ? 'back' : undefined,
+        data: back ? { below: bottom + 30 + 16 * backs++ } : undefined,
+        label: back ? (l.label ? `${l.label}, loops back` : 'loops back') : l.label,
+        className: `lbl-edge${back ? ' is-back' : ''}${sel && (l.from === sel || l.to === sel) ? ' is-active' : ''}`,
+        markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
+      };
+    });
+    return { nodes, edges, count: procs.length, total: matching.length, hidden };
   }, [model, filters, sel]);
 
   useEffect(() => {
-    const t = setTimeout(() => flow.fitView({ padding: 0.15, maxZoom: 1, duration: 200 }), 0);
+    const t = setTimeout(() => flow.fitView({ padding: 0.15, maxZoom: 1, minZoom: MIN_ZOOM, duration: 200 }), 0);
     return () => clearTimeout(t);
   }, [filters, flow]);
 
-  if (count === 0) return <Empty title="No processes match" description="Change the search or the filters." />;
+  if (count === 0)
+    return (
+      <Empty
+        title="No processes match"
+        description={filters.cyclesOnly ? 'No process is in a dependency cycle.' : 'Change the search or the filters.'}
+      />
+    );
   return (
     <ReactFlow
       nodes={nodes}
       edges={edges}
       nodeTypes={nodeTypes}
+      edgeTypes={edgeTypes}
       nodesDraggable={false}
       nodesConnectable={false}
       onlyRenderVisibleElements
@@ -181,10 +229,14 @@ function MapCanvas({
         <span className="lbl-legend-item">
           <WorkflowsIcon aria-hidden /> Process (objects, technology, highest complexity)
         </span>
-        <span className="lbl-legend-item">
-          <TableIcon aria-hidden /> Shared table (dashed): written or read by several processes
-        </span>
-        <span className="lbl-legend-item">Arrows: data flows from writer to reader</span>
+        {filters.hubs ? (
+          <span className="lbl-legend-item">
+            <TableIcon aria-hidden /> Shared table (dashed): written or read by several processes
+          </span>
+        ) : (
+          <span className="lbl-legend-item">Edge label: tables one process writes and the other reads</span>
+        )}
+        <span className="lbl-legend-item">Arrows: data flows from writer to reader. Dashed red: closes a dependency cycle</span>
       </Panel>
       <Panel position="bottom-left" className="lbl-graph-tools">
         <Button componentId="sts-lb-lineage.map.zoom-in" icon={<ZoomInIcon />} aria-label="Zoom in" onClick={() => flow.zoomIn()} />
@@ -193,13 +245,37 @@ function MapCanvas({
           componentId="sts-lb-lineage.map.fit"
           icon={<ZoomToFitIcon />}
           aria-label="Fit to screen"
-          onClick={() => flow.fitView({ padding: 0.15, maxZoom: 1 })}
+          onClick={() => flow.fitView({ padding: 0.15, maxZoom: 1, minZoom: MIN_ZOOM })}
         />
         <Typography.Hint>
-          {`${count} processes${hidden ? `, ${hidden} self-contained hidden` : ''}. Click a process for details and its lineage; click a shared table to open it.`}
+          {`${count < total ? `${count} most connected of ${total} processes` : plural(count, 'process', 'processes')}${hidden ? `, ${hidden} self-contained hidden` : ''}. Drag to pan. Click a process for its details and lineage graph.`}
         </Typography.Hint>
       </Panel>
     </ReactFlow>
+  );
+}
+
+const PREVIEW_FILTERS = { q: '', tech: 'all', hubs: true, connectedOnly: true, cyclesOnly: false, all: false };
+
+/** Small, read-only map for the Overview page. */
+export function ProcessMapPreview({
+  model,
+  cap,
+  onOpenProcess,
+  onOpenObject,
+}: {
+  model: Model;
+  cap: number;
+  onOpenProcess: (name: string) => void;
+  onOpenObject: (id: string) => void;
+}) {
+  const filters = useMemo(() => ({ ...PREVIEW_FILTERS, cap }), [cap]);
+  return (
+    <div className="lbl-canvas is-preview">
+      <ReactFlowProvider>
+        <MapCanvas model={model} filters={filters} onOpenProcess={onOpenProcess} onOpenObject={onOpenObject} />
+      </ReactFlowProvider>
+    </div>
   );
 }
 
@@ -255,8 +331,10 @@ export function ProcessMap({
   model,
   onOpenProcess,
   onOpenObject,
+  initialCycles = false,
 }: {
   model: Model;
+  initialCycles?: boolean;
   onOpenProcess: (name: string) => void;
   onOpenObject: (id: string) => void;
 }) {
@@ -265,8 +343,13 @@ export function ProcessMap({
   const [tech, setTech] = useState('all');
   const [hubs, setHubs] = useState(true);
   const [connectedOnly, setConnectedOnly] = useState(true);
+  const [cyclesOnly, setCyclesOnly] = useState(initialCycles);
+  const [all, setAll] = useState(false);
   const techs = Object.keys(model.ins.summary.technologies);
-  const filters = useMemo(() => ({ q, tech, hubs, connectedOnly }), [q, tech, hubs, connectedOnly]);
+  const filters = useMemo(() => ({ q, tech, hubs, connectedOnly, cyclesOnly, all }), [q, tech, hubs, connectedOnly, cyclesOnly, all]);
+  const linked = useMemo(() => new Set(model.ins.hubs.flatMap((h) => [...h.writers, ...h.readers])), [model]);
+  const selfContained = model.ins.processes.filter((p) => !linked.has(p.name) && p.objects.length > 0).length;
+  const inCycle = model.ins.processes.filter((p) => p.cycle !== null).length;
 
   return (
     <div className="lbl-tab">
@@ -296,13 +379,35 @@ export function ProcessMap({
                 </SimpleSelectOption>
               ))}
             </SimpleSelect>
-            <Switch componentId="sts-lb-lineage.map.hubs" label="Show shared tables" checked={hubs} onChange={(v) => setHubs(v)} />
+            <Switch
+              componentId="sts-lb-lineage.map.hubs"
+              label="Shared tables as nodes"
+              checked={hubs}
+              onChange={(v) => setHubs(v)}
+            />
             <Switch
               componentId="sts-lb-lineage.map.connected"
-              label="Only processes that share tables"
+              label={`Hide self-contained processes (${selfContained})`}
               checked={connectedOnly}
+              disabled={selfContained === 0}
               onChange={(v) => setConnectedOnly(v)}
             />
+            {inCycle > 0 && (
+              <Switch
+                componentId="sts-lb-lineage.map.cycles"
+                label={`Only processes in a cycle (${inCycle})`}
+                checked={cyclesOnly}
+                onChange={(v) => setCyclesOnly(v)}
+              />
+            )}
+            {model.ins.processes.length > MAP_CAP && (
+              <Switch
+                componentId="sts-lb-lineage.map.all"
+                label={`Show all processes (${model.ins.processes.length})`}
+                checked={all}
+                onChange={(v) => setAll(v)}
+              />
+            )}
           </>
         )}
       </div>

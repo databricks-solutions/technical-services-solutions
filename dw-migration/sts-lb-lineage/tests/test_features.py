@@ -270,3 +270,49 @@ def test_run_extension_is_validated(tmp_path):
                 str(tmp_path),
             ]
         )
+
+
+def test_parent_process_matches_names_case_insensitively():
+    lin = Lineage()
+    lin.add_report(
+        {
+            "runInfo": {"sourceTechnology": "INFA"},
+            "inventory": [
+                {
+                    "name": "M_FACT_SALES",
+                    "objectRel": [
+                        {"action": "source", "object": "a"},
+                        {"action": "target", "object": "b"},
+                    ],
+                },
+                {"name": "wf_sales"},
+            ],
+            "subJobInfo": [
+                {"parent": "wf_sales", "child": "s_m_fact_sales"},
+                {"parent": "s_m_fact_sales", "child": "m_fact_sales"},
+            ],
+        }
+    )
+    assert lin.root("M_FACT_SALES") == {"wf_sales"}
+    assert {p["name"] for p in lin.insights()["processes"]} == {"wf_sales"}
+
+
+def test_ai_answer_text_drops_reasoning_parts():
+    from sts_lb_lineage.ai import answer_text
+
+    parts = [
+        {"type": "reasoning", "summary": [{"type": "summary_text", "text": "hidden"}]},
+        {"type": "text", "text": "## Summary\nok"},
+    ]
+    assert answer_text(parts) == "## Summary\nok"
+    assert answer_text("plain") == "plain"
+    assert answer_text(None) == answer_text([]) == "The endpoint returned no text."
+
+
+def test_ai_context_names_the_cycle_members():
+    from sts_lb_lineage import ai
+
+    d = load("infa_customer").to_dict()
+    ctx = ai.impact_context(d, "proc:wf_customer", "down")
+    p = next(x for x in ctx["processes"] if x["name"] == "wf_customer")
+    assert p["in_cycle"] and p["cycle_with"] == ["wf_sales"] and "feeds" in p

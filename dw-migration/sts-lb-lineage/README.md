@@ -56,14 +56,14 @@ python -m sts_lb_lineage --help                             # all options
 
 | Group | Page | What you get |
 |---|---|---|
-| Summary | Overview | Estate counts, object roles, sources to ingest by schema, most shared tables, most connected processes, and how far to trust the scan. |
+| Summary | Overview | Estate counts, a lineage map of the most connected processes (no click needed), object roles, sources to ingest by schema, most shared tables, most connected processes, and how far to trust the scan. |
 | Summary | Statistics | Lines of code, SQL statements, dynamic SQL, loops, parameters, programs by technology and type, analyzer complexity levels, top transformations and functions, most read and most fed tables, tables by schema. |
-| Explore | Process map | One node per top-level process; shared tables connect them. Filter by technology, search, and a coupling matrix. Self-contained processes are hidden by default. |
-| Explore | Objects | Every table and job. Group by process, technology, schema, or type. List or graph. Selector bar, for example `role:source`, `process:wf_sales`, `complexity:high`, `+dw.fact_orders+`. |
+| Explore | Process map | One node per top-level process; shared tables connect them. Toggles: shared tables as nodes (off: processes link directly, labeled with the number of tables), hide self-contained processes, only processes in a dependency cycle, show all processes (by default, large estates show the 15 most connected). Cycle edges are red and dashed, routed under the map. Search, technology filter, and a coupling matrix. |
+| Explore | Objects | Every table and job. Opens on the graph; above 200 objects it asks you to pick a group or a graph scope instead of drawing a hairball. Group by process, technology, schema, or type. List or graph. Selector bar, for example `role:source`, `process:wf_sales`, `complexity:high`, `+dw.fact_orders+`. |
 | Analyze | Impact analysis | Downstream impact, upstream sources, or the path between two objects or processes, with a CSV report. Opens with suggested starting points. With `--serve`, an AI assistant explains the impact, flags risks, and answers follow-up questions. |
 | Compare | Changes | Only with `--compare`: new and removed processes, objects, and relationships, and objects that moved to another process. |
 
-Use the search box at the top of every page to jump to any process, table, or job. Drawers show the details of an object (role, process, upstream, downstream, programs, columns with `--columns`, suggested UC target) or a process (programs and the analyzer drivers behind their complexity, objects, shared tables, dependencies). Every view is in the URL hash, so you can share a link to it. Scoped graphs show at most 1,500 objects; focus on an object to explore beyond that.
+**Where the graphs are**: the Overview map, the Process map, the Objects graph, and the details drawer of every table, job, and process, which opens with its lineage graph. Use the search box at the top of every page to jump to any process, table, or job. Drawers show the details of an object (role, process, upstream, downstream, programs, columns with `--columns`, suggested UC target) or a process (programs and the analyzer drivers behind their complexity, objects, shared tables, dependencies). Every view is in the URL hash, so you can share a link to it. Scoped graphs show at most 1,500 objects; focus on an object to explore beyond that.
 
 The tool reports facts from the scan. It does not estimate effort or plan migration waves.
 
@@ -71,7 +71,7 @@ The tool reports facts from the scan. It does not estimate effort or plan migrat
 
 ```sh
 sts-lb-lineage report.json --search-path dbo,dw          # qualify unqualified names: orders -> dbo.orders
-sts-lb-lineage report.json --collapse-instances          # fold ETL instance names: SQ_CUSTOMER, CUSTOMER_1 -> CUSTOMER
+sts-lb-lineage report.json --collapse-instances          # fold ETL instance names: SQ_CUSTOMER, LKP_CUSTOMER, CUSTOMER_1 -> CUSTOMER
 sts-lb-lineage report.json --columns                     # column lineage from the SQL embedded in ETL programs
 sts-lb-lineage report.json --compare old/lineage.json    # what changed since a previous scan
 ```
@@ -89,7 +89,7 @@ sts-lb-lineage analyzer-output.json --serve --profile <profile> --endpoint <chat
 
 This builds the lineage, then serves the viewer at `http://127.0.0.1:8765/` (`--port` to change). On the Impact analysis page, pick a target, then use **Explain impact and risks** or ask a question. The answer is a short summary, the affected processes and objects, risk flags (shared tables, dependency cycles, approximate job-level edges, dynamic SQL, loops, high analyzer complexity), and what to check first. Object and process names in the answer link to their details. Follow-up questions keep the last 3 turns.
 
-- **Endpoint**: any chat serving endpoint in the workspace, for example a Foundation Model or external model behind Unity AI Gateway, so the gateway's permissions, rate limits, guardrails, and usage tracking apply. Requests carry the usage context `client=sts-lb-lineage`.
+- **Endpoint**: any chat serving endpoint in the workspace (reasoning models work; only their text parts are shown), for example a Foundation Model or external model behind Unity AI Gateway, so the gateway's permissions, rate limits, guardrails, and usage tracking apply. Requests carry the usage context `client=sts-lb-lineage`.
 - **Auth**: the Databricks CLI profile, through the Databricks SDK. The credential stays in the Python process and never reaches the browser.
 - **What is sent**: only the selected impact result, at most 300 objects with their names, roles, processes, and the involved programs' technology, analyzer complexity, and dynamic-SQL / loop counts, plus up to 3 earlier questions and answers. No source code or SQL text.
 - **Local server protections**: binds to `127.0.0.1` only; checks the `Host` header; requires a per-run session token that only the served page has; accepts JSON only and caps the request size, question length, and history. The answer is rendered as text, never as HTML.
@@ -161,15 +161,15 @@ The tool reads the JSON of every Lakebridge Analyzer source technology. How much
 
 | Technology (`--platform`) | Result | Notes from the e2e sample |
 |---|---|---|
-| Athena, IBM DB2, Oracle, Presto, Redshift, MS SQL Server, Synapse, Teradata | Table lineage | Complete for `CREATE TABLE AS SELECT`, `INSERT ... SELECT`, and `SELECT INTO`. |
+| Athena, IBM DB2, Oracle, Presto, Redshift, MS SQL Server, Synapse, Teradata | Table lineage | Complete for `CREATE TABLE AS SELECT`, `INSERT ... SELECT`, and `SELECT INTO`. In procedures, MS SQL Server `MERGE` targets and Teradata `MERGE` from a volatile table are not seen, and CTE names come through as tables. Oracle `MERGE` works. |
 | BigQuery | Table lineage | With backtick names, a join source comes back as its alias. |
 | Cloudera (Impala), Hive | Table lineage | `INSERT OVERWRITE TABLE` is not seen. |
 | Greenplum, Netezza, Vertica | Table lineage | With a distribution clause (`DISTRIBUTED BY`, `DISTRIBUTE ON`, `SEGMENTED BY`), the first join table is lost. |
 | Snowflake | Table lineage | `CREATE OR REPLACE TRANSIENT TABLE ... AS SELECT` is not seen. |
-| PySpark | Table lineage | Only SQL inside `spark.sql()`; DataFrame API calls give no lineage. |
+| PySpark | Table lineage | Only SQL inside `spark.sql()`; DataFrame API calls give no lineage. Relations are per file, so a multi-statement job over-links, and temp views are not followed. |
 | PIG | Table lineage | Job-level relations, so inputs x outputs over-link. |
 | SAS | Table lineage | `PROC SQL`; a DATA step `SET` was not captured. |
-| Informatica - PC | Table lineage | Workflow, session, and mapping links. Job-level table names have no schema (a SQL override keeps it). Exports declared as Windows-1252 failed on macOS; UTF-8 works. |
+| Informatica - PC | Table lineage | Workflow, session, and mapping links. Use `--collapse-instances`: Source Qualifiers and Lookups come through as `SQ_*` and `LKP_*` tables. Job-level table names have no schema (a SQL override keeps it). Exports declared as Windows-1252 failed on macOS; UTF-8 works. |
 | SSIS | Table lineage | Execute SQL tasks; the OLE DB destination is reported as a read. |
 | PentahoDI | Table lineage | `<schema>` is ignored, so put `schema.table` in `<table>`. `.kjb` jobs give no links. |
 | Oozie | Job links only | Only `workflow.xml` is read; Hive scripts and inline queries give no tables. |
@@ -180,7 +180,7 @@ The tool reads the JSON of every Lakebridge Analyzer source technology. How much
 | Informatica Cloud | Not parsed | Needs `--extension zip`. |
 | Talend, ABInitio, Informatica - Big Data Edition, Oracle Data Integrator | Not parsed | |
 
-`--extension` is needed because the Lakebridge Analyzer Python wrapper cannot pass the analyzer's file-extension option; with it, the tool runs the bundled analyzer binary directly. When an e2e case fails after a Lakebridge Analyzer upgrade, the analyzer may have improved: update the case in `tests/e2e/test_e2e.py` and this table.
+`--extension` is needed because the Lakebridge Analyzer Python wrapper cannot pass the analyzer's file-extension option; with it, the tool runs the bundled analyzer binary directly. Seven larger cases (`*-complex`: Informatica with two workflows in a cycle, SSIS master and child packages, PySpark, SAS, and SQL Server, Oracle, and Teradata procedures with MERGE, CTEs, temp tables, cursors, and dynamic SQL) also pin process counts, shared tables, and cycles. When an e2e case fails after a Lakebridge Analyzer upgrade, the analyzer may have improved: update the case in `tests/e2e/test_e2e.py` and this table.
 
 ## Lakebridge Analyzer quirks handled (version 0.3.1)
 
@@ -204,14 +204,19 @@ Run these from `dw-migration/sts-lb-lineage/`:
 # unit tests (synthetic fixtures, no Lakebridge Analyzer needed)
 uv run -p 3.13 --no-project --with-editable '.[test,columns,profiler,databricks]' pytest -q
 
-# end-to-end tests (about 12 minutes): run the Lakebridge Analyzer on tests/e2e/sources/
+# end-to-end tests (about 17 minutes): run the Lakebridge Analyzer on tests/e2e/sources/
 uv run -p 3.12 --no-project --with-editable '.[test,analyzer]' pytest -q -m e2e
 
 # rebuild the viewer into sts_lb_lineage/lineage_viewer.html
-cd viewer && npm ci --legacy-peer-deps && npm run build
+(cd viewer && npm ci --legacy-peer-deps && npm run build)
+
+# UI smoke test in headless Chrome (set CHROME_PATH if Chrome is not in the default macOS place):
+# every page renders, graphs show without extra clicks, process map toggles keep a graph
+python tests/estate.py /tmp/estate && sts-lb-lineage /tmp/estate/*.json -o /tmp/estate/out
+(cd viewer && npm run e2e -- /tmp/estate/out/lineage.html table:dw.fact_sales_01 wf_sales_01)
 
 # live preview of the viewer with your own lineage.json
-cp <your-output>/lineage.json viewer/public/sample.json && cd viewer && npm run dev
+cp <your-output>/lineage.json viewer/public/sample.json && (cd viewer && npm run dev)
 ```
 
 CI runs the unit tests on pull requests that touch this folder (`.github/workflows/sts-lb-lineage-tests.yml`). The end-to-end tests run only on demand.

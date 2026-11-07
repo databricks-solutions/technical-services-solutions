@@ -9,9 +9,10 @@ export interface Route {
   target?: string; // impact: object id or "proc:<name>"
   to?: string; // impact: path end
   mode?: 'down' | 'up' | 'path';
+  only?: 'cycles'; // process map filter
 }
 
-const KEYS: (keyof Route)[] = ['tab', 'obj', 'proc', 'q', 'target', 'to', 'mode'];
+const KEYS: (keyof Route)[] = ['tab', 'obj', 'proc', 'q', 'target', 'to', 'mode', 'only'];
 
 function read(): Route {
   const h = location.hash.slice(1);

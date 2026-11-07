@@ -1,5 +1,6 @@
 import {
   Alert,
+  Button,
   Checkbox,
   Empty,
   FolderIcon,
@@ -20,6 +21,9 @@ import {
   WorkflowsIcon,
 } from '@databricks/design-system';
 import { useEffect, useMemo, useState } from 'react';
+
+/** Above this many objects the graph asks for a narrower scope instead of drawing a hairball. */
+const OBJECT_GRAPH_CAP = 200;
 
 import {
   GROUP_BY_LABEL,
@@ -111,7 +115,7 @@ export function Objects({
   const [connectedOnly, setConnectedOnly] = useState(true);
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'down', dir: 'desc' });
   const [page, setPage] = useState(1);
-  const [view, setView] = useState<'list' | 'graph'>('list');
+  const [view, setView] = useState<'list' | 'graph'>('graph');
   const [groupBy, setGroupBy] = useState<GroupBy>('process');
   const [groupFilter, setGroupFilter] = useState<Set<string>>(new Set());
 
@@ -289,6 +293,29 @@ export function Objects({
 
         {rows.length === 0 ? (
           <Empty title="No matching objects" description="Change the selector or the filters." />
+        ) : view === 'graph' && ids.length > OBJECT_GRAPH_CAP ? (
+          <div className="lbl-details">
+            <Alert
+              componentId="sts-lb-lineage.objects.too-many"
+              type="info"
+              closable={false}
+              message={`${ids.length} objects are too many for one readable graph`}
+              description="Pick a group below, filter on the left, or type a graph scope such as +dw.fact_orders (everything upstream). The list shows every object."
+            />
+            <div className="lbl-row">
+              {groupCounts
+                .filter(([, n]) => n <= OBJECT_GRAPH_CAP)
+                .slice(0, 8)
+                .map(([g, n]) => (
+                  <Button key={g} componentId="sts-lb-lineage.objects.pick-group" onClick={() => setGroupFilter(new Set([g]))}>
+                    {`${groupLabel(groupBy, g)} (${n})`}
+                  </Button>
+                ))}
+              <Button componentId="sts-lb-lineage.objects.show-list" type="tertiary" onClick={() => setView('list')}>
+                Show the list
+              </Button>
+            </div>
+          </div>
         ) : view === 'graph' ? (
           <GraphView model={model} scope={ids} groupBy={groupBy} onOpenDetails={onOpen} onOpenProcess={onOpenProcess} />
         ) : (

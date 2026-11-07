@@ -1,4 +1,7 @@
-import { MetricCard, Table, TableCell, TableHeader, TableRow, Typography } from '@databricks/design-system';
+import { Button, MetricCard, ShareNodesIcon, Table, TableCell, TableHeader, TableRow, Typography } from '@databricks/design-system';
+import { ProcessMapPreview } from './ProcessMap';
+
+const PREVIEW = 12;
 import { useMemo } from 'react';
 
 import { LEVELS, type Model, schemaOf, shortName } from './data';
@@ -19,7 +22,17 @@ const TRUST: { key: string; label: string; help: string; optional?: boolean }[] 
   { key: 'columnStatementsSkipped', label: 'SQL skipped for columns', help: 'Embedded statements that did not parse or are not INSERT/CREATE AS SELECT.', optional: true },
 ];
 
-export function Overview({ model, go }: { model: Model; go: (r: Partial<Route>) => void }) {
+export function Overview({
+  model,
+  go,
+  onOpenProcess,
+  onOpenObject,
+}: {
+  model: Model;
+  go: (r: Partial<Route>) => void;
+  onOpenProcess: (p: string) => void;
+  onOpenObject: (id: string) => void;
+}) {
   const s = model.ins.summary;
   const st = model.ins.statistics;
   const procs = model.ins.processes;
@@ -53,9 +66,24 @@ export function Overview({ model, go }: { model: Model; go: (r: Partial<Route>) 
         <MetricCard fullHeight pinButtonToBottom componentId="sts-lb-lineage.ov.programs" label="Programs" metric={fmt(s.programs)} comparison={Object.entries(s.technologies).map(([t, n]) => `${t} ${n}`).join(' · ')} buttonText="Statistics" onButtonClick={() => go({ tab: 'statistics' })} />
         <MetricCard fullHeight pinButtonToBottom componentId="sts-lb-lineage.ov.tables" label="Tables" metric={fmt(s.tables)} comparison={`${fmt(s.roles.source)} sources · ${fmt(s.roles.terminal)} outputs`} buttonText="Objects" onButtonClick={() => go({ tab: 'objects', q: undefined })} />
         <MetricCard fullHeight pinButtonToBottom componentId="sts-lb-lineage.ov.hubs" label="Shared tables" metric={fmt(s.hubs)} comparison="Read or written by more than one process" buttonText="Show them" onButtonClick={() => go({ tab: 'objects', q: 'role:shared' })} />
-        <MetricCard fullHeight pinButtonToBottom componentId="sts-lb-lineage.ov.links" label="Process dependencies" metric={fmt(st.crossProcessLinks)} comparison={`${plural(st.selfContainedProcesses, 'process', 'processes')} share no tables`} />
-        <MetricCard fullHeight pinButtonToBottom componentId="sts-lb-lineage.ov.cycles" label="Dependency cycles" metric={fmt(s.cycles)} comparison={s.cycles ? 'Processes that feed each other' : 'No process feeds itself'} />
+        <MetricCard fullHeight pinButtonToBottom componentId="sts-lb-lineage.ov.links" label="Process dependencies" metric={fmt(st.crossProcessLinks)} comparison={`${plural(st.selfContainedProcesses, 'process', 'processes')} share no tables`} buttonText="Process map" onButtonClick={() => go({ tab: 'processes' })} />
+        <MetricCard fullHeight pinButtonToBottom componentId="sts-lb-lineage.ov.cycles" label="Dependency cycles" metric={fmt(s.cycles)} comparison={s.cycles ? 'Processes that feed each other' : 'No process feeds itself'} {...(s.cycles ? { buttonText: 'Show them', onButtonClick: () => go({ tab: 'processes', only: 'cycles' }) } : {})} />
       </div>
+
+      {model.ins.processes.length > 1 && (
+        <section>
+          <div className="lbl-row lbl-spread">
+            <Typography.Title level={3}>Lineage at a glance</Typography.Title>
+            <Button componentId="sts-lb-lineage.ov.open-map" type="primary" icon={<ShareNodesIcon />} onClick={() => go({ tab: 'processes' })}>
+              Open the process map
+            </Button>
+          </div>
+          <Typography.Paragraph color="secondary">
+            {`The ${Math.min(PREVIEW, model.ins.processes.length)} most connected processes and the shared tables between them. Click a process for its own lineage graph, or open any table from the search box.`}
+          </Typography.Paragraph>
+          <ProcessMapPreview model={model} cap={PREVIEW} onOpenProcess={onOpenProcess} onOpenObject={onOpenObject} />
+        </section>
+      )}
 
       <div className="lbl-grid">
         <section>

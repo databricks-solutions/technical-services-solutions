@@ -597,9 +597,10 @@ export function LineageModal({
   );
 }
 
-export function GraphView(props: CanvasProps) {
+/** `inline` is the short preview inside a drawer. */
+export function GraphView({ inline, ...props }: CanvasProps & { inline?: boolean }) {
   return (
-    <div className="lbl-canvas is-page">
+    <div className={`lbl-canvas ${inline ? 'is-inline' : 'is-page'}`}>
       <ReactFlowProvider>
         <Canvas {...props} />
       </ReactFlowProvider>

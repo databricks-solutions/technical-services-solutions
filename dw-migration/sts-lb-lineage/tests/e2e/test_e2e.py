@@ -316,3 +316,139 @@ def test_technology(tmp_path, slug, platform, ext, status, edges, note):
     assert str(src.resolve()) not in raw and "/private/" not in raw, (
         "local paths leaked into lineage.json"
     )
+
+
+# Larger, multi-file estates: several processes, shared tables, MERGE, CTEs, temp tables, cursors,
+# dynamic SQL. Each pins edges, process count, shared tables, and cycles.
+# slug, platform, extra CLI flags, required edges, processes, min shared tables, cycles, note
+COMPLEX = [
+    (
+        "infa-pc-complex",
+        "Informatica - PC",
+        ["--collapse-instances"],
+        {
+            ("customer", "stg_customer", "data"),
+            ("region", "stg_customer", "data"),
+            ("stg_customer", "dim_customer", "data"),
+            ("customer_score", "dim_customer", "data"),
+            ("dim_customer", "fact_sales", "data"),
+            ("stg_sales", "fact_sales", "data"),
+            ("fact_sales", "customer_score", "data"),
+            ("wf_customer", "s_m_stg_customer", "orchestration"),
+        },
+        2,
+        2,
+        1,
+        "2 workflows, 5 mappings, lookups and an SQ join override; the workflows feed each other",
+    ),
+    (
+        "ssis-complex",
+        "SSIS",
+        [],
+        {
+            ("raw.customer", "stg.customer_clean", "data"),
+            ("stg.customer_clean", "dw.dim_customer", "data"),
+            ("dw.dim_customer", "dw.fact_sales", "data"),
+            ("stg.sales_clean", "dw.fact_sales", "data"),
+            ("dw.fact_sales", "mart.sales_summary", "data"),
+        },
+        4,
+        3,
+        0,
+        "master package with Execute Package tasks (no job links from the analyzer)",
+    ),
+    (
+        "pyspark-complex",
+        "PySpark",
+        [],
+        {
+            ("raw.sales_online", "stg.sales_clean", "data"),
+            ("raw.sales_store", "stg.sales_clean", "data"),
+            ("dw.fact_sales", "mart.sales_by_region", "data"),
+        },
+        2,
+        1,
+        0,
+        "CTEs, UNION ALL, MERGE INTO, temp views; the analyzer links per file",
+    ),
+    (
+        "sas-complex",
+        "SAS",
+        [],
+        {
+            ("raw.sales", "work.sales_yr", "data"),
+            ("work.sales_yr", "stg.sales_clean", "data"),
+            ("stg.sales_clean", "work.top_regions", "data"),
+            ("work.top_regions", "out.region_summary", "data"),
+            ("out.region_summary", "out.region_history", "data"),
+        },
+        2,
+        1,
+        0,
+        "PROC SQL chains across two programs",
+    ),
+    (
+        "mssql-complex",
+        "MS SQL Server",
+        [],
+        {
+            ("raw.orders", "#orders", "data"),
+            ("raw.order_lines", "#orders", "data"),
+            ("dw.fact_sales", "mart.sales_by_region", "data"),
+            ("stg.customer_segment", "mart.top_customers", "data"),
+        },
+        2,
+        1,
+        0,
+        "procedures with temp tables, CTE, MERGE, cursor, sp_executesql; MERGE targets and CTE names are not resolved",
+    ),
+    (
+        "oracle-complex",
+        "Oracle",
+        [],
+        {
+            ("raw.journal_entries", "stg.gl_entries", "data"),
+            ("stg.gl_entries", "dw.fact_gl", "data"),
+            ("dw.fact_gl", "mart.account_balance", "data"),
+        },
+        1,
+        0,
+        0,
+        "PL/SQL package with MERGE, cursor loop, EXECUTE IMMEDIATE",
+    ),
+    (
+        "teradata-complex",
+        "Teradata",
+        [],
+        {("dw.dim_customer", "mart.customer_counts", "data")},
+        1,
+        0,
+        0,
+        "BTEQ with a volatile table and MERGE; the MERGE is not seen",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("slug", "platform", "flags", "edges", "processes", "hubs", "cycles", "note"),
+    COMPLEX,
+    ids=[c[0] for c in COMPLEX],
+)
+def test_complex_estate(
+    tmp_path, slug, platform, flags, edges, processes, hubs, cycles, note
+):
+    src = SOURCES / slug
+    main(
+        ["--run", str(src), "--platform", platform, "-o", str(tmp_path)]
+        + ["--format", "json,html", *flags]
+    )
+    raw = (tmp_path / "lineage.json").read_text()
+    d = json.loads(raw)
+    names = {n["id"]: n["name"].lower() for n in d["nodes"]}
+    got = {(names[e["from"]], names[e["to"]], e["kind"]) for e in d["edges"]}
+    s = d["insights"]["summary"]
+    assert edges <= got, f"{slug}: missing {sorted(edges - got)} ({note})"
+    assert (s["processes"], s["cycles"]) == (processes, cycles), f"{slug}: {s}"
+    assert s["hubs"] >= hubs, f"{slug}: {s['hubs']} shared tables"
+    assert "/private/" not in raw and str(src.resolve()) not in raw
+    assert (tmp_path / "lineage.html").stat().st_size > 1_000_000

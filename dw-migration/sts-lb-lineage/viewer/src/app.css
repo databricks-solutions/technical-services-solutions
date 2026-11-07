@@ -102,6 +102,19 @@ body {
   height: calc(100vh - 180px);
 }
 
+.lbl-canvas.is-inline {
+  height: 340px;
+}
+
+.lbl-canvas.is-preview {
+  height: 420px;
+}
+
+.lbl-spread {
+  justify-content: space-between;
+  align-items: center;
+}
+
 .lbl-canvas .react-flow {
   --xy-background-pattern-dots-color-default: var(--db-border-base);
   --xy-background-color-default: var(--db-surface-subtle);
@@ -516,4 +529,17 @@ body {
 .lbl-md li {
   font-size: var(--db-font-size-base);
   line-height: 1.6;
+}
+
+/* edge labels follow the theme instead of React Flow's white default */
+.react-flow {
+  --xy-edge-label-background-color: var(--db-surface-base);
+  --xy-edge-label-color: var(--db-text-subtle);
+}
+.react-flow__edge-text {
+  font-size: 11px;
+}
+.lbl-edge.is-back .react-flow__edge-path {
+  stroke: var(--db-alert-icon-color-error);
+  stroke-dasharray: 6 4;
 }

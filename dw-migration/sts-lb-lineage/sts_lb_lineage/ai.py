@@ -132,6 +132,19 @@ def impact_context(
                     "tech": p["tech"],
                     "max_complexity": p["maxComplexity"],
                     "in_cycle": p["cycle"] is not None,
+                    **(
+                        {
+                            "cycle_with": sorted(
+                                q["name"]
+                                for q in procs.values()
+                                if q["cycle"] == p["cycle"] and q["name"] != name
+                            )[:20]
+                        }
+                        if p["cycle"] is not None
+                        else {}
+                    ),
+                    "depends_on": p["upstream"][:20],
+                    "feeds": p["downstream"][:20],
                 }
             )
     programs = []
@@ -210,6 +223,21 @@ def messages_for(
     return msgs + [("user", task)]
 
 
+def answer_text(content) -> str:
+    """Chat content is a string, or (reasoning models) a list of parts such as
+    {"type": "reasoning", ...} and {"type": "text", "text": ...}. Keep the text parts only."""
+    if isinstance(content, list):
+        content = "\n\n".join(
+            part.get("text", "")
+            for part in content
+            if isinstance(part, dict)
+            and part.get("type") in (None, "text", "output_text")
+        )
+    return (
+        content if isinstance(content, str) else ""
+    ).strip() or "The endpoint returned no text."
+
+
 def sdk_caller(profile: str, endpoint: str):
     """Returns (host, ask) where ask(messages) -> text, using the Databricks CLI profile."""
     from databricks.sdk import WorkspaceClient
@@ -229,9 +257,9 @@ def sdk_caller(profile: str, endpoint: str):
             usage_context={"client": "sts-lb-lineage"},
         )
         choice = (r.choices or [None])[0]
-        return (
+        return answer_text(
             choice.message.content if choice and choice.message else None
-        ) or "The endpoint returned no text."
+        )
 
     return w.config.host, ask
 

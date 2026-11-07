@@ -8,7 +8,7 @@ type Code = (text: string) => ReactNode | null;
 function inline(text: string, code?: Code): ReactNode[] {
   return text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).map((part, i) =>
     part.startsWith('**') && part.endsWith('**') ? (
-      <strong key={i}>{part.slice(2, -2)}</strong>
+      <strong key={i}>{inline(part.slice(2, -2), code)}</strong>
     ) : part.startsWith('`') && part.endsWith('`') ? (
       <span key={i}>{code?.(part.slice(1, -1)) ?? <code>{part.slice(1, -1)}</code>}</span>
     ) : (

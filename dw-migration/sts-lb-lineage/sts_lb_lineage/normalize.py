@@ -53,11 +53,14 @@ def search_path_aliases(lin, schemas: list[str]) -> dict[str, str]:
     return out
 
 
-_INSTANCE = [re.compile(r"^SQ_(.+)$", re.IGNORECASE), re.compile(r"^(.+?)_?\d+$")]
+_INSTANCE = [
+    re.compile(r"^(?:SQ|LKP)_(.+)$", re.IGNORECASE),
+    re.compile(r"^(.+?)_?\d+$"),
+]
 
 
 def instance_aliases(lin) -> dict[str, str]:
-    """ETL instance names: SQ_<base> (source qualifier) and <base>_1 / <base>1 -> <base>."""
+    """ETL instance names: SQ_<base> (source qualifier), LKP_<base> (lookup) and <base>_1 / <base>1 -> <base>."""
     tables = {
         n["name"].lower(): nid for nid, n in lin.nodes.items() if n["kind"] == "table"
     }

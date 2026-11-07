@@ -47,7 +47,7 @@ const PAGES: { group: string; items: { tab: Tab; label: string; icon: ReactNode;
   {
     group: 'Summary',
     items: [
-      { tab: 'overview', label: 'Overview', icon: <DashboardIcon />, intro: 'What was scanned, how it connects, and how far to trust it.' },
+      { tab: 'overview', label: 'Overview', icon: <DashboardIcon />, intro: 'What was scanned, how it connects, and how far to trust it. Click any process or table to see its lineage graph.' },
       { tab: 'statistics', label: 'Statistics', icon: <BarChartIcon />, intro: 'Descriptive statistics of the scanned code and its lineage. All numbers come from the analyzer output.' },
     ],
   },
@@ -58,9 +58,9 @@ const PAGES: { group: string; items: { tab: Tab; label: string; icon: ReactNode;
         tab: 'processes',
         label: 'Process map',
         icon: <WorkflowsIcon />,
-        intro: 'One node per top-level process. Shared tables connect them. Click a process to open it and its lineage.',
+        intro: 'One node per top-level process, linked by the tables they share. Click a process to see its own lineage graph.',
       },
-      { tab: 'objects', label: 'Objects', icon: <TableIcon />, intro: 'Every table and job. Filter, group, or switch to the graph.' },
+      { tab: 'objects', label: 'Objects', icon: <TableIcon />, intro: 'Every table and job as a lineage graph or a list. Filter or group on the left; click any object to see its upstream and downstream.' },
     ],
   },
   {
@@ -126,7 +126,7 @@ function Shell({ model, dark, onToggleDark }: { model: Model; dark: boolean; onT
                           label={it.label}
                           onClick={(e) => {
                             e.preventDefault();
-                            go({ tab: it.tab, obj: undefined, proc: undefined });
+                            go({ tab: it.tab, obj: undefined, proc: undefined, only: undefined });
                           }}
                         />
                       </NavList.Item>
@@ -159,9 +159,11 @@ function Shell({ model, dark, onToggleDark }: { model: Model; dark: boolean; onT
         />
         <Typography.Paragraph color="secondary">{page.intro}</Typography.Paragraph>
 
-        {route.tab === 'overview' && <Overview model={model} go={go} />}
+        {route.tab === 'overview' && <Overview model={model} go={go} onOpenProcess={openProcess} onOpenObject={openObject} />}
         {route.tab === 'statistics' && <Statistics model={model} go={go} />}
-        {route.tab === 'processes' && <ProcessMap model={model} onOpenProcess={openProcess} onOpenObject={openObject} />}
+        {route.tab === 'processes' && (
+          <ProcessMap key={route.only ?? 'all'} model={model} initialCycles={route.only === 'cycles'} onOpenProcess={openProcess} onOpenObject={openObject} />
+        )}
         {route.tab === 'objects' && (
           <Objects model={model} q={route.q ?? ''} setQ={(q) => go({ q: q || undefined })} onOpen={openObject} onOpenProcess={openProcess} />
         )}

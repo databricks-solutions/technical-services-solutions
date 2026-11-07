@@ -1,0 +1,18 @@
+title: Many-to-many bridge
+category: Modeling
+scenario: >-
+  A part has many suppliers and a supplier has many parts. The bridge table partsupp has one row per pair.
+  Use the bridge as the source, so each pair counts once, and count each side with COUNT(DISTINCT). Distinct
+  counts do not add up across groups: a part supplied from two nations counts once in each nation.
+question: How many distinct parts can the suppliers in each European nation supply, and at what stock value?
+roles:
+  - name: bridge_table
+    description: The table with one row per pair, such as partsupp or account-customer.
+  - name: left_key
+    description: The key of one side, such as the part key.
+  - name: right_key
+    description: The key of the other side, such as the supplier key.
+test:
+  query: >-
+    SELECT `Supplier Nation`, MEASURE(`Parts Supplied`) AS parts, MEASURE(`Suppliers`) AS suppliers,
+    MEASURE(`Stock Value`) AS stock_value FROM {{view}} WHERE `Supplier Region` = 'EUROPE' GROUP BY ALL ORDER BY ALL

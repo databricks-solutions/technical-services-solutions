@@ -1,0 +1,15 @@
+title: Static segmentation
+category: Segmentation
+scenario: >-
+  Put each row in a band from a configuration table, for example order size bands. The band is a fixed
+  attribute of the row. A range join to the band table keeps the bands editable without changing the metric view.
+question: How many orders and how much revenue fall in each order size band?
+roles:
+  - name: amount
+    description: The value that decides the band, such as the order total.
+  - name: band_table
+    description: A table with the band name and its lower and upper bounds.
+test:
+  query: >-
+    SELECT `Order Size`, MEASURE(`Orders`) AS orders, MEASURE(`Revenue`) AS revenue
+    FROM {{view}} WHERE `Order Year` = 1996 GROUP BY ALL ORDER BY ALL

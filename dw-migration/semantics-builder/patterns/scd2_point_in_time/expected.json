@@ -1,0 +1,11 @@
+{
+  "columns": ["Order Year", "Segment at Order Time", "orders"],
+  "rows": [
+    ["1994", "AUTOMOBILE", "45186"],
+    ["1994", "BUILDING", "45861"],
+    ["1994", "FURNITURE", "45911"],
+    ["1994", "HOUSEHOLD", "226363"],
+    ["1994", "MACHINERY", "45781"],
+    ["1996", "HOUSEHOLD", "409880"]
+  ]
+}

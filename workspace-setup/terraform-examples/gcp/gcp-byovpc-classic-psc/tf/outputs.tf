@@ -12,13 +12,13 @@ output "workspace_id" {
 }
 
 output "vpc_name" {
-  value       = google_compute_network.databricks_vpc.name
-  description = "Name of the created VPC network."
+  value       = local.vpc_name
+  description = "Name of the VPC network used by the workspace."
 }
 
 output "node_subnet_name" {
-  value       = google_compute_subnetwork.node_subnet.name
-  description = "Name of the created Databricks node subnet."
+  value       = local.node_subnet_name
+  description = "Name of the Databricks node subnet."
 }
 
 output "psc_subnet_name" {

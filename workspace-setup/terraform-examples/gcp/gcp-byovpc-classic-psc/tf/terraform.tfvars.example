@@ -6,10 +6,17 @@ google_project_name          = "<gcp-project-id>"
 google_region                = "us-central1"
 
 ######################################################
-# Network (created by this module)
+# Network
 ######################################################
-subnet_cidr     = "10.10.0.0/22" # Databricks node subnet
-psc_subnet_cidr = "10.10.4.0/28" # PSC endpoint subnet (must not overlap subnet_cidr)
+# New VPC (default): set subnet_cidr and leave vpc_name empty.
+subnet_cidr     = "10.10.0.0/22" # Databricks node subnet (ignored when vpc_name is set)
+psc_subnet_cidr = "10.10.4.0/28" # PSC endpoint subnet (must not overlap the node subnet)
+
+# Existing VPC: set these and Terraform reuses the VPC/node subnet, still creating
+# a dedicated PSC subnet in that VPC.
+# vpc_network_project_id = "<vpc-host-project>"
+# vpc_name               = "<existing-vpc-name>"
+# subnet_name            = "<existing-node-subnet-name>"
 
 # NAT gateway for outbound egress from the (no-public-IP) nodes.
 #   true  = deploy Cloud Router + Cloud NAT (default; nodes reach the internet).

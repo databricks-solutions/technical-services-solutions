@@ -11,7 +11,7 @@ resource "databricks_mws_vpc_endpoint" "rest_api" {
   vpc_endpoint_name = "dbx-backend-rest-${random_string.databricks_suffix.result}"
 
   gcp_vpc_endpoint_info {
-    project_id        = var.google_project_name
+    project_id        = local.network_project
     psc_endpoint_name = var.workspace_pe_name
     endpoint_region   = var.google_region
   }
@@ -25,7 +25,7 @@ resource "databricks_mws_vpc_endpoint" "relay" {
   vpc_endpoint_name = "dbx-backend-relay-${random_string.databricks_suffix.result}"
 
   gcp_vpc_endpoint_info {
-    project_id        = var.google_project_name
+    project_id        = local.network_project
     psc_endpoint_name = var.relay_pe_name
     endpoint_region   = var.google_region
   }
@@ -57,9 +57,9 @@ resource "databricks_mws_networks" "databricks_network" {
   network_name = "dbx-nwt-${random_string.databricks_suffix.result}"
 
   gcp_network_info {
-    network_project_id = var.google_project_name
-    vpc_id             = google_compute_network.databricks_vpc.name
-    subnet_id          = google_compute_subnetwork.node_subnet.name
+    network_project_id = local.network_project
+    vpc_id             = local.vpc_name
+    subnet_id          = local.node_subnet_name
     subnet_region      = var.google_region
   }
 

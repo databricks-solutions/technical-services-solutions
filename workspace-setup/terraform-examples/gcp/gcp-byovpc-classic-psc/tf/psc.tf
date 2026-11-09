@@ -20,7 +20,7 @@
 # --- Backend REST API endpoint (workspace / control plane) ---
 resource "google_compute_address" "rest_api_ip" {
   name         = "${var.workspace_pe_name}-ip"
-  project      = var.google_project_name
+  project      = local.network_project
   region       = var.google_region
   subnetwork   = google_compute_subnetwork.psc_subnet.id
   address_type = "INTERNAL"
@@ -28,9 +28,9 @@ resource "google_compute_address" "rest_api_ip" {
 
 resource "google_compute_forwarding_rule" "rest_api_psc_ep" {
   name                  = var.workspace_pe_name
-  project               = var.google_project_name
+  project               = local.network_project
   region                = var.google_region
-  network               = google_compute_network.databricks_vpc.id
+  network               = local.vpc_id
   ip_address            = google_compute_address.rest_api_ip.id
   target                = var.workspace_service_attachment
   load_balancing_scheme = "" # Required to be "" when target is a service attachment URI.
@@ -39,7 +39,7 @@ resource "google_compute_forwarding_rule" "rest_api_psc_ep" {
 # --- Backend SCC relay endpoint ---
 resource "google_compute_address" "relay_ip" {
   name         = "${var.relay_pe_name}-ip"
-  project      = var.google_project_name
+  project      = local.network_project
   region       = var.google_region
   subnetwork   = google_compute_subnetwork.psc_subnet.id
   address_type = "INTERNAL"
@@ -47,9 +47,9 @@ resource "google_compute_address" "relay_ip" {
 
 resource "google_compute_forwarding_rule" "relay_psc_ep" {
   name                  = var.relay_pe_name
-  project               = var.google_project_name
+  project               = local.network_project
   region                = var.google_region
-  network               = google_compute_network.databricks_vpc.id
+  network               = local.vpc_id
   ip_address            = google_compute_address.relay_ip.id
   target                = var.relay_service_attachment
   load_balancing_scheme = "" # Required to be "" when target is a service attachment URI.

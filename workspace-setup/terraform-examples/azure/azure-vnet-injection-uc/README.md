@@ -158,18 +158,6 @@ Copy `terraform.tfvars.example` to `terraform.tfvars` in the `tf/` directory and
 | `create_nat_gateway` | **(Optional)** Create the NAT gateway for outbound access. Default `true`. `false` is rejected by this template: without Private Link, clusters reach the Databricks control plane only through NAT and would not launch. To deploy without NAT use `azure-privatelink-classic`. |
 | `nat_gateway_zones` | **(Optional)** Availability zone(s) for the NAT gateway and its public IP. Azure NAT gateway is a zonal resource, so provide at most one zone. Default: `["1"]`. Use `[]` for regions without availability-zone support. For zone-redundant egress, deploy one NAT gateway per zone (not covered by this example). |
 
-### Renamed and removed variables
-
-If you are updating an existing `terraform.tfvars`, change these before the next `terraform plan`:
-
-| Old | New | Notes |
-|-----|-----|-------|
-| `existing_metastore_id` | `metastore_id` | Leaving the old name set fails with an error (it would otherwise unassign the metastore). |
-| `cidr` | `vnet_cidr` | No default any more; required when `create_new_vnet = true`. |
-| `vnet_resource_group_name` (required, must differ) | `vnet_resource_group_name` (optional) | Existing values keep working. Empty now means the workspace resource group. |
-| `workspace_name` (required) and `root_storage_name` (required) | `workspace_name` and `root_storage_name` (both optional) | Resource names now derive from the new `resource_prefix` using the Azure CAF pattern `<abbreviation>-<resource_prefix>[-suffix]` (it used to be `<workspace_name>-<suffix>`). The renamed resources are replaced on an existing deployment, so redeploy rather than upgrade in place. |
-| `tenant_id` | _(removed)_ | The tenant is taken from the logged-in identity. Set `ARM_TENANT_ID` if your CLI session defaults to another tenant. |
-
 ### Unity Catalog storage security
 
 The UC external-location storage account is created with TLS 1.2 minimum, infrastructure (double) encryption, and public blob access disabled. This is a VNet-injection (non-Private Link) example, so the account keeps its public endpoint. For production, restrict it with an [Azure Storage account firewall](https://learn.microsoft.com/en-us/azure/storage/common/storage-network-security) (allowlist your networks and enable trusted-service access for the Databricks access connector).
@@ -179,6 +167,8 @@ The UC external-location storage account is created with TLS 1.2 minimum, infras
 ### Provider authentication
 
 The `databricks` providers do not pin `auth_type`, so authentication is auto-detected: Azure CLI (`az login`) for interactive use, or a service principal via `ARM_CLIENT_ID` / `ARM_CLIENT_SECRET` / `ARM_TENANT_ID` for CI/CD (see [Option 2](#option-2-service-principal-login-for-automation-cicd) above).
+
+There is no tenant input: the Azure tenant is taken from the logged-in identity. Set `ARM_TENANT_ID` if your CLI session defaults to a different tenant.
 
 ## Deploy
 

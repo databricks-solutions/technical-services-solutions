@@ -135,21 +135,7 @@ Copy `terraform.tfvars.example` to `terraform.tfvars` in the `tf/` directory and
 | `node_type_id` / `cluster_autotermination_minutes` | **(Optional)** VM SKU (default `Standard_DS3_v2`) and idle minutes (default `10`, minimum `10`) for the validation cluster. |
 | `tags` | **(Optional)** Tags applied to Azure resources that support tags. Default `{}` applies no tags (no built-in `Project` or `owner`). |
 
-#### Renamed variables
-
-If you are updating an existing `terraform.tfvars`, change these before the next `terraform plan`. The old names no longer exist, so Terraform reports the new required variables as missing.
-
-| Old | New |
-|-----|-----|
-| `az_subscription` | `azure_subscription_id` |
-| `cidr_dp` | `vnet_cidr` |
-| `create_data_plane_resource_group` | `create_resource_group` (now defaults to `true`) |
-| `existing_data_plane_resource_group_name`, or the derived name `rg-<resource_prefix>-dp` | `resource_group_name` (always required) |
-
-All resource names now follow the Azure CAF pattern `<abbreviation>-<resource_prefix>[-suffix]` without the old `-dp` part (for example `vnet-<resource_prefix>`, `snet-<resource_prefix>-public`, `pep-<resource_prefix>-dbfs-dfs`). Because the names changed, applying this version to an existing deployment replaces the renamed resources; redeploy rather than upgrade in place.
-| `subnet_workspace_cidrs` (list `[public, private]`) | `subnet_public_cidr` and `subnet_private_cidr` |
-
-These variables, and the create-or-reuse options for the resource group and VNet, are shared with `azure-vnet-injection-uc`, which uses the same names.
+Resource names follow the Azure CAF pattern `<abbreviation>-<resource_prefix>[-suffix]`, for example `vnet-<resource_prefix>`, `snet-<resource_prefix>-public`, `pep-<resource_prefix>-dbfs-dfs`.
 
 ## Existing metastore prerequisites
 

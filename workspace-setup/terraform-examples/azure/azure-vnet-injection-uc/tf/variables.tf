@@ -155,18 +155,6 @@ variable "new_metastore_name" {
   }
 }
 
-# Renamed to metastore_id. Kept only so a leftover value fails loudly: silently ignoring it would plan to unassign the
-# metastore from the workspace. Remove this variable in a later release.
-variable "existing_metastore_id" {
-  description = "REMOVED: renamed to metastore_id."
-  type        = string
-  default     = ""
-  validation {
-    condition     = var.existing_metastore_id == ""
-    error_message = "existing_metastore_id has been renamed to metastore_id. Update the variable values you pass to Terraform."
-  }
-}
-
 #=============================================================================
 # Cluster Configuration (optional)
 #=============================================================================

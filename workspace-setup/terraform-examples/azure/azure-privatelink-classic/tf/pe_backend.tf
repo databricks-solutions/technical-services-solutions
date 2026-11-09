@@ -7,7 +7,7 @@
 # =============================================================================
 
 resource "azurerm_private_endpoint" "dp_dpcp" {
-  name                = "pep-${local.prefix}-dp-dpcp"
+  name                = "pep-${local.prefix}-dpcp"
   location            = local.dp_rg_location
   resource_group_name = local.dp_rg_name
   subnet_id           = azurerm_subnet.dp_plsubnet.id
@@ -15,7 +15,7 @@ resource "azurerm_private_endpoint" "dp_dpcp" {
 
   # Connect to the Databricks workspace control plane (databricks_ui_api).
   private_service_connection {
-    name                           = "ple-${local.prefix}-dp-dpcp"
+    name                           = "ple-${local.prefix}-dpcp"
     private_connection_resource_id = azurerm_databricks_workspace.dp_workspace.id
     is_manual_connection           = false
     subresource_names              = ["databricks_ui_api"]
@@ -23,7 +23,7 @@ resource "azurerm_private_endpoint" "dp_dpcp" {
 
   # Auto-register private DNS (privatelink.azuredatabricks.net) for this endpoint.
   private_dns_zone_group {
-    name                 = "pdnsgrp-${local.prefix}-dp-dpcp"
+    name                 = "pdnsgrp-${local.prefix}-dpcp"
     private_dns_zone_ids = [azurerm_private_dns_zone.control_plane.id]
   }
 }

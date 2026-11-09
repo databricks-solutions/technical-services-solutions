@@ -2,32 +2,29 @@
 # Azure Configuration
 # =============================================================================
 
-variable "tenant_id" {
-  description = "Your Azure Tenant ID"
-  type        = string
-}
-
 variable "azure_subscription_id" {
   description = "Your Azure Subscription ID"
   type        = string
 }
 
+variable "create_resource_group" {
+  description = "Set to true to create the workspace resource group; set to false to reuse the existing group named resource_group_name (it must already exist, and its region is used)."
+  type        = bool
+  default     = true
+}
+
 variable "resource_group_name" {
-  description = "The name of the resource group"
+  description = "Name of the workspace resource group (workspace, access connector, catalog storage). Created when create_resource_group is true, otherwise it must already exist."
   type        = string
 }
 
 variable "managed_resource_group_name" {
-  description = "The name of managed resource group. This is optional field"
+  description = "Name of the Databricks managed resource group. Leave empty to use mrg-dbw-<resource_prefix> (this template always names it). Must differ from resource_group_name. Changing it forces workspace replacement."
   type        = string
-  default     = null
+  default     = ""
   validation {
-    condition     = var.managed_resource_group_name == null || length(var.managed_resource_group_name) > 0
-    error_message = "managed_resource_group_name must not be an empty string. Leave it as null to let Azure auto-generate one."
-  }
-  validation {
-    condition     = var.managed_resource_group_name != var.resource_group_name
-    error_message = "Managed resource group name should not be same as resource group name"
+    condition     = var.managed_resource_group_name == "" || var.managed_resource_group_name != var.resource_group_name
+    error_message = "managed_resource_group_name must not be the same as resource_group_name."
   }
 }
 
@@ -47,81 +44,129 @@ variable "databricks_account_id" {
   sensitive   = true
 }
 
-variable "workspace_name" {
-  description = "The name of the Databricks workspace"
+variable "resource_prefix" {
+  description = "Prefix for Azure resource names (VNet, NSG, subnets, resource group). Used to derive DBFS storage account name (alphanumeric only, 3-24 chars)."
   type        = string
+  default     = "databricks-workspace"
+  validation {
+    condition     = can(regex("^[a-z0-9-.]{1,40}$", var.resource_prefix))
+    error_message = "resource_prefix must be 1-40 characters containing only a-z, 0-9, -, ."
+  }
+}
+
+variable "workspace_name" {
+  description = "Name of the Databricks workspace (3-30 characters: letters, numbers, hyphens, underscores). Leave empty to use dbw-<resource_prefix>."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.workspace_name == "" || can(regex("^[A-Za-z0-9_-]{3,30}$", var.workspace_name))
+    error_message = "workspace_name must be 3-30 characters: letters, numbers, hyphens and underscores only."
+  }
 }
 
 variable "admin_user" {
-  description = "The email of the user to assign admin access to the workspace and the new metastore"
-  type        = string
-}
-
-variable "root_storage_name" {
-  type        = string
-  description = "The root storage name. Only lowercase letters and numbers, 3-24 characters."
-  validation {
-    condition     = length(var.root_storage_name) >= 3 && length(var.root_storage_name) <= 24
-    error_message = "root_storage_name must be between 3 and 24 characters."
-  }
-  validation {
-    condition     = can(regex("^[a-z0-9]+$", var.root_storage_name))
-    error_message = "root_storage_name can only contain lowercase letters and numbers."
-  }
-}
-variable "catalog_name" {
-  type        = string
-  description = "The name of the Unity Catalog catalog"
-}
-
-variable "storage_credential_name" {
-  type        = string
-  description = "The name of the Databricks storage credential"
-}
-
-variable "external_location_name" {
-  type        = string
-  description = "The name of the external location"
-}
-variable "uc_storage_account_name" {
-  type        = string
-  description = "Azure storage account name for the Unity Catalog external location. Must be globally unique, only lowercase letters and numbers, 3-24 characters."
-  validation {
-    condition     = length(var.uc_storage_account_name) >= 3 && length(var.uc_storage_account_name) <= 24
-    error_message = "uc_storage_account_name must be between 3 and 24 characters."
-  }
-  validation {
-    condition     = can(regex("^[a-z0-9]+$", var.uc_storage_account_name))
-    error_message = "uc_storage_account_name can only contain lowercase letters and numbers."
-  }
-}
-
-variable "location" {
-  description = "The Azure region to deploy the workspace to"
-  type        = string
-  validation {
-    condition = contains([
-      "australiacentral", "australiacentral2", "australiaeast", "australiasoutheast", "brazilsouth", "canadacentral", "canadaeast", "centralindia", "centralus", "chinaeast2", "chinaeast3", "chinanorth2", "chinanorth3", "eastasia", "eastus", "eastus2", "francecentral", "germanywestcentral", "japaneast", "japanwest", "koreacentral", "mexicocentral", "northcentralus", "northeurope", "norwayeast", "qatarcentral", "southafricanorth", "southcentralus", "southeastasia", "southindia", "swedencentral", "switzerlandnorth", "switzerlandwest", "uaenorth", "uksouth", "ukwest", "westcentralus", "westeurope", "westindia", "westus", "westus2", "westus3"
-    ], var.location)
-    error_message = "Valid values for var.location are standard Azure regions supported by Databricks."
-  }
-}
-
-variable "existing_metastore_id" {
-  description = "The ID of the existing metastore. Leave empty to create a new metastore."
+  description = "Databricks account user (email) made workspace admin and granted ALL PRIVILEGES on the user-defined catalog, external location and storage credential. Required when new_metastore_name is set (added to the metastore admins group); run Terraform as this user in that case. Leave empty to skip."
   type        = string
   default     = ""
 }
 
+variable "root_storage_name" {
+  description = "Name of the workspace root (DBFS) storage account: lowercase letters and numbers only, 3-24 characters, globally unique. Leave empty to derive it from resource_prefix (\"dbfs\" + up to 20 alphanumeric characters)."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.root_storage_name == "" || can(regex("^[a-z0-9]{3,24}$", var.root_storage_name))
+    error_message = "root_storage_name must be 3-24 characters: lowercase letters and numbers only."
+  }
+}
+variable "new_catalog" {
+  description = "Set to true to create a user-defined catalog on a dedicated storage account, together with its access connector, storage credential and external location. Requires a metastore (metastore_id or new_metastore_name)."
+  type        = bool
+  default     = true
+}
+
+variable "uc_storage_account_name" {
+  description = "Name of the storage account for the Unity Catalog catalog (3-24 chars, lowercase letters and numbers, globally unique). Leave empty to derive it from resource_prefix (\"uc\" + up to 22 alphanumeric characters), which may collide with an existing account. Only used when new_catalog is true."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.uc_storage_account_name == "" || can(regex("^[a-z0-9]{3,24}$", var.uc_storage_account_name))
+    error_message = "uc_storage_account_name must be 3-24 characters, lowercase letters and numbers only."
+  }
+}
+
+variable "uc_container_name" {
+  description = "Name of the storage container used as the catalog storage root. Only used when new_catalog is true."
+  type        = string
+  default     = "uc-catalog"
+  validation {
+    condition     = can(regex("^[a-z0-9]([a-z0-9]|-[a-z0-9]){2,62}$", var.uc_container_name))
+    error_message = "uc_container_name must be 3-63 characters: lowercase letters, numbers and single hyphens, starting and ending with a letter or number."
+  }
+}
+
+variable "catalog_name" {
+  description = "Name of the Unity Catalog catalog. Leave empty to use \"<resource_prefix>_catalog\" (hyphens and dots replaced by underscores)."
+  type        = string
+  default     = ""
+}
+
+variable "storage_credential_name" {
+  description = "Name of the Unity Catalog storage credential. Leave empty to use \"<resource_prefix>-storage-credential\"."
+  type        = string
+  default     = ""
+}
+
+variable "external_location_name" {
+  description = "Name of the Unity Catalog external location. Leave empty to use \"<resource_prefix>-external-location\"."
+  type        = string
+  default     = ""
+}
+
+variable "location" {
+  description = "Azure region to deploy to. Required when create_resource_group is true. When reusing a resource group, leave empty: the template uses that group's region for every regional resource."
+  type        = string
+  default     = ""
+  validation {
+    condition = var.location == "" ? !var.create_resource_group : contains([
+      "australiacentral", "australiacentral2", "australiaeast", "australiasoutheast", "brazilsouth", "canadacentral", "canadaeast", "centralindia", "centralus", "chinaeast2", "chinaeast3", "chinanorth2", "chinanorth3", "eastasia", "eastus", "eastus2", "francecentral", "germanywestcentral", "japaneast", "japanwest", "koreacentral", "mexicocentral", "northcentralus", "northeurope", "norwayeast", "qatarcentral", "southafricanorth", "southcentralus", "southeastasia", "southindia", "swedencentral", "switzerlandnorth", "switzerlandwest", "uaenorth", "uksouth", "ukwest", "westcentralus", "westeurope", "westindia", "westus", "westus2", "westus3"
+    ], var.location)
+    error_message = "location must be set to a standard Azure region supported by Databricks when create_resource_group is true; leave it empty only when reusing a resource group."
+  }
+}
+
+variable "metastore_id" {
+  description = "Unity Catalog metastore ID (UUID) of an existing metastore to assign to this workspace via the account API. Azure allows one metastore per region per account, so the regional metastore usually already exists (list with: databricks account metastores list). Leave empty to create one with new_metastore_name, or to skip and attach a metastore manually. Mutually exclusive with new_metastore_name."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.metastore_id == "" || can(regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", var.metastore_id))
+    error_message = "metastore_id must be empty or a valid UUID (e.g. aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee). Find IDs with: databricks account metastores list."
+  }
+}
+
 variable "new_metastore_name" {
-  description = "The name of the new metastore."
+  description = "Name of a new Unity Catalog metastore to create in the workspace region and assign to the workspace, owned by a new <name>-admins group. Requires admin_user. Leave empty to not create a metastore. Mutually exclusive with metastore_id."
   type        = string
   default     = ""
   validation {
     condition     = can(regex("^[a-zA-Z0-9_-]*$", var.new_metastore_name))
-    error_message = "metastore_name can only contain alphanumerical characters, hyphens, and underscores."
+    error_message = "new_metastore_name can only contain alphanumerical characters, hyphens, and underscores."
   }
 }
+
+# Renamed to metastore_id. Kept only so a leftover value fails loudly: silently ignoring it would plan to unassign the
+# metastore from the workspace. Remove this variable in a later release.
+variable "existing_metastore_id" {
+  description = "REMOVED: renamed to metastore_id."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.existing_metastore_id == ""
+    error_message = "existing_metastore_id has been renamed to metastore_id. Update the variable values you pass to Terraform."
+  }
+}
+
 #=============================================================================
 # Cluster Configuration (optional)
 #=============================================================================
@@ -152,7 +197,7 @@ variable "cluster_autotermination_minutes" {
 # =============================================================================
 
 variable "create_new_vnet" {
-  description = "Whether to create a new VNet. Set to false to bring an existing VNet (specify vnet_name and vnet_resource_group_name)."
+  description = "Whether to create a new VNet. Set to false to bring an existing VNet (specify vnet_name, and vnet_resource_group_name if it is not in the workspace resource group). The template still creates its own public and private subnets and NSG in the VNet, so it needs free address space for both subnet CIDRs."
   type        = bool
   default     = true
 }
@@ -168,32 +213,39 @@ variable "vnet_name" {
 }
 
 variable "vnet_resource_group_name" {
-  description = "The name of the VNet resource group"
+  description = "Resource group for the VNet and networking resources (subnets, NSG, NAT gateway). Leave empty, or set to the same value as resource_group_name, to use the workspace resource group. When create_new_vnet is true and this names a different group, that group is created; when reusing a VNet it must be the group that holds the existing VNet."
   type        = string
+  default     = ""
+}
+
+variable "vnet_cidr" {
+  description = "CIDR of the virtual network address space (e.g. 10.0.0.0/20). Required when create_new_vnet is true; must encompass both workspace subnets. Not used when reusing an existing VNet."
+  type        = string
+  default     = ""
   validation {
-    condition     = var.vnet_resource_group_name != var.resource_group_name
-    error_message = "vnet_resource_group_name must not be the same as resource_group_name"
+    condition     = !var.create_new_vnet || var.vnet_cidr != ""
+    error_message = "vnet_cidr must be set when create_new_vnet is true."
   }
 }
 
-variable "cidr" {
-  description = "The CIDR address of the virtual network"
-  type        = string
-  default     = "10.0.0.0/20"
-}
-
 variable "subnet_public_cidr" {
-  description = "The CIDR address of the first subnet"
+  description = "CIDR of the Databricks public (host) subnet. Must be within the VNet (vnet_cidr)."
   type        = string
 }
 
 variable "subnet_private_cidr" {
-  description = "The CIDR address of the second subnet"
+  description = "CIDR of the Databricks private (container) subnet. Must be within the VNet (vnet_cidr)."
   type        = string
 }
 
+variable "create_nat_gateway" {
+  description = "Create a NAT gateway for outbound internet access from the workspace subnets. This template has no Private Link, so clusters can only reach the Databricks control plane through the NAT gateway: false is rejected here. To deploy without NAT, use the azure-privatelink-classic template, which provides private connectivity."
+  type        = bool
+  default     = true
+}
+
 variable "nat_gateway_zones" {
-  description = "Availability zone(s) for the NAT gateway and its public IP. Azure NAT gateway is a zonal resource, so provide at most one zone (e.g. [\"1\"]). Use [] for regions without availability-zone support (non-zonal). Default [\"1\"] preserves prior behavior. For zone-redundant egress, deploy one NAT gateway per zone (not covered by this example)."
+  description = "Availability zone(s) for the NAT gateway and its public IP. Only used when create_nat_gateway is true. Azure NAT gateway is a zonal resource, so provide at most one zone (e.g. [\"1\"]). Use [] for regions without availability-zone support (non-zonal). Default [\"1\"] preserves prior behavior. For zone-redundant egress, deploy one NAT gateway per zone (not covered by this example)."
   type        = list(string)
   default     = ["1"]
   validation {

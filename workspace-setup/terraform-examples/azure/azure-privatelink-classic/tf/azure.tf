@@ -1,20 +1,22 @@
 # =============================================================================
-# azure.tf - Data plane resource group
+# azure.tf - Workspace resource group
 # =============================================================================
-# Creates or references the Azure resource group for data plane resources (VNet,
-# workspace, NAT, private endpoints). Other modules use local.dp_rg_name, etc.
+# Creates or references the Azure resource group for the workspace and its Private
+# Link resources (workspace, access connectors, storage, private endpoints, private
+# DNS zones). Other files use local.dp_rg_name, etc. Networking can live in a
+# different group: see vnet_resource_group_name in network.tf.
 # =============================================================================
 
-# Data plane resource group. Only created when create_data_plane_resource_group is true.
+# Workspace resource group. Only created when create_resource_group is true.
 resource "azurerm_resource_group" "dp_rg" {
-  count    = var.create_data_plane_resource_group ? 1 : 0
-  name     = "rg-${local.prefix}-dp"
+  count    = var.create_resource_group ? 1 : 0
+  name     = var.resource_group_name
   location = var.location
   tags     = local.tags
 }
 
-# Reference to existing resource group when create_data_plane_resource_group is false.
+# Reference to the existing resource group when create_resource_group is false.
 data "azurerm_resource_group" "dp_rg" {
-  count = var.create_data_plane_resource_group ? 0 : 1
-  name  = var.existing_data_plane_resource_group_name
+  count = var.create_resource_group ? 0 : 1
+  name  = var.resource_group_name
 }

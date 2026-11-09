@@ -138,39 +138,3 @@ resource "databricks_grant" "storage_credential_admin" {
   privileges         = ["ALL_PRIVILEGES"]
   depends_on         = [databricks_mws_permission_assignment.workspace_access]
 }
-
-# These resources now have count (new_catalog). Keep existing deployments from replacing them.
-moved {
-  from = azurerm_databricks_access_connector.db_mi
-  to   = azurerm_databricks_access_connector.db_mi[0]
-}
-
-moved {
-  from = azurerm_storage_account.db_uc_catalog
-  to   = azurerm_storage_account.db_uc_catalog[0]
-}
-
-moved {
-  from = azurerm_storage_container.db_uc_catalog
-  to   = azurerm_storage_container.db_uc_catalog[0]
-}
-
-moved {
-  from = azurerm_role_assignment.db_mi_data_contributor
-  to   = azurerm_role_assignment.db_mi_data_contributor[0]
-}
-
-moved {
-  from = databricks_storage_credential.db_uc_storage_cred
-  to   = databricks_storage_credential.db_uc_storage_cred[0]
-}
-
-moved {
-  from = databricks_external_location.db_ext_loc
-  to   = databricks_external_location.db_ext_loc[0]
-}
-
-moved {
-  from = databricks_catalog.uc_quickstart_sandbox
-  to   = databricks_catalog.uc_quickstart_sandbox[0]
-}

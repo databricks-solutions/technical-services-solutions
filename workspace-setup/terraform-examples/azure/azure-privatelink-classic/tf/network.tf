@@ -213,8 +213,3 @@ resource "azurerm_subnet" "dp_plsubnet" {
   default_outbound_access_enabled   = false
   private_endpoint_network_policies = "Enabled"
 }
-
-moved {
-  from = azurerm_virtual_network.dp_vnet
-  to   = azurerm_virtual_network.dp_vnet[0]
-}

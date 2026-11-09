@@ -131,29 +131,3 @@ resource "azurerm_subnet_nat_gateway_association" "private_nat_gateway_associati
   subnet_id      = azurerm_subnet.private.id
   nat_gateway_id = azurerm_nat_gateway.this[0].id
 }
-
-# These resources now have count (create_nat_gateway). Keep existing deployments from replacing them.
-moved {
-  from = azurerm_public_ip.this
-  to   = azurerm_public_ip.this[0]
-}
-
-moved {
-  from = azurerm_nat_gateway.this
-  to   = azurerm_nat_gateway.this[0]
-}
-
-moved {
-  from = azurerm_nat_gateway_public_ip_association.this
-  to   = azurerm_nat_gateway_public_ip_association.this[0]
-}
-
-moved {
-  from = azurerm_subnet_nat_gateway_association.public_nat_gateway_association
-  to   = azurerm_subnet_nat_gateway_association.public_nat_gateway_association[0]
-}
-
-moved {
-  from = azurerm_subnet_nat_gateway_association.private_nat_gateway_association
-  to   = azurerm_subnet_nat_gateway_association.private_nat_gateway_association[0]
-}

@@ -18,11 +18,6 @@ locals {
   resource_group_location = var.create_resource_group ? azurerm_resource_group.this[0].location : data.azurerm_resource_group.this[0].location
 }
 
-moved {
-  from = azurerm_resource_group.this
-  to   = azurerm_resource_group.this[0]
-}
-
 locals {
   # Prefix for Azure resource names, following the Azure CAF pattern <abbreviation>-<prefix>[-suffix]:
   # https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/ready/azure-best-practices/resource-abbreviations
@@ -34,4 +29,3 @@ locals {
   # Keep only [a-z0-9] from resource_prefix, then take first 20 chars after "dbfs".
   dbfsname = var.root_storage_name != "" ? var.root_storage_name : "dbfs${substr(join("", regexall("[a-z0-9]", lower(var.resource_prefix))), 0, 20)}"
 }
-

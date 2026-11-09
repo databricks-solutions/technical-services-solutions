@@ -170,8 +170,6 @@ If you are updating an existing `terraform.tfvars`, change these before the next
 | `workspace_name` (required) and `root_storage_name` (required) | `workspace_name` and `root_storage_name` (both optional) | Resource names now derive from the new `resource_prefix` using the Azure CAF pattern `<abbreviation>-<resource_prefix>[-suffix]` (it used to be `<workspace_name>-<suffix>`). The renamed resources are replaced on an existing deployment, so redeploy rather than upgrade in place. |
 | `tenant_id` | _(removed)_ | The tenant is taken from the logged-in identity. Set `ARM_TENANT_ID` if your CLI session defaults to another tenant. |
 
-The workspace resource group, NAT gateway resources and UC catalog resources now use `count`; `moved` blocks keep existing deployments from being replaced. Read the plan: it should report the resources as moved, not destroyed and re-created.
-
 ### Unity Catalog storage security
 
 The UC external-location storage account is created with TLS 1.2 minimum, infrastructure (double) encryption, and public blob access disabled. This is a VNet-injection (non-Private Link) example, so the account keeps its public endpoint. For production, restrict it with an [Azure Storage account firewall](https://learn.microsoft.com/en-us/azure/storage/common/storage-network-security) (allowlist your networks and enable trusted-service access for the Databricks access connector).

@@ -48,11 +48,6 @@ resource "databricks_mws_permission_assignment" "workspace_access" {
   ]
 }
 
-moved {
-  from = databricks_mws_permission_assignment.workspace_access
-  to   = databricks_mws_permission_assignment.workspace_access[0]
-}
-
 # metastore: assign an existing one (metastore_id) or create one (new_metastore_name) and assign it to the workspace.
 # Neither set = no metastore assignment here (attach one manually in the account console).
 
@@ -109,9 +104,4 @@ resource "databricks_metastore_assignment" "this" {
   metastore_id = local.metastore_id
 
   depends_on = [databricks_group_member.metastore_owner]
-}
-
-moved {
-  from = databricks_metastore_assignment.this
-  to   = databricks_metastore_assignment.this[0]
 }

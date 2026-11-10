@@ -1,6 +1,7 @@
 import type { SemanticBrief } from '../../shared/brief';
 import type { DictionaryEntry } from '../../shared/dictionary';
 import type { MetricView } from '../../shared/metricView';
+import { assetOf, clip } from '../../shared/pages';
 import type { PageDraft } from '../../shared/pages';
 
 export interface PageInput {
@@ -59,9 +60,9 @@ export function buildPages(input: PageInput): PageDraft[] {
       kind: e.kind,
       title: e.display_name || e.name,
       synonyms: uniq([...e.synonyms, e.display_name && e.display_name !== e.name ? e.name : '']),
-      description: e.definition.slice(0, 1000),
+      description: clip(e.definition),
       body,
-      relatedAssets: uniq([field && viewRef ? viewRef : '', e.source ?? '']),
+      relatedAssets: uniq([field && viewRef ? viewRef : '', e.source ? assetOf(e.source) : '']),
       sources: uniq([
         `Certified metric dictionary${input.dictionaryFile ? ` (${input.dictionaryFile})` : ''}`,
         projectSource,
@@ -79,7 +80,7 @@ export function buildPages(input: PageInput): PageDraft[] {
       kind: 'term',
       title: g.term,
       synonyms: [],
-      description: g.definition.slice(0, 1000),
+      description: clip(g.definition),
       body: `## Definition\n\n${g.definition}`,
       relatedAssets: viewRef ? [viewRef] : [],
       sources: [`Semantic Brief version ${input.brief!.version}`, projectSource],
@@ -108,7 +109,7 @@ export function buildPages(input: PageInput): PageDraft[] {
       kind: 'entity',
       title: b?.title || input.subProject,
       synonyms: [],
-      description: (v.comment || b?.businessGoal || '').slice(0, 1000),
+      description: clip(v.comment || b?.businessGoal || ''),
       body,
       relatedAssets: uniq([viewRef ?? '', ...input.sourceTables]),
       sources: uniq([input.brief ? `Semantic Brief version ${input.brief.version}` : '', projectSource]),

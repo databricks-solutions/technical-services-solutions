@@ -37,12 +37,29 @@ export interface DomainList {
 }
 
 const text = (max: number) => z.string().trim().max(max);
+
+/** Discover limits a Page description to this many characters. */
+export const DESCRIPTION_MAX = 160;
+
+/** Cuts text to `max` characters at a word boundary. */
+export function clip(s: string, max = DESCRIPTION_MAX): string {
+  const t = s.trim().replace(/\s+/g, ' ');
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max - 3);
+  return `${cut.slice(0, cut.lastIndexOf(' ') > 0 ? cut.lastIndexOf(' ') : cut.length)}...`;
+}
+
+/** Related assets of a Page are tables and views, so a column reference becomes its table. */
+export function assetOf(ref: string): string {
+  const parts = ref.split('.');
+  return parts.length > 3 ? parts.slice(0, 3).join('.') : ref;
+}
 export const domainSchema = z.object({ domain: text(200).min(1) });
 export const pageEditSchema = z.object({
   key: text(300).min(1),
   title: text(200).min(1),
   synonyms: z.array(text(100).min(1)).max(20),
-  description: text(1000),
+  description: text(DESCRIPTION_MAX),
   body: text(20_000),
   include: z.boolean(),
 });
@@ -64,29 +81,35 @@ export function piiWarnings(page: Pick<PageDraft, 'title' | 'synonyms' | 'descri
   return PII.filter(([re]) => re.test(all)).map(([, what]) => `It may contain ${what}.`);
 }
 
-const KIND: Record<PageDraft['kind'], string> = {
-  term: 'Business term',
-  metric: 'Metric',
-  dimension: 'Dimension',
-  entity: 'Entity',
-};
-
-/** One Page as Markdown, with the fields of a Page labeled so that Genie Code bulk import can map them. */
+/**
+ * One Page as Markdown, with only the fields a Page has, labeled so that Genie Code bulk import maps them. Sources are
+ * not links, and a Page source must be a link, so they go to the body.
+ */
 export function pageMarkdown(page: PageDraft, domain: string): string {
   const list = (items: string[]) => (items.length ? items.join(', ') : 'None');
+  const assets = [...new Set(page.relatedAssets.map(assetOf))];
   return [
     `# ${page.title}`,
     '',
     `- **Domain:** ${domain}`,
-    `- **Type:** ${KIND[page.kind]}`,
     `- **Synonyms:** ${list(page.synonyms)}`,
-    `- **Description:** ${page.description || 'None'}`,
-    `- **Related assets:** ${list(page.relatedAssets.map((a) => `\`${a}\``))}`,
-    `- **Sources:** ${list(page.sources)}`,
+    `- **Description:** ${clip(page.description) || 'None'}`,
+    `- **Related assets:** ${list(assets.map((a) => `\`${a}\``))}`,
     '',
     page.body.trim(),
+    ...(page.sources.length ? ['', '## Sources', '', ...page.sources.map((s) => `- ${s}`)] : []),
     '',
   ].join('\n');
+}
+
+/** The prompt for Genie Code bulk import: the domain, the file layout, and a preview before it creates the Pages. */
+export function importPrompt(domain: string, count: number): string {
+  return [
+    `Bulk import pages. Use the domain ${domain}.`,
+    `The source is the attached Markdown file: ${count} pages, one per top-level heading, each with Domain, Synonyms,`,
+    'Description and Related assets lines, then the body. Keep the text as written.',
+    'Show me the proposed pages before you create them as drafts.',
+  ].join(' ');
 }
 
 /** All included Pages in one file for bulk import, one Page per top-level heading. */

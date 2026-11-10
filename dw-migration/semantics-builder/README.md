@@ -24,20 +24,20 @@ A Databricks App that helps data teams design, validate, optimize, publish and g
 
 ## Modules
 
-| Module                    | What it does                                                                                                                                                                                | Status    |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| Projects and sub-projects | A project groups related KPI areas. A sub-project builds one metric view.                                                                                                                   | Available |
-| Sources & Readiness       | Pick UC tables, find how they relate, score readiness, review and apply metadata fixes (comments, keys, tags) as SQL you approve.                                                           | Available |
-| Intent & Context          | Draft a Semantic Brief (goal, audience, questions, measures, dimensions) with AI, edit it, and confirm it.                                                                                  | Available |
-| Metric dictionary         | Import certified definitions (Excel, CSV, Markdown, or a UC volume file) that every sub-project reuses.                                                                                     | Available |
-| Modeling patterns         | Try common metric patterns (ratios, windows, semi-additive) on your tables.                                                                                                                 | Available |
-| Metric Designer           | Generate a design with AI or start from a template, edit fields in tables or as YAML, see the join diagram, write tests, validate in the sandbox, and keep every change as a version.       | Available |
-| Optimize                  | Best-practice checks, stress test, materialization suggestions with a sandbox try, cost and a monthly budget, and Ask Genie (a Genie space, or Genie One).                                  | Available |
-| Unity Catalog tab         | Promote a validated version to a UC view, restore an older version, set the owner and read grants, and check drift.                                                                         | Available |
-| Pages for Discover        | Draft UC Semantics Pages from the certified dictionary, the brief glossary and the metric view. Pick the Discover domain, edit the Pages, and download one file for Genie Code bulk import. | Available |
-| Metric views library      | All your metric views, their promoted and latest versions, and health. Import a metric view made outside the app.                                                                           | Available |
-| Discover and consolidate  | Scan schemas for metric views and SQL views, group the same KPI across views, show formula conflicts, propose one definition, import it, or add it to a dictionary as certified.            | Available |
-| Drift and health          | Schema, definition, governance, usage and data (opt-in totals) drift. Runs on demand and once a day when you open the app.                                                                  | Available |
+| Module                    | What it does                                                                                                                                                                                    | Status    |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| Projects and sub-projects | A project groups related KPI areas. A sub-project builds one metric view.                                                                                                                       | Available |
+| Sources & Readiness       | Pick UC tables, find how they relate, score readiness, review and apply metadata fixes (comments, keys, tags) as SQL you approve.                                                               | Available |
+| Intent & Context          | Draft a Semantic Brief (goal, audience, questions, measures, dimensions) with AI, edit it, and confirm it.                                                                                      | Available |
+| Metric dictionary         | Import certified definitions (Excel, CSV, Markdown, or a UC volume file) that every sub-project reuses.                                                                                         | Available |
+| Modeling patterns         | Try common metric patterns (ratios, windows, semi-additive) on your tables.                                                                                                                     | Available |
+| Metric Designer           | Generate a design with AI or start from a template, edit fields in tables or as YAML, see the join diagram, write tests, validate in the sandbox, and keep every change as a version.           | Available |
+| Optimize                  | Best-practice checks, stress test, materialization suggestions with a sandbox try, cost and a monthly budget, and Ask Genie (a Genie space, or Genie One).                                      | Available |
+| Publish                   | A left pane with four tasks: Promotion (promote a validated version, restore an older one), Governance (owner and read grants), Drift, and Pages.                                               | Available |
+| Pages for Discover        | Draft UC Semantics Pages from the certified dictionary, the brief glossary and the metric view. Pick the domain, edit the Pages, download one file, and copy the Genie Code bulk import prompt. | Available |
+| Metric views library      | All your metric views, their promoted and latest versions, and health. Import a metric view made outside the app.                                                                               | Available |
+| Discover and consolidate  | Scan schemas for metric views and SQL views, group the same KPI across views, show formula conflicts, propose one definition, import it, or add it to a dictionary as certified.                | Available |
+| Drift and health          | Schema, definition, governance, usage and data (opt-in totals) drift. Runs on demand and once a day when you open the app.                                                                      | Available |
 
 ## How to use the app
 
@@ -58,8 +58,10 @@ A typical path for one KPI area. Each page shows the next step.
 6. **Optimize.** Fix best-practice findings, run a stress test, try materialization in the sandbox, and set
    a monthly budget. In **Ask Genie**, create a Genie space on the sandbox view, pick the expected fields for
    each business question, and click **Ask Genie** or **Ask Genie One**. The app checks the fields in the SQL.
-7. **Unity Catalog tab (in Metric Designer).** Set the target view (`catalog.schema.view`, not the sandbox),
-   then **Promote**. Set the owner and read grants. **Check drift** compares UC with the promoted version.
+7. **Publish.** In **Promotion**, set the target view (`catalog.schema.view`, not the sandbox), then
+   **Promote**. In **Governance**, set the owner and read grants. In **Drift**, **Check drift** compares UC with
+   the promoted version. In **Pages**, download the Pages, then click **Open Discover** and **Copy the prompt**
+   for Genie Code bulk import. **Overview** shows the status of each step in the About box.
 8. **Metric views (left nav).** See every view and its health. **Import a metric view** made outside the app,
    or **Discover and consolidate KPIs** across schemas.
 
@@ -230,7 +232,8 @@ lineage canvas uses React Flow and keeps its attribution link.
   Genie One also searched workspace knowledge snippets that other users wrote.
 - Discover reads metric views and SQL views only. Dashboards, Genie instructions, dbt and LookML come later.
 - Drift checks run on demand and once a day when you open the app. No unattended scheduled job yet.
-- Pages have no API. The app writes a file for Genie Code bulk import, which creates draft Pages. A domain curator
+- Pages and Genie Code have no API, so the app cannot create Pages itself. The app writes a file and a prompt for
+  Genie Code bulk import, which creates draft Pages. A domain curator
   publishes them. Apps cannot get the `domains` user scope, so the app service principal lists the published
   domains. Give it `MANAGE DISCOVER` (Discover > Manage Domains > Permissions); without it, users type the domain
   name.

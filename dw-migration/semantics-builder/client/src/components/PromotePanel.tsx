@@ -16,8 +16,6 @@ import {
 import type { PromotionView } from '../../../shared/promote';
 import { api, useResource } from '../api';
 import { DataState } from './DataState';
-import { GovernPanel } from './GovernPanel';
-import { DriftPanel } from './DriftPanel';
 import { OpenInCatalog } from './OpenInCatalog';
 import { SqlBlock } from './SqlBlock';
 
@@ -52,7 +50,7 @@ export function PromotePanel({ projectId, onPromoted }: { projectId: string; onP
   return (
     <DataState status={data.status} message={data.error} onRetry={data.reload}>
       {v && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingTop: 16, maxWidth: 960 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 960 }}>
           <Typography.Text color="secondary">
             Promote puts the latest validated version in Unity Catalog, where dashboards, Genie and SQL users find it.
             It creates or replaces the view, as you. To roll back, restore an older version in Metric Designer, History,
@@ -134,18 +132,6 @@ export function PromotePanel({ projectId, onPromoted }: { projectId: string; onP
                 </TableRow>
               ))}
             </Table>
-          )}
-
-          {last ? (
-            <>
-              <GovernPanel key={last.id} projectId={projectId} />
-              <DriftPanel key={`drift-${last.id}`} projectId={projectId} />
-            </>
-          ) : (
-            <Typography.Text color="secondary">
-              After the first promotion, you set the owner and who can read the view here, and check it for drift
-              (changes made outside the app, or in the source tables).
-            </Typography.Text>
           )}
 
           {plan && (

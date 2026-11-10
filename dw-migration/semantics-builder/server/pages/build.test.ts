@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { DictionaryEntry } from '../../shared/dictionary';
-import { pageMarkdown, pagesBundle, piiWarnings } from '../../shared/pages';
+import { assetOf, clip, pageMarkdown, pagesBundle, piiWarnings } from '../../shared/pages';
 import { validateMetricView } from '../../shared/metricView';
 import { buildPages } from './build';
 
@@ -86,6 +86,23 @@ describe('Markdown and PII', () => {
     const bundle = pagesBundle({ domain: 'Sales', pages: pages.map((p, i) => ({ ...p, include: i !== 1 })) }, 'Orders');
     expect(bundle.match(/^# /gm)).toHaveLength(2);
     expect(bundle).not.toContain('# Backorder');
+  });
+  it('writes only the fields a Page has, and puts the sources in the body', () => {
+    const md = pageMarkdown(
+      { ...buildPages(base)[0], relatedAssets: ['main.sales.orders.amount'], sources: ['Dictionary (d.xlsx)'] },
+      'Sales'
+    );
+    expect(md).not.toContain('**Type:**');
+    expect(md).not.toContain('**Sources:**');
+    expect(md).toContain('- **Related assets:** `main.sales.orders`');
+    expect(md).toMatch(/## Sources\n\n- Dictionary \(d\.xlsx\)/);
+  });
+  it('clips a description to 160 characters at a word boundary', () => {
+    const c = clip('word '.repeat(60));
+    expect(c.length).toBeLessThanOrEqual(160);
+    expect(c.endsWith('word...')).toBe(true);
+    expect(clip('short')).toBe('short');
+    expect(assetOf('a.b.c')).toBe('a.b.c');
   });
   it('warns on personal data', () => {
     expect(piiWarnings({ title: 'x', synonyms: [], description: 'Ask jane@example.com', body: '' })).toEqual([

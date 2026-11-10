@@ -21,7 +21,7 @@ import {
   Tag,
   Typography,
 } from '@databricks/design-system';
-import { pagesBundle, piiWarnings } from '../../../shared/pages';
+import { DESCRIPTION_MAX, importPrompt, pagesBundle, piiWarnings } from '../../../shared/pages';
 import type { DomainList, PageDraft, PagesView } from '../../../shared/pages';
 import { api, useResource } from '../api';
 import { DataState } from './DataState';
@@ -92,12 +92,15 @@ function EditModal({
         </div>
         <div>
           <FormUI.Label htmlFor="page-description">Description</FormUI.Label>
-          <FormUI.Hint>A short summary. Genie One shows it first.</FormUI.Hint>
+          <FormUI.Hint>
+            A short summary, {DESCRIPTION_MAX} characters maximum ({p.description.length} now). Genie One shows it
+            first.
+          </FormUI.Hint>
           <Input.TextArea
             componentId="gsb.pages.description"
             id="page-description"
             autoSize={{ minRows: 2, maxRows: 5 }}
-            maxLength={1000}
+            maxLength={DESCRIPTION_MAX}
             value={p.description}
             onChange={(e) => setP({ ...p, description: e.target.value })}
           />
@@ -150,6 +153,8 @@ export function PagesPanel({ projectId, title }: { projectId: string; title: str
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [done, setDone] = useState<number>();
+  const base = useResource<{ workspaceUrl: string | null }>('/api/config').data?.workspaceUrl;
+  const [copied, setCopied] = useState(false);
   const v = data.data;
   const current = domain ?? v?.domain ?? '';
   const included = v?.pages.filter((p) => p.include) ?? [];
@@ -218,8 +223,14 @@ export function PagesPanel({ projectId, title }: { projectId: string; title: str
                 <FormUI.Label htmlFor="pages-domain">Domain</FormUI.Label>
                 {list?.domains.length ? (
                   <>
-                    <FormUI.Hint>The published Discover domain or subdomain of these Pages. One per project.</FormUI.Hint>
-                    <DialogCombobox componentId="gsb.pages.domain_pick" id="pages-domain" value={current ? [current] : []}>
+                    <FormUI.Hint>
+                      The published Discover domain or subdomain of these Pages. One per project.
+                    </FormUI.Hint>
+                    <DialogCombobox
+                      componentId="gsb.pages.domain_pick"
+                      id="pages-domain"
+                      value={current ? [current] : []}
+                    >
                       <DialogComboboxTrigger placeholder="Select a domain" allowClear={false} width={360} />
                       <DialogComboboxContent maxHeight={360} matchTriggerWidth>
                         <DialogComboboxOptionList>
@@ -376,13 +387,31 @@ export function PagesPanel({ projectId, title }: { projectId: string; title: str
                 message={`Downloaded ${done} Page${done === 1 ? '' : 's'}. Next, in Databricks:`}
                 description={
                   <ol style={{ margin: 0, paddingLeft: 20 }}>
-                    <li>Open Discover, then Pages.</li>
-                    <li>Open the Genie Code pane and select Bulk import pages.</li>
-                    <li>Attach the downloaded file. Genie Code proposes the Pages.</li>
-                    <li>Review them. Genie Code creates them as drafts. A curator of the domain publishes them.</li>
+                    <li>Open Discover. In the Genie Code pane, select Bulk import pages.</li>
+                    <li>Attach the downloaded file, and paste the prompt.</li>
+                    <li>Genie Code proposes the Pages. Review them, then let it create them as drafts.</li>
+                    <li>A curator of the domain publishes them.</li>
                   </ol>
                 }
               />
+            )}
+            {done !== undefined && v.domain && (
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {base && (
+                  <Typography.Link componentId="gsb.pages.open_discover" href={`${base}/discover`} openInNewTab>
+                    Open Discover
+                  </Typography.Link>
+                )}
+                <Button
+                  componentId="gsb.pages.copy_prompt"
+                  size="small"
+                  onClick={() =>
+                    void navigator.clipboard.writeText(importPrompt(v.domain!, done)).then(() => setCopied(true))
+                  }
+                >
+                  {copied ? 'Prompt copied' : 'Copy the prompt'}
+                </Button>
+              </div>
             )}
             {error && <Alert componentId="gsb.pages.error" type="error" closable={false} message={error} />}
           </>

@@ -20,6 +20,7 @@ import { registerPagesRoutes } from './api/pages';
 import { registerDriftRoutes } from './api/drift';
 import { registerDiscoverRoutes } from './api/discover';
 import { genieDeps } from './genie/client';
+import { domainsDeps } from './pages/domains';
 import { servingDeps } from './llm/llm';
 import { warehouseDeps } from './sql/runner';
 
@@ -54,7 +55,7 @@ createApp({
       registerLibraryRoutes(app, pool, runFor);
       registerImportRoutes(app, pool, ucFor);
       registerGovernRoutes(app, pool, runFor, ucFor);
-      registerPagesRoutes(app, pool);
+      registerPagesRoutes(app, pool, domainsDeps());
       registerDriftRoutes(app, pool, runFor, ucFor);
       registerDiscoverRoutes(app, ucFor);
       registerGenieRoutes(app, pool, runFor, (req) => genieDeps(asUser(req)));

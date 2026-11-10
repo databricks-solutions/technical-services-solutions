@@ -23,6 +23,19 @@ export interface PagesView {
   pages: PageDraft[];
 }
 
+/** A Discover domain or subdomain. A Page names it by its tag key, for example `Finance/Tax`. */
+export interface DiscoverDomain {
+  id: string;
+  name: string;
+  subdomain: boolean;
+}
+
+/** Published Discover domains. `error` is set when the list is not available; then the user types the name. */
+export interface DomainList {
+  domains: DiscoverDomain[];
+  error: string | null;
+}
+
 const text = (max: number) => z.string().trim().max(max);
 export const domainSchema = z.object({ domain: text(200).min(1) });
 export const pageEditSchema = z.object({

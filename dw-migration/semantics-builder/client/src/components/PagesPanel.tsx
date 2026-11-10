@@ -3,6 +3,12 @@ import {
   Alert,
   Button,
   Checkbox,
+  DialogCombobox,
+  DialogComboboxContent,
+  DialogComboboxOptionList,
+  DialogComboboxOptionListSearch,
+  DialogComboboxOptionListSelectItem,
+  DialogComboboxTrigger,
   DownloadIcon,
   FormUI,
   Input,
@@ -16,7 +22,7 @@ import {
   Typography,
 } from '@databricks/design-system';
 import { pagesBundle, piiWarnings } from '../../../shared/pages';
-import type { PageDraft, PagesView } from '../../../shared/pages';
+import type { DomainList, PageDraft, PagesView } from '../../../shared/pages';
 import { api, useResource } from '../api';
 import { DataState } from './DataState';
 
@@ -137,6 +143,7 @@ function EditModal({
  */
 export function PagesPanel({ projectId, title }: { projectId: string; title: string }) {
   const data = useResource<PagesView>(`/api/projects/${projectId}/pages`);
+  const list = useResource<DomainList>('/api/pages/domains').data;
   const [domain, setDomain] = useState<string>();
   const [editing, setEditing] = useState<PageDraft>();
   const [checked, setChecked] = useState(false);
@@ -144,6 +151,7 @@ export function PagesPanel({ projectId, title }: { projectId: string; title: str
   const [error, setError] = useState<string>();
   const [done, setDone] = useState<number>();
   const v = data.data;
+  const current = domain ?? v?.domain ?? '';
   const included = v?.pages.filter((p) => p.include) ?? [];
   const flagged = included.filter((p) => piiWarnings(p).length);
 
@@ -208,16 +216,53 @@ export function PagesPanel({ projectId, title }: { projectId: string; title: str
             <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
               <div style={{ minWidth: 320 }}>
                 <FormUI.Label htmlFor="pages-domain">Domain</FormUI.Label>
-                <FormUI.Hint>
-                  The Discover domain or subdomain, for example Sales or Sales / Orders. One per project.
-                </FormUI.Hint>
-                <Input
-                  componentId="gsb.pages.domain"
-                  id="pages-domain"
-                  maxLength={200}
-                  value={domain ?? v.domain ?? ''}
-                  onChange={(e) => setDomain(e.target.value)}
-                />
+                {list?.domains.length ? (
+                  <>
+                    <FormUI.Hint>The published Discover domain or subdomain of these Pages. One per project.</FormUI.Hint>
+                    <DialogCombobox componentId="gsb.pages.domain_pick" id="pages-domain" value={current ? [current] : []}>
+                      <DialogComboboxTrigger placeholder="Select a domain" allowClear={false} width={360} />
+                      <DialogComboboxContent maxHeight={360} matchTriggerWidth>
+                        <DialogComboboxOptionList>
+                          <DialogComboboxOptionListSearch>
+                            {list.domains.map((d) => (
+                              <DialogComboboxOptionListSelectItem
+                                key={d.id}
+                                value={d.name}
+                                checked={d.name === current}
+                                onChange={() => setDomain(d.name)}
+                                hintColumn={d.subdomain ? 'Subdomain' : undefined}
+                              >
+                                {d.name}
+                              </DialogComboboxOptionListSelectItem>
+                            ))}
+                          </DialogComboboxOptionListSearch>
+                        </DialogComboboxOptionList>
+                      </DialogComboboxContent>
+                    </DialogCombobox>
+                    {v.domain && !list.domains.some((d) => d.name === v.domain) && (
+                      <FormUI.Message
+                        type="warning"
+                        message={`"${v.domain}" is not a published Discover domain. Select one from the list.`}
+                      />
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <FormUI.Hint>
+                      Type the exact name of a Discover domain or subdomain, for example Sales or Sales/Orders. One per
+                      project.
+                      {list?.error &&
+                        ' The app cannot list the domains: its service principal needs the MANAGE DISCOVER permission. Copy the name from Discover > Manage Domains.'}
+                    </FormUI.Hint>
+                    <Input
+                      componentId="gsb.pages.domain"
+                      id="pages-domain"
+                      maxLength={200}
+                      value={current}
+                      onChange={(e) => setDomain(e.target.value)}
+                    />
+                  </>
+                )}
               </div>
               <Button
                 componentId="gsb.pages.save_domain"

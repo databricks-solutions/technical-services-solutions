@@ -2,10 +2,11 @@ import type { Application, Request } from 'express';
 import { z } from 'zod';
 import type { LakebasePool } from '@databricks/appkit';
 import { domainSchema, pageEditSchema, pageKeySchema } from '../../shared/pages';
-import type { PageDraft, PagesView } from '../../shared/pages';
+import type { DomainList, PageDraft, PagesView } from '../../shared/pages';
 import { validateMetricView } from '../../shared/metricView';
 import { loadDictionary } from '../dictionary/store';
 import { buildPages } from '../pages/build';
+import type { DomainsDeps } from '../pages/domains';
 import { actorOf, handle, HttpError } from './http';
 import { designerRepo } from './designer';
 import { projectRepo } from './projects';
@@ -19,7 +20,7 @@ type Edit = Pick<PageDraft, 'title' | 'synonyms' | 'description' | 'body' | 'inc
  * Pages for UC Semantics Discover. Pages have no API, so the app drafts them from its own content, the user edits
  * them, and downloads one file for Genie Code bulk import. Nothing is written to Discover from here.
  */
-export function registerPagesRoutes(app: Application, db: Db) {
+export function registerPagesRoutes(app: Application, db: Db, domains: DomainsDeps) {
   const projects = projectRepo(db);
   const designs = designerRepo(db);
 
@@ -79,6 +80,19 @@ export function registerPagesRoutes(app: Application, db: Db) {
       [actor, action, projectId, detail]
     );
   const strip = (v: PagesView & { topId: string }): PagesView => ({ domain: v.domain, pages: v.pages });
+
+  /** A failure is not an error here: if the service principal cannot list the domains, the user types the name. */
+  app.get(
+    '/api/pages/domains',
+    handle(async (req): Promise<DomainList> => {
+      actorOf(req);
+      try {
+        return { domains: await domains.list(), error: null };
+      } catch (err) {
+        return { domains: [], error: (err as Error).message.slice(0, 300) };
+      }
+    })
+  );
 
   app.get(
     '/api/projects/:id/pages',

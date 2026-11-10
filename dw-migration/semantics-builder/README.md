@@ -24,19 +24,20 @@ A Databricks App that helps data teams design, validate, optimize, publish and g
 
 ## Modules
 
-| Module                    | What it does                                                                                                                                                                          | Status    |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| Projects and sub-projects | A project groups related KPI areas. A sub-project builds one metric view.                                                                                                             | Available |
-| Sources & Readiness       | Pick UC tables, find how they relate, score readiness, review and apply metadata fixes (comments, keys, tags) as SQL you approve.                                                     | Available |
-| Intent & Context          | Draft a Semantic Brief (goal, audience, questions, measures, dimensions) with AI, edit it, and confirm it.                                                                            | Available |
-| Metric dictionary         | Import certified definitions (Excel, CSV, Markdown, or a UC volume file) that every sub-project reuses.                                                                               | Available |
-| Modeling patterns         | Try common metric patterns (ratios, windows, semi-additive) on your tables.                                                                                                           | Available |
-| Metric Designer           | Generate a design with AI or start from a template, edit fields in tables or as YAML, see the join diagram, write tests, validate in the sandbox, and keep every change as a version. | Available |
-| Optimize                  | Best-practice checks, stress test, materialization suggestions with a sandbox try, cost and a monthly budget, and Ask Genie (a Genie space, or Genie One).                            | Available |
-| Unity Catalog tab         | Promote a validated version to a UC view, restore an older version, set the owner and read grants, and check drift.                                                                   | Available |
-| Metric views library      | All your metric views, their promoted and latest versions, and health. Import a metric view made outside the app.                                                                     | Available |
-| Discover and consolidate  | Scan schemas for metric views and SQL views, group the same KPI across views, show formula conflicts, propose one definition, import it, or add it to a dictionary as certified.      | Available |
-| Drift and health          | Schema, definition, governance, usage and data (opt-in totals) drift. Runs on demand and once a day when you open the app.                                                            | Available |
+| Module                    | What it does                                                                                                                                                                                | Status    |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| Projects and sub-projects | A project groups related KPI areas. A sub-project builds one metric view.                                                                                                                   | Available |
+| Sources & Readiness       | Pick UC tables, find how they relate, score readiness, review and apply metadata fixes (comments, keys, tags) as SQL you approve.                                                           | Available |
+| Intent & Context          | Draft a Semantic Brief (goal, audience, questions, measures, dimensions) with AI, edit it, and confirm it.                                                                                  | Available |
+| Metric dictionary         | Import certified definitions (Excel, CSV, Markdown, or a UC volume file) that every sub-project reuses.                                                                                     | Available |
+| Modeling patterns         | Try common metric patterns (ratios, windows, semi-additive) on your tables.                                                                                                                 | Available |
+| Metric Designer           | Generate a design with AI or start from a template, edit fields in tables or as YAML, see the join diagram, write tests, validate in the sandbox, and keep every change as a version.       | Available |
+| Optimize                  | Best-practice checks, stress test, materialization suggestions with a sandbox try, cost and a monthly budget, and Ask Genie (a Genie space, or Genie One).                                  | Available |
+| Unity Catalog tab         | Promote a validated version to a UC view, restore an older version, set the owner and read grants, and check drift.                                                                         | Available |
+| Pages for Discover        | Draft UC Semantics Pages from the certified dictionary, the brief glossary and the metric view. Pick the Discover domain, edit the Pages, and download one file for Genie Code bulk import. | Available |
+| Metric views library      | All your metric views, their promoted and latest versions, and health. Import a metric view made outside the app.                                                                           | Available |
+| Discover and consolidate  | Scan schemas for metric views and SQL views, group the same KPI across views, show formula conflicts, propose one definition, import it, or add it to a dictionary as certified.            | Available |
+| Drift and health          | Schema, definition, governance, usage and data (opt-in totals) drift. Runs on demand and once a day when you open the app.                                                                  | Available |
 
 ## How to use the app
 
@@ -81,7 +82,8 @@ Apply primary keys before the foreign keys that reference them.
   Catalog, schema and table pickers list only what that user can access. Production fails closed
   without the user headers from the Databricks Apps proxy.
 - **App identity for metadata only.** The app service principal owns the Lakebase `gsb` schema
-  (projects, briefs, reports, fixes, audit log) and writes MLflow traces. It never reads customer data.
+  (projects, briefs, reports, fixes, audit log), writes MLflow traces, and lists the published Discover domain
+  names for Pages (apps cannot get the `domains` user scope). It never reads customer data.
 - **One path to the warehouse.** Every statement passes an allowlist (reads, `DESCRIBE`, and a fixed set
   of metadata DDL: comments, keys, tags, metric views, read grants and revokes, and the owner of a view). One statement at a time, no comments.
 - **The model never writes SQL.** It proposes names and text. The server checks names against the real
@@ -136,8 +138,7 @@ The app calls Databricks as the user. The bundle sets these scopes in `user_api_
 | `sql`                                                                  | Warehouse queries, approved DDL, Query History |
 | `serving.serving-endpoints`                                            | Model calls                                    |
 | `catalog.catalogs:read`, `catalog.schemas:read`, `catalog.tables:read` | UC pickers and metadata                        |
-| `dashboards.genie`                                                     | Ask Genie (Genie space)                        |
-| `genie`                                                                | Ask Genie One (OneChat)                        |
+| `genie`                                                                | Ask Genie (Genie space) and Ask Genie One      |
 
 Each `databricks apps deploy` (bundle) **replaces** the scopes with the list in `databricks.yml`. Add a scope
 there, not only with `databricks apps create-update`, or the next deploy removes it. After a scope change,
@@ -229,6 +230,10 @@ lineage canvas uses React Flow and keeps its attribution link.
   Genie One also searched workspace knowledge snippets that other users wrote.
 - Discover reads metric views and SQL views only. Dashboards, Genie instructions, dbt and LookML come later.
 - Drift checks run on demand and once a day when you open the app. No unattended scheduled job yet.
+- Pages have no API. The app writes a file for Genie Code bulk import, which creates draft Pages. A domain curator
+  publishes them. Apps cannot get the `domains` user scope, so the app service principal lists the published
+  domains. Give it `MANAGE DISCOVER` (Discover > Manage Domains > Permissions); without it, users type the domain
+  name.
 - Owner transfer is blocked for a materialized view (set the owner before you materialize).
 
 ## Design notes

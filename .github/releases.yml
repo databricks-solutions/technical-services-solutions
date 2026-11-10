@@ -148,6 +148,11 @@
   kind: "Installer notebook + Databricks App + Declarative Automation Bundle"
   path: "unified-governance/unity-gateway-migration-toolkit"
 
+- slug: unity-gateway-readiness
+  name: "Unity Gateway Readiness Check"
+  kind: "Databricks notebook"
+  path: "unified-governance/unity-gateway-readiness"
+
 - slug: genie-agent-scanner
   name: "Genie Agent Scanner"
   kind: "Agent skill"

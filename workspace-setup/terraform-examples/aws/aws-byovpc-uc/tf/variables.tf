@@ -34,6 +34,16 @@ variable "pricing_tier" {
   }
 }
 
+variable "cross_account_policy_type" {
+  description = "Cross-account IAM access policy variant. 'customer' = Customer-managed VPC with default restrictions. 'restricted' = Customer-managed VPC with custom restrictions (EC2 actions scoped to this AWS account, region, VPC and security group)."
+  type        = string
+  default     = "customer"
+  validation {
+    condition     = contains(["customer", "restricted"], var.cross_account_policy_type)
+    error_message = "cross_account_policy_type must be either 'customer' or 'restricted'."
+  }
+}
+
 # =============================================================================
 # AWS Configuration
 # =============================================================================

@@ -24,6 +24,45 @@ Configuration values (Databricks account ID, AWS region, VPC and subnet CIDRs, a
 
 You can either create a new VPC (leave `vpc_id` empty and provide the CIDR/AZ values) or reuse an existing VPC by setting `vpc_id` and `subnet_ids`. The user-defined catalog (`new_catalog`) is created by default; the optional single-node cluster (`new_cluster`) is disabled by default.
 
+## Cross-account IAM policy type
+
+Databricks documents two access policies for the cross-account IAM role of a workspace that uses a customer-managed VPC ([Create a workspace with Unity Catalog, Step 2: create an access policy](https://docs.databricks.com/aws/en/admin/workspace/create-uc-workspace)). Pick one with `cross_account_policy_type`:
+
+| Value | Docs name | What it grants |
+|-------|-----------|----------------|
+| `customer` (default) | Customer-managed VPC with default restrictions | EC2 actions needed to run clusters, on `*` resources, with the `Vendor=Databricks` tag conditions. Same policy this template used before the option existed. |
+| `restricted` | Customer-managed VPC with custom restrictions | The same EC2 actions, but scoped to **one AWS account, one region, one VPC and one security group**. `ec2:RunInstances` on network interfaces, subnets and security groups only works inside the workspace VPC, and security group rule changes (`Authorize*/Revoke*SecurityGroup*`) only work on the workspace security group. |
+
+Both policies come from the Databricks provider's [`databricks_aws_crossaccount_policy`](https://registry.terraform.io/providers/databricks/databricks/latest/docs/data-sources/aws_crossaccount_policy) data source. The template does not hand-write the JSON.
+
+With `restricted`, the template fills in the data source arguments:
+
+| Argument | Source |
+|----------|--------|
+| `aws_account_id` | `data.aws_caller_identity.current.account_id` (the account of your AWS credentials). A precondition checks that it equals `var.aws_account_id`. |
+| `region` | `var.region` |
+| `vpc_id` | The VPC that is used: the VPC the template creates, or `var.vpc_id` |
+| `security_group_id` | The security group that is used: the SG the template creates, or the single ID in `var.security_group_ids` |
+
+Prerequisites and limits for `restricted`:
+
+- Use **exactly one** workspace security group. With an existing VPC, set `security_group_ids` to one ID, or leave it empty and the template creates one. A precondition fails the plan if you pass more than one.
+- `aws_account_id` must be the account that owns the VPC and the cross-account role, which is the account of the credentials running Terraform.
+- The policy is tied to the VPC and security group. If you later move the workspace to another VPC or SG (a new network configuration), update the policy too. The template does this automatically when you change `vpc_id` / `security_group_ids` and re-apply.
+- Works with or without PrivateLink. This template is the non-PrivateLink (NAT egress) variant.
+- When the template creates the VPC/SG, the policy JSON is only known after the SG exists. Terraform creates the VPC and SG first, then the role policy, then `databricks_mws_credentials` and the workspace. There is no dependency cycle.
+
+### Provider-generated policy vs. the docs policy
+
+We compared the `restricted` output of provider `databricks/databricks` 1.142.0 (the version `~> 1.84` resolved to when this was written) with the "custom restrictions" JSON on the docs page. They grant **the same permissions**: the same 12 statements, the same actions, resources, `NotResource` and conditions. Neither one has a statement the other lacks. The only differences are cosmetic and do not change what the policy allows:
+
+- The first statement (non-resource-based EC2 actions on `*`) has `Sid: NonResourceBasedPermissions` in the docs. The provider leaves out the `Sid`.
+- The docs write the condition key as `ec2:Vpc` and the provider writes `ec2:vpc`. IAM condition key names are case-insensitive.
+- Some `Resource` / `Action` values are single strings in the provider and one-element lists in the docs.
+- Statement order differs: the `iam:CreateServiceLinkedRole` (EC2 Spot service-linked role) statement comes second in the provider output and second-to-last in the docs.
+
+The `customer` output also matches the docs' "default restrictions" policy (same actions). If you pin a different provider version, re-check this with `terraform console` → `data.databricks_aws_crossaccount_policy.this.json` after an apply, or in the IAM console.
+
 ## Existing metastore prerequisites
 
 Skip this section if you let the template create the metastore: the identity running Terraform then owns it and can create everything it needs.
@@ -86,7 +125,7 @@ The code provisions:
 2. **NAT Gateway** -- Either one shared NAT Gateway or one NAT Gateway per availability zone, selected with `nat_gateway_mode`.
 3. **VPC Endpoints** -- Gateway endpoint for S3 and interface endpoints for STS and Kinesis Streams.
 4. **Security group** -- When `security_group_ids` is empty, a dedicated security group (`{resource_prefix}-databricks-sg`, or `new_security_group_name` if set) configured with Databricks-required egress rules (ports 443, 3306, 2443, 5432, 8443-8451), internal TCP/UDP egress, and self-ingress. Alternatively, provide existing security group IDs via `security_group_ids`.
-5. **Cross-account IAM role** -- An IAM role that grants Databricks access to your AWS account for workspace provisioning.
+5. **Cross-account IAM role** -- An IAM role that grants Databricks access to your AWS account for workspace provisioning. Its inline policy is the `customer` or `restricted` variant, chosen with `cross_account_policy_type`.
 6. **Root S3 bucket** -- An S3 bucket for workspace root storage (DBFS), with a Databricks-specific bucket policy.
 7. **Databricks workspace** -- An E2 workspace using the provisioned network, credentials, and storage configuration.
 8. **Unity Catalog metastore** -- Either creates a new metastore (when `metastore_id` is empty) or uses an existing one. The metastore is assigned to the workspace.
@@ -107,6 +146,7 @@ Copy `terraform.tfvars.example` to `terraform.tfvars` in the `tf/` directory and
 | `prefix` | **(Optional)** Prefix for Databricks resource names (workspace name, storage config, etc.). Default: `databricks-workspace`. |
 | `resource_prefix` | **(Optional)** Prefix for naming AWS resources (VPC, S3, IAM, etc.). Lowercase letters, numbers, hyphens, and dots only, max 40 characters. Default: `databricks-workspace`. |
 | `pricing_tier` | **(Optional)** Pricing tier for the workspace. `ENTERPRISE` or `PREMIUM`. Default: `PREMIUM`. |
+| `cross_account_policy_type` | **(Optional)** Cross-account IAM policy variant: `customer` (Customer-managed VPC with default restrictions) or `restricted` (Customer-managed VPC with custom restrictions, scoped to the account, region, VPC and security group). See [Cross-account IAM policy type](#cross-account-iam-policy-type). Default: `customer`. |
 | `region` | **(Required)** AWS region code where resources will be deployed. Must be a [Databricks-supported region](https://docs.databricks.com/en/resources/supported-regions.html). |
 | `tags` | **(Optional)** Additional tags to apply to all AWS resources. Default: `{}`. |
 | `vpc_id` | **(Optional)** Existing VPC ID to reuse. If empty, a new VPC is created. Default: `""`. |
@@ -117,10 +157,10 @@ Copy `terraform.tfvars.example` to `terraform.tfvars` in the `tf/` directory and
 | `private_subnets_cidr` | **(Required when creating a new VPC)** List of private subnet CIDR blocks (one per AZ). |
 | `public_subnets_cidr` | **(Required when creating a new VPC)** List of public subnet CIDR blocks (one per AZ). |
 | `intra_subnet_cidr` | **(Required when creating a new VPC)** List of intra subnet CIDR blocks for STS and Kinesis endpoints. |
-| `security_group_ids` | **(Optional)** Existing security group IDs to use. If empty, a dedicated security group is created. Default: `[]`. |
+| `security_group_ids` | **(Optional)** Existing security group IDs to use. If empty, a dedicated security group is created. With `cross_account_policy_type = "restricted"`, give at most one ID. Default: `[]`. |
 | `new_security_group_name` | **(Optional)** Name for the new security group. If empty, defaults to `{resource_prefix}-databricks-sg`. Default: `""`. |
 | `sg_egress_ports` | **(Optional)** List of egress ports to allow in security group rules. Default: `[443, 3306, 2443, 5432, 8443, 8444, 8445, 8446, 8447, 8448, 8449, 8450, 8451]`. |
-| `aws_account_id` | **(Required)** AWS account ID where resources are deployed (used to construct IAM role ARNs for Unity Catalog). |
+| `aws_account_id` | **(Required)** AWS account ID where resources are deployed (used to construct IAM role ARNs for Unity Catalog). With `cross_account_policy_type = "restricted"` it must match the account of the AWS credentials. |
 | `metastore_id` | **(Optional)** Existing Unity Catalog metastore ID. Leave empty to create a new one. Default: `""`. |
 | `metastore_name` | **(Optional)** Name for the Unity Catalog metastore. Required when `metastore_id` is empty. Default: `""`. |
 | `workspace_admin_email` | **(Optional)** Email of a Databricks account user to make workspace admin and grant `ALL PRIVILEGES` on the user-defined catalog, external location and storage credential. Without it the Terraform principal owns them and nobody else can see them until granted access. Default: `""` (skipped). |
@@ -148,6 +188,63 @@ terraform apply
 ```
 
 Occasionally, you'll be asked to confirm certain actions; type yes when prompted. The deployment typically takes 10-15 minutes. Once the execution finishes, the terminal will output the URL of the created workspace.
+
+### Walkthrough: restricted policy, new /18 BYOVPC, no PrivateLink (ap-southeast-1)
+
+1. Copy the example and edit it:
+
+   ```bash
+   cd tf/
+   cp terraform.tfvars.example terraform.tfvars
+   ```
+
+   Set at least:
+
+   ```hcl
+   databricks_account_id     = "<databricks-account-id>"
+   aws_account_id            = "<aws-account-id>"  # must match your AWS credentials
+   region                    = "ap-southeast-1"
+   pricing_tier              = "PREMIUM"
+   cross_account_policy_type = "restricted"
+
+   vpc_id               = ""
+   nat_gateway_mode     = "single"
+   vpc_cidr_range       = "10.10.0.0/18"
+   availability_zones   = ["ap-southeast-1a", "ap-southeast-1b"]
+   private_subnets_cidr = ["10.10.0.0/20", "10.10.16.0/20"]
+   public_subnets_cidr  = ["10.10.32.0/26", "10.10.32.64/26"]
+   security_group_ids   = []
+
+   metastore_id   = ""  # or the ID of the existing ap-southeast-1 metastore
+   metastore_name = "<metastore-name>"
+   workspace_admin_email = "<you@company.com>"
+   ```
+
+   To use an existing /18 VPC instead, set `vpc_id`, `subnet_ids` (at least 2 private subnets in different AZs) and either one `security_group_ids` entry or none.
+
+2. Authenticate to AWS and Databricks (see [Authenticate](#authenticate)), then run:
+
+   ```bash
+   terraform init
+   terraform plan    # check aws_iam_role_policy.this: its policy is "known after apply" when the VPC/SG is new
+   terraform apply
+   ```
+
+3. Check the policy that was attached:
+
+   ```bash
+   aws iam get-role-policy \
+     --role-name "$(terraform output -raw cross_account_role_arn | awk -F/ '{print $NF}')" \
+     --policy-name "<prefix>-policy"
+   ```
+
+   The resources should reference `arn:aws:ec2:ap-southeast-1:<aws-account-id>:...`, the `ec2:vpc` condition should name `terraform output -raw vpc_id`, and the security group statement should name the ID from `terraform output security_group_ids`.
+
+4. Validate compute with a **DBSQL Pro warehouse**. Pro warehouses run as classic compute in your VPC, so this tests the restricted cross-account policy, the subnets, NAT egress and the security group. (Serverless warehouses run in the Databricks account and would not test them.)
+   - Open the workspace (`terraform output -raw workspace_url`), go to **SQL Warehouses → Create SQL warehouse**, set **Type = Pro**, the smallest cluster size, and a short auto-stop.
+   - Wait until the warehouse is **Running**. Then, in the SQL editor, run `SELECT current_metastore(), current_catalog();` and, if `new_catalog = true`, `SHOW SCHEMAS IN <catalog_name>;`.
+   - If it stays in *Starting* and fails with an EC2 authorization error (for example `UnauthorizedOperation` on `ec2:RunInstances`), the restricted policy does not match the VPC/SG the workspace uses. Re-run `terraform apply` and check step 3.
+   - Stop or delete the warehouse afterwards to avoid charges.
 
 ## Access Your Workspace
 
@@ -192,6 +289,9 @@ Type `yes` when prompted. Destruction can take several minutes.
 | Subnet CIDR errors | CIDRs overlap or don't fit in VPC range | Ensure `private_subnets_cidr`, `public_subnets_cidr`, and `intra_subnet_cidr` are non-overlapping and within `vpc_cidr_range`. |
 | NAT Gateway or outbound connectivity issues | Cluster nodes cannot reach the control plane | Verify the selected `nat_gateway_mode` created the expected NAT Gateway resources and that each private subnet has a working route. Check that security group rules allow outbound traffic on required ports. |
 | Cannot delete catalog on destroy | Catalog still has schemas, tables, or volumes | This template already sets `force_destroy = true` on `databricks_catalog.uc_quickstart` and `databricks_external_location`, so a normal `terraform destroy` should remove them. If destroy fails, empty or drop objects in that catalog in the workspace, then run `terraform destroy` again. |
+| Plan fails: `cross_account_policy_type = "restricted" scopes the policy to a single security group` | More than one ID in `security_group_ids` | Use a single workspace security group, or switch to `customer`. |
+| Plan fails: `aws_account_id does not match the AWS account of the current AWS credentials` | `aws_account_id` and the AWS credentials point to different accounts | Fix `aws_account_id` or switch AWS credentials. |
+| Clusters / Pro warehouses fail with EC2 `UnauthorizedOperation` (restricted policy) | The workspace network configuration uses a VPC/SG the policy is not scoped to | Re-apply so the policy follows the current `vpc_id` / security group, then check the policy with `aws iam get-role-policy`. |
 | Cluster create fails on `node_type_id` validation | The workspace restricts allowed instance types | Set `node_type_id` (in `cluster.tf`) to an allowed type, or adjust the allowed instance types in the account console. |
 
 ## File Structure
@@ -224,7 +324,7 @@ tf/
 | **workspace.tf** | Databricks MWS resources: storage configuration, credentials, network configuration, and workspace. |
 | **network.tf** | VPC module (address space, public/private/intra subnets), selectable NAT topology, IGW, S3 gateway endpoint, and STS/Kinesis interface endpoints. |
 | **security_group.tf** | Default security group egress rules for Databricks-required ports, internal TCP/UDP egress, and self-ingress. |
-| **credential.tf** | Cross-account IAM role and policy for Databricks workspace provisioning. |
+| **credential.tf** | Cross-account IAM role and its `customer` or `restricted` policy (`cross_account_policy_type`) for Databricks workspace provisioning. |
 | **root_s3_bucket.tf** | S3 bucket for workspace root storage (DBFS) with Databricks bucket policy. |
 | **metastore.tf** | Unity Catalog metastore (create new or use existing), region check for existing metastores, and workspace assignment. |
 | **unity_catalog.tf** | Optional Unity Catalog IAM role, S3 bucket, storage credential, external location, and user-defined catalog (gated by `new_catalog`). |

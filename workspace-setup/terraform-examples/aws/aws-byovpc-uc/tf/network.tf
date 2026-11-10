@@ -1,3 +1,11 @@
+# Effective network IDs, whether the template creates the VPC / security group or the
+# user supplies existing ones. Shared by the network configuration and the
+# restricted cross-account policy.
+locals {
+  vpc_id             = var.vpc_id == "" ? module.vpc[0].vpc_id : var.vpc_id
+  security_group_ids = var.vpc_id != "" && length(var.security_group_ids) > 0 ? var.security_group_ids : aws_security_group.databricks[*].id
+}
+
 module "vpc" {
   count   = var.vpc_id == "" ? 1 : 0
   source  = "terraform-aws-modules/vpc/aws"

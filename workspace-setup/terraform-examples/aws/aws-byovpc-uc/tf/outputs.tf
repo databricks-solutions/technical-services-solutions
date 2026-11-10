@@ -28,7 +28,7 @@ output "workspace_status" {
 
 output "vpc_id" {
   description = "ID of the VPC used for the workspace"
-  value       = var.vpc_id == "" ? module.vpc[0].vpc_id : var.vpc_id
+  value       = local.vpc_id
 }
 
 output "private_subnet_ids" {
@@ -48,12 +48,17 @@ output "nat_gateway_ids" {
 
 output "security_group_ids" {
   description = "IDs of the security groups used for the workspace"
-  value       = length(var.security_group_ids) > 0 ? var.security_group_ids : aws_security_group.databricks[*].id
+  value       = local.security_group_ids
 }
 
 # =============================================================================
 # IAM and Storage Outputs
 # =============================================================================
+
+output "cross_account_policy_type" {
+  description = "Cross-account IAM policy variant attached to the cross-account role (customer or restricted)"
+  value       = var.cross_account_policy_type
+}
 
 output "cross_account_role_arn" {
   description = "ARN of the cross-account IAM role"

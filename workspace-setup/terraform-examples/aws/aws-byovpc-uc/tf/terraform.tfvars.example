@@ -14,6 +14,12 @@ resource_prefix = "my-databricks-workspace"
 # Pricing tier of account (ENTERPRISE or PREMIUM)
 pricing_tier = "PREMIUM"
 
+# Cross-account IAM access policy variant (see README "Cross-account IAM policy type"):
+#   "customer"   - Customer-managed VPC with default restrictions (default)
+#   "restricted" - Customer-managed VPC with custom restrictions: EC2 actions scoped to
+#                  this AWS account (aws_account_id), region, VPC and a single security group
+cross_account_policy_type = "customer"
+
 # =============================================================================
 # AWS Configuration
 # =============================================================================
@@ -33,15 +39,30 @@ region = "us-west-2"
 # =============================================================================
 
 # Option 1: Create new VPC (leave vpc_id empty and specify network config)
-vpc_id              = ""
+vpc_id               = ""
 nat_gateway_mode     = "single" # "single" or "per_az"
-vpc_cidr_range      = "10.0.0.0/16"
-availability_zones  = ["us-west-2a", "us-west-2b"]
+vpc_cidr_range       = "10.0.0.0/16"
+availability_zones   = ["us-west-2a", "us-west-2b"]
 private_subnets_cidr = ["10.0.1.0/24", "10.0.2.0/24"]
 public_subnets_cidr  = ["10.0.101.0/24", "10.0.102.0/24"]
 # Option 2: Use existing VPC (uncomment and specify IDs)
 # vpc_id     = "vpc-xxxxxxxxx"
 # subnet_ids = ["subnet-xxxxxxxxx", "subnet-yyyyyyyyy"]
+
+# Example: new /18 BYOVPC in ap-southeast-1, no PrivateLink, restricted cross-account policy.
+# Set region = "ap-southeast-1" and cross_account_policy_type = "restricted" above, then:
+# vpc_id               = ""
+# nat_gateway_mode     = "single"
+# vpc_cidr_range       = "10.10.0.0/18"
+# availability_zones   = ["ap-southeast-1a", "ap-southeast-1b"]
+# private_subnets_cidr = ["10.10.0.0/20", "10.10.16.0/20"]   # Databricks cluster subnets (/20 each)
+# public_subnets_cidr  = ["10.10.32.0/26", "10.10.32.64/26"] # NAT gateway / IGW subnets
+# security_group_ids   = []                                  # template creates one SG; the policy is scoped to it
+#
+# Same, but with an existing /18 VPC (restricted requires exactly one security group):
+# vpc_id             = "vpc-xxxxxxxxx"
+# subnet_ids         = ["subnet-xxxxxxxxx", "subnet-yyyyyyyyy"]
+# security_group_ids = ["sg-xxxxxxxxx"]
 
 # =============================================================================
 # Security Group Configuration
@@ -71,7 +92,8 @@ metastore_name = "my-unity-catalog-metastore"
 # Unity Catalog Storage Configuration
 # =============================================================================
 
-# AWS account ID where Unity Catalog IAM role and S3 bucket will be created
+# AWS account ID where Unity Catalog IAM role and S3 bucket will be created.
+# With cross_account_policy_type = "restricted" this must match the account of your AWS credentials.
 aws_account_id = "your-aws-account-id"
 
 # =============================================================================

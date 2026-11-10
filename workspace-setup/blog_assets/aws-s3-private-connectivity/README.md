@@ -3,6 +3,16 @@
 Images for the Databricks Community technical blog post
 **"Private connectivity from Databricks on AWS to Amazon S3"**.
 
+## Blog post
+
+📝 **Read the blog:** _Coming soon — the link will be added here once the post is published on the [Databricks Community Technical Blog](https://community.databricks.com/t5/technical-blog/bg-p/technical-blog)._
+
+<!-- TODO: replace the line above with the published URL, e.g.
+**Read the blog:** [Private connectivity from Databricks on AWS to Amazon S3](https://community.databricks.com/t5/technical-blog/...)
+-->
+
+## Images
+
 Files are named `<section>-<step>-<what-it-shows>.png`, in reading order:
 
 | Prefix | Blog section |

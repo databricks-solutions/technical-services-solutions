@@ -575,6 +575,14 @@ class FakeWS:
             def run_now(self_inner, job_id, job_parameters=None):
                 params = job_parameters or {}
                 applies = ws.tables.setdefault("main.ug_migration.ug_migration_applies", [])
+                if params.get("mode") in ("rollback_dry_run", "rollback"):
+                    # Like the job (run_apply.py): a run that already counts as rolled back is refused, dry run too.
+                    import ug_migration_store as store_mod
+                    target = params["rollback_of"]
+                    if any(r["mode"] == "rollback" and r.get("rollback_of") == target
+                           and store_mod.rollback_done(r["status"], r.get("summary")) for r in applies):
+                        ws.log.append(("rollback_refused", target, "already rolled back"))
+                        return FakeRun(ws.next_run, behaviour="FAILED", ws=ws)
                 if params.get("mode") == "rollback_dry_run":
                     apply_id = params["rollback_of"]
                     script = ws.dry_script.get(apply_id, [("SUCCEEDED", {"would_delete": 1})])

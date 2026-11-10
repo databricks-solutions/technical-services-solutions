@@ -1533,6 +1533,11 @@ def _short_name_refs(name, code):
     ('se = w.serving_endpoints\nse.query(name="llm", messages=m)', ["sdk_serving_query"]),
     ('from mlflow.deployments import get_deploy_client as gdc\nc = gdc("databricks")\nc.predict(endpoint="chat", inputs={})',
      ["mlflow_deployments_predict"]),
+    # the name as the first positional argument, right after the "(" (the SDK's signature: query(name, ...))
+    ('w.serving_endpoints.query("llm", messages=m)', ["sdk_serving_query"]),
+    ("w.serving_endpoints.query('llm')", ["sdk_serving_query"]),
+    ('se = w.serving_endpoints\nse.query("llm")', ["sdk_serving_query"]),
+    ('c = get_deploy_client("databricks")\nc.predict("chat", inputs={})', ["mlflow_deployments_predict"]),
     # still not a call: closed before the name, a string after the call, another model's predict
     ('w.serving_endpoints.query(name=ep)\nprint("llm")', []),
     ('w.serving_endpoints.query(name=ep, messages=["a ) b"])\nx = "llm"', []),
@@ -1552,6 +1557,15 @@ def test_a_specific_name_in_another_models_predict_isnt_called_a_deployments_cli
     sc = m.Scanner(["proj-a-gpt"], {}, [])
     sc.scan_text("notebook", "/n", code)
     assert [r.pattern for r in sc.refs] == ["legacy_endpoint_name"]
+
+
+def test_a_specific_name_in_a_multi_line_deployments_client_predict_gets_no_gateway_rewrite():
+    """That client's predict always calls /serving-endpoints: a name-only rewrite to a gateway name is wrong
+    (review of 0.10.3, a regression against the HEAD before it)."""
+    code = 'c = get_deploy_client("databricks")\nc.predict(\n    endpoint="proj-a-gpt", inputs={})'
+    sc = m.Scanner(["proj-a-gpt"], {"proj-a-gpt": "system.ai.x"}, [])
+    sc.scan_text("notebook", "/n", code)
+    assert [(r.pattern, r.fixed_line) for r in sc.refs] == [("mlflow_deployments_predict", None)]
 
 
 def test_a_file_with_thousands_of_short_name_matches_scans_in_linear_time():
@@ -1717,9 +1731,26 @@ def test_supervisor_tools_are_read_page_by_page_and_never_forever():
     w = mock.MagicMock()
     w.api_client.do.return_value = {"tools": [GENIE_TOOL], "next_page_token": "same"}
     assert len(m.supervisor_tools(w, "supervisor-agents/X")) == 2
-    w.api_client.do.return_value = mock.MagicMock()  # not a dict: fall back to the typed tools
-    w.supervisor_agents.list_tools.return_value = [SimpleNamespace(as_dict=lambda: GENIE_TOOL)]
-    assert m.supervisor_tools(w, "supervisor-agents/X") == [GENIE_TOOL]
+
+
+def test_supervisor_tools_never_fall_back_to_the_typed_list(monkeypatch):
+    """The typed Tool drops the vector_search_index and serving_endpoint specs, so a fallback would make a dependent
+    Supervisor read clean with no note (review of 0.10.3). One transient error is retried; then it's a gap."""
+    monkeypatch.setattr(m.time, "sleep", lambda s: None)
+    vs = {"tool_type": "vector_search_index", "tool_id": "kb", "vector_search_index": {"name": "c.s.idx"}}
+    w = mock.MagicMock()
+    w.api_client.do.side_effect = [RuntimeError("503"), {"tools": [vs]}]  # transient: the retry gets it
+    assert m.supervisor_tools(w, "supervisor-agents/X") == [vs]
+    w.supervisor_agents.list_tools.assert_not_called()
+    w = mock.MagicMock()
+    w.api_client.do.side_effect = [{"tools": [GENIE_TOOL], "next_page_token": "1"}, RuntimeError("503"), RuntimeError("503")]
+    with pytest.raises(RuntimeError):  # page 2 fails twice: no half list
+        m.supervisor_tools(w, "supervisor-agents/X")
+    w.supervisor_agents.list_tools.assert_not_called()
+    w = mock.MagicMock()
+    w.api_client.do.return_value = "not a dict"
+    with pytest.raises(ValueError):
+        m.supervisor_tools(w, "supervisor-agents/X")
 
 
 def test_supervisor_scan_survives_odd_tools_and_names_each_assistant_once():
@@ -1731,7 +1762,33 @@ def test_supervisor_scan_survives_odd_tools_and_names_each_assistant_once():
     assert sc.coverage["supervisor_agents"] == "ok"
 
 
-def test_a_supervisor_whose_tools_cant_be_read_is_a_coverage_gap_not_a_pass():
+@pytest.mark.parametrize("spec", [
+    {"name": "serving-endpoints/ka-KA-endpoint/invocations"},            # a path
+    {"url": "https://ws.example.com/serving-endpoints/ka-KA-endpoint"},   # a URL
+    {"name": "ka-KA-endpoint"},                                          # the live shape
+])
+def test_an_endpoint_tool_that_names_a_knowledge_assistant_endpoint_in_a_path_blocks(spec):
+    tool = {"tool_type": "serving_endpoint", "tool_id": "kaep", "serving_endpoint": spec}
+    assert _super_findings({"S": [tool]})[0] == [("S", "supervisor_uses_vs_ka")]
+    # but not a longer endpoint name that only contains it
+    other = {"tool_type": "serving_endpoint", "tool_id": "x", "serving_endpoint": {"name": "ka-KA-endpoint-v2"}}
+    assert _super_findings({"S": [other]})[0] == []
+
+
+def test_a_nested_supervisor_named_by_display_name_is_followed():
+    by_display = {"tool_type": "supervisor_agent", "tool_id": "sub", "supervisor_agent": {"display_name": "Inner"}}
+    found, _, _ = _super_findings({"Inner": [_ka_tool("KA")], "Outer": [by_display]})
+    assert ("Outer", "supervisor_uses_supervisor") in found
+
+
+@pytest.mark.parametrize("bad", [{"tool_type": ["vector_search_index"]}, {"tool_type": {"x": 1}}, {"tool_type": None}])
+def test_a_malformed_tool_doesnt_stop_the_other_supervisors_findings(bad):
+    found, sc, _ = _super_findings({"Odd": [bad], "Real": [_ka_tool("KA")]})
+    assert found == [("Real", "supervisor_uses_vs_ka")] and sc.coverage["supervisor_agents"] == "ok"
+
+
+def test_a_supervisor_whose_tools_cant_be_read_is_a_coverage_gap_not_a_pass(monkeypatch):
+    monkeypatch.setattr(m.time, "sleep", lambda s: None)
     found, sc, _ = _super_findings({"Locked": [], "Open": [_ka_tool("KA")]}, unreadable_sa={"Locked"})
     assert found == [("Open", "supervisor_uses_vs_ka")]
     assert sc.coverage["supervisor_agents"] == "partial: 1 unreadable"

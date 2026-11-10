@@ -1518,7 +1518,7 @@ class _CallContext:
         ends = self._ends.get(key)
         if ends is None:
             ends = self._ends[key] = [m.end() for m in regex.finditer(self.text)]
-        k = bisect.bisect_left(ends, at) - 1
+        k = bisect.bisect_right(ends, at) - 1  # right: a "(" that ends where the name starts, query("llm"), counts
         while k >= 0 and at - ends[k] <= CALL_WINDOW:  # the nearest calls first; a closed one may precede an open one
             if _call_still_open(self.text, ends[k], at):
                 return True
@@ -1820,7 +1820,10 @@ class Scanner:
                         continue
                     at = line_start + m.start()
                     in_sdk_query = bool(SDK_QUERY_RE.search(text[max(0, at - GATEWAY_WINDOW):at]))
-                    in_predict = bool(MLFLOW_PREDICT_RE.search(line[:m.start()]))
+                    # Same line, as before; or inside an open predict( that spans lines, in a file that uses the MLflow
+                    # deployments client (that client's predict always calls /serving-endpoints, so no gateway rewrite).
+                    in_predict = bool(MLFLOW_PREDICT_RE.search(line[:m.start()])) \
+                        or (ctx.uses_deploy_client() and ctx.in_predict(at))
                     if name in self.generic and not KEY_CONTEXT_RE.search(line[:m.start()]):
                         # A short or common name needs a key or call context to count: inside the arguments of a
                         # serving_endpoints.query(...) call, or of a predict(...) call in a file that uses the
@@ -2232,21 +2235,28 @@ def supervisor_tools(w: WorkspaceClient, parent: str) -> list[dict]:
 
     The SDK's typed Tool keeps the specs of only some tool types (knowledge_assistant, genie_space, app, ...), and
     drops the ones for vector_search_index, serving_endpoint and supervisor_agent, so the raw JSON is what shows
-    what a Supervisor depends on. Falls back to the typed tools when the raw call fails."""
-    try:
-        out, token, seen = [], None, set()
-        for _ in range(MAX_TOOL_PAGES):
-            page = _get(w, f"/api/2.1/{parent}/tools", {"page_size": 100, **({"page_token": token} if token else {})})
-            if not isinstance(page, dict):
-                raise ValueError("unexpected response")
-            out += [t for t in page.get("tools") or [] if isinstance(t, dict)]
-            token = page.get("next_page_token")
-            if not isinstance(token, str) or not token or token in seen:  # last page, or a token that repeats
-                return out
-            seen.add(token)
-        return out
-    except Exception:
-        return [t.as_dict() for t in w.supervisor_agents.list_tools(parent=parent)]
+    what a Supervisor depends on. There is no fallback to the typed tools: without those specs a dependent
+    Supervisor would read clean. A failure raises, and the caller counts the Supervisor as unreadable (a coverage
+    gap). A page is tried twice, so one transient error doesn't make the scan incomplete."""
+    out, token, seen = [], None, set()
+    for _ in range(MAX_TOOL_PAGES):
+        query = {"page_size": 100, **({"page_token": token} if token else {})}
+        for attempt in (1, 2):
+            try:
+                page = _get(w, f"/api/2.1/{parent}/tools", query)
+                break
+            except Exception:
+                if attempt == 2:
+                    raise
+                time.sleep(2)
+        if not isinstance(page, dict):
+            raise ValueError(f"unexpected response listing the tools of {parent}")
+        out += [t for t in page.get("tools") or [] if isinstance(t, dict)]
+        token = page.get("next_page_token")
+        if not isinstance(token, str) or not token or token in seen:  # last page, or a token that repeats
+            return out
+        seen.add(token)
+    return out
 
 
 _TOOL_BOOKKEEPING = ("name", "tool_id", "id", "description", "tool_type")
@@ -2255,7 +2265,8 @@ _TOOL_BOOKKEEPING = ("name", "tool_id", "id", "description", "tool_type")
 def _tool_strings(tool: dict) -> list[str]:
     """Every string value in a tool's spec (the field named like its tool_type; else every nested value but the
     tool's own bookkeeping), so a tool is matched by what it points at without knowing the spec's field names."""
-    spec = tool.get(tool.get("tool_type") or "")
+    kind = tool.get("tool_type")
+    spec = tool.get(kind) if isinstance(kind, str) else None
     roots = [spec] if spec is not None else [v for k, v in tool.items() if k not in _TOOL_BOOKKEEPING]
     out: list[str] = []
 
@@ -2273,6 +2284,14 @@ def _tool_strings(tool: dict) -> list[str]:
     return out
 
 
+def _names_in(strings: list[str], ref: str) -> bool:
+    """True if ref is one of the strings, or a path segment of one (serving-endpoints/<name>/invocations, a URL)."""
+    for s in strings:
+        if s == ref or ref in re.split(r"[/?#:]", s):
+            return True
+    return False
+
+
 def supervisor_dependencies(supervisors: dict[str, dict], kas: dict[str, str],
                             ka_endpoints: dict[str, str]) -> dict[str, list[tuple[str, str, str]]]:
     """The Supervisor Agents that depend on AI Search, with why: {supervisor name: [(pattern, target, text)]}.
@@ -2284,7 +2303,8 @@ def supervisor_dependencies(supervisors: dict[str, dict], kas: dict[str, str],
     supervisors is {name: {"label", "endpoint", "tools": [raw tool dicts]}}; kas {Knowledge Assistant name: display}."""
     by_ref: dict[str, str] = {}  # every way a tool can name a Supervisor -> its name
     for name, info in supervisors.items():
-        for ref in (name, name.rsplit("/", 1)[-1], info.get("endpoint")):
+        display = str(info.get("label") or "").removeprefix("supervisor agent ")
+        for ref in (name, name.rsplit("/", 1)[-1], info.get("endpoint"), display):
             if ref:
                 by_ref[ref] = name
     found: dict[str, list[tuple[str, str, str]]] = {}
@@ -2303,7 +2323,7 @@ def supervisor_dependencies(supervisors: dict[str, dict], kas: dict[str, str],
                 spec = t.get("knowledge_assistant") if isinstance(t.get("knowledge_assistant"), dict) else {}
                 ka_ref = str(spec.get("knowledge_assistant_id") or spec.get("name") or "")
                 hit = (next((v for k, v in kas.items() if ka_ref and (ka_ref in k or k.endswith(ka_ref))), None)
-                       or next((v for k, v in ka_endpoints.items() if k in strings), None)
+                       or next((v for k, v in ka_endpoints.items() if _names_in(strings, k)), None)
                        or ka_ref or "a knowledge assistant")
                 add(name, "supervisor_uses_vs_ka", hit,
                     f"tool {tool} uses knowledge assistant {hit}, which depends on AI Search")
@@ -2312,7 +2332,7 @@ def supervisor_dependencies(supervisors: dict[str, dict], kas: dict[str, str],
                 add(name, "supervisor_uses_vs_index", target, f"tool {tool} is an AI Search index ({target})")
             elif kind == "serving_endpoint":
                 for ep, display in ka_endpoints.items():
-                    if ep in strings:
+                    if _names_in(strings, ep):
                         add(name, "supervisor_uses_vs_ka", display,
                             f"tool {tool} calls the endpoint of knowledge assistant {display}, which depends on AI Search")
     changed = True
@@ -2322,9 +2342,11 @@ def supervisor_dependencies(supervisors: dict[str, dict], kas: dict[str, str],
             for t in info["tools"]:
                 if t.get("tool_type") not in ("supervisor_agent", "serving_endpoint"):
                     continue
-                for ref in _tool_strings(t):
-                    child = by_ref.get(ref)
-                    if child and child != name and child in found:
+                strings = _tool_strings(t)
+                for ref, child in list(by_ref.items()):
+                    if not _names_in(strings, ref):
+                        continue
+                    if child != name and child in found:
                         tool = t.get("tool_id") or str(t.get("name") or "?").rsplit("/", 1)[-1]
                         changed |= add(name, "supervisor_uses_supervisor", supervisors[child]["label"],
                                        f"tool {tool} uses {supervisors[child]['label']}, which depends on AI Search")

@@ -1,5 +1,5 @@
 import { UC_NAME_PART } from '../../shared/brief';
-import type { TestCase, TestResult } from '../../shared/designer';
+import type { Expectation, TestCase, TestResult } from '../../shared/designer';
 import { toDirectAliases } from '../../shared/metricView';
 import type { Join, MetricView } from '../../shared/metricView';
 import { quoteId, quoteName } from '../readiness/profile';
@@ -35,6 +35,49 @@ export function measureQuery(fullName: string, test: TestCase): string {
     ...test.measures.map((m) => `MEASURE(${quoteId(m)}) AS ${quoteId(m)}`),
   ];
   return `SELECT ${cols.join(', ')} FROM ${quoteName(fullName)}${test.dimensions.length ? ' GROUP BY ALL' : ''} ORDER BY ALL LIMIT ${MAX_TEST_ROWS + 1}`;
+}
+
+const literal = (v: string) => `'${v.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+
+/** The query of a test with an expected value: one measure, the filters as WHERE, one row. */
+export function expectQuery(fullName: string, test: TestCase): string {
+  const where = (test.expect?.filters ?? []).map((f) => `${quoteId(f.dimension)} = ${literal(f.value)}`);
+  return `SELECT MEASURE(${quoteId(test.measures[0])}) AS ${quoteId(test.measures[0])} FROM ${quoteName(fullName)}${where.length ? ` WHERE ${where.join(' AND ')}` : ''}`;
+}
+
+const pct = (n: number) => `${Number(n.toFixed(2))}%`;
+
+/** Checks the measure value against the expectation. The detail has the difference in percent, never the value. */
+export function checkExpected(
+  rows: (string | null)[][],
+  expect: Expectation
+): Pick<TestResult, 'status' | 'rows' | 'detail'> {
+  if (rows.length !== 1)
+    return { status: 'failed', rows: rows.length, detail: `The query returned ${rows.length} rows, not 1.` };
+  const raw = rows[0]?.[0] ?? null;
+  const actual = raw === null || raw.trim() === '' ? NaN : Number(raw);
+  if (!Number.isFinite(actual)) return { status: 'failed', rows: 1, detail: 'The measure returned no number.' };
+  if (expect.value === 0) {
+    const ok = actual === 0;
+    return {
+      status: ok ? 'passed' : 'failed',
+      rows: 1,
+      detail: ok ? 'Equal to the expected 0.' : 'Not 0 as expected.',
+    };
+  }
+  const diff = (Math.abs(actual - expect.value) / Math.abs(expect.value)) * 100;
+  const side = actual > expect.value ? 'above' : 'below';
+  return diff <= expect.tolerancePct + 1e-9
+    ? {
+        status: 'passed',
+        rows: 1,
+        detail: `Within ${pct(expect.tolerancePct)} of the expected value (difference ${pct(diff)}).`,
+      }
+    : {
+        status: 'failed',
+        rows: 1,
+        detail: `${pct(diff)} ${side} the expected value. The tolerance is ${pct(expect.tolerancePct)}.`,
+      };
 }
 
 /**

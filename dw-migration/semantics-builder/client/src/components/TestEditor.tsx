@@ -1,7 +1,18 @@
 import { useState } from 'react';
-import { Alert, Button, Checkbox, FormUI, Input, PlusIcon, TrashIcon, Typography } from '@databricks/design-system';
+import {
+  Alert,
+  Button,
+  Checkbox,
+  FormUI,
+  Input,
+  PlusIcon,
+  SimpleSelect,
+  SimpleSelectOption,
+  TrashIcon,
+  Typography,
+} from '@databricks/design-system';
 import { saveDraftSchema } from '../../../shared/designer';
-import type { TestCase } from '../../../shared/designer';
+import type { Expectation, TestCase } from '../../../shared/designer';
 import type { MetricView } from '../../../shared/metricView';
 
 export function FieldPick({
@@ -32,7 +43,103 @@ export function FieldPick({
   );
 }
 
-/** Add, change and remove test cases by hand: a name, up to 3 dimensions and 1 to 4 measures each. */
+/** The expected value of one measure, and the dimension filters that pick the row. */
+function ExpectFields({
+  i,
+  expect,
+  dims,
+  onChange,
+}: {
+  i: number;
+  expect: Expectation;
+  dims: string[];
+  onChange: (e: Expectation) => void;
+}) {
+  const putFilter = (k: number, f: Expectation['filters'][number]) =>
+    onChange({ ...expect, filters: expect.filters.map((x, j) => (j === k ? f : x)) });
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <div>
+          <FormUI.Label htmlFor={`te-value-${i}`}>Expected value</FormUI.Label>
+          <Input
+            componentId="gsb.test_editor.expected"
+            id={`te-value-${i}`}
+            type="number"
+            value={Number.isNaN(expect.value) ? '' : String(expect.value)}
+            onChange={(e) => onChange({ ...expect, value: e.target.value === '' ? NaN : Number(e.target.value) })}
+          />
+        </div>
+        <div>
+          <FormUI.Label htmlFor={`te-tol-${i}`}>Tolerance (%)</FormUI.Label>
+          <Input
+            componentId="gsb.test_editor.tolerance"
+            id={`te-tol-${i}`}
+            type="number"
+            min={0}
+            max={100}
+            step={0.1}
+            value={String(expect.tolerancePct)}
+            onChange={(e) => onChange({ ...expect, tolerancePct: Number(e.target.value) })}
+          />
+        </div>
+      </div>
+      {expect.filters.map((f, k) => (
+        // eslint-disable-next-line react/no-array-index-key
+        <div key={k} style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+          <div>
+            <FormUI.Label htmlFor={`te-fd-${i}-${k}`}>Where</FormUI.Label>
+            <SimpleSelect
+              componentId="gsb.test_editor.filter_dimension"
+              id={`te-fd-${i}-${k}`}
+              value={f.dimension}
+              onChange={(e) => putFilter(k, { ...f, dimension: e.target.value })}
+            >
+              {dims.map((d) => (
+                <SimpleSelectOption key={d} value={d}>
+                  {d}
+                </SimpleSelectOption>
+              ))}
+            </SimpleSelect>
+          </div>
+          <div style={{ flex: 1 }}>
+            <FormUI.Label htmlFor={`te-fv-${i}-${k}`}>equals</FormUI.Label>
+            <Input
+              componentId="gsb.test_editor.filter_value"
+              id={`te-fv-${i}-${k}`}
+              placeholder="For example 2024"
+              value={f.value}
+              onChange={(e) => putFilter(k, { ...f, value: e.target.value })}
+            />
+          </div>
+          <Button
+            componentId="gsb.test_editor.filter_remove"
+            icon={<TrashIcon />}
+            aria-label={`Remove filter ${k + 1}`}
+            onClick={() => onChange({ ...expect, filters: expect.filters.filter((_, j) => j !== k) })}
+          />
+        </div>
+      ))}
+      {dims.length > 0 && expect.filters.length < 5 && (
+        <div>
+          <Button
+            componentId="gsb.test_editor.filter_add"
+            size="small"
+            icon={<PlusIcon />}
+            onClick={() => onChange({ ...expect, filters: [...expect.filters, { dimension: dims[0], value: '' }] })}
+          >
+            Add a filter
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Add, change and remove test cases by hand: a name, up to 3 dimensions and 1 to 4 measures each, or one measure
+ * with an expected value.
+ */
 export function TestEditor({
   tests,
   view,
@@ -106,18 +213,41 @@ export function TestEditor({
               onClick={() => setRows((r) => r.filter((_, j) => j !== i))}
             />
           </div>
+          <Checkbox
+            componentId="gsb.test_editor.expect"
+            isChecked={!!t.expect}
+            onChange={(on) =>
+              put(
+                i,
+                on
+                  ? {
+                      ...t,
+                      dimensions: [],
+                      measures: t.measures.slice(0, 1),
+                      expect: { value: NaN, tolerancePct: 0.5, filters: [] },
+                    }
+                  : { name: t.name, dimensions: t.dimensions, measures: t.measures }
+              )
+            }
+          >
+            Check against an expected value, for example a total from the legacy report
+          </Checkbox>
           <FieldPick
-            label="Measures (1 to 4)"
+            label={t.expect ? 'Measure (1)' : 'Measures (1 to 4)'}
             names={measures}
             value={t.measures}
-            onChange={(v) => put(i, { ...t, measures: v })}
+            onChange={(v) => put(i, { ...t, measures: t.expect ? v.slice(-1) : v })}
           />
-          <FieldPick
-            label="By dimensions (up to 3)"
-            names={dims}
-            value={t.dimensions}
-            onChange={(v) => put(i, { ...t, dimensions: v })}
-          />
+          {t.expect ? (
+            <ExpectFields i={i} expect={t.expect} dims={dims} onChange={(e) => put(i, { ...t, expect: e })} />
+          ) : (
+            <FieldPick
+              label="By dimensions (up to 3)"
+              names={dims}
+              value={t.dimensions}
+              onChange={(v) => put(i, { ...t, dimensions: v })}
+            />
+          )}
         </fieldset>
       ))}
       <div>

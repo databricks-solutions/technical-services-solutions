@@ -88,6 +88,10 @@ export function keepValidTests(tests: TestCase[], view: MetricView): TestCase[] 
   const dims = new Set(view.dimensions.map((d) => d.name));
   const measures = new Set(view.measures.map((m) => m.name));
   return tests.filter(
-    (t) => t.measures.length > 0 && t.measures.every((m) => measures.has(m)) && t.dimensions.every((d) => dims.has(d))
+    (t) =>
+      t.measures.length > 0 &&
+      t.measures.every((m) => measures.has(m)) &&
+      t.dimensions.every((d) => dims.has(d)) &&
+      (t.expect?.filters ?? []).every((f) => dims.has(f.dimension))
   );
 }

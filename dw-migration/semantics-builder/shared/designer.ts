@@ -9,10 +9,25 @@ export interface Explanations {
   dimensions: Record<string, { explanation: string }>;
 }
 
+export interface TestFilter {
+  dimension: string;
+  value: string;
+}
+
+/** An expected value for one measure, with equality filters on dimensions. */
+export interface Expectation {
+  value: number;
+  /** Allowed difference, in percent of the expected value. */
+  tolerancePct: number;
+  filters: TestFilter[];
+}
+
 export interface TestCase {
   name: string;
   dimensions: string[];
   measures: string[];
+  /** Set: the test checks one measure against this value, not against plain SQL. */
+  expect?: Expectation;
 }
 
 export interface DesignDraft {
@@ -70,11 +85,23 @@ export const saveDraftSchema = z.object({
   /** Set by the test editor. Absent: keep the tests of the base version. */
   tests: z
     .array(
-      z.object({
-        name: z.string().trim().min(1).max(200),
-        dimensions: z.array(testName).max(3),
-        measures: z.array(testName).min(1).max(4),
-      })
+      z
+        .object({
+          name: z.string().trim().min(1).max(200),
+          dimensions: z.array(testName).max(3),
+          measures: z.array(testName).min(1).max(4),
+          expect: z
+            .object({
+              value: z.number().finite(),
+              tolerancePct: z.number().min(0).max(100),
+              filters: z.array(z.object({ dimension: testName, value: z.string().max(500) })).max(5),
+            })
+            .optional(),
+        })
+        .refine((t) => !t.expect || (t.measures.length === 1 && t.dimensions.length === 0), {
+          message: 'A test with an expected value checks exactly 1 measure, with filters and no group.',
+          path: ['expect'],
+        })
     )
     .max(20)
     .optional(),

@@ -522,8 +522,9 @@ function Designer({
         <Tabs.Content value="tests">
           <section style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 16 }}>
             <Typography.Text color="secondary">
-              Validation creates the metric view in the sandbox schema, runs each test as you, and compares the result
-              with plain SQL derived from the YAML.
+              Validation creates the metric view in the sandbox schema and runs each test as you. A test compares the
+              result with plain SQL derived from the YAML, or checks one measure against an expected value, for example
+              a total from the legacy report. The app keeps only pass or fail and the difference in percent.
             </Typography.Text>
             {editingTests && saved ? (
               <TestEditor
@@ -547,7 +548,11 @@ function Designer({
                     {draft.tests.map((t) => (
                       <li key={t.name}>
                         <Typography.Text bold>{t.name}</Typography.Text>: {t.measures.join(', ')}
-                        {t.dimensions.length ? ` by ${t.dimensions.join(', ')}` : ' in total'}
+                        {t.expect
+                          ? `${t.expect.filters.length ? ` where ${t.expect.filters.map((f) => `${f.dimension} = ${f.value}`).join(' and ')}` : ' in total'} = ${t.expect.value.toLocaleString()} +/- ${t.expect.tolerancePct}%`
+                          : t.dimensions.length
+                            ? ` by ${t.dimensions.join(', ')}`
+                            : ' in total'}
                       </li>
                     ))}
                   </ul>

@@ -51,7 +51,10 @@ A typical path for one KPI area. Each page shows the next step.
    Use **Suggest the empty sections with AI** to fill gaps.
 5. **Metric Designer.** Click **Generate design** (AI), or **Start from a template** (no AI). Then:
    - **Edit fields** to change measures and dimensions in tables, or add a field by hand.
-   - **Tests**: the questions the view must answer. **Edit tests by hand** if needed.
+   - **Tests**: the questions the view must answer. **Edit tests by hand** if needed. A test compares the view
+     with plain SQL, or checks one measure against an **expected value** with a tolerance, for example "Net
+     Revenue where Customer Region = ASIA = 218,400,000,000 +/- 0.5%" from the legacy report. Promote needs a
+     validated version, so every test must pass first.
    - **Validate** creates the view in the sandbox schema and runs the tests. **Fix with AI** helps when a
      test fails.
    - **History** lists every version. **Restore** copies an old version as a new one.
@@ -96,7 +99,7 @@ Apply primary keys before the foreign keys that reference them.
   outcome. Prompts, responses and catalog details stay inside the app.
 - **Validation stays in a sandbox.** Draft metric views are created only in the schema set by the
   `sandbox_schema` bundle variable, never in a name from the request. Tests are reads. Only pass or fail,
-  row counts and the SQL are stored, never result values.
+  row counts, the difference in percent for expected values, and the SQL are stored, never result values.
 - **Untrusted input stays data.** User text and catalog metadata go to the model inside delimited
   `untrusted_data` blocks. Model output is validated against a schema and repaired once at most.
 

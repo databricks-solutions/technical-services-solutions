@@ -30,3 +30,19 @@ describe('saveDraftSchema', () => {
     );
   });
 });
+
+describe('expected value tests', () => {
+  const tests = saveDraftSchema.shape.tests;
+  const expect_ = { value: 10, tolerancePct: 0.5, filters: [{ dimension: 'Region', value: 'ASIA' }] };
+
+  it('accepts one measure with no group, and rejects more', () => {
+    expect(tests.safeParse([{ name: 'a', dimensions: [], measures: ['Revenue'], expect: expect_ }]).success).toBe(true);
+    expect(tests.safeParse([{ name: 'a', dimensions: [], measures: ['A', 'B'], expect: expect_ }]).success).toBe(false);
+    expect(tests.safeParse([{ name: 'a', dimensions: ['Region'], measures: ['A'], expect: expect_ }]).success).toBe(
+      false
+    );
+    expect(
+      tests.safeParse([{ name: 'a', dimensions: [], measures: ['A'], expect: { ...expect_, value: NaN } }]).success
+    ).toBe(false);
+  });
+});

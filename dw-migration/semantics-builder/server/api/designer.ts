@@ -28,10 +28,12 @@ import {
 } from '../llm/prompts/designer';
 import type { Pattern } from '../../shared/patterns';
 import {
+  checkExpected,
   compareRows,
   createStatement,
   dropStatement,
   expandedQuery,
+  expectQuery,
   measureQuery,
   sandboxSchema,
   sandboxViewName,
@@ -495,6 +497,16 @@ export function registerDesignerRoutes(
 
       const results = await Promise.all(
         draft.tests.map(async (test): Promise<TestResult> => {
+          if (test.expect) {
+            const measureSql = expectQuery(plan.sandboxView, test);
+            try {
+              const actual = await runStatement(measureSql, { ...ctx, approved: false }, run);
+              return { name: test.name, ...checkExpected(actual.rows, test.expect), measureSql, expandedSql: null };
+            } catch (err) {
+              const detail = (err as Error).message.slice(0, 500);
+              return { name: test.name, status: 'error', rows: 0, detail, measureSql, expandedSql: null };
+            }
+          }
           const measureSql = measureQuery(plan.sandboxView, test);
           // Window measures have no plain SQL form; compare the other columns and say so.
           const plain = test.measures.filter((m) => expandedQuery(view, { ...test, measures: [m] }) !== null);

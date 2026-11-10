@@ -1,7 +1,16 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { validateMetricView } from '../../shared/metricView';
 import { checkStatement } from '../sql/allowlist';
-import { compareRows, createStatement, expandedQuery, measureQuery, sandboxSchema, sandboxViewName } from './validate';
+import {
+  checkExpected,
+  compareRows,
+  createStatement,
+  expandedQuery,
+  expectQuery,
+  measureQuery,
+  sandboxSchema,
+  sandboxViewName,
+} from './validate';
 
 const YAML = `version: 1.1
 source: s.t.lineitem
@@ -89,5 +98,39 @@ describe('validation', () => {
     });
     expect(compareRows(['a'], [['x'], ['y']], [['x']]).status).toBe('failed');
     expect(compareRows(['a'], [[null]], [['0']]).status).toBe('failed');
+  });
+});
+
+describe('expected value tests', () => {
+  const test = {
+    name: 'Revenue 2024',
+    dimensions: [],
+    measures: ['Net revenue'],
+    expect: { value: 1000, tolerancePct: 0.5, filters: [{ dimension: 'Order year', value: "2024' OR 1=1 --" }] },
+  };
+
+  it('filters on the dimensions with escaped literals, and passes the allowlist', () => {
+    const sql = expectQuery('c.s.v', test);
+    expect(sql).toBe(
+      "SELECT MEASURE(`Net revenue`) AS `Net revenue` FROM `c`.`s`.`v` WHERE `Order year` = '2024\\' OR 1=1 --'"
+    );
+    expect(checkStatement(sql).kind).toBe('read');
+  });
+
+  it('passes within the tolerance and never shows the actual value', () => {
+    const ok = checkExpected([['1004']], test.expect);
+    expect(ok.status).toBe('passed');
+    expect(ok.detail).toBe('Within 0.5% of the expected value (difference 0.4%).');
+    const bad = checkExpected([['987.65']], test.expect);
+    expect(bad.status).toBe('failed');
+    expect(bad.detail).toBe('1.24% below the expected value. The tolerance is 0.5%.');
+    expect(bad.detail).not.toContain('987');
+  });
+
+  it('fails on no number, many rows, and a non-zero against 0', () => {
+    expect(checkExpected([[null]], test.expect).status).toBe('failed');
+    expect(checkExpected([['1'], ['2']], test.expect).detail).toBe('The query returned 2 rows, not 1.');
+    expect(checkExpected([['0']], { ...test.expect, value: 0 }).status).toBe('passed');
+    expect(checkExpected([['3']], { ...test.expect, value: 0 }).status).toBe('failed');
   });
 });

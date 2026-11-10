@@ -1,6 +1,13 @@
 # Phase h: migration import, Genie in the app, trust and governance
 
-Status: draft for approval (2026-11-10). Nothing in this phase is built yet.
+Status: approved 2026-11-10.
+
+Decisions (2026-11-10):
+- Tests and reconcile store only pass or fail and the difference in percent. Actual values show live, never stored.
+- Approvals: the author shares one sub-project read-only with a named reviewer, by email. No group reviewers
+  (the app cannot check group membership with its scopes).
+- Genie chat: a Genie button in the header opens a side panel on every page, scoped to the current sub-project.
+- Legacy uploads: the app keeps only the parsed model and deletes the file after the parse.
 
 ## Goal
 

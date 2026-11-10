@@ -1537,6 +1537,12 @@ def _short_name_refs(name, code):
     ('w.serving_endpoints.query("llm", messages=m)', ["sdk_serving_query"]),
     ("w.serving_endpoints.query('llm')", ["sdk_serving_query"]),
     ('se = w.serving_endpoints\nse.query("llm")', ["sdk_serving_query"]),
+    # the data-plane API and an alias through the client constructor (Opus review of 0.10.3)
+    ('w.serving_endpoints_data_plane.query(name="llm", messages=m)', ["sdk_serving_query"]),
+    ('se = WorkspaceClient().serving_endpoints\nse.query(name="llm")', ["sdk_serving_query"]),
+    ('se = WorkspaceClient(profile="dev").serving_endpoints_data_plane\nse.query(name="llm")', ["sdk_serving_query"]),
+    # still not an alias: the result of a call on the API
+    ('x = w.serving_endpoints.get("e")\nprint("llm")', []),
     ('c = get_deploy_client("databricks")\nc.predict("chat", inputs={})', ["mlflow_deployments_predict"]),
     # still not a call: closed before the name, a string after the call, another model's predict
     ('w.serving_endpoints.query(name=ep)\nprint("llm")', []),
@@ -1582,6 +1588,16 @@ def test_a_file_with_thousands_of_short_name_matches_scans_in_linear_time():
     t0 = _t.time()
     sc.scan_text("notebook", "/big", "from mlflow.deployments import get_deploy_client\n" + big)
     assert _t.time() - t0 < 2.0 and len(sc.refs) == 2000  # with it, every one counts
+
+
+@pytest.mark.parametrize("call", ["serving_endpoints", "serving_endpoints_data_plane"])
+def test_a_short_name_called_through_either_query_api_isnt_a_close_candidate(call):
+    ext = _ep({**EXTERNAL, "name": "llm"})
+    rows, _ = m.plan([ext], {}, {}, "c", "s")
+    s = m.Scanner(["llm"], {}, rows)
+    s.scan_text("notebook", "/monthly", f'w.{call}.query(name="llm", messages=m)')
+    r = m.readiness(rows, s.refs, True, 30, [ext], {"local_files": "ok"})
+    assert "llm" not in json.dumps(r["rate_limit_zero_candidates"])
 
 
 def test_a_short_name_called_by_code_isnt_a_close_candidate():
@@ -1727,10 +1743,17 @@ def test_supervisor_tools_are_read_page_by_page_and_never_forever():
     found, _, w = _super_findings({"Paged": []}, pages=pages)
     assert found == [("Paged", "supervisor_uses_vs_ka")]  # the third page's tool was found
     assert [c[1].get("page_token") for c in w.calls] == [None, "1", "2"]
-    # A token that never ends (or repeats) stops: the old loop would have spun forever.
+    # A token that repeats, or more pages than the cap, is an incomplete read: it raises (a coverage gap), and
+    # never spins forever or returns a partial list that reads clean.
     w = mock.MagicMock()
     w.api_client.do.return_value = {"tools": [GENIE_TOOL], "next_page_token": "same"}
-    assert len(m.supervisor_tools(w, "supervisor-agents/X")) == 2
+    with pytest.raises(ValueError, match="repeat a page token"):
+        m.supervisor_tools(w, "supervisor-agents/X")
+    w = mock.MagicMock()
+    counter = iter(range(10_000))
+    w.api_client.do.side_effect = lambda *a, **k: {"tools": [GENIE_TOOL], "next_page_token": str(next(counter))}
+    with pytest.raises(ValueError, match="more than"):
+        m.supervisor_tools(w, "supervisor-agents/X")
 
 
 def test_supervisor_tools_never_fall_back_to_the_typed_list(monkeypatch):
@@ -1773,6 +1796,25 @@ def test_an_endpoint_tool_that_names_a_knowledge_assistant_endpoint_in_a_path_bl
     # but not a longer endpoint name that only contains it
     other = {"tool_type": "serving_endpoint", "tool_id": "x", "serving_endpoint": {"name": "ka-KA-endpoint-v2"}}
     assert _super_findings({"S": [other]})[0] == []
+
+
+def test_a_display_name_two_supervisors_share_resolves_to_the_safe_side():
+    """Two Supervisors named "Twin", one dependent. A parent that names "Twin" may mean either, so it depends: an
+    extra finding to check, never a dependent parent that reads clean (Opus review of 0.10.3)."""
+    sups = {"supervisor-agents/a": {"label": "supervisor agent Twin", "endpoint": None, "tools": [_ka_tool("KA")]},
+            "supervisor-agents/b": {"label": "supervisor agent Twin", "endpoint": None, "tools": []},
+            "supervisor-agents/p": {"label": "supervisor agent Parent", "endpoint": None,
+                                    "tools": [{"tool_type": "supervisor_agent", "tool_id": "s",
+                                               "supervisor_agent": {"display_name": "Twin"}}]}}
+    kas = {"knowledge-assistants/KA": "KA"}
+    found = m.supervisor_dependencies(sups, kas, {})
+    assert "supervisor-agents/a" in found and "supervisor-agents/b" not in found
+    assert "supervisor-agents/p" in found  # in either order of the twins
+    sups = dict(reversed(list(sups.items())))
+    assert "supervisor-agents/p" in m.supervisor_dependencies(sups, kas, {})
+    # Named by id, it resolves exactly: the clean twin's parent stays clean.
+    sups["supervisor-agents/p"]["tools"][0]["supervisor_agent"] = {"supervisor_agent_id": "b"}
+    assert "supervisor-agents/p" not in m.supervisor_dependencies(sups, kas, {})
 
 
 def test_a_nested_supervisor_named_by_display_name_is_followed():

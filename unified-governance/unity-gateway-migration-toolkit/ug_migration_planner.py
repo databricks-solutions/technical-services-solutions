@@ -1401,7 +1401,8 @@ GENERIC_NAMES = {"test", "default", "model", "llm", "chat", "prod", "dev", "demo
 KEY_CONTEXT_RE = re.compile(r"(endpoint|model|serving|llm|embed)\w*['\"]?\s*[:=(,]\s*$", re.I)
 MODEL_KEY_RE = re.compile(r"\bmodel\w*['\"]?\s*[:=]\s*$", re.I)  # `model=`, `"model":` just before a name
 # Databricks SDK serving_endpoints.query(...): a call the SDK makes to a serving endpoint, not to a gateway route.
-SDK_QUERY_RE = re.compile(r"serving_endpoints\s*\.\s*query\s*\(")
+# serving_endpoints_data_plane.query (ServingEndpointsDataPlaneAPI) calls the same /serving-endpoints route.
+SDK_QUERY_RE = re.compile(r"serving_endpoints(?:_data_plane)?\s*\.\s*query\s*\(")
 # MLflow deployments client (mlflow.deployments.get_deploy_client("databricks")): predict(endpoint=...) always calls
 # /serving-endpoints/<endpoint>/invocations, so a Unity Gateway service name can't go there either.
 MLFLOW_PREDICT_RE = re.compile(r"\.\s*predict\s*\([^()]*$")  # the name sits inside an open .predict( call
@@ -1442,7 +1443,8 @@ MAX_FIX_LINE = 5000
 CALL_WINDOW = 4000  # how far into a call's arguments a short or common name still counts as an argument
 _CALL_TOKEN_RE = re.compile(r'"""|\'\'\'|"|\'|#|//|--|\(|\)')
 # `se = w.serving_endpoints` (an alias of the SDK's serving endpoints API) and the mention of the MLflow client
-SERVING_ALIAS_RE = re.compile(r"\b(\w+)\s*=\s*[\w.]*\bserving_endpoints\b(?![\w.(])")
+# An alias of the API: `se = w.serving_endpoints`, `se = WorkspaceClient(profile="x").serving_endpoints_data_plane`
+SERVING_ALIAS_RE = re.compile(r"\b(\w+)\s*=\s*(?:[\w.]|\([^()\n]*\))*\bserving_endpoints(?:_data_plane)?\b(?![\w.(])")
 DEPLOY_CLIENT_MENTION_RE = re.compile(r"\bget_deploy_client\b")  # also `import get_deploy_client as gdc`
 
 
@@ -2253,10 +2255,12 @@ def supervisor_tools(w: WorkspaceClient, parent: str) -> list[dict]:
             raise ValueError(f"unexpected response listing the tools of {parent}")
         out += [t for t in page.get("tools") or [] if isinstance(t, dict)]
         token = page.get("next_page_token")
-        if not isinstance(token, str) or not token or token in seen:  # last page, or a token that repeats
+        if not isinstance(token, str) or not token:  # the last page
             return out
+        if token in seen:  # a token that repeats: the rest can't be read, so this list is incomplete
+            raise ValueError(f"the tools of {parent} repeat a page token, so they can't all be read")
         seen.add(token)
-    return out
+    raise ValueError(f"the tools of {parent} span more than {MAX_TOOL_PAGES} pages; the rest weren't read")
 
 
 _TOOL_BOOKKEEPING = ("name", "tool_id", "id", "description", "tool_type")
@@ -2301,12 +2305,15 @@ def supervisor_dependencies(supervisors: dict[str, dict], kas: dict[str, str],
     tool that is a Knowledge Assistant's endpoint (or another dependent Supervisor's), or a supervisor_agent tool
     (or an endpoint tool) pointing at a dependent Supervisor. Nested Supervisors are followed until nothing changes.
     supervisors is {name: {"label", "endpoint", "tools": [raw tool dicts]}}; kas {Knowledge Assistant name: display}."""
-    by_ref: dict[str, str] = {}  # every way a tool can name a Supervisor -> its name
+    # Every way a tool can name a Supervisor -> the Supervisors it may mean. Names, ids and endpoints are unique; a
+    # display name can be shared, and then a tool naming it may mean any of them: it depends when any of them does
+    # (the safe direction: an extra finding to check, never a dependent Supervisor that reads clean).
+    by_ref: dict[str, set] = {}
     for name, info in supervisors.items():
         display = str(info.get("label") or "").removeprefix("supervisor agent ")
         for ref in (name, name.rsplit("/", 1)[-1], info.get("endpoint"), display):
             if ref:
-                by_ref[ref] = name
+                by_ref.setdefault(ref, set()).add(name)
     found: dict[str, list[tuple[str, str, str]]] = {}
 
     def add(name: str, pattern: str, target: str, text: str) -> bool:
@@ -2343,10 +2350,12 @@ def supervisor_dependencies(supervisors: dict[str, dict], kas: dict[str, str],
                 if t.get("tool_type") not in ("supervisor_agent", "serving_endpoint"):
                     continue
                 strings = _tool_strings(t)
-                for ref, child in list(by_ref.items()):
+                for ref, children in by_ref.items():
                     if not _names_in(strings, ref):
                         continue
-                    if child != name and child in found:
+                    for child in sorted(children):
+                        if child == name or child not in found:
+                            continue
                         tool = t.get("tool_id") or str(t.get("name") or "?").rsplit("/", 1)[-1]
                         changed |= add(name, "supervisor_uses_supervisor", supervisors[child]["label"],
                                        f"tool {tool} uses {supervisors[child]['label']}, which depends on AI Search")

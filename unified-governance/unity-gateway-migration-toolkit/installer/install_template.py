@@ -1049,6 +1049,12 @@ def roll_back_all(st: dict) -> dict:
             if s == "still running":
                 lines.append(f"- {p['apply_id']}: still running: wait for it to finish (Jobs > [{APP_NAME}] Unity Gateway "
                              "migration apply) and run uninstall again")
+            elif s.startswith(("rollback refused", "rollback dry run")):
+                # The app is stopped by now, so its Apply page can't be the first place to look: the job run says why.
+                lines.append(f"- {p['apply_id']}: {s}: see why in the latest run of Jobs > [{APP_NAME}] Unity Gateway "
+                             "migration apply (its output names the object it couldn't read or the check that refused "
+                             "it), fix the cause, and run uninstall again. Or roll it back from the command line: "
+                             + rollback_command(FOLDER, p["apply_id"]))
             else:
                 lines.append(f"- {p['apply_id']}: {s}: open the app's Apply page for this run to see why, fix the cause "
                              "(the message names the grant or object), and run uninstall again. Or roll it back from the "

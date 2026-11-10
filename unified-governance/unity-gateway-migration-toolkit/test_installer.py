@@ -1144,6 +1144,8 @@ def test_uninstall_stops_when_the_dry_run_had_errors_and_says_why(monkeypatch):
     ws.dry_script[A1] = [("NEEDS_ATTENTION", {"would_delete": 1, "error": 1})]
     res = run_notebook(monkeypatch, ws, uninstall_widgets(rollback_services="yes"))
     assert res.raised and "rollback refused after its dry run" in res.status and A1 in res.status
+    assert "latest run of Jobs > [ug-migration-toolkit] Unity Gateway migration apply" in res.status
+    assert "open the app's Apply page" not in res.status  # the app is stopped by then
     assert _attempts(ws, A1) == ["rollback_dry_run", "rollback_refused"]
     assert ws.jobs and f"{FOLDER}/ug_migration_toolkit.marker" in ws.files  # nothing else was removed
 

@@ -585,11 +585,16 @@ function ApplyDetail({ applyId, onRolledBack, onOpen, onFinished, onClose, opera
   const alreadyRolledBack = !!rolledBack || rolledBackInList;
   const rollbackOffered = operator && m.mode === "execute" && created > 0 && ["SUCCEEDED", "NEEDS_ATTENTION", "FAILED"].includes(m.status);
   // A rollback dry run that keeps some objects finishes as NEEDS_ATTENTION ("kept" is a problem action): it still
-  // unlocks the rollback of what it would delete (the server accepts both).
-  const rollbackDryDone = rollbackDry && ["SUCCEEDED", "NEEDS_ATTENTION"].includes(m.status);
+  // unlocks the rollback of what it would delete. One with other problems (an object it couldn't read, so the
+  // rollback might delete something it didn't list) doesn't: the server says why (unlock_problem).
+  const unlockProblem: string | null = rollbackDry ? (m.unlock_problem || null) : null;
+  const rollbackDryDone = rollbackDry && ["SUCCEEDED", "NEEDS_ATTENTION"].includes(m.status) && !unlockProblem;
   // Each rollback dry run unlocks one rollback: once a rollback used it, link to that run instead of the button.
   const usedBy: string | null = rollbackDry ? (m.used_by || null) : null;
   const deleteOffered = operator && rollbackDryDone && toDelete.length > 0 && !usedBy;
+  // Nothing left to delete (gone, kept for another run, or older than the run): the rollback still has to run once to
+  // record it, or the execute run stays "not rolled back" (and uninstall keeps it pending).
+  const recordOffered = operator && rollbackDryDone && toDelete.length === 0 && !usedBy;
   const rollbackReason = alreadyRolledBack ? "This run was already rolled back." : jobRunning(jobId, job) ? "A rollback is already running." : null;
   const startRollback = async (body: Record<string, string>) => {
     setBusy(true);
@@ -616,7 +621,7 @@ function ApplyDetail({ applyId, onRolledBack, onOpen, onFinished, onClose, opera
     ? <>A rollback already used this dry run: <button className="btn link" onClick={() => onOpen(usedBy)}>{usedBy.slice(0, 8)}</button>. To roll back again, run a new rollback dry run from the execute run.</>
     : rollbackDryDone
     ? (toDelete.length ? "Check what rollback would delete below. If it's right, delete them: that runs the rollback of the same execute run."
-      : "Rollback would delete nothing: the objects are gone, changed or still used by another run (see below).")
+      : "Rollback would delete nothing: the objects are gone, changed or still used by another run (see below). Record the rollback so this execute run counts as rolled back where that applies.")
     : m.mode === "dry_run" && m.status === "SUCCEEDED"
     ? "If the plan looks right, execute the same selection. Execute creates the objects, and you can roll back from this history."
     : m.mode === "execute" && ["SUCCEEDED", "NEEDS_ATTENTION"].includes(m.status)
@@ -634,8 +639,13 @@ function ApplyDetail({ applyId, onRolledBack, onOpen, onFinished, onClose, opera
               <button className="btn danger sm" aria-disabled={busy || undefined}
                       onClick={() => { if (!busy) setConfirming(true); }}>Delete these objects…</button>
             )}
+            {recordOffered && (
+              <button className="btn secondary sm" aria-disabled={busy || undefined}
+                      onClick={() => { if (!busy) setConfirming(true); }}>Record the rollback…</button>
+            )}
           </>}>
       {outcome}
+      {unlockProblem && <Notice tone="warning" title="This rollback dry run can't be used for a rollback">{unlockProblem.charAt(0).toUpperCase() + unlockProblem.slice(1)}.</Notice>}
       {next && <p className="small"><b>Next:</b> {next}</p>}
       {rolledBack && <p className="small">Rolled back by run <button className="btn link" onClick={() => onOpen(rolledBack.apply_id)}>{String(rolledBack.apply_id).slice(0, 8)}</button> ({String(rolledBack.status).toLowerCase()}).</p>}
       {rollbackOffered && rollbackReason && <Reason id="rollback-reason">Roll back is unavailable. {rollbackReason}</Reason>}
@@ -648,13 +658,16 @@ function ApplyDetail({ applyId, onRolledBack, onOpen, onFinished, onClose, opera
         { key: "reason", label: "Details", sortable: false, render: (i) => <span className="small">{itemDetails(i)}</span> },
       ]} />
       {confirming && (
-        <Confirm word="ROLLBACK" title="Roll back" action={`Delete ${plural(toDelete.length, "object")}`} busy={busy}
+        <Confirm word="ROLLBACK" title={toDelete.length ? "Roll back" : "Record the rollback"}
+                 action={toDelete.length ? `Delete ${plural(toDelete.length, "object")}` : "Record the rollback"} busy={busy}
                  onCancel={() => setConfirming(false)} onConfirm={rollback}
                  body={<>
                    {data.meta?.workspace_id && <p>In workspace <b>{data.meta.workspace_id}</b> (where the execute run created them).</p>}
-                   <p>Delete the {plural(toDelete.length, "object")} this dry run listed:</p>
-                   <ul className="small">{toDelete.slice(0, 12).map((i: any) => <li key={i.type + i.name}><code>{i.name}</code> ({String(i.type).replace(/_/g, " ")})</li>)}</ul>
-                   <p className="small">Objects another run still uses are kept. Inference tables stay. Grants are never revoked: a deleted service takes its grants with it, and a kept service keeps them (the results list them).</p>
+                   {toDelete.length ? <>
+                     <p>Delete the {plural(toDelete.length, "object")} this dry run listed:</p>
+                     <ul className="small">{toDelete.slice(0, 12).map((i: any) => <li key={i.type + i.name}><code>{i.name}</code> ({String(i.type).replace(/_/g, " ")})</li>)}</ul>
+                   </> : <p>This dry run found nothing to delete, and the rollback deletes only what its dry run listed. Running it records the result, so the execute run counts as rolled back where everything left is gone, used by another run, or older than the run.</p>}
+                   <p className="small">Only these are deleted: anything else, even something that became deletable since the dry run, is kept and the result says so. Objects another run still uses are kept. Inference tables stay. Grants are never revoked: a deleted service takes its grants with it, and a kept service keeps them (the results list them).</p>
                    <Notice tone="warning">If callers have already moved to these endpoints, rolling back breaks their traffic. Move them back first.</Notice>
                  </>} />
       )}

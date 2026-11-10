@@ -197,16 +197,22 @@ fingerprint = None if (operation == "apply" and ROLLING_BACK) else store.run_fin
     "allow_secret_read": g("allow_secret_read"), "grants": g("grants"), "ack_guardrails": g("ack_guardrails"),
     "create_uc_secrets": g("create_uc_secrets"), "services": g("services"), "api_type": g("api_type"), "prompt": g("prompt"), "rollback_of": g("rollback_of"),
     "force": g("force"), "target_workspace_id": target_req})
+def dry_run_row(columns: str) -> dict | None:
+    """The dry run's row in the applies table. The id is a bound parameter, not text in the SQL, so the check on
+    the id above isn't the only thing between a widget value and the query. columns is a fixed list from this file;
+    started_at comes as epoch seconds, so the session time zone doesn't matter."""
+    found = spark.sql(f"SELECT {columns}, unix_timestamp(started_at) AS started_at "
+                      f"FROM {store.q(schema)}.ug_migration_applies WHERE apply_id = :id",
+                      args={"id": g("dry_run_id")}).collect()
+    return found[0].asDict() if found else None
+
+
 # Execute follows a successful, recent dry run of the same settings (the app checks this too; the job doesn't rely
 # on it). Checked before this run's row is written, so a refused execute leaves no RUNNING row behind.
 if mode == "execute" and operation in apply_mod.DRY_RUN_GATED:
     dry = None
     if g("dry_run_id"):
-        found = spark.sql(
-            f"SELECT mode, operation, status, fingerprint, scan_run_id, requested_by, "  # epoch: no session time zone
-            f"unix_timestamp(started_at) AS started_at FROM {store.q(schema)}.ug_migration_applies "
-            f"WHERE apply_id = '{g('dry_run_id')}'").collect()  # dry_run_id matched ID_RE above
-        dry = found[0].asDict() if found else None
+        dry = dry_run_row("mode, operation, status, fingerprint, scan_run_id, requested_by")
     used_by = None
     if dry is not None:
         used_sql, used_args = store.dry_run_used(schema, g("dry_run_id"))
@@ -216,14 +222,17 @@ if mode == "execute" and operation in apply_mod.DRY_RUN_GATED:
                                            used_by=used_by)
     if problem:
         raise ValueError(f"execute refused: {problem}")
+# A rollback of an apply run, and its dry run, say who is rolling back. The check below compares the dry run's
+# requester with the rollback's, which only means something when both are set. requested_by is a job parameter, so
+# this is a consistency check, not an authorization control: who may start the job is the job's permissions.
+if ROLLING_BACK and operation == "apply" and not g("requested_by").strip():
+    raise ValueError("a rollback and its dry run need requested_by (who is rolling back): the app and the "
+                     "installer set it")
 # An apply rollback follows a finished, recent rollback dry run of the same execute run (the app checks this too).
 if mode == "rollback" and operation == "apply":
     rb_dry, rb_used = None, None
     if g("dry_run_id"):
-        found = spark.sql(
-            f"SELECT mode, operation, status, rollback_of, requested_by, unix_timestamp(started_at) AS started_at "
-            f"FROM {store.q(schema)}.ug_migration_applies WHERE apply_id = '{g('dry_run_id')}'").collect()
-        rb_dry = found[0].asDict() if found else None  # dry_run_id matched ID_RE above
+        rb_dry = dry_run_row("mode, operation, status, summary, rollback_of, requested_by")
         if rb_dry is not None:
             used_sql, used_args = store.dry_run_used(schema, g("dry_run_id"))
             used = spark.sql(used_sql, args=used_args).collect()
@@ -361,8 +370,12 @@ try:
         n = store.apply_log_from_items(spark, schema, src_id, work, os.path.join(LOG_DIR, f"{src_id}.jsonl"))
         if n:
             protect, released = apply_mod.protection_from_runs(store.protection_runs(spark, schema, LOG_DIR), src_id)
+            # The rollback deletes only what its dry run listed (would_delete). It reads the workspace again, and up
+            # to 24 hours can pass: another run may have been rolled back since, which releases objects the dry run
+            # kept, and force makes changed objects deletable. Anything not listed is kept, and the result says so.
+            only = store.rollback_dry_run_deletes(spark, schema, g("dry_run_id")) if mode == "rollback" else None
             results = apply_mod.rollback(w, work, execute=execute, protect=protect, released=released,
-                                         apply_id=src_id, force=flag("force"), audit_path=log_path)
+                                         apply_id=src_id, force=flag("force"), audit_path=log_path, only=only)
         else:
             results = [{"type": "log", "name": src_id, "action": "manual",
                         "reason": "no created objects found for that run; check the workspace by hand"}]

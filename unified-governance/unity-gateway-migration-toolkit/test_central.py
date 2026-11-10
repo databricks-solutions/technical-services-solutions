@@ -288,13 +288,14 @@ def test_apply_notebook_rollback_acts_on_the_workspace_of_the_run_it_undoes(monk
     src = {"mode": "execute", "operation": "apply", "status": "SUCCEEDED", "job_run_id": "1", "workspace_id": REMOTE}
     rb = ta.rollback_dry_rows(ta.OTHER)
     calls = ta._notebook(monkeypatch, {"apply_id": ta.APPLY, "results_schema": "c.s", "mode": "rollback",
-                                       "rollback_of": ta.OTHER, "job_run_id": "5", "dry_run_id": ta.RB_DRY}, hub,
+                                       "rollback_of": ta.OTHER, "job_run_id": "5", "dry_run_id": ta.RB_DRY,
+                                       "requested_by": ta.ROLLER}, hub,
                          apply_rows={ta.OTHER: src}, dry_rows=rb)
     assert seen == [REMOTE] and calls["upserts"][0]["workspace_id"] == REMOTE
     with pytest.raises(ValueError, match="doesn't match"):
         ta._notebook(monkeypatch, {"apply_id": ta.APPLY, "results_schema": "c.s", "mode": "rollback",
                                    "rollback_of": ta.OTHER, "job_run_id": "5", "target_workspace_id": OTHER,
-                                   "dry_run_id": ta.RB_DRY}, hub, apply_rows={ta.OTHER: src}, dry_rows=rb)
+                                   "dry_run_id": ta.RB_DRY, "requested_by": ta.ROLLER}, hub, apply_rows={ta.OTHER: src}, dry_rows=rb)
 
 
 def test_apply_notebook_refuses_a_scan_of_another_workspace(monkeypatch):

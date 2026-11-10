@@ -1511,6 +1511,65 @@ def test_a_short_name_outside_a_call_doesnt_count(code):
     assert not [r for r in s.refs if r.legacy_endpoint == "test"]
 
 
+def _short_name_refs(name, code):
+    sc = m.Scanner([name], {}, [])
+    sc.scan_text("notebook", "/n", code)
+    return [r.pattern for r in sc.refs if r.legacy_endpoint == name]
+
+
+@pytest.mark.parametrize("code, want", [
+    # a ")" inside a string before the name no longer closes the call (review of 0.10.3)
+    ('w.serving_endpoints.query(\n    messages=[{"role": "user", "content": "Rules: 1) be brief"}],\n    name="llm")',
+     ["sdk_serving_query"]),
+    ("w.serving_endpoints.query(\n    messages=[{'content': 'a ) b'}, {'content': \"c ) d\"}],\n    name='llm')", ["sdk_serving_query"]),
+    ('w.serving_endpoints.query(\n    messages=[{"content": """multi\nline ) text"""}],\n    name="llm")', ["sdk_serving_query"]),
+    ('w.serving_endpoints.query(\n    messages=[{"content": "an escaped \\" ) quote"}],\n    name="llm")', ["sdk_serving_query"]),
+    # a comment with an apostrophe or a paren doesn't confuse it either
+    ("w.serving_endpoints.query(\n    # don't forget ) this\n    name=\"llm\")", ["sdk_serving_query"]),
+    ("w.serving_endpoints.query(\n    -- it's SQL-ish ) comment\n    name=\"llm\")", ["sdk_serving_query"]),
+    # a long call: the name is 3,000 characters into the arguments
+    ('w.serving_endpoints.query(\n    messages="' + "x" * 3000 + '",\n    name="llm")', ["sdk_serving_query"]),
+    # aliases of the SDK API and renamed imports of the MLflow client
+    ('se = w.serving_endpoints\nse.query(name="llm", messages=m)', ["sdk_serving_query"]),
+    ('from mlflow.deployments import get_deploy_client as gdc\nc = gdc("databricks")\nc.predict(endpoint="chat", inputs={})',
+     ["mlflow_deployments_predict"]),
+    # still not a call: closed before the name, a string after the call, another model's predict
+    ('w.serving_endpoints.query(name=ep)\nprint("llm")', []),
+    ('w.serving_endpoints.query(name=ep, messages=["a ) b"])\nx = "llm"', []),
+    ('model.predict("chat")', []),
+])
+def test_short_names_in_calls_with_strings_comments_long_arguments_and_aliases(code, want):
+    name = "chat" if "chat" in code else "llm"
+    assert _short_name_refs(name, code) == want
+
+
+@pytest.mark.parametrize("code", [
+    'sk_model.predict(\n    pd.DataFrame({"route": ["proj-a-gpt"]}))',   # spans lines
+    'sk_model.predict(pd.DataFrame({"route": ["proj-a-gpt"]}))',          # one line: the same as on main
+])
+def test_a_specific_name_in_another_models_predict_isnt_called_a_deployments_client_call(code):
+    """Only short names get the multi-line predict( context, and only with the MLflow client in the file (N5)."""
+    sc = m.Scanner(["proj-a-gpt"], {}, [])
+    sc.scan_text("notebook", "/n", code)
+    assert [r.pattern for r in sc.refs] == ["legacy_endpoint_name"]
+
+
+def test_a_file_with_thousands_of_short_name_matches_scans_in_linear_time():
+    """The deployments-client check ran once per match (6.5 s for 2,000 matches in 0.66 MB, against 0.04 s before)."""
+    import time as _t
+    line = 'y = model.predict("test", x)  ' + "# padding " * 28 + "\n"
+    big = line * 2000
+    assert len(big) > 600_000
+    sc = m.Scanner(["test"], {}, [])
+    t0 = _t.time()
+    sc.scan_text("notebook", "/big", big)
+    assert _t.time() - t0 < 2.0 and not sc.refs  # no deployments client in the file: none count
+    sc = m.Scanner(["test"], {}, [])
+    t0 = _t.time()
+    sc.scan_text("notebook", "/big", "from mlflow.deployments import get_deploy_client\n" + big)
+    assert _t.time() - t0 < 2.0 and len(sc.refs) == 2000  # with it, every one counts
+
+
 def test_a_short_name_called_by_code_isnt_a_close_candidate():
     ext = _ep({**EXTERNAL, "name": "llm"})
     rows, _ = m.plan([ext], {}, {}, "c", "s")
@@ -1527,7 +1586,9 @@ def test_readiness_says_volumes_and_dbfs_arent_searched():
     assert "volumes_dbfs" not in r["coverage_gaps"] and "volumes" in m.readiness_md("https://x", r, 30).lower()
 
 
-def _agent_bricks_w(sources_by_ka, tools_by_sa=None, unreadable=()):
+def _agent_bricks_w(sources_by_ka, tools_by_sa=None, unreadable=(), unreadable_sa=(), pages=None):
+    """A workspace with Knowledge Assistants and Supervisor Agents. Supervisor tools come as the raw JSON the API
+    returns (pages: supervisor -> list of pages, to test paging)."""
     w = mock.MagicMock()
     w.knowledge_assistants.list_knowledge_assistants.return_value = [
         SimpleNamespace(name=f"knowledge-assistants/{k}", display_name=k, endpoint_name=f"ka-{k}-endpoint")
@@ -1542,11 +1603,39 @@ def _agent_bricks_w(sources_by_ka, tools_by_sa=None, unreadable=()):
     w.supervisor_agents.list_supervisor_agents.return_value = [
         SimpleNamespace(name=f"supervisor-agents/{n}", display_name=n, endpoint_name=f"sa-{n}-endpoint")
         for n in (tools_by_sa or {})]
-    w.supervisor_agents.list_tools.side_effect = lambda parent: (tools_by_sa or {})[parent.rsplit("/", 1)[-1]]
+    calls = []
+
+    def do(method, path, query=None, **kw):
+        sa = path.split("/")[-2]
+        calls.append((sa, dict(query or {})))
+        if sa in unreadable_sa:
+            raise RuntimeError("PERMISSION_DENIED")
+        if pages and sa in pages:
+            n = int((query or {}).get("page_token") or 0)
+            page = {"tools": pages[sa][n]}
+            if n + 1 < len(pages[sa]):
+                page["next_page_token"] = str(n + 1)
+            return page
+        return {"tools": tools_by_sa[sa]}
+    w.api_client.do.side_effect = do
+
+    def typed(parent):  # the typed fallback fails the same way for a Supervisor the identity can't read
+        if parent.rsplit("/", 1)[-1] in unreadable_sa:
+            raise RuntimeError("PERMISSION_DENIED")
+        return []
+    w.supervisor_agents.list_tools.side_effect = typed
+    w.calls = calls
     col = SimpleNamespace(embedding_model_endpoint_name="databricks-gte-large-en")
     w.vector_search_indexes.get_index.return_value = SimpleNamespace(
         delta_sync_index_spec=SimpleNamespace(embedding_source_columns=[col]))
     return w
+
+
+def _ka_tool(ka, tool_id="docs"):
+    return {"tool_type": "knowledge_assistant", "tool_id": tool_id, "knowledge_assistant": {"knowledge_assistant_id": ka}}
+
+
+GENIE_TOOL = {"tool_type": "genie_space", "tool_id": "sales", "genie_space": {"id": "space-1"}}
 
 
 def test_every_knowledge_assistant_blocks_enforce_files_sources_included():
@@ -1554,10 +1643,8 @@ def test_every_knowledge_assistant_blocks_enforce_files_sources_included():
     Bricks agents that depend on AI Search don't work: it must block, not only warn (review of 0.10.2)."""
     files = SimpleNamespace(source_type="files", index=None)
     index = SimpleNamespace(source_type="index", index=SimpleNamespace(index_name="c.s.docs_index"))
-    tool = lambda ka: SimpleNamespace(name="docs", knowledge_assistant=SimpleNamespace(knowledge_assistant_id=ka))
-    genie = SimpleNamespace(name="sales", knowledge_assistant=None)
     w = _agent_bricks_w({"FilesKA": [files], "IndexKA": [index], "EmptyKA": [], "LockedKA": []},
-                        {"Super": [tool("FilesKA"), genie], "GenieOnly": [genie]}, unreadable={"LockedKA"})
+                        {"Super": [_ka_tool("FilesKA"), GENIE_TOOL], "GenieOnly": [GENIE_TOOL]}, unreadable={"LockedKA"})
     sc = m.Scanner([], {}, [])
     m.scan_agent_bricks(w, sc)
     by = {(r.asset, r.pattern) for r in sc.refs}
@@ -1578,15 +1665,78 @@ def test_every_knowledge_assistant_blocks_enforce_files_sources_included():
     assert "couldn't be read" in locked.suggestion and "none yet" not in locked.suggestion
 
 
-def test_supervisor_scan_survives_odd_tools_and_names_each_assistant_once():
-    tool = lambda n, ka: SimpleNamespace(name=n, knowledge_assistant=SimpleNamespace(knowledge_assistant_id=ka))
-    odd = SimpleNamespace(name="no-ka-attribute")  # an SDK object without the attribute must not stop the scan
-    w = _agent_bricks_w({"Docs": []}, {"Super": [odd, tool("a", "Docs"), tool("b", "Docs")], "Other": [tool("c", "Docs")]})
+def _super_findings(tools_by_sa, kas=None, **kw):
+    w = _agent_bricks_w(kas or {"KA": []}, tools_by_sa, **kw)
     sc = m.Scanner([], {}, [])
     m.scan_agent_bricks(w, sc)
-    sup = [r.asset for r in sc.refs if r.asset_type == "supervisor_agent"]
-    assert sorted(sup) == ["supervisor agent Other", "supervisor agent Super"]
+    return sorted((r.asset.removeprefix("supervisor agent "), r.pattern) for r in sc.refs if r.asset_type == "supervisor_agent"), sc, w
+
+
+def test_supervisors_with_an_ai_search_index_tool_block():
+    """tool_type vector_search_index: the SDK's typed Tool drops its spec, so the raw JSON is what shows it."""
+    vs = {"tool_type": "vector_search_index", "tool_id": "kb", "vector_search_index": {"name": "c.s.kb_index"}}
+    found, sc, _ = _super_findings({"WithIndex": [vs, GENIE_TOOL], "Plain": [GENIE_TOOL]})
+    assert found == [("WithIndex", "supervisor_uses_vs_index")]
+    ref = next(r for r in sc.refs if r.asset == "supervisor agent WithIndex")
+    assert "c.s.kb_index" in ref.suggestion
+    r = m.readiness([], sc.refs, True, 30, [], {"local_files": "ok", **sc.coverage})
+    sup = [b["item"] for b in r["blockers"] if b["item"].startswith("supervisor agent")]
+    assert sup == ["supervisor agent WithIndex"] and r["status"] == "BLOCKED"
+
+
+def test_supervisor_endpoint_tools_block_only_when_they_are_an_agent_bricks_endpoint_that_depends():
+    ka_ep = {"tool_type": "serving_endpoint", "tool_id": "kaep", "serving_endpoint": {"name": "ka-KA-endpoint"}}
+    other = {"tool_type": "serving_endpoint", "tool_id": "llm", "serving_endpoint": {"name": "some-custom-agent"}}
+    found, _, _ = _super_findings({"UsesKaEndpoint": [ka_ep], "UsesOther": [other]})
+    assert found == [("UsesKaEndpoint", "supervisor_uses_vs_ka")]
+    # The spec's field names don't matter: any string in the spec that is a Knowledge Assistant's endpoint counts.
+    odd = {"tool_type": "serving_endpoint", "tool_id": "kaep", "serving_endpoint": {"endpoint": {"id": "ka-KA-endpoint"}}}
+    assert _super_findings({"Odd": [odd]})[0] == [("Odd", "supervisor_uses_vs_ka")]
+
+
+def test_nested_supervisors_inherit_the_dependency_and_cycles_terminate():
+    nest = lambda child, kind="supervisor_agent": {"tool_type": kind, "tool_id": "sub", kind: {"supervisor_agent_id": child}}
+    via_ep = {"tool_type": "serving_endpoint", "tool_id": "sub", "serving_endpoint": {"name": "sa-Inner-endpoint"}}
+    tools = {"Inner": [_ka_tool("KA")], "Mid": [nest("Inner")], "Outer": [nest("Mid")],     # chain: Outer -> Mid -> Inner
+             "ViaEndpoint": [via_ep], "Clean": [GENIE_TOOL], "UsesClean": [nest("Clean")],
+             "LoopA": [nest("LoopB"), GENIE_TOOL], "LoopB": [nest("LoopA")]}                # a cycle with no dependency
+    found, _, _ = _super_findings(tools)
+    assert sorted({n for n, _ in found}) == ["Inner", "Mid", "Outer", "ViaEndpoint"]
+    assert ("Outer", "supervisor_uses_supervisor") in found and ("Mid", "supervisor_uses_supervisor") in found
+    # A cycle that includes a dependent Supervisor makes every member depend, and still terminates.
+    tools["LoopB"].append(_ka_tool("KA"))
+    assert {n for n, _ in _super_findings(tools)[0]} >= {"LoopA", "LoopB"}
+
+
+def test_supervisor_tools_are_read_page_by_page_and_never_forever():
+    pages = {"Paged": [[GENIE_TOOL], [GENIE_TOOL], [_ka_tool("KA")]]}
+    found, _, w = _super_findings({"Paged": []}, pages=pages)
+    assert found == [("Paged", "supervisor_uses_vs_ka")]  # the third page's tool was found
+    assert [c[1].get("page_token") for c in w.calls] == [None, "1", "2"]
+    # A token that never ends (or repeats) stops: the old loop would have spun forever.
+    w = mock.MagicMock()
+    w.api_client.do.return_value = {"tools": [GENIE_TOOL], "next_page_token": "same"}
+    assert len(m.supervisor_tools(w, "supervisor-agents/X")) == 2
+    w.api_client.do.return_value = mock.MagicMock()  # not a dict: fall back to the typed tools
+    w.supervisor_agents.list_tools.return_value = [SimpleNamespace(as_dict=lambda: GENIE_TOOL)]
+    assert m.supervisor_tools(w, "supervisor-agents/X") == [GENIE_TOOL]
+
+
+def test_supervisor_scan_survives_odd_tools_and_names_each_assistant_once():
+    odd = {"tool_id": "no-type"}  # a tool without the fields the scan reads must not stop it
+    unknown = {"tool_type": "some_future_tool", "tool_id": "x", "some_future_tool": {"name": "?"}}
+    found, sc, _ = _super_findings({"Super": [odd, unknown, _ka_tool("Docs", "a"), _ka_tool("Docs", "b")],
+                                    "Other": [_ka_tool("Docs", "c")]}, kas={"Docs": []})
+    assert found == [("Other", "supervisor_uses_vs_ka"), ("Super", "supervisor_uses_vs_ka")]  # one each, not three
     assert sc.coverage["supervisor_agents"] == "ok"
+
+
+def test_a_supervisor_whose_tools_cant_be_read_is_a_coverage_gap_not_a_pass():
+    found, sc, _ = _super_findings({"Locked": [], "Open": [_ka_tool("KA")]}, unreadable_sa={"Locked"})
+    assert found == [("Open", "supervisor_uses_vs_ka")]
+    assert sc.coverage["supervisor_agents"] == "partial: 1 unreadable"
+    r = m.readiness([], sc.refs, True, 30, [], {"local_files": "ok", **sc.coverage})
+    assert "supervisor_agents" in r["coverage_gaps"]
 
 
 def test_calls_in_agent_classes_are_model_code():

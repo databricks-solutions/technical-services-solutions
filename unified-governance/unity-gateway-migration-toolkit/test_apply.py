@@ -1179,15 +1179,25 @@ NB_PATH = Path(__file__).parent / "notebook" / "run_apply.py"
 
 
 class DryRunSpark:
-    """spark for the job notebook: answers only the dry-run lookup, from rows keyed by apply_id."""
+    """spark for the job notebook: answers the dry-run lookup (rows keyed by apply_id) and the "already used" lookup
+    (used: dry run id -> the apply_id of the execute or rollback that followed it)."""
 
-    def __init__(self, rows):
-        self.rows, self.queries = rows or {}, []
+    def __init__(self, rows, used=None, items=None):
+        self.rows, self.used, self.items, self.queries = rows or {}, used or {}, items or {}, []
 
     def sql(self, text, args=None):
         self.queries.append(text)
-        m = re.search(r"WHERE apply_id = '([0-9a-f-]+)'", text)
-        row = self.rows.get(m.group(1)) if m else None
+        if "dry_run_id = :dry_run_id" in text:  # store.dry_run_used
+            apply_id = self.used.get((args or {}).get("dry_run_id"))
+            row = {"apply_id": apply_id} if apply_id else None
+        elif "ug_migration_apply_items" in text and "apply_id = :id" in text:  # a run's stored result rows
+            return SimpleNamespace(collect=lambda: [{"payload": json.dumps(i)} for i in self.items.get(args["id"], [])])
+        elif "apply_id = :id" in text:  # the job's dry run lookup (the id is a bound parameter)
+            assert "'" not in text.split("WHERE", 1)[1], "the id must not be written into the SQL"
+            row = self.rows.get((args or {}).get("id"))
+        else:
+            m = re.search(r"WHERE apply_id = '([0-9a-f-]+)'", text)
+            row = self.rows.get(m.group(1)) if m else None
         return SimpleNamespace(collect=lambda: [SimpleNamespace(asDict=lambda: dict(row))] if row else [])
 
 
@@ -1201,7 +1211,7 @@ def _dry_row(calls, apply_id, **override):
 
 
 def _notebook(monkeypatch, params, fake_w, apply_rows=None, legacy_entries=None, dry_rows=None, traffic=None,
-              candidates=None, kinds=None):
+              candidates=None, kinds=None, used=None, dry_items=None):
     import ug_migration_store as st
 
     # Usage tracking goes only to trackable endpoints of the scan's plan: by default the endpoints asked for are listed.
@@ -1241,7 +1251,7 @@ def _notebook(monkeypatch, params, fake_w, apply_rows=None, legacy_entries=None,
     monkeypatch.setattr(os, "makedirs", lambda *a, **k: None)  # the job's log folder doesn't exist here
     monkeypatch.setattr(sdk, "WorkspaceClient", lambda *a, **k: fake_w)
     code = compile(NB_PATH.read_text(), str(NB_PATH), "exec")
-    exec(code, {"dbutils": dbutils, "spark": DryRunSpark(dry_rows), "__name__": "run_apply_test"})
+    exec(code, {"dbutils": dbutils, "spark": DryRunSpark(dry_rows, used, dry_items), "__name__": "run_apply_test"})
     return calls
 
 
@@ -1316,20 +1326,24 @@ def test_notebook_resume_needs_a_pause_run(monkeypatch):
 
 
 RB_DRY = "eeeeeeee-0000-0000-0000-000000000001"
+ROLLER = "me@x.com"  # who starts the rollback dry run and the rollback
 
 
 def rollback_dry_rows(rollback_of, **over):
-    """A successful, recent rollback dry run of rollback_of, as the job reads it back (dry_rows for _notebook)."""
+    """A successful, recent rollback dry run of rollback_of, as the job reads it back (dry_rows for _notebook).
+    requested_by is set, so the job's requester check is exercised."""
     import time
-    return {RB_DRY: {"mode": "rollback_dry_run", "operation": "apply", "status": "SUCCEEDED",
-                     "rollback_of": rollback_of, "requested_by": "", "started_at": time.time(), **over}}
+    status = over.get("status", "SUCCEEDED")
+    summary = {"would_delete": 1} if status == "SUCCEEDED" else {"would_delete": 1, "kept": 1, "kept_other_run": 1}
+    return {RB_DRY: {"mode": "rollback_dry_run", "operation": "apply", "status": status, "summary": json.dumps(summary),
+                     "rollback_of": rollback_of, "requested_by": ROLLER, "started_at": time.time(), **over}}
 
 
 def test_notebook_rollback_of_a_tracking_run_is_refused(monkeypatch):
     tracking_run = {"mode": "execute", "operation": "enable_tracking", "status": "SUCCEEDED", "job_run_id": "1"}
     with pytest.raises(ValueError, match="enable_tracking"):
         _notebook(monkeypatch, {"apply_id": OTHER, "results_schema": "c.s", "mode": "rollback",
-                                "rollback_of": APPLY, "dry_run_id": RB_DRY}, CutoverW([]),
+                                "rollback_of": APPLY, "dry_run_id": RB_DRY, "requested_by": ROLLER}, CutoverW([]),
                   apply_rows={APPLY: tracking_run}, dry_rows=rollback_dry_rows(APPLY))
 
 
@@ -1340,25 +1354,44 @@ def test_notebook_rollback_follows_its_dry_run(monkeypatch):
     monkeypatch.setattr(st, "apply_log_from_items", lambda *a, **k: 1)
     monkeypatch.setattr(st, "protection_runs", lambda *a, **k: [])
     import ug_migration_apply as am
-    monkeypatch.setattr(am, "rollback", lambda w, path, execute, **k: seen.append(execute) or
+    only_seen = []
+    monkeypatch.setattr(am, "rollback", lambda w, path, execute, **k: seen.append(execute) or only_seen.append(k.get("only")) or
                         [{"type": "model_service", "name": "c.s.x", "action": "deleted" if execute else "would_delete"}])
-    base = {"results_schema": "c.s", "rollback_of": APPLY, "job_run_id": "5"}
+    base = {"results_schema": "c.s", "rollback_of": APPLY, "job_run_id": "5", "requested_by": ROLLER}
     # The dry run lists what would go and deletes nothing.
     calls = _notebook(monkeypatch, {**base, "apply_id": OTHER, "mode": "rollback_dry_run"}, CutoverW([]),
                       apply_rows={APPLY: src})
     assert seen == [False] and calls["items"][OTHER][0]["action"] == "would_delete"
     assert calls["upserts"][0]["mode"] == "rollback_dry_run" and calls["upserts"][0]["dry_run_id"] == ""
     # Without a matching dry run the rollback is refused before its row is written.
-    for rows, why in ((None, "needs dry_run_id"), (rollback_dry_rows(OTHER), "another execute run"),
-                      (rollback_dry_rows(APPLY, status="FAILED"), "didn't finish"),
-                      (rollback_dry_rows(APPLY, started_at=0), "hours old")):
+    errors = json.dumps({"would_delete": 1, "error": 1})
+    for rows, used, why in ((None, None, "needs dry_run_id"), (rollback_dry_rows(OTHER), None, "another execute run"),
+                            (rollback_dry_rows(APPLY, status="FAILED"), None, "didn't finish"),
+                            (rollback_dry_rows(APPLY, started_at=0), None, "hours old"),
+                            # the requester check: a dry run by someone else is refused
+                            (rollback_dry_rows(APPLY, requested_by="someone@else.com"), None, "someone else"),
+                            # single use: a rollback already followed this dry run
+                            (rollback_dry_rows(APPLY), {RB_DRY: OTHER}, "already used"),
+                            # errors besides kept objects, or a summary nobody can read, don't unlock it
+                            (rollback_dry_rows(APPLY, status="NEEDS_ATTENTION", summary=errors), None, "other than kept"),
+                            (rollback_dry_rows(APPLY, status="NEEDS_ATTENTION", summary=None), None, "summary can't")):
         with pytest.raises(ValueError, match=why):
             _notebook(monkeypatch, {**base, "apply_id": DRY, "mode": "rollback",
                                     "dry_run_id": RB_DRY if rows else ""}, CutoverW([]),
-                      apply_rows={APPLY: src}, dry_rows=rows)
+                      apply_rows={APPLY: src}, dry_rows=rows, used=used)
+    listed = [{"type": "model_service", "name": "c.s.x", "action": "would_delete"},
+              {"type": "model_provider_service", "name": "c.s.p", "action": "kept", "other_run": True},
+              {"type": "uc_secret", "name": "c.s.sec", "action": "would_delete"}]
     calls = _notebook(monkeypatch, {**base, "apply_id": DRY, "mode": "rollback", "dry_run_id": RB_DRY}, CutoverW([]),
-                      apply_rows={APPLY: src}, dry_rows=rollback_dry_rows(APPLY))
+                      apply_rows={APPLY: src}, dry_rows=rollback_dry_rows(APPLY), dry_items={RB_DRY: listed})
     assert seen[-1] is True and calls["upserts"][0]["dry_run_id"] == RB_DRY
+    # The rollback may delete only what the dry run listed as would_delete (the dry run itself isn't limited).
+    assert only_seen[-1] == {("model_service", "c.s.x"), ("uc_secret", "c.s.sec")} and only_seen[0] is None
+    # Both runs need requested_by: the requester check means nothing when it is empty.
+    for mode in ("rollback_dry_run", "rollback"):
+        with pytest.raises(ValueError, match="need requested_by"):
+            _notebook(monkeypatch, {**base, "requested_by": "", "apply_id": DRY, "mode": mode, "dry_run_id": RB_DRY},
+                      CutoverW([]), apply_rows={APPLY: src}, dry_rows=rollback_dry_rows(APPLY))
     # A dry run that keeps objects (NEEDS_ATTENTION) still unlocks the rollback.
     _notebook(monkeypatch, {**base, "apply_id": DRY, "mode": "rollback", "dry_run_id": RB_DRY}, CutoverW([]),
               apply_rows={APPLY: src}, dry_rows=rollback_dry_rows(APPLY, status="NEEDS_ATTENTION"))
@@ -1369,10 +1402,14 @@ def test_a_rollback_dry_run_that_keeps_objects_finishes_as_needs_attention_and_w
     """The real rollback() on a dry run: kept objects make NEEDS_ATTENTION (so the gate must accept it), and no
     rollback_complete marker is written, so the execute run doesn't count as rolled back."""
     import ug_migration_apply as am
-    st = am.run_outcome([{"action": "would_delete"}, {"action": "kept", "other_run": True}])[0]
-    assert st == "NEEDS_ATTENTION" and am.rollback_gate_error(
-        {"mode": "rollback_dry_run", "operation": "apply", "status": st, "rollback_of": APPLY,
-         "started_at": __import__("time").time()}, APPLY) is None
+    st, summary = am.run_outcome([{"action": "would_delete"}, {"action": "kept", "other_run": True}])
+    dry = {"mode": "rollback_dry_run", "operation": "apply", "status": st, "summary": summary, "rollback_of": APPLY,
+           "requested_by": ROLLER, "started_at": __import__("time").time()}
+    assert st == "NEEDS_ATTENTION" and am.rollback_gate_error(dry, APPLY, ROLLER) is None
+    # The same status with an error item (an object it couldn't read) is not good enough: the rollback could delete it.
+    st2, summary2 = am.run_outcome([{"action": "would_delete"}, {"action": "kept"}, {"action": "error"}])
+    assert st2 == "NEEDS_ATTENTION" and "other than kept" in am.rollback_gate_error(
+        {**dry, "status": st2, "summary": summary2}, APPLY, ROLLER)
     log = tmp_path / "a.jsonl"
     log.write_text(json.dumps({"type": "run", "action": "run_start", "apply_id": APPLY, "execute": True}) + "\n")
     am.rollback(CutoverW([]), str(log), execute=False, apply_id=APPLY, audit_path=str(log))
@@ -1560,11 +1597,11 @@ def test_notebook_gate_wiring_every_gated_operation_and_single_use(monkeypatch):
     dry = _notebook(monkeypatch, {**base, "apply_id": DRY, "mode": "dry_run", "job_run_id": "6"}, w)
     row = _dry_row(dry, DRY)
     spark = UsedDryRunSpark({DRY: row}, used={DRY: OTHER})
-    monkeypatch.setattr(sys.modules[__name__], "DryRunSpark", lambda rows: spark)
+    monkeypatch.setattr(sys.modules[__name__], "DryRunSpark", lambda rows, used=None, items=None: spark)
     with pytest.raises(ValueError, match="already used by execute"):
         _notebook(monkeypatch, {**base, "apply_id": APPLY, "mode": "execute", "job_run_id": "7", "dry_run_id": DRY},
                   w, dry_rows={DRY: row})
-    assert any(f"WHERE apply_id = '{DRY}'" in q for q in spark.queries)
+    assert any("WHERE apply_id = :id" in q and DRY not in q for q in spark.queries)  # bound, not written into the SQL
     assert any("dry_run_id = :dry_run_id" in q for q in spark.queries)
     assert w.api_client.puts == []
     # The execute that does run records the dry run it used, which is what makes the next one refuse.
@@ -1845,3 +1882,72 @@ def test_enable_tracking_gives_the_right_reason_per_kind(tmp_path):
     assert "agent endpoints don't support" not in res["odd"]["reason"]
     assert "agent endpoints don't support usage tracking" in res["ka-1"]["reason"]
     assert w.api_client.puts == []
+
+
+# -- A rollback deletes only what its dry run listed (review of 0.10.3) ----------------------------------------
+
+def _two_services(w):
+    for n in ("c.s.listed", "c.s.late"):
+        w.ai_gateway.services[n] = {"comment": f"Created by ug-migration-toolkit apply={APPLY}, x", "etag": "e1"}
+
+
+def test_rollback_deletes_only_what_the_dry_run_listed(tmp_path):
+    """Between the dry run and the rollback something changed (another run was rolled back, so an object the dry run
+    kept became deletable): the rollback must not delete what the person never saw."""
+    w = FakeW()
+    _two_services(w)
+    log = _log(tmp_path, [_created("c.s.listed", etag="e1"), _created("c.s.late", etag="e1")])
+    listed = {("model_service", "c.s.listed")}
+    out = a.rollback(w, str(log), True, apply_id=APPLY, only=listed)
+    by = {r["name"]: r for r in out if r.get("type") == "model_service"}
+    assert by["c.s.listed"]["action"] == "deleted"
+    assert by["c.s.late"]["action"] == "kept" and by["c.s.late"]["not_in_dry_run"] and "rollback dry run" in by["c.s.late"]["reason"]
+    assert "c.s.late" in w.ai_gateway.services and "c.s.listed" not in w.ai_gateway.services
+    # Without the list (the command line, or the dry run itself) nothing changes.
+    w2 = FakeW()
+    _two_services(w2)
+    assert {r["action"] for r in a.rollback(w2, str(log), True, apply_id=APPLY) if r.get("type") == "model_service"} == {"deleted"}
+    assert {r["action"] for r in a.rollback(w2, str(log), False, apply_id=APPLY, only=set())} <= {"would_delete", "already_gone"}
+
+
+def test_force_cant_delete_what_the_dry_run_did_not_list(tmp_path):
+    """The dry run shows a changed object as kept; a direct job run with force on must not delete it (N3)."""
+    w = FakeW()
+    w.ai_gateway.services["c.s.mine"] = {"comment": f"ug-migration-toolkit apply={APPLY}", "etag": "changed"}
+    log = _log(tmp_path, [_created("c.s.mine", etag="e1")])
+    dry = a.rollback(w, str(log), False, apply_id=APPLY)
+    assert dry[0]["action"] == "kept" and "changed since apply" in dry[0]["reason"]  # so it isn't listed
+    out = a.rollback(w, str(log), True, apply_id=APPLY, force=True, only={(r["type"], r["name"]) for r in dry
+                                                                          if r["action"] == "would_delete"})
+    assert out[0]["action"] == "kept" and out[0]["not_in_dry_run"] and "c.s.mine" in w.ai_gateway.services
+    # With force on in the dry run too, the changed object is listed, so the forced rollback deletes it.
+    dry = a.rollback(w, str(log), False, apply_id=APPLY, force=True)
+    assert dry[0]["action"] == "would_delete"
+    out = a.rollback(w, str(log), True, apply_id=APPLY, force=True, only={(dry[0]["type"], dry[0]["name"])})
+    assert out[0]["action"] == "deleted" and "c.s.mine" not in w.ai_gateway.services
+
+
+def test_a_provider_released_since_the_dry_run_is_kept_with_its_secret(tmp_path):
+    """The dry run kept the shared provider (another run uses it). That run is rolled back afterwards, which
+    releases the provider; this rollback must still keep it, and the secret that provider uses."""
+    w = FakeW()
+    w.ai_gateway.services["c.s.svc"] = {"comment": f"ug-migration-toolkit apply={APPLY}", "etag": "e1"}
+    w.ai_gateway.providers["c.s.p"] = {"comment": f"ug-migration-toolkit apply={APPLY}", "etag": "p1", "config": {}}
+    log = _log(tmp_path, [_created("c.s.p", etag="p1", typ="model_provider_service"), _created("c.s.svc", etag="e1")])
+    out = a.rollback(w, str(log), True, apply_id=APPLY, only={("model_service", "c.s.svc")})
+    by = {r["name"]: r for r in out}
+    assert by["c.s.svc"]["action"] == "deleted"
+    assert by["c.s.p"]["action"] == "kept" and by["c.s.p"]["not_in_dry_run"]
+    assert "c.s.p" in w.ai_gateway.providers
+    # Kept for that reason, the rollback isn't "done": the execute run stays rolled back only by a new dry run + rollback.
+    assert not a.rollback_summary_done(a.run_outcome(out)[1])
+
+
+def test_rollback_gate_refuses_an_empty_requester_on_either_side():
+    import time
+    ok = {"mode": "rollback_dry_run", "operation": "apply", "status": "SUCCEEDED", "summary": "{}", "rollback_of": APPLY,
+          "requested_by": "me@x.com", "started_at": time.time()}
+    assert a.rollback_gate_error(ok, APPLY, "me@x.com") is None
+    assert "needs requested_by" in a.rollback_gate_error(ok, APPLY, "")            # mallory with no name
+    assert "no recorded requester" in a.rollback_gate_error({**ok, "requested_by": ""}, APPLY, "mallory")
+    assert "someone else" in a.rollback_gate_error(ok, APPLY, "mallory")

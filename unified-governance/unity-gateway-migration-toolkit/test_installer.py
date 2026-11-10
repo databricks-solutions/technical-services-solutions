@@ -14,10 +14,12 @@ import re
 import time
 import uuid
 import zipfile
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import databricks.sdk as sdk_pkg
 import pytest
+import ug_migration_apply as apply_mod
 from databricks.sdk import errors as sdk_errors
 from databricks.sdk.service import apps, jobs
 
@@ -335,6 +337,11 @@ class FakeWS:
         self.files = {}
         self.dirs = set()
         self.rollback_script = {}  # apply id -> statuses, one per rollback run ("SUCCEEDED" when empty)
+        # apply id -> (status, summary) per rollback dry run; default SUCCEEDED with one object to delete
+        self.dry_script = {}
+        # apply id -> the summary a NEEDS_ATTENTION rollback of it stores; by default one kept object that nothing else
+        # explains, so the run stays pending (the app's rule: ug_migration_store.rollback_done)
+        self.rollback_summary = {}
         self.trashed = []
         self.log = []
         self.next_run = 500
@@ -373,27 +380,39 @@ class FakeWS:
             if applies is None:
                 raise Exception("[TABLE_OR_VIEW_NOT_FOUND] The table or view does not exist")
             items = self.tables.get(f"{full}.ug_migration_apply_items", [])
-            rolled = {r["rollback_of"] for r in applies if r["mode"] == "rollback" and r["status"] == "SUCCEEDED"}
+            # Every execute run: the installer decides which ones are rolled back from the rollback rows (below).
             for a in sorted(applies, key=lambda r: r["started_at"], reverse=True):
-                if a["mode"] != "execute" or a["apply_id"] in rolled:
+                if a["mode"] != "execute":
                     continue
                 created = sum(1 for i in items if i["apply_id"] == a["apply_id"] and '"created"' in i["payload"])
                 rows.append({"apply_id": a["apply_id"], "job_run_id": a["job_run_id"], "created": created})
-        m = re.search(r"SELECT status FROM .*rollback_of = '([^']+)'", s)
-        if m:
+        if s.startswith("SELECT rollback_of, status, summary FROM"):  # the rollback rows, as the app stores them
+            full = self.results_schema()
+            if f"{full}.ug_migration_applies" not in self.tables:
+                raise Exception("[TABLE_OR_VIEW_NOT_FOUND] The table or view does not exist")
+            rows = [{"rollback_of": r["rollback_of"], "status": r["status"], "summary": r.get("summary", "{}")}
+                    for r in self.tables[f"{full}.ug_migration_applies"]
+                    if r["mode"] == "rollback" and r.get("rollback_of")]
+        m = re.search(r"SELECT status FROM .*ug_migration_applies WHERE apply_id = '([^']+)'", s)
+        if m:  # one run's row, by the apply_id the installer gave it
             hits = [r for r in self.tables.get(f"{self.results_schema()}.ug_migration_applies", [])
-                    if r["mode"] == "rollback" and r["rollback_of"] == m[1]]
+                    if r["apply_id"] == m[1]]
             rows = [{"status": hits[-1]["status"]}] if hits else []
         return _ns(collect=lambda: rows)
 
     def results_schema(self):
         return "main.ug_migration"
 
-    def _rollback_row(self, apply_id, status):
+    def _now(self):
+        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+
+    def _rollback_row(self, apply_id, status, row_id=None, **extra):
         self.clock += 1
+        summary = self.rollback_summary.get(apply_id, {"kept": 1, "kept_other_run": 0, "kept_preexisting": 0}) \
+            if status == "NEEDS_ATTENTION" else {}
         self.tables.setdefault(f"main.ug_migration.ug_migration_applies", []).append(
-            {"apply_id": f"rb-{self.clock}", "mode": "rollback", "rollback_of": apply_id, "status": status,
-             "started_at": f"2026-11-01T10:{self.clock:02d}:00"})
+            {"apply_id": row_id or f"rb-{self.clock}", "mode": "rollback", "rollback_of": apply_id, "status": status,
+             "summary": json.dumps(summary), "started_at": self._now(), **extra})
         if status == "SUCCEEDED":
             for r in self.tables.get("main.ug_migration.ug_migration_apply_items", []):
                 if r["apply_id"] == apply_id:
@@ -555,17 +574,41 @@ class FakeWS:
 
             def run_now(self_inner, job_id, job_parameters=None):
                 params = job_parameters or {}
-                if params.get("mode") == "rollback":
+                applies = ws.tables.setdefault("main.ug_migration.ug_migration_applies", [])
+                if params.get("mode") == "rollback_dry_run":
                     apply_id = params["rollback_of"]
+                    script = ws.dry_script.get(apply_id, [("SUCCEEDED", {"would_delete": 1})])
+                    status, summary = script.pop(0) if len(script) > 1 else script[0]
+                    ws.log.append(("rollback_dry_run", apply_id, status))
+                    ws.clock += 1
+                    applies.append({"apply_id": params["apply_id"], "mode": "rollback_dry_run", "operation": "apply",
+                                    "rollback_of": apply_id, "requested_by": params.get("requested_by", ""),
+                                    "status": "RUNNING" if status == "TIMEOUT" else status,
+                                    "summary": json.dumps(summary), "started_at": ws._now()})
+                    return FakeRun(ws.next_run, behaviour=status if status in ("FAILED", "TIMEOUT") else "SUCCEEDED", ws=ws)
+                if params.get("mode") == "rollback":
+                    # The real job's gate (notebook/run_apply.py): it refuses a rollback that doesn't cite a finished
+                    # rollback dry run of the same execute run by the same requester, used once. The run fails and
+                    # writes no row, like the job.
+                    apply_id = params["rollback_of"]
+                    dry = next((r for r in applies if r["apply_id"] == params.get("dry_run_id")), None)
+                    used = next((r["apply_id"] for r in applies if r.get("dry_run_id") and params.get("dry_run_id")
+                                 and r["dry_run_id"] == params["dry_run_id"] and r["mode"] == "rollback"), None)
+                    refusal = apply_mod.rollback_gate_error(dry, apply_id, params.get("requested_by", ""), used_by=used)
+                    if refusal:
+                        ws.log.append(("rollback_refused", apply_id, refusal))
+                        return FakeRun(ws.next_run, behaviour="FAILED", ws=ws)
                     script = ws.rollback_script.get(apply_id, ["SUCCEEDED"])
                     behaviour = script.pop(0) if len(script) > 1 else script[0]
                     ws.log.append(("rollback", apply_id, behaviour))
+                    row = dict(row_id=params["apply_id"], dry_run_id=params["dry_run_id"],
+                               requested_by=params.get("requested_by", ""))
                     if behaviour == "TIMEOUT":
-                        ws._rollback_row(apply_id, "RUNNING")
+                        ws._rollback_row(apply_id, "RUNNING", **row)
                     elif behaviour == "FAILED":
-                        ws._rollback_row(apply_id, "FAILED")
+                        ws._rollback_row(apply_id, "FAILED", **row)
                     else:
-                        ws._rollback_row(apply_id, behaviour)
+                        ws._rollback_row(apply_id, behaviour, **row)
                     return FakeRun(ws.next_run, behaviour=behaviour, ws=ws)
                 ws.next_run += 1
                 ws.log.append(("run_now", job_id, dict(params)))
@@ -621,6 +664,10 @@ class FakeWS:
 
             def stop_and_wait(self_inner, name, timeout=None):
                 ws.log.append(("stop_app", name))
+                state = ws.apps[name].compute_status.state
+                if state != apps.ComputeState.ACTIVE:  # like the API (found by the live uninstall test)
+                    raise sdk_errors.BadRequest(f"Cannot stop app {name} as its compute is in {state.value} state. "
+                                                "App compute needs to be ACTIVE to stop.")
                 ws.apps[name].compute_status = apps.ComputeStatus(state=apps.ComputeState.STOPPED)
                 return ws.apps[name]
 
@@ -1029,6 +1076,158 @@ def test_rollback_that_makes_no_progress_stops_with_the_run_ids(monkeypatch):
     assert A1 in res.status and "rollback --log" in res.status
     assert ws.jobs and f"{FOLDER}/ug_migration_toolkit.marker" in ws.files  # nothing else was removed
     assert ws.apps[APP].compute_status.state == apps.ComputeState.STOPPED  # the app is stopped, as the message says
+
+
+def _attempts(ws, apply_id):
+    """The order the fake's job saw for one execute run: dry run, refusal, or rollback."""
+    return [e[0] for e in ws.log if e[0] in ("rollback_dry_run", "rollback_refused", "rollback") and e[1] == apply_id]
+
+
+def test_uninstall_runs_a_rollback_dry_run_first_and_cites_it(monkeypatch):
+    """The job refuses a rollback that doesn't cite a finished rollback dry run (0.10.3): uninstall must run one."""
+    ws = FakeWS()
+    seed_install(ws, pending=[(A1, 2, RUN1)], logs=[A1])
+    res = run_notebook(monkeypatch, ws, uninstall_widgets(rollback_services="yes"))
+    assert not res.raised, res.status
+    assert _attempts(ws, A1) == ["rollback_dry_run", "rollback"]
+    applies = ws.tables["main.ug_migration.ug_migration_applies"]
+    dry = next(r for r in applies if r["mode"] == "rollback_dry_run")
+    rb = next(r for r in applies if r["mode"] == "rollback")
+    assert rb["dry_run_id"] == dry["apply_id"] and rb["rollback_of"] == dry["rollback_of"] == A1
+    assert rb["requested_by"] == dry["requested_by"] == ME  # the gate compares them
+    assert rb["status"] == "SUCCEEDED"
+
+
+def test_fake_job_refuses_a_rollback_without_a_finished_dry_run():
+    """The fake enforces the job's gate, so a regression like 0.10.3's first cut (a rollback with no dry_run_id) fails
+    in these tests instead of passing against a fake that accepts anything."""
+    ws = FakeWS()
+    seed_install(ws, pending=[(A1, 2, RUN1)], logs=[A1])
+    jobs_api = ws.make().jobs
+    old = {"mode": "rollback", "rollback_of": A1, "results_schema": "main.ug_migration", "requested_by": ME}
+    with pytest.raises(sdk_errors.OperationFailed):
+        jobs_api.run_now(job_id=1, job_parameters=old).result()
+    assert _attempts(ws, A1) == ["rollback_refused"]
+    assert not [r for r in ws.tables["main.ug_migration.ug_migration_applies"] if r["mode"] == "rollback"]
+    # A dry run of another execute run, or by someone else, is refused too.
+    jobs_api.run_now(job_id=1, job_parameters={"mode": "rollback_dry_run", "rollback_of": A2, "apply_id": "d-other",
+                                               "requested_by": ME}).result()
+    jobs_api.run_now(job_id=1, job_parameters={"mode": "rollback_dry_run", "rollback_of": A1, "apply_id": "d-mine",
+                                               "requested_by": "someone@else.com"}).result()
+    for dry_id in ("d-other", "d-mine"):
+        with pytest.raises(sdk_errors.OperationFailed):
+            jobs_api.run_now(job_id=1, job_parameters={**old, "dry_run_id": dry_id, "apply_id": "r"}).result()
+
+
+def test_uninstall_goes_on_when_the_dry_run_only_keeps_objects(monkeypatch):
+    """Kept objects (another run uses them, or they existed before) end a dry run NEEDS_ATTENTION: that is normal."""
+    ws = FakeWS()
+    seed_install(ws, pending=[(A1, 2, RUN1)], logs=[A1])
+    ws.dry_script[A1] = [("NEEDS_ATTENTION", {"would_delete": 1, "kept": 2, "kept_other_run": 2})]
+    res = run_notebook(monkeypatch, ws, uninstall_widgets(rollback_services="yes"))
+    assert not res.raised, res.status
+    assert _attempts(ws, A1) == ["rollback_dry_run", "rollback"]
+
+
+def test_uninstall_stops_when_the_dry_run_had_errors_and_says_why(monkeypatch):
+    """An object the dry run couldn't read (error) might be deleted by the rollback without being listed: refused."""
+    ws = FakeWS()
+    seed_install(ws, pending=[(A1, 2, RUN1)], logs=[A1])
+    ws.dry_script[A1] = [("NEEDS_ATTENTION", {"would_delete": 1, "error": 1})]
+    res = run_notebook(monkeypatch, ws, uninstall_widgets(rollback_services="yes"))
+    assert res.raised and "rollback refused after its dry run" in res.status and A1 in res.status
+    assert _attempts(ws, A1) == ["rollback_dry_run", "rollback_refused"]
+    assert ws.jobs and f"{FOLDER}/ug_migration_toolkit.marker" in ws.files  # nothing else was removed
+
+
+def test_uninstall_stops_when_the_dry_run_failed(monkeypatch):
+    ws = FakeWS()
+    seed_install(ws, pending=[(A1, 2, RUN1)], logs=[A1])
+    ws.dry_script[A1] = [("FAILED", {})]
+    res = run_notebook(monkeypatch, ws, uninstall_widgets(rollback_services="yes"))
+    assert res.raised and "rollback dry run FAILED" in res.status
+    assert _attempts(ws, A1) == ["rollback_dry_run"]  # no rollback after a failed dry run
+
+
+def test_uninstall_retries_with_a_new_dry_run_each_pass(monkeypatch):
+    """Each rollback dry run is good for one rollback, so a second pass runs a new dry run first."""
+    ws = FakeWS()
+    seed_install(ws, pending=[(A1, 2, RUN1), (A2, 1, RUN2)], logs=[A1, A2])
+    ws.rollback_script[A1] = ["NEEDS_ATTENTION", "SUCCEEDED"]  # A2 succeeds in pass 1: progress, so pass 2 runs
+    res = run_notebook(monkeypatch, ws, uninstall_widgets(rollback_services="yes"))
+    assert not res.raised, res.status
+    assert _attempts(ws, A1) == ["rollback_dry_run", "rollback", "rollback_dry_run", "rollback"]
+    ids = [r["dry_run_id"] for r in ws.tables["main.ug_migration.ug_migration_applies"]
+           if r["mode"] == "rollback" and r["rollback_of"] == A1]
+    assert len(ids) == 2 and len(set(ids)) == 2
+
+
+def _summary(**kw):
+    base = {"kept": 0, "kept_other_run": 0, "kept_preexisting": 0}
+    return {**base, **kw}
+
+
+@pytest.mark.parametrize("status, summary", [
+    ("SUCCEEDED", {}),
+    ("SUCCEEDED", _summary(kept=2, kept_other_run=2)),
+    ("NEEDS_ATTENTION", _summary(kept=1, kept_other_run=1)),                       # a shared object kept on purpose
+    ("NEEDS_ATTENTION", _summary(kept=2, kept_other_run=1, kept_preexisting=1)),
+    ("NEEDS_ATTENTION", _summary(kept=2, kept_other_run=1)),                       # one kept for another reason
+    ("NEEDS_ATTENTION", _summary(kept=1, kept_other_run=1, error=1)),              # plus an error
+    ("NEEDS_ATTENTION", _summary(kept=1, kept_preexisting=1, manual=1)),
+    ("NEEDS_ATTENTION", {"error": 1}),                                             # written before kept_other_run existed
+    ("NEEDS_ATTENTION", {}),
+    ("NEEDS_ATTENTION", None),
+    ("NEEDS_ATTENTION", "not json"),
+    ("NEEDS_ATTENTION", json.dumps(_summary(kept=1, kept_other_run=1))),           # as stored: a JSON string
+    ("RUNNING", _summary()), ("FAILED", _summary()), (None, None),
+])
+def test_the_installer_and_the_app_agree_on_what_rolled_back_means(status, summary):
+    """The uninstall decides what is still pending with its own copy of the rule; it must be the app's rule."""
+    import ug_migration_store as store
+    assert _helpers()["rollback_done"](status, summary) == store.rollback_done(status, summary)
+    assert _helpers()["PROBLEM_ACTIONS"] == apply_mod.PROBLEM_ACTIONS
+
+
+def test_uninstall_counts_a_run_that_kept_only_a_shared_object_as_rolled_back(monkeypatch):
+    """Live finding: a run that reused another run's secret keeps it on purpose, so its rollback ends NEEDS_ATTENTION
+    (kept_other_run). The uninstall counted only SUCCEEDED and stopped on it with 'no progress'."""
+    ws = FakeWS()
+    seed_install(ws, pending=[(A1, 2, RUN1)], logs=[A1])
+    ws.rollback_script[A1] = ["NEEDS_ATTENTION"]
+    ws.rollback_summary[A1] = _summary(kept=1, kept_other_run=1)
+    res = run_notebook(monkeypatch, ws, uninstall_widgets(rollback_services="yes"))
+    assert not res.raised, res.status
+    assert _attempts(ws, A1) == ["rollback_dry_run", "rollback"]  # one pass was enough
+    # A kept object nothing explains still keeps it pending.
+    ws2 = FakeWS()
+    seed_install(ws2, pending=[(A1, 2, RUN1)], logs=[A1])
+    ws2.rollback_script[A1] = ["NEEDS_ATTENTION"]
+    res = run_notebook(monkeypatch, ws2, uninstall_widgets(rollback_services="yes"))
+    assert res.raised and "didn't finish" in res.status
+
+
+def test_uninstall_can_be_run_again_after_it_stopped_the_app(monkeypatch):
+    """Live finding: the stuck messages say 'run uninstall again', but the app is STOPPED by then and the API refuses to
+    stop it again (BadRequest), so the re-run died on the first step."""
+    ws = FakeWS()
+    seed_install(ws, pending=[(A1, 2, RUN1)], logs=[A1])
+    ws.rollback_script[A1] = ["FAILED", "SUCCEEDED"]
+    first = run_notebook(monkeypatch, ws, uninstall_widgets(rollback_services="yes"))
+    assert first.raised and ws.apps[APP].compute_status.state == apps.ComputeState.STOPPED
+    second = run_notebook(monkeypatch, ws, uninstall_widgets(rollback_services="yes"))
+    assert not second.raised, second.status
+    assert APP not in ws.apps  # removed this time
+    assert [e for e in ws.log if e[0] == "stop_app"] == [("stop_app", APP)]  # stopped once, not twice
+
+
+def test_uninstall_waits_for_an_app_that_is_still_starting(monkeypatch):
+    ws = FakeWS()
+    seed_install(ws, pending=[(A1, 2, RUN1)], logs=[A1])
+    ws.apps[APP].compute_status = apps.ComputeStatus(state=apps.ComputeState.STARTING)
+    res = run_notebook(monkeypatch, ws, uninstall_widgets(rollback_services="yes"))
+    assert res.raised and "Nothing was changed" in res.status and "STARTING" in res.status
+    assert ws.jobs and not [e for e in ws.log if e[0] in ("rollback", "rollback_dry_run", "delete_job")]
 
 
 def test_timeout_says_still_running_and_how_to_continue(monkeypatch):

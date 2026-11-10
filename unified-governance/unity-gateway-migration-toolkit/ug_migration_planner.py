@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import bisect
 import csv
 import json
 import os
@@ -1438,24 +1439,97 @@ def scrub(line: str | None) -> str | None:
 MAX_FIX_LINE = 5000
 
 
-def _in_open_call(text: str, at: int, call_re: re.Pattern) -> bool:
-    """True if position at is inside the arguments of the nearest call_re match before it (within GATEWAY_WINDOW):
-    its "(" isn't closed yet. Calls can span lines, so this reads the text, not the line."""
-    start = max(0, at - GATEWAY_WINDOW)
-    last = None
-    for last in call_re.finditer(text, start, at):
-        pass
-    if last is None:
-        return False
-    depth = 1
-    for c in text[last.end():at]:
-        if c == "(":
+CALL_WINDOW = 4000  # how far into a call's arguments a short or common name still counts as an argument
+_CALL_TOKEN_RE = re.compile(r'"""|\'\'\'|"|\'|#|//|--|\(|\)')
+# `se = w.serving_endpoints` (an alias of the SDK's serving endpoints API) and the mention of the MLflow client
+SERVING_ALIAS_RE = re.compile(r"\b(\w+)\s*=\s*[\w.]*\bserving_endpoints\b(?![\w.(])")
+DEPLOY_CLIENT_MENTION_RE = re.compile(r"\bget_deploy_client\b")  # also `import get_deploy_client as gdc`
+
+
+def _escaped(text: str, i: int) -> bool:
+    """True if the character at i is preceded by an odd number of backslashes."""
+    n = 0
+    while i - 1 - n >= 0 and text[i - 1 - n] == "\\":
+        n += 1
+    return n % 2 == 1
+
+
+def _call_still_open(text: str, start: int, at: int) -> bool:
+    """True if the call whose "(" ends at start is still open at position at. Parentheses inside strings (single,
+    double, triple quoted) and comments (# // --) don't count, so `content="Rules: 1) be brief"` doesn't close the
+    call. Uncertain cases (a string or comment that runs to at) read as still open: the safe direction, because a
+    name counted by mistake is a warning, while a name missed can list an endpoint under "Can be closed now"."""
+    depth, i = 1, start
+    while i < at:
+        m = _CALL_TOKEN_RE.search(text, i, at)
+        if not m:
+            return True
+        tok, i = m.group(), m.end()
+        if tok in ('"""', "'''", '"', "'"):
+            while True:
+                j = text.find(tok, i, at)
+                if j == -1:
+                    return True
+                i = j + len(tok)
+                if not _escaped(text, j):
+                    break
+        elif tok in ("#", "//", "--"):
+            nl = text.find("\n", i, at)
+            if nl == -1:
+                return True
+            i = nl + 1
+        elif tok == "(":
             depth += 1
-        elif c == ")":
+        else:
             depth -= 1
             if depth == 0:
                 return False
     return True
+
+
+class _CallContext:
+    """Where a name sits relative to calls in one file. Everything is computed lazily and once per file, so a file
+    with thousands of short-name matches costs one pass for each call kind, not one per match."""
+
+    def __init__(self, text: str):
+        self.text = text
+        self._ends: dict[str, list[int]] = {}
+        self._deploy: bool | None = None
+        self._sdk_re: re.Pattern | None = None
+
+    def uses_deploy_client(self) -> bool:
+        """The file mentions get_deploy_client (the MLflow deployments client): its .predict( calls hit
+        /serving-endpoints. Any model has a .predict, so this is what makes a predict( call count."""
+        if self._deploy is None:
+            self._deploy = bool(DEPLOY_CLIENT_MENTION_RE.search(self.text))
+        return self._deploy
+
+    def _sdk_query_re(self) -> re.Pattern:
+        if self._sdk_re is None:
+            aliases = sorted(set(SERVING_ALIAS_RE.findall(self.text)))
+            if aliases:
+                alt = "|".join(re.escape(a) for a in aliases)
+                self._sdk_re = re.compile(SDK_QUERY_RE.pattern + r"|\b(?:" + alt + r")\s*\.\s*query\s*\(")
+            else:
+                self._sdk_re = SDK_QUERY_RE
+        return self._sdk_re
+
+    def _inside(self, key: str, regex: re.Pattern, at: int) -> bool:
+        ends = self._ends.get(key)
+        if ends is None:
+            ends = self._ends[key] = [m.end() for m in regex.finditer(self.text)]
+        k = bisect.bisect_left(ends, at) - 1
+        while k >= 0 and at - ends[k] <= CALL_WINDOW:  # the nearest calls first; a closed one may precede an open one
+            if _call_still_open(self.text, ends[k], at):
+                return True
+            k -= 1
+        return False
+
+    def in_sdk_query(self, at: int) -> bool:
+        return self._inside("sdk", self._sdk_query_re(), at)
+
+    def in_predict(self, at: int) -> bool:
+        return self._inside("predict", PREDICT_CALL_RE, at)
 
 
 def _balanced_args(text: str, open_paren: int) -> str:
@@ -1625,6 +1699,7 @@ class Scanner:
 
     def _scan_lines(self, asset_type: str, asset: str, text: str) -> None:
         lines = text.split("\n")
+        ctx = _CallContext(text)
 
         def line_of(pos: int) -> int:
             return text.count("\n", 0, pos) + 1
@@ -1745,14 +1820,14 @@ class Scanner:
                         continue
                     at = line_start + m.start()
                     in_sdk_query = bool(SDK_QUERY_RE.search(text[max(0, at - GATEWAY_WINDOW):at]))
-                    in_predict = bool(MLFLOW_PREDICT_RE.search(line[:m.start()])) \
-                        or _in_open_call(text, at, PREDICT_CALL_RE)
+                    in_predict = bool(MLFLOW_PREDICT_RE.search(line[:m.start()]))
                     if name in self.generic and not KEY_CONTEXT_RE.search(line[:m.start()]):
                         # A short or common name needs a key or call context to count: inside the arguments of a
                         # serving_endpoints.query(...) call, or of a predict(...) call in a file that uses the
                         # MLflow deployments client (any model has a .predict).
-                        if not (_in_open_call(text, at, SDK_QUERY_RE)
-                                or (in_predict and DEPLOY_CLIENT_RE.search(text))):
+                        in_sdk_query = ctx.in_sdk_query(at)
+                        in_predict = (in_predict or ctx.in_predict(at)) and ctx.uses_deploy_client()
+                        if not (in_sdk_query or in_predict):
                             continue
                     if in_sdk_query:
                         # Never rewritten: the SDK call has no gateway form to map onto (see the suggestion).
@@ -2149,6 +2224,113 @@ def scan_local(scanner: Scanner, paths: list[str], max_bytes: int = 2_000_000) -
     _log(f"  scanned {files} local files ({len(texts)} distinct) under {', '.join(paths)}")
 
 
+MAX_TOOL_PAGES = 100  # a Supervisor Agent's tool pages read at most this many (100 tools each)
+
+
+def supervisor_tools(w: WorkspaceClient, parent: str) -> list[dict]:
+    """A Supervisor Agent's tools as the API returns them: every tool type with its spec, all pages.
+
+    The SDK's typed Tool keeps the specs of only some tool types (knowledge_assistant, genie_space, app, ...), and
+    drops the ones for vector_search_index, serving_endpoint and supervisor_agent, so the raw JSON is what shows
+    what a Supervisor depends on. Falls back to the typed tools when the raw call fails."""
+    try:
+        out, token, seen = [], None, set()
+        for _ in range(MAX_TOOL_PAGES):
+            page = _get(w, f"/api/2.1/{parent}/tools", {"page_size": 100, **({"page_token": token} if token else {})})
+            if not isinstance(page, dict):
+                raise ValueError("unexpected response")
+            out += [t for t in page.get("tools") or [] if isinstance(t, dict)]
+            token = page.get("next_page_token")
+            if not isinstance(token, str) or not token or token in seen:  # last page, or a token that repeats
+                return out
+            seen.add(token)
+        return out
+    except Exception:
+        return [t.as_dict() for t in w.supervisor_agents.list_tools(parent=parent)]
+
+
+_TOOL_BOOKKEEPING = ("name", "tool_id", "id", "description", "tool_type")
+
+
+def _tool_strings(tool: dict) -> list[str]:
+    """Every string value in a tool's spec (the field named like its tool_type; else every nested value but the
+    tool's own bookkeeping), so a tool is matched by what it points at without knowing the spec's field names."""
+    spec = tool.get(tool.get("tool_type") or "")
+    roots = [spec] if spec is not None else [v for k, v in tool.items() if k not in _TOOL_BOOKKEEPING]
+    out: list[str] = []
+
+    def walk(x):
+        if isinstance(x, str):
+            out.append(x)
+        elif isinstance(x, dict):
+            for v in x.values():
+                walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+    for r in roots:
+        walk(r)
+    return out
+
+
+def supervisor_dependencies(supervisors: dict[str, dict], kas: dict[str, str],
+                            ka_endpoints: dict[str, str]) -> dict[str, list[tuple[str, str, str]]]:
+    """The Supervisor Agents that depend on AI Search, with why: {supervisor name: [(pattern, target, text)]}.
+
+    Agent Bricks agents that depend on AI Search don't work with Enforce on. A Supervisor depends on it through:
+    a knowledge_assistant tool (every Knowledge Assistant does), a vector_search_index tool, a serving_endpoint
+    tool that is a Knowledge Assistant's endpoint (or another dependent Supervisor's), or a supervisor_agent tool
+    (or an endpoint tool) pointing at a dependent Supervisor. Nested Supervisors are followed until nothing changes.
+    supervisors is {name: {"label", "endpoint", "tools": [raw tool dicts]}}; kas {Knowledge Assistant name: display}."""
+    by_ref: dict[str, str] = {}  # every way a tool can name a Supervisor -> its name
+    for name, info in supervisors.items():
+        for ref in (name, name.rsplit("/", 1)[-1], info.get("endpoint")):
+            if ref:
+                by_ref[ref] = name
+    found: dict[str, list[tuple[str, str, str]]] = {}
+
+    def add(name: str, pattern: str, target: str, text: str) -> bool:
+        if any(p == pattern and t == target for p, t, _ in found.get(name, [])):
+            return False
+        found.setdefault(name, []).append((pattern, target, text))
+        return True
+
+    for name, info in supervisors.items():  # direct dependencies
+        for t in info["tools"]:
+            kind, tool = t.get("tool_type"), t.get("tool_id") or str(t.get("name") or "?").rsplit("/", 1)[-1]
+            strings = _tool_strings(t)
+            if kind == "knowledge_assistant":
+                spec = t.get("knowledge_assistant") if isinstance(t.get("knowledge_assistant"), dict) else {}
+                ka_ref = str(spec.get("knowledge_assistant_id") or spec.get("name") or "")
+                hit = (next((v for k, v in kas.items() if ka_ref and (ka_ref in k or k.endswith(ka_ref))), None)
+                       or next((v for k, v in ka_endpoints.items() if k in strings), None)
+                       or ka_ref or "a knowledge assistant")
+                add(name, "supervisor_uses_vs_ka", hit,
+                    f"tool {tool} uses knowledge assistant {hit}, which depends on AI Search")
+            elif kind == "vector_search_index":
+                target = next(iter(strings), "an AI Search index")
+                add(name, "supervisor_uses_vs_index", target, f"tool {tool} is an AI Search index ({target})")
+            elif kind == "serving_endpoint":
+                for ep, display in ka_endpoints.items():
+                    if ep in strings:
+                        add(name, "supervisor_uses_vs_ka", display,
+                            f"tool {tool} calls the endpoint of knowledge assistant {display}, which depends on AI Search")
+    changed = True
+    while changed:  # a Supervisor that uses a dependent Supervisor depends too (also through its endpoint)
+        changed = False
+        for name, info in supervisors.items():
+            for t in info["tools"]:
+                if t.get("tool_type") not in ("supervisor_agent", "serving_endpoint"):
+                    continue
+                for ref in _tool_strings(t):
+                    child = by_ref.get(ref)
+                    if child and child != name and child in found:
+                        tool = t.get("tool_id") or str(t.get("name") or "?").rsplit("/", 1)[-1]
+                        changed |= add(name, "supervisor_uses_supervisor", supervisors[child]["label"],
+                                       f"tool {tool} uses {supervisors[child]['label']}, which depends on AI Search")
+    return found
+
+
 def scan_agent_bricks(w: WorkspaceClient, scanner: Scanner) -> None:
     """Knowledge Assistants and the Supervisor Agents that use them: all of them depend on AI Search.
 
@@ -2158,12 +2340,14 @@ def scan_agent_bricks(w: WorkspaceClient, scanner: Scanner) -> None:
     with a Knowledge Assistant tool.
     """
     kas: dict[str, str] = {}  # every Knowledge Assistant: name -> display name
+    ka_endpoints: dict[str, str] = {}  # Knowledge Assistant serving endpoint -> display name
     n_ka = n_sa = bad_ka = bad_sa = 0
     try:
         for ka in w.knowledge_assistants.list_knowledge_assistants():
             n_ka += 1
             if getattr(ka, "endpoint_name", None):
                 scanner.agent_bricks[ka.endpoint_name] = f"knowledge assistant {ka.display_name or ka.name}"
+                ka_endpoints[ka.endpoint_name] = ka.display_name or ka.name
             kas[ka.name] = ka.display_name or ka.name
             readable = True
             try:
@@ -2200,31 +2384,23 @@ def scan_agent_bricks(w: WorkspaceClient, scanner: Scanner) -> None:
         _log(f"  could not list Knowledge Assistants: {error}")
         scanner.note("knowledge_assistants", f"failed: {str(error)[:120]}")
     scanner.note("knowledge_assistants", f"partial: {bad_ka} unreadable" if bad_ka else "ok")
+    supervisors: dict[str, dict] = {}  # name -> {"label", "endpoint", "tools"}
     try:
         for sa in w.supervisor_agents.list_supervisor_agents():
             n_sa += 1
-            if getattr(sa, "endpoint_name", None):
-                scanner.agent_bricks[sa.endpoint_name] = f"supervisor agent {sa.display_name or sa.name}"
+            label = f"supervisor agent {sa.display_name or sa.name}"
+            endpoint = getattr(sa, "endpoint_name", None)
+            if endpoint:
+                scanner.agent_bricks[endpoint] = label
             try:
-                tools = list(w.supervisor_agents.list_tools(parent=sa.name))
+                tools = supervisor_tools(w, sa.name)
             except Exception:
                 bad_sa += 1
                 continue
-            named: set[str] = set()  # one finding per Supervisor and Knowledge Assistant, however many tools
-            for t in tools:
-                ka_ref = getattr(t, "knowledge_assistant", None)
-                ka_name = getattr(ka_ref, "knowledge_assistant_id", None) or getattr(ka_ref, "name", None) if ka_ref else None
-                if not ka_ref:
-                    continue
-                hit = next((v for k, v in kas.items() if ka_name and (ka_name in k or k.endswith(str(ka_name)))),
-                           None) or str(ka_name or "a knowledge assistant")
-                if hit in named:
-                    continue
-                named.add(hit)
-                scanner._add("supervisor_agent", f"supervisor agent {sa.display_name or sa.name}", None,
-                             "supervisor_uses_vs_ka", hit, None,
-                             f"tool {getattr(t, 'name', None) or '?'} uses knowledge assistant {hit}, which depends "
-                             "on AI Search")
+            supervisors[sa.name] = {"label": label, "endpoint": endpoint, "tools": tools}
+        for name, reasons in supervisor_dependencies(supervisors, kas, ka_endpoints).items():
+            for pattern, target, text in reasons:
+                scanner._add("supervisor_agent", supervisors[name]["label"], None, pattern, target, None, text)
     except Exception as error:
         _log(f"  could not list Supervisor Agents: {error}")
         scanner.note("supervisor_agents", f"failed: {str(error)[:120]}")

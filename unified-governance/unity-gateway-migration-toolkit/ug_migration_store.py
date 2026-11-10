@@ -336,6 +336,19 @@ def apply_log_from_items(spark, schema: str, apply_id: str, path: str, durable_l
     return n
 
 
+def rollback_dry_run_deletes(spark, schema: str, dry_run_id: str) -> set[tuple[str, str]]:
+    """The (type, name) keys a rollback dry run listed as would_delete: the only objects the rollback that follows it
+    may delete. The id is a bound parameter."""
+    rows = spark.sql(f"SELECT payload FROM {q(schema)}.ug_migration_apply_items WHERE apply_id = :id",
+                     args={"id": str(dry_run_id)}).collect()
+    keys = set()
+    for r in rows:
+        item = json.loads(r["payload"])
+        if item.get("action") == "would_delete" and item.get("type") and item.get("name"):
+            keys.add((item["type"], item["name"]))
+    return keys
+
+
 def _is_rollback_entry(e: dict) -> bool:
     """Entries a rollback needs: objects this run created, reused or updated, and the grants it added."""
     if not e.get("execute"):

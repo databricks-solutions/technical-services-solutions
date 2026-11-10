@@ -1065,7 +1065,7 @@ def _verify_rollback_dry_run(request: Request, dry_run_id: str, rollback_of: str
     if not dry_run_id:
         raise HTTPException(400, "Run a rollback dry run of this execute run first")
     check_id(dry_run_id, "dry run id")
-    rows = reconcile(query(request, f"SELECT mode, operation, status, job_run_id, rollback_of, requested_by, "
+    rows = reconcile(query(request, f"SELECT mode, operation, status, summary, job_run_id, rollback_of, requested_by, "
                                     f"unix_timestamp(started_at) AS started_at "
                                     f"FROM {table('ug_migration_applies')} WHERE apply_id = :a", {"a": dry_run_id}))
     row = rows[0] if rows else None
@@ -1137,6 +1137,9 @@ def apply_detail(apply_id: str, request: Request):
     if out.get("mode") == "rollback_dry_run":
         # Each rollback dry run unlocks one rollback: the page shows the rollback that used it instead of the button.
         out["used_by"] = _dry_run_used_by(request, apply_id)
+        # Why this finished dry run can't unlock a rollback (errors besides kept objects); None when it can.
+        out["unlock_problem"] = (apply_rules.rollback_dry_run_problem(out.get("status"), out.get("summary"))
+                                 if out.get("status") in apply_rules.ROLLBACK_DRY_RUN_OK else None)
     return {"meta": out, "items": [_load(i["payload"]) for i in items],
             "rollbacks": [{"apply_id": r["apply_id"], "status": r["status"]} for r in rollbacks]}
 

@@ -16,6 +16,7 @@ import { registerPromoteRoutes } from './api/promote';
 import { registerLibraryRoutes } from './api/library';
 import { registerImportRoutes } from './api/import';
 import { registerGovernRoutes } from './api/govern';
+import { registerPagesRoutes } from './api/pages';
 import { registerDriftRoutes } from './api/drift';
 import { registerDiscoverRoutes } from './api/discover';
 import { genieDeps } from './genie/client';
@@ -53,6 +54,7 @@ createApp({
       registerLibraryRoutes(app, pool, runFor);
       registerImportRoutes(app, pool, ucFor);
       registerGovernRoutes(app, pool, runFor, ucFor);
+      registerPagesRoutes(app, pool);
       registerDriftRoutes(app, pool, runFor, ucFor);
       registerDiscoverRoutes(app, ucFor);
       registerGenieRoutes(app, pool, runFor, (req) => genieDeps(asUser(req)));

@@ -39,7 +39,9 @@ export function tableOf(res: {
 
 /** Genie calls, always as the calling user (OBO). Needs the dashboards.genie app scope. */
 export interface GenieDeps {
-  createSpace(view: string, title: string, description: string): Promise<string>;
+  createSpace(title: string, description: string, serializedSpace: string): Promise<string>;
+  /** Replaces the settings of the space (full replacement). */
+  updateSpace(spaceId: string, serializedSpace: string): Promise<void>;
   trashSpace(spaceId: string): Promise<void>;
   ask(spaceId: string, question: string): Promise<GenieAnswer>;
   /** A new conversation, or a follow-up when the conversation id is set. */
@@ -55,7 +57,7 @@ function client() {
 
 export function genieDeps(runAsUser: RunAsUser): GenieDeps {
   return {
-    createSpace: (view, title, description) =>
+    createSpace: (title, description, serializedSpace) =>
       runAsUser(async () => {
         // The SDK has no create-space method yet; this is the REST call it would make.
         const res = (await client().apiClient.request({
@@ -67,11 +69,29 @@ export function genieDeps(runAsUser: RunAsUser): GenieDeps {
             warehouse_id: await getWarehouseId(),
             title,
             description,
-            serialized_space: JSON.stringify({ version: 2, data_sources: { tables: [{ identifier: view }] } }),
+            serialized_space: serializedSpace,
           },
         })) as { space_id?: string };
         if (!res.space_id) throw new Error('Genie did not return a space id.');
         return res.space_id;
+      }),
+    updateSpace: (spaceId, serializedSpace) =>
+      runAsUser(async () => {
+        // The SDK request drops the body of a PATCH (it sends one for POST and PUT only). The SDK config still
+        // signs the request as the user.
+        const { config } = client();
+        const headers = new Headers({ 'Content-Type': 'application/json' });
+        await config.authenticate(headers);
+        const url = new URL(`/api/2.0/genie/spaces/${encodeURIComponent(spaceId)}`, await config.getHost());
+        const res = await fetch(url, {
+          method: 'PATCH',
+          headers,
+          body: JSON.stringify({ serialized_space: serializedSpace }),
+        });
+        if (!res.ok) {
+          const detail = ((await res.json().catch(() => ({}))) as { message?: string }).message ?? res.statusText;
+          throw new Error(`Genie did not update the space: ${detail.slice(0, 300)}`);
+        }
       }),
     trashSpace: (spaceId) =>
       runAsUser(async () => {

@@ -6,7 +6,7 @@ import { DataState } from './DataState';
 import { SqlBlock } from './SqlBlock';
 import { FieldPick } from './TestEditor';
 
-type View = GenieView & { setup: string[] };
+type View = GenieView & { setup: string[]; config: string | null };
 interface Question {
   question: string;
   expected: GenieExpected;
@@ -98,7 +98,7 @@ export function GeniePanel({
     if (!v) return;
     setBusy('space');
     setError(undefined);
-    api<View>(`/api/projects/${projectId}/genie/space`, { statements: v.setup }).then(
+    api<View>(`/api/projects/${projectId}/genie/space`, { statements: v.setup, config: v.config }).then(
       (next) => {
         setBusy(undefined);
         setReviewing(false);
@@ -173,7 +173,7 @@ export function GeniePanel({
                 disabled={!!busy}
                 onClick={() => setReviewing(true)}
               >
-                Update the sandbox view
+                Update the view and the space
               </Button>
             </div>
           )}
@@ -276,7 +276,7 @@ export function GeniePanel({
 
           <Modal
             componentId="gsb.genie.space_modal"
-            title={v.space ? 'Update the sandbox view' : 'Create the Genie space'}
+            title={v.space ? 'Update the view and the space' : 'Create the Genie space'}
             visible={reviewing}
             okText="Run SQL"
             cancelText="Cancel"
@@ -289,11 +289,21 @@ export function GeniePanel({
                 componentId="gsb.genie.space_warning"
                 type="warning"
                 closable={false}
-                message="This replaces the sandbox view with the validated version, as you. Then the app creates one Genie space on it, as you, if none exists for this view."
+                message={`This replaces the sandbox view with the validated version, as you. Then the app ${v.space ? 'replaces the settings of the Genie space' : 'creates one Genie space on it'}, as you, with the settings below.`}
               />
               {v.setup.map((s) => (
                 <SqlBlock key={s} label="SQL" sql={s} />
               ))}
+              {v.config && (
+                <>
+                  <Typography.Text color="secondary">
+                    The settings come from the design: instructions from the brief (goal, audience, glossary, rules),
+                    sample questions from the key questions, example SQL from the tests, and benchmarks from the tests
+                    with an expected value. Synonyms and descriptions come from the view.
+                  </Typography.Text>
+                  <SqlBlock label="Genie space settings (JSON)" sql={v.config} />
+                </>
+              )}
             </div>
           </Modal>
         </div>

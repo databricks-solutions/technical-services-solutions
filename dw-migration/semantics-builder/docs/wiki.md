@@ -453,6 +453,24 @@ The app reads the SQL that Genie wrote and compares the fields with your selecti
 matches, different, needs review, or no answer. The answer also shows if Genie One searched knowledge that other
 users wrote. The app does not compare result values yet.
 
+### 14.0 The Genie space settings
+
+**Create the Genie space** and **Update the view and the space** show the space settings (JSON) before they
+run. The app makes the settings from the design:
+
+| Setting | Source |
+| --- | --- |
+| Data source | The sandbox view of the validated version. |
+| Text instructions | The brief: goal, audience, glossary and assumptions (as rules). |
+| Sample questions | The key questions of the brief (not more than 10). |
+| Example SQL | The tests that compare fields. The test name is the question. |
+| Benchmarks | The tests with an expected value. The answer is the SQL of the test, not the value. |
+
+Synonyms and descriptions come from the view itself, so the settings do not repeat them. A test with an
+expected value is not also an example, so Genie cannot copy its SQL. When the design changes, click
+**Update the view and the space**. The app replaces all the settings of the space. Changes made in Genie to
+the settings are lost.
+
 ### 14.1 The Genie panel
 
 The Genie panel is a chat about the sandbox view of the validated version. It stays open when you go to a

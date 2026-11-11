@@ -4,9 +4,12 @@ import type { LakebasePool } from '@databricks/appkit';
 import { askSchema, chatSchema } from '../../shared/genie';
 import type { ChatAnswer, GenieCheck, GenieView } from '../../shared/genie';
 import { validateMetricView } from '../../shared/metricView';
+import type { SemanticBrief } from '../../shared/brief';
+import type { TestCase } from '../../shared/designer';
 import { createStatement, sandboxSchema, sandboxViewName } from '../designer/validate';
 import type { GenieDeps } from '../genie/client';
 import { readsView } from '../genie/onechat';
+import { spaceConfig } from '../genie/space';
 import { fieldsUsed, verdictOf } from '../genie/verdict';
 import { runStatement } from '../sql/runner';
 import type { RunDeps } from '../sql/runner';
@@ -16,7 +19,10 @@ import { projectRepo } from './projects';
 
 type Db = Pick<LakebasePool, 'query' | 'connect'>;
 const idParam = z.object({ id: z.uuid() });
-const spaceBody = z.object({ statements: z.array(z.string().min(1).max(200_000)).min(1).max(10) });
+const spaceBody = z.object({
+  statements: z.array(z.string().min(1).max(200_000)).min(1).max(10),
+  config: z.string().min(1).max(3_500_000),
+});
 const MAX_CHECKS = 50;
 
 interface CheckRow {
@@ -58,7 +64,11 @@ export function registerGenieRoutes(
     return { actor, project, draft: validated, sandboxView, space: rows[0] ?? null };
   }
 
-  async function view(req: Request): Promise<GenieView & { setup: string[] }> {
+  /** The space settings JSON the user reviews, built from the validated version. */
+  const configOf = (sandboxView: string, brief: SemanticBrief | null, tests: TestCase[]) =>
+    JSON.stringify(spaceConfig(sandboxView, brief, tests), null, 2);
+
+  async function view(req: Request): Promise<GenieView & { setup: string[]; config: string | null }> {
     const ctx = await context(req);
     const brief = await projects.latestBrief(ctx.project.id);
     const { rows } = await db.query<CheckRow>(
@@ -74,6 +84,7 @@ export function registerGenieRoutes(
         : null,
       keyQuestions: brief?.brief.keyQuestions ?? [],
       setup: ctx.draft && ctx.sandboxView ? [createStatement(ctx.sandboxView, ctx.draft.yaml)] : [],
+      config: ctx.draft && ctx.sandboxView ? configOf(ctx.sandboxView, brief?.brief ?? null, ctx.draft.tests) : null,
       checks: rows.map((r) => ({
         id: r.id,
         engine: r.engine,
@@ -94,28 +105,37 @@ export function registerGenieRoutes(
   app.get('/api/projects/:id/genie', handle(view));
 
   /**
-   * Creates the sandbox view of the validated version, as reviewed, then one Genie space on it, as the user.
-   * A space that already points at the same view is kept; the view itself is replaced in place.
+   * Creates the sandbox view of the validated version, as reviewed, then one Genie space on it with the settings
+   * from the design, as the user. A space on the same view is kept, and its settings are replaced.
    */
   app.post(
     '/api/projects/:id/genie/space',
     handle(async (req) => {
-      const { statements } = spaceBody.parse(req.body);
+      const { statements, config } = spaceBody.parse(req.body);
       const ctx = await context(req);
       if (!ctx.draft || !ctx.sandboxView) throw new HttpError(409, 'Validate the design before you ask Genie.');
       const setup = [createStatement(ctx.sandboxView, ctx.draft.yaml)];
       if (statements.length !== setup.length || statements.some((s, i) => s !== setup[i]))
         throw new HttpError(409, 'The SQL changed since you reviewed it. Review it again.');
+      const brief = await projects.latestBrief(ctx.project.id);
+      if (config !== configOf(ctx.sandboxView, brief?.brief ?? null, ctx.draft.tests))
+        throw new HttpError(409, 'The space settings changed since you reviewed them. Review them again.');
       for (const s of setup)
         await runStatement(s, { actor: ctx.actor, projectId: ctx.project.id, approved: true }, runFor(req));
 
-      if (ctx.space?.view_name !== ctx.sandboxView) {
-        const genie = genieFor(req);
-        const brief = await projects.latestBrief(ctx.project.id);
+      const genie = genieFor(req);
+      if (ctx.space?.view_name === ctx.sandboxView) {
+        await genie.updateSpace(ctx.space.space_id, config);
+        await db.query(
+          `INSERT INTO gsb.audit_log (actor, action, project_id, target, outcome)
+           VALUES ($1, 'update_genie_space', $2, $3, 'succeeded')`,
+          [ctx.actor, ctx.project.id, ctx.space.space_id]
+        );
+      } else {
         const spaceId = await genie.createSpace(
-          ctx.sandboxView,
           `${ctx.project.name} - Semantics Builder check`,
-          (brief?.brief.businessGoal ?? '').slice(0, 1000)
+          (brief?.brief.businessGoal ?? '').slice(0, 1000),
+          config
         );
         if (ctx.space) await genie.trashSpace(ctx.space.space_id).catch(() => undefined);
         await db.query(

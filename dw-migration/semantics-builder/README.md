@@ -63,6 +63,8 @@ A typical path for one KPI area. Each page shows the next step.
 6. **Optimize.** Fix best-practice findings, run a stress test, try materialization in the sandbox, and set
    a monthly budget. In **Ask Genie**, create a Genie space on the sandbox view, pick the expected fields for
    each business question, and click **Ask Genie** or **Ask Genie One**. The app checks the fields in the SQL.
+   The space gets its settings from the design (instructions from the brief, sample questions, example SQL and
+   benchmarks from the tests); the dialog shows the JSON before it runs.
    At any step, click **Genie** in the header to chat about the sandbox view. **Use as a test** opens the
    question as a new test in Metric Designer, Tests. The app stores no question or answer.
 7. **Publish.** In **Promotion**, set the target view (`catalog.schema.view`, not the sandbox), then

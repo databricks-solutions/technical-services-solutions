@@ -67,6 +67,12 @@ brief (goal, audience, rules), sample questions from the key questions, synonyms
 SQL from the tests, and benchmark questions with the expected values from h3. Show the JSON before it runs.
 Update the space when the design changes.
 
+Status (2026-11-11): built, on the sandbox space. Notes from the live test:
+- The SDK request drops the body of a PATCH, so the app sends the update with `fetch` and SDK-signed headers.
+- Genie joins `text_instructions.content` items with no separator. The app sends one string with line breaks.
+- `data_sources.metric_views` is stored as `tables`. The app uses `tables`.
+- A space on the promoted view, and benchmark eval runs, are not built yet.
+
 ### h3. Measure tests with expected values (#2)
 
 A new test kind: a measure, optional filters and a group, an expected value and a tolerance (for example

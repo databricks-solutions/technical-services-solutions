@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Check that the committed installer matches the sources and the versions agree. Run before a release.
 
-- rebuilds the installer into a temporary folder (make_installer.build, no mtime check) and byte-compares it with
-  INSTALL_unity_gateway_migration_toolkit_<version>.py in this folder
+- rebuilds the installer and uninstaller into a temporary folder (make_installer.build, no mtime check) and
+  byte-compares them with INSTALL_ / UNINSTALL_unity_gateway_migration_toolkit_<version>.py in this folder
 - checks that __version__ (ug_migration_planner.py), version (app/frontend/package.json) and toolkit_version
   (databricks.yml) are the same
 - checks that every installer or zip file name the shipped guides mention (GUIDES) carries that version, so a guide
@@ -43,12 +43,12 @@ def versions() -> dict[str, str]:
 
 
 # A versioned customer file name in the docs: INSTALL_..._0_10_1.py or unity-gateway-migration-toolkit-0.10.1.zip.
-VERSIONED_NAME_RE = re.compile(r"INSTALL_unity_gateway_migration_toolkit_(\d+_\d+_\d+)\.py"
+VERSIONED_NAME_RE = re.compile(r"(?:UN)?INSTALL_unity_gateway_migration_toolkit_(\d+_\d+_\d+)\.py"
                                r"|unity-gateway-migration-toolkit-(\d+\.\d+\.\d+)\.zip")
 
 
 # The guides that ship with the toolkit. Dev notes (NOTES_*.md) keep old file names on purpose, so they aren't checked.
-GUIDES = ("README.md", "USER_GUIDE.md", "HOW_TO_READ.md", "DEVELOPING.md")
+GUIDES = ("README.md", "INSTALL.md", "USER_GUIDE.md", "HOW_TO_READ.md", "DEVELOPING.md")
 
 
 def stale_doc_names(version: str) -> list[str]:
@@ -72,16 +72,18 @@ def main() -> int:
     if len(set(v.values())) != 1:
         problems += [f"version mismatch: {name} = {value}" for name, value in v.items()]
     version = v["ug_migration_planner.py __version__"]
-    committed = os.path.join(HERE, f"INSTALL_unity_gateway_migration_toolkit_{version.replace('.', '_')}.py")
-    if not os.path.exists(committed):
-        problems.append(f"{os.path.basename(committed)} is not committed (run ./package.sh and copy it here)")
-    else:
-        with tempfile.TemporaryDirectory() as tmp:
-            built = make_installer.build(tmp, check_fresh=False)
-            with open(built, "rb") as a, open(committed, "rb") as b:
+    with tempfile.TemporaryDirectory() as tmp:
+        make_installer.build(tmp, check_fresh=False)
+        for mode in ("install", "uninstall"):  # both notebooks are committed next to this file
+            name = make_installer.notebook_name(mode, version)
+            committed = os.path.join(HERE, name)
+            if not os.path.exists(committed):
+                problems.append(f"{name} is not committed (run ./package.sh and copy it here)")
+                continue
+            with open(os.path.join(tmp, name), "rb") as a, open(committed, "rb") as b:
                 if a.read() != b.read():
-                    problems.append(f"{os.path.basename(committed)} doesn't match a fresh build from the sources: "
-                                    "rebuild with ./package.sh and commit the new installer")
+                    problems.append(f"{name} doesn't match a fresh build from the sources: rebuild with ./package.sh "
+                                    "and commit the new notebook")
     problems += [f"{loc} names another version's file: use the {version} name" for loc in stale_doc_names(version)]
     for p in problems:
         print("FAIL:", p)

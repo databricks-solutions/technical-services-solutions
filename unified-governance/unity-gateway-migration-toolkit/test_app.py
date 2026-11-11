@@ -1196,3 +1196,13 @@ def test_tracking_is_refused_for_endpoints_the_scan_doesnt_mark_trackable(env):
     r = _post(env, operation="enable_tracking", endpoints=["my-agent"])
     assert r.status_code == 400 and "Choose the scan" in r.json()["detail"]
     assert env.sdk.jobs.run_now.call_count == 0
+
+
+def test_default_target_comes_from_the_install(env):
+    """The installer sets UGMIG_DEFAULT_TARGET; installs before 0.11.0, the bundle and bad values keep ai_gateway.migrated."""
+    assert main._default_target("main.ug_migrated") == ("main", "ug_migrated")
+    for raw in ("", "main", "a.b c", "x.`y`"):
+        assert main._default_target(raw) == ("ai_gateway", "migrated"), raw
+    c = env.client.get("/api/config", headers=OP).json()
+    assert c["default_target"] == {"catalog": main.DEFAULT_TARGET_CATALOG, "schema": main.DEFAULT_TARGET_SCHEMA}
+    assert main.ScanRequest().target_catalog == main.DEFAULT_TARGET_CATALOG

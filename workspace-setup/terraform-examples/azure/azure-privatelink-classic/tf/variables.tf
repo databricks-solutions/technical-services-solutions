@@ -27,6 +27,10 @@ variable "workspace_name" {
     condition     = var.workspace_name == "" || can(regex("^[A-Za-z0-9_-]{3,30}$", var.workspace_name))
     error_message = "workspace_name must be 3-30 characters: letters, numbers, hyphens and underscores only."
   }
+  validation {
+    condition     = var.workspace_name != "" || can(regex("^[A-Za-z0-9_-]{3,30}$", "dbw-${var.resource_prefix}"))
+    error_message = "With workspace_name empty, the derived name dbw-<resource_prefix> must be 3-30 characters of letters, numbers, hyphens and underscores (no dots, so resource_prefix can be at most 26 characters). Shorten resource_prefix or set workspace_name."
+  }
 }
 
 variable "root_storage_name" {
@@ -103,6 +107,10 @@ variable "vnet_resource_group_name" {
   description = "Resource group for the VNet and networking resources (subnets, NSG, NAT gateway). Leave empty, or set to the same value as resource_group_name, to use the workspace resource group. When create_new_vnet is true and this names a different group, that group is created; when reusing a VNet it must be the group that holds the existing VNet."
   type        = string
   default     = ""
+  validation {
+    condition     = var.create_new_vnet || !var.create_resource_group || (var.vnet_resource_group_name != "" && var.vnet_resource_group_name != var.resource_group_name)
+    error_message = "When reusing a VNet (create_new_vnet = false) with create_resource_group = true, set vnet_resource_group_name to the existing resource group that holds the VNet. The new workspace resource group cannot contain it yet."
+  }
 }
 
 variable "vnet_cidr" {

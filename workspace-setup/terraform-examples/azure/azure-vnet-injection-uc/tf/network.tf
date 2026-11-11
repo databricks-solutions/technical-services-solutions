@@ -31,6 +31,13 @@ data "azurerm_virtual_network" "existing" {
   count               = var.create_new_vnet ? 0 : 1
   name                = var.vnet_name
   resource_group_name = local.vnet_resource_group_name
+
+  lifecycle {
+    postcondition {
+      condition     = lower(replace(self.location, " ", "")) == lower(replace(local.resource_group_location, " ", ""))
+      error_message = "The existing VNet is in ${self.location}, but the workspace resource group is in ${local.resource_group_location}. The workspace and the VNet must be in the same region."
+    }
+  }
 }
 
 # other network resources

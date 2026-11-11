@@ -57,11 +57,28 @@ variable "existing_data_plane_resource_group_name" {
 # Network Configuration
 # =============================================================================
 
-variable "cidr_dp" {
-  description = "CIDR for the data plane VNet address space (e.g. 10.0.0.0/16). Must encompass all subnets. Use a block between /16 and /24."
+variable "existing_vnet_name" {
+  description = "Name of an existing VNet to inject Databricks subnets into. When set, no new VNet is created and cidr_dp is ignored. Leave empty (default) to create a new VNet."
   type        = string
+  default     = ""
+}
+
+variable "existing_vnet_resource_group_name" {
+  description = "Resource group of the existing VNet. Required when existing_vnet_name is set."
+  type        = string
+  default     = ""
   validation {
-    condition     = length(regexall("^[0-9.]+/(\\d+)$", var.cidr_dp)) > 0 && tonumber(regexall("^[0-9.]+/(\\d+)$", var.cidr_dp)[0][0]) >= 16 && tonumber(regexall("^[0-9.]+/(\\d+)$", var.cidr_dp)[0][0]) <= 24
+    condition     = var.existing_vnet_name == "" || length(trimspace(var.existing_vnet_resource_group_name)) > 0
+    error_message = "existing_vnet_resource_group_name must be set when existing_vnet_name is set."
+  }
+}
+
+variable "cidr_dp" {
+  description = "CIDR for the new data plane VNet address space (e.g. 10.0.0.0/16). Required when existing_vnet_name is empty. Ignored when existing_vnet_name is set. Use a block between /16 and /24."
+  type        = string
+  default     = null
+  validation {
+    condition     = var.cidr_dp == null || (length(regexall("^[0-9.]+/(\\d+)$", var.cidr_dp)) > 0 && tonumber(regexall("^[0-9.]+/(\\d+)$", var.cidr_dp)[0][0]) >= 16 && tonumber(regexall("^[0-9.]+/(\\d+)$", var.cidr_dp)[0][0]) <= 24)
     error_message = "cidr_dp must be a CIDR block with prefix length between /16 and /24 (e.g. 10.0.0.0/16)."
   }
 }

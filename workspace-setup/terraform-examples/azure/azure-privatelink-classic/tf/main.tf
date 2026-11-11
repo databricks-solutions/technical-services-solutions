@@ -27,4 +27,8 @@ locals {
   dp_rg_name     = var.create_data_plane_resource_group ? azurerm_resource_group.dp_rg[0].name : data.azurerm_resource_group.dp_rg[0].name
   dp_rg_id       = var.create_data_plane_resource_group ? azurerm_resource_group.dp_rg[0].id : data.azurerm_resource_group.dp_rg[0].id
   dp_rg_location = var.create_data_plane_resource_group ? azurerm_resource_group.dp_rg[0].location : data.azurerm_resource_group.dp_rg[0].location
+  # VNet: create a new one or look up an existing one.
+  create_new_vnet = var.existing_vnet_name == ""
+  vnet_id         = local.create_new_vnet ? azurerm_virtual_network.dp_vnet[0].id   : data.azurerm_virtual_network.dp_vnet[0].id
+  vnet_name       = local.create_new_vnet ? azurerm_virtual_network.dp_vnet[0].name : data.azurerm_virtual_network.dp_vnet[0].name
 }

@@ -39,12 +39,12 @@ output "resource_group_id" {
 
 output "vnet_name" {
   description = "Name of the data plane virtual network"
-  value       = azurerm_virtual_network.dp_vnet.name
+  value       = local.vnet_name
 }
 
 output "vnet_id" {
   description = "ID of the data plane virtual network"
-  value       = azurerm_virtual_network.dp_vnet.id
+  value       = local.vnet_id
 }
 
 output "subnet_public_id" {

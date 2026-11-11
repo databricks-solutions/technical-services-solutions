@@ -7,6 +7,7 @@ dbutils, spark, displayHTML and the Databricks SDK replaced by fakes. Nothing he
 """
 
 import base64
+import inspect
 import io
 import json
 import pathlib
@@ -41,11 +42,11 @@ FOLDER = f"/Workspace/Users/{ME}/ug-migration-toolkit"  # the default install fo
 APP = "ug-migration-toolkit"
 DESC = "Unity Gateway Migration Toolkit: account overview, workspace scans, readiness, code fixes and apply"
 WH_ID = "0a1b2c3d"
-WH_LABEL = f"serverless ({WH_ID})"
+APP_SP = "5e6f7a8b-0000-4000-8000-00000000a99"
 A1 = "aaaaaaaa-0000-0000-0000-000000000001"  # older apply run
 A2 = "aaaaaaaa-0000-0000-0000-000000000002"  # newer apply run
 RUN1, RUN2 = "900001", "900002"  # their job run ids
-RESULT_TABLES = ("scans", "scan_items", "applies", "apply_items", "workspaces", "endpoints")
+RESULT_TABLES = ("scans", "scan_items", "applies", "apply_items", "workspaces", "endpoints", "operators")
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -100,13 +101,13 @@ def test_service_principal_detection():
     assert not H["is_service_principal"]("")
 
 
-def test_downgrade_needs_widget_and_compares_numbers():
+def test_downgrade_needs_the_setting_and_compares_numbers():
     assert H["downgrade_problem"]("0.8.0", "0.7.0", allow=False) is not None
     assert H["downgrade_problem"]("0.8.0", "0.7.0", allow=True) is None
     assert H["downgrade_problem"]("0.7.0", "0.8.0", allow=False) is None
     assert H["downgrade_problem"]("", "0.8.0", allow=False) is None
     assert H["downgrade_problem"]("0.10.0", "0.9.0", allow=False) is not None
-    assert "Advanced: Allow downgrade" in H["downgrade_problem"]("0.8.0", "0.7.0", allow=False)
+    assert "allow_downgrade=True" in H["downgrade_problem"]("0.8.0", "0.7.0", allow=False)
 
 
 def test_marker_status():
@@ -347,6 +348,8 @@ class FakeWS:
         self.next_run = 500
         self.clock = 0
         self.sp_rules = None  # grant rules on the run-as SP's rule set; None = the API isn't reachable
+        self.default_catalog = "main"  # the workspace's default catalog (default namespace setting)
+        self.grant_fails = False  # GRANT statements are refused (you don't own the catalog)
 
     # ---- seeding helpers
     def add_table(self, key, rows=()):
@@ -357,6 +360,18 @@ class FakeWS:
         s = " ".join(stmt.split())
         self.log.append(("sql", s[:100]))
         rows = []
+        m = re.match(r"CREATE TABLE IF NOT EXISTS `(\w+)`\.`(\w+)`\.ug_migration_operators", s)
+        if m:
+            self.tables.setdefault(f"{m[1]}.{m[2]}.ug_migration_operators", [])
+        m = re.match(r"SELECT email FROM `(\w+)`\.`(\w+)`\.ug_migration_operators$", s)
+        if m:
+            rows = [{"email": r["email"]} for r in self.tables[f"{m[1]}.{m[2]}.ug_migration_operators"]]
+        m = re.match(r"INSERT INTO `(\w+)`\.`(\w+)`\.ug_migration_operators", s)
+        if m:
+            assert set(args) == {"email", "by"}  # bound, never formatted into the statement
+            self.tables[f"{m[1]}.{m[2]}.ug_migration_operators"].append({"email": args["email"], "added_by": args["by"]})
+        if s.startswith("GRANT ") and self.grant_fails:
+            raise Exception("[INSUFFICIENT_PERMISSIONS] User does not have MANAGE on Catalog")
         if "FROM system.access.workspaces_latest" in s:
             rows = [("acct-1",)]
         m = re.match(r"DROP TABLE IF EXISTS `(\w+)`\.`(\w+)`\.ug_migration_(\w+)", s)
@@ -646,6 +661,7 @@ class FakeWS:
                     raise sdk_errors.OperationFailed(f"failed to reach ACTIVE, got ComputeState.ERROR: {ws.create_fail}")
                 app.compute_status = apps.ComputeStatus(state=apps.ComputeState.ACTIVE)
                 app.url = f"https://{app.name}.example.app"
+                app.service_principal_client_id = APP_SP
                 ws.apps[app.name] = app
                 return app
 
@@ -701,7 +717,13 @@ class FakeWS:
             assert path == "/api/2.0/preview/accounts/access-control/rule-sets" and "acct-1" in query["name"]
             return {"grant_rules": ws.sp_rules}
 
-        return _ns(current_user=Current(), catalogs=Catalogs(), schemas=Schemas(), warehouses=Warehouses(),
+        def default_namespace():
+            if ws.default_catalog is None:
+                raise sdk_errors.NotFound("default namespace not set")
+            return _ns(namespace=_ns(value=ws.default_catalog))
+
+        return _ns(settings=_ns(default_namespace=_ns(get=default_namespace)),
+                   metastores=_ns(current=lambda: _ns(default_catalog_name=None)), current_user=Current(), catalogs=Catalogs(), schemas=Schemas(), warehouses=Warehouses(),
                    grants=Grants(), statement_execution=Statements(), workspace=Workspace(), lakeview=Lakeview(),
                    jobs=Jobs(), apps=Apps(), config=_ns(host="https://ws.example.com"),
                    get_workspace_id=lambda: 123, api_client=_ns(do=rule_set))
@@ -711,6 +733,7 @@ def app_obj(name, desc=DESC, env=None):
     a = apps.App(name=name, description=desc, user_api_scopes=["sql"])
     a.compute_status = apps.ComputeStatus(state=apps.ComputeState.ACTIVE)
     a.url = f"https://{name}.example.app"
+    a.service_principal_client_id = APP_SP
     if env is not None:
         a.active_deployment = apps.AppDeployment(env_vars=[apps.EnvVar(name=k, value=v) for k, v in env.items()])
     return a
@@ -781,8 +804,8 @@ def _notebook_text():
 
 
 class Outcome:
-    def __init__(self, status, out, ws, labels):
-        self.status, self.out, self.ws, self.labels = status, out, ws, labels
+    def __init__(self, status, out, ws):
+        self.status, self.out, self.ws = status, out, ws
 
     @property
     def text(self):
@@ -798,32 +821,20 @@ def _fast(monkeypatch):
     monkeypatch.setattr(time, "sleep", lambda s: None)
 
 
-def run_notebook(monkeypatch, ws, widgets=None):
-    """Runs the notebook cell by cell. Widgets not given keep the notebook's own defaults."""
+def run_notebook(monkeypatch, ws, settings=None):
+    """Runs the notebook cell by cell. settings: the install() or uninstall() call made in place of the settings cell
+    ({"action": "install" or "uninstall: preview" / "uninstall: remove", plus keyword arguments}); None runs the
+    settings cell as shipped."""
     monkeypatch.setattr(sdk_pkg, "WorkspaceClient", lambda *a, **k: ws.make())
     text = _notebook_text()
     cells = text.split("\n# COMMAND ----------\n")
-    vals = dict(widgets or {})
     out = []
-    labels = {}
-
-    class Widgets:
-        def dropdown(self, name, default, choices=None, label=""):
-            labels[name] = label
-            vals.setdefault(name, default)
-
-        def text(self, name, default, label=""):
-            labels[name] = label
-            vals.setdefault(name, default)
-
-        def get(self, name):
-            return vals[name]
 
     def exit_(value):
         raise NBExit(value)
 
     ns = {
-        "dbutils": _ns(widgets=Widgets(), notebook=_ns(exit=exit_)),
+        "dbutils": _ns(notebook=_ns(exit=exit_)),
         "displayHTML": lambda html: out.append(re.sub(r"<[^>]+>", " ", html)),
         "spark": _ns(sql=ws.sql),
         "print": lambda *a, **k: out.append(" ".join(str(x) for x in a)),
@@ -831,20 +842,28 @@ def run_notebook(monkeypatch, ws, widgets=None):
     status = "completed"
     try:
         for i, cell in enumerate(cells):
+            if settings is not None and cell.lstrip().startswith("# Settings: edit"):
+                kw = dict(settings)
+                action = kw.pop("action")
+                if action == "install":
+                    ns["install"](**kw)
+                else:
+                    ns["uninstall"](preview=action == "uninstall: preview", **kw)
+                continue
             exec(compile(cell, f"cell{i}", "exec"), ns)
     except NBExit as e:
         status = "exit: " + str(e.args[0])
     except Exception as e:  # noqa: BLE001 (the notebook's own failures are the result under test)
         status = f"raised {type(e).__name__}: {e}"
-    return Outcome(status, out, ws, labels)
+    return Outcome(status, out, ws)
 
 
-def install_widgets(**kw):
-    return {"action": "install", "results_catalog": "main", "warehouse": WH_LABEL, **kw}
+def install_call(**kw):
+    return {"action": "install", "catalog": "main", "warehouse": WH_ID, **kw}
 
 
-def uninstall_widgets(action="uninstall: remove", **kw):
-    return {"action": action, "results_catalog": "main", "warehouse": WH_LABEL, **kw}
+def uninstall_call(action="uninstall: remove", **kw):
+    return {"action": action, **kw}
 
 
 def snapshot_of(ws):
@@ -852,35 +871,84 @@ def snapshot_of(ws):
             "tables": sorted(ws.tables), "files": sorted(ws.files)}
 
 
-def test_widgets_are_the_first_code_cell_and_the_prompt_follows():
+def test_settings_cell_follows_the_pip_cell_and_needs_no_widgets():
     cells = TEXT.split("\n# COMMAND ----------\n")
     assert cells[0].startswith("# Databricks notebook source")
     assert "Installing and using the app needs no CLI" in cells[0]
-    assert 'dbutils.widgets.dropdown("action", "install", ["install", "uninstall: preview", "uninstall: remove"]' in cells[1]
-    assert "confirm_uninstall" not in TEXT
-    assert cells[2].strip().endswith("Set Install: Results catalog and SQL warehouse above, then Run all")
-    assert "# MAGIC %pip" in cells[3]
+    assert "# MAGIC %pip" in cells[1]  # first, so its restart can't drop the settings
+    assert "def install(" in cells[2] and "def uninstall(" in cells[2]
+    assert cells[3].lstrip().startswith("# Settings: edit") and "install(\n    catalog=None," in cells[3]
+    assert "dbutils.widgets" not in TEXT and "confirm_uninstall" not in TEXT
 
 
-def test_widget_labels_carry_their_prefix_and_the_rules(monkeypatch):
-    lab = run_notebook(monkeypatch, FakeWS(), install_widgets()).labels
-    for key in ("results_catalog", "warehouse", "operators", "app_name"):
-        assert lab[key].startswith("Install:"), key
-    for key in ("results_schema", "install_folder", "adopt_app", "allow_downgrade", "second_install", "secret_schemas",
-                "allow_secret_read"):
-        assert lab[key].startswith("Advanced:"), key
-    for key in ("drop_data", "remove_logs", "rollback_services"):
-        assert lab[key].startswith("Uninstall:"), key
-    assert "2-30 lowercase letters, digits or hyphens" in lab["app_name"]
-    assert "blank = ug_migration for the default app, else the app name with - as _" in lab["results_schema"]
-    assert "blank = your home folder/<app name> (ending -toolkit)" in lab["install_folder"]
-    assert "overwrites or deletes that app" in lab["adopt_app"]
-    assert "risk" in lab["allow_secret_read"]
+def test_install_and_uninstall_take_only_known_settings_with_matching_defaults():
+    ns = {}
+    exec(TEXT.split("\n# COMMAND ----------\n")[2], ns)
+    for fn in ("install", "uninstall"):
+        sig = inspect.signature(ns[fn])
+        for name, p in sig.parameters.items():
+            if name != "preview":
+                assert name in H["SETTINGS"], name
+                assert p.default == H["SETTINGS"][name], name
+    ns["install"](catalog="main")
+    assert ns["PARAMS"]["action"] == "install" and ns["PARAMS"]["catalog"] == "main"
+    ns["uninstall"](preview=False, drop_data=True)
+    assert ns["PARAMS"]["action"] == "uninstall: remove" and "preview" not in ns["PARAMS"]
+    with pytest.raises(TypeError):
+        ns["install"](catlog="main")  # a typo fails at once
+
+
+def test_settings_from_checks_types_and_fills_defaults():
+    s, problems = H["settings_from"]({"action": "install", "catalog": " main ", "secret_schemas": ["a.b", "c.d"],
+                                      "allow_secret_read": False, "app_name": None})
+    assert not problems
+    assert s["catalog"] == "main" and s["secret_schemas"] == "a.b,c.d" and s["app_name"] == "ug-migration-toolkit"
+    assert s["warehouse"] == "" and s["drop_data"] is False
+    _, problems = H["settings_from"]({"action": "install", "allow_secret_read": "yes", "catalog": 3})
+    assert any("allow_secret_read must be True or False" in p for p in problems)
+    assert any("catalog must be text" in p for p in problems)
+    _, problems = H["settings_from"]({})
+    assert problems == ["call install(...) or uninstall(...) in the settings cell, then Run all"]
+
+
+def _wh(wid, name, state):
+    return _ns(id=wid, name=name, state=_state(state))
+
+
+def test_pick_warehouse_never_guesses_between_several():
+    pick = H["pick_warehouse"]
+    a, b = _wh("aaa", "Shared", "RUNNING"), _wh("bbb", "Serverless", "STOPPED")
+    assert pick("", [a, b]) == ("aaa", None)  # the only running one
+    assert pick("", [b]) == ("bbb", None)  # the only one
+    assert pick("", [a, b], current_id="bbb") == ("bbb", None)  # an update keeps its warehouse
+    assert pick("serverless", [a, b]) == ("bbb", None) and pick("aaa", [a, b]) == ("aaa", None)
+    wid, problem = pick("", [a, _wh("ccc", "Other", "RUNNING")])
+    assert wid == "" and "set warehouse=" in problem and "Shared (aaa)" in problem
+    wid, problem = pick("nope", [a])
+    assert wid == "" and "wasn't found" in problem
+    assert "no SQL warehouse found" in pick("", [])[1]
+
+
+def test_pick_catalog_uses_the_default_unless_it_cant_hold_results():
+    assert H["pick_catalog"]("main") == ("main", None)
+    for bad in (None, "hive_metastore", "samples"):
+        assert H["pick_catalog"](bad)[0] == "" and "set catalog=" in H["pick_catalog"](bad)[1]
+
+
+def test_operators_to_seed():
+    seed = H["operators_to_seed"]
+    assert seed([], "", "Me@x.com", False) == ["me@x.com"]
+    assert seed([], "", "0b1f7c2e-1234-4abc-9def-0123456789ab", True) == []  # a service principal isn't an operator
+    assert seed([], "a@x.com, b@x.com,a@x.com", "me@x.com", False) == ["a@x.com", "b@x.com"]  # moved from the app
+    assert seed(["a@x.com"], "b@x.com", "me@x.com", False) == []  # the app owns the list after the first install
+    grants = H["operator_grants"]("main", "ug_migration", APP_SP)
+    assert grants[-1] == f"GRANT SELECT, MODIFY ON TABLE `main`.`ug_migration`.ug_migration_operators TO `{APP_SP}`"
+    assert not any("ALL PRIVILEGES" in g or "CREATE" in g for g in grants)
 
 
 def test_fresh_install_creates_everything_and_says_what_next(monkeypatch):
     ws = FakeWS()
-    res = run_notebook(monkeypatch, ws, install_widgets())
+    res = run_notebook(monkeypatch, ws, install_call())
     assert not res.raised, res.status
     assert APP in ws.apps and ws.apps[APP].url == f"https://{APP}.example.app"
     assert {j.name for j in ws.jobs.values()} == {f"[{APP}] Unity Gateway migration {t}" for t in
@@ -892,37 +960,84 @@ def test_fresh_install_creates_everything_and_says_what_next(monkeypatch):
     assert "Compute > Apps > ug-migration-toolkit" in text
     assert "First steps" in text and "Start scan" in text
     assert "paused" in text and "unpause" in text
-    assert "Advanced: Allowed secret schemas" in text  # how to turn on secret mapping
+    assert "with secret_schemas" in text  # how to turn on secret mapping
+    assert ws.tables["main.ug_migration.ug_migration_operators"] == [{"email": ME, "added_by": ME}]
+    assert ("sql", f"GRANT SELECT, MODIFY ON TABLE `main`.`ug_migration`.ug_migration_operators TO `{APP_SP}`"[:100]) \
+        in ws.log
+    env = {e.name: e.value for e in ws.apps[APP].active_deployment.env_vars}
+    assert env["OPERATORS"] == ""  # the app reads them from the table
+    assert "add or remove operators in the app: Settings" in text
     # The apply target doesn't exist in this workspace: the exact SQL is printed and nothing is created for it.
     assert "CREATE SCHEMA IF NOT EXISTS `ai_gateway`.`migrated`;" in text
     assert "GRANT USE SCHEMA, CREATE SERVICE ON SCHEMA `ai_gateway`.`migrated`" in text
     assert "ai_gateway.migrated" not in ws.schemas and "ai_gateway.migrated" not in ws.catalogs
 
 
-def test_install_refuses_without_a_catalog_and_changes_nothing(monkeypatch):
+def test_install_with_no_settings_uses_the_default_catalog_and_the_running_warehouse(monkeypatch):
     ws = FakeWS()
-    res = run_notebook(monkeypatch, ws, {"action": "install", "warehouse": WH_LABEL})
-    assert res.raised and "choose Install: Results catalog" in res.status
+    ws.warehouses["ffff0000"] = {"name": "other", "state": "STOPPED"}
+    res = run_notebook(monkeypatch, ws)  # the settings cell as shipped: install(catalog=None, warehouse=None)
+    assert not res.raised, res.status
+    assert "results catalog (the workspace's default): main" in res.text and "main.ug_migration" in ws.schemas
+    assert ws.apps[APP].resources[0].sql_warehouse.id == WH_ID
+
+
+def test_install_refuses_without_a_usable_catalog_and_changes_nothing(monkeypatch):
+    ws = FakeWS()
+    ws.default_catalog = "hive_metastore"
+    res = run_notebook(monkeypatch, ws, {"action": "install"})
+    assert res.raised and "set catalog=" in res.status
     assert snapshot_of(ws) == snapshot_of(FakeWS()) and not ws.apps
 
 
-def test_several_warehouses_need_a_choice_and_one_is_preselected(monkeypatch):
+def test_several_running_warehouses_need_a_choice_and_an_update_keeps_its_own(monkeypatch):
     ws = FakeWS()
     ws.warehouses["ffff0000"] = {"name": "other", "state": "RUNNING"}
-    res = run_notebook(monkeypatch, ws, {"action": "install", "results_catalog": "main"})
-    assert res.raised and "choose Install: SQL warehouse" in res.status
+    res = run_notebook(monkeypatch, ws, {"action": "install"})
+    assert res.raised and "set warehouse=" in res.status and "other (ffff0000)" in res.status
     assert not ws.apps
-    ws2 = FakeWS()  # one warehouse: no choice needed
-    res2 = run_notebook(monkeypatch, ws2, {"action": "install", "results_catalog": "main"})
+    assert not run_notebook(monkeypatch, ws, {"action": "install", "warehouse": "other"}).raised
+    res2 = run_notebook(monkeypatch, ws, {"action": "install"})  # the update keeps the warehouse it has
     assert not res2.raised, res2.status
-    assert APP in ws2.apps
+    assert ws.apps[APP].resources[0].sql_warehouse.id == "ffff0000"
+
+
+def test_a_setting_of_the_wrong_type_stops_before_anything_changes(monkeypatch):
+    ws = FakeWS()
+    res = run_notebook(monkeypatch, ws, install_call(drop_data=True, adopt_app="yes"))
+    assert res.raised and "TypeError" in res.status  # install() has no drop_data
+    res = run_notebook(monkeypatch, ws, install_call(adopt_app="yes"))
+    assert res.raised and "adopt_app must be True or False" in res.status and not ws.apps
+
+
+def test_update_moves_operators_from_the_app_into_the_table_once(monkeypatch):
+    ws = FakeWS()
+    seed_install(ws)
+    ws.tables.pop("main.ug_migration.ug_migration_operators", None)  # installed by a version without the table
+    ws.apps[APP].active_deployment.env_vars.append(apps.EnvVar(name="OPERATORS", value="a@x.com,b@x.com"))
+    assert not run_notebook(monkeypatch, ws, install_call()).raised
+    assert [r["email"] for r in ws.tables["main.ug_migration.ug_migration_operators"]] == ["a@x.com", "b@x.com"]
+    ws.tables["main.ug_migration.ug_migration_operators"].pop()  # an admin removed b in the app
+    res = run_notebook(monkeypatch, ws, install_call())
+    assert not res.raised, res.status
+    assert [r["email"] for r in ws.tables["main.ug_migration.ug_migration_operators"]] == ["a@x.com"]  # not re-added
+
+
+def test_without_the_grants_the_operators_stay_on_the_app(monkeypatch):
+    ws = FakeWS()
+    ws.grant_fails = True
+    res = run_notebook(monkeypatch, ws, install_call())
+    assert not res.raised, res.status
+    env = {e.name: e.value for e in ws.apps[APP].active_deployment.env_vars}
+    assert env["OPERATORS"] == ME  # the install still works
+    assert f"GRANT USE CATALOG ON CATALOG `main` TO `{APP_SP}`" in res.text and "Settings in the app can't" in res.text
 
 
 def test_rerun_keeps_job_ids(monkeypatch):
     ws = FakeWS()
-    assert not run_notebook(monkeypatch, ws, install_widgets()).raised
+    assert not run_notebook(monkeypatch, ws, install_call()).raised
     ids = sorted(ws.jobs)
-    res = run_notebook(monkeypatch, ws, install_widgets())
+    res = run_notebook(monkeypatch, ws, install_call())
     assert not res.raised and sorted(ws.jobs) == ids
     assert any(e[0] == "update_app" for e in ws.log)
 
@@ -930,7 +1045,7 @@ def test_rerun_keeps_job_ids(monkeypatch):
 def test_stopped_warehouse_is_started_before_the_checks(monkeypatch):
     ws = FakeWS()
     ws.warehouses[WH_ID]["state"] = "STOPPED"
-    res = run_notebook(monkeypatch, ws, install_widgets())
+    res = run_notebook(monkeypatch, ws, install_call())
     assert not res.raised, res.status
     assert ("start_warehouse", WH_ID) in ws.log
     assert "starting SQL warehouse" in res.text
@@ -940,7 +1055,7 @@ def test_warehouse_that_wont_start_reports_its_state(monkeypatch):
     ws = FakeWS()
     ws.warehouses[WH_ID]["state"] = "STOPPED"
     ws.start_fails = True
-    res = run_notebook(monkeypatch, ws, install_widgets())
+    res = run_notebook(monkeypatch, ws, install_call())
     assert res.raised and "is STOPPED, not RUNNING" in res.status
     assert not ws.apps
 
@@ -948,7 +1063,7 @@ def test_warehouse_that_wont_start_reports_its_state(monkeypatch):
 def test_each_system_table_is_probed_and_a_missing_grant_is_named(monkeypatch):
     ws = FakeWS()
     ws.denied = {"system.serving.endpoint_usage", "system.access.workspaces_latest"}
-    res = run_notebook(monkeypatch, ws, install_widgets())
+    res = run_notebook(monkeypatch, ws, install_call())
     assert res.raised
     probes = [e[1] for e in ws.log if e[0] == "sql_warehouse" and e[1].startswith("SELECT 1 FROM system.")]
     assert len(probes) == 4  # all four tables the snapshot and scans read
@@ -961,7 +1076,7 @@ def test_each_system_table_is_probed_and_a_missing_grant_is_named(monkeypatch):
 def test_missing_create_schema_privilege_gives_the_exact_fix(monkeypatch):
     ws = FakeWS()
     ws.no_create = {"main"}
-    res = run_notebook(monkeypatch, ws, install_widgets())
+    res = run_notebook(monkeypatch, ws, install_call())
     assert res.raised
     assert (f"Ask the owner of catalog main (admins) to run: GRANT USE CATALOG, CREATE SCHEMA ON CATALOG `main` "
             f"TO `{ME}`") in res.status
@@ -972,7 +1087,7 @@ def test_folder_with_foreign_files_and_no_marker_is_refused(monkeypatch):
     ws = FakeWS()
     ws.files[f"{FOLDER}/my_notes.txt"] = b"mine"
     ws.dirs.add(FOLDER)
-    res = run_notebook(monkeypatch, ws, install_widgets())
+    res = run_notebook(monkeypatch, ws, install_call())
     assert res.raised and "won't touch them" in res.status
     assert ws.files[f"{FOLDER}/my_notes.txt"] == b"mine" and not ws.apps
 
@@ -981,7 +1096,7 @@ def test_home_folder_itself_is_never_the_install_folder(monkeypatch):
     ws = FakeWS()
     home = f"/Workspace/Users/{ME}"
     ws.files[f"{home}/files/my_notes.txt"] = b"mine"
-    res = run_notebook(monkeypatch, ws, install_widgets(install_folder=home))
+    res = run_notebook(monkeypatch, ws, install_call(folder=home))
     assert res.raised and "subfolder of /Workspace/Users/<you>/" in res.status
     assert ws.files[f"{home}/files/my_notes.txt"] == b"mine"
 
@@ -990,7 +1105,7 @@ def test_explicit_catalog_that_conflicts_with_existing_results_stops(monkeypatch
     ws = FakeWS()
     ws.catalogs["other"] = "admins"
     seed_install(ws)
-    res = run_notebook(monkeypatch, ws, install_widgets(results_catalog="other"))
+    res = run_notebook(monkeypatch, ws, install_call(catalog="other"))
     assert res.raised and "already keeps its results in main.ug_migration" in res.status
     assert "other.ug_migration" not in ws.schemas
 
@@ -998,7 +1113,7 @@ def test_explicit_catalog_that_conflicts_with_existing_results_stops(monkeypatch
 def test_blank_schema_adopts_the_existing_results(monkeypatch):
     ws = FakeWS()
     seed_install(ws)
-    res = run_notebook(monkeypatch, ws, install_widgets())
+    res = run_notebook(monkeypatch, ws, install_call())
     assert not res.raised, res.status
     assert "using the results schema of the existing install: main.ug_migration" in res.text
     assert "main.ug_migration" in ws.schemas
@@ -1008,13 +1123,13 @@ def test_bundle_jobs_without_an_app_tag_are_mentioned_not_named(monkeypatch):
     ws = FakeWS()
     seed_jobs_only(ws, "[dev admin] Unity Gateway migration apply",
                    {"tool": "ug-migration-toolkit", "Project": "unity-gateway-migration-toolkit"})
-    res = run_notebook(monkeypatch, ws, install_widgets())
+    res = run_notebook(monkeypatch, ws, install_call())
     assert not res.raised, res.status
     assert "Note: 1 toolkit job(s) deployed by the bundle have no app name" in res.text  # mentioned...
     assert "app dev admin" not in res.text and "'dev admin'" not in res.text  # ...never suggested as an app name
     assert APP in ws.apps and ws.apps[APP].description.startswith("Unity Gateway Migration Toolkit")
     # Uninstall of an unknown name lists only valid app names.
-    res2 = run_notebook(monkeypatch, ws, uninstall_widgets(app_name="nope"))
+    res2 = run_notebook(monkeypatch, ws, uninstall_call(app_name="nope"))
     assert res2.raised and "no install named nope; found: ug-migration-toolkit. Also 1 toolkit job(s)" in res2.status
     assert "app dev admin" not in res2.status  # the bundle job is mentioned, never suggested as an app name
 
@@ -1022,9 +1137,9 @@ def test_bundle_jobs_without_an_app_tag_are_mentioned_not_named(monkeypatch):
 def test_bundle_deployed_app_needs_adopt(monkeypatch):
     ws = FakeWS()
     seed_install(ws, app="ug-migration-bundle", folder=f"/Workspace/Users/{ME}/ug-migration-bundle-toolkit")
-    res = run_notebook(monkeypatch, ws, install_widgets(app_name="ug-migration-bundle"))
-    assert res.raised and "deployed by the bundle" in res.status and "Adopt existing app" in res.status
-    res2 = run_notebook(monkeypatch, ws, install_widgets(app_name="ug-migration-bundle", adopt_app="yes"))
+    res = run_notebook(monkeypatch, ws, install_call(app_name="ug-migration-bundle"))
+    assert res.raised and "deployed by the bundle" in res.status and "adopt_app=True" in res.status
+    res2 = run_notebook(monkeypatch, ws, install_call(app_name="ug-migration-bundle", adopt_app=True))
     assert not res2.raised, res2.status
 
 
@@ -1032,7 +1147,7 @@ def test_a_running_job_blocks_install_and_names_it(monkeypatch):
     ws = FakeWS()
     ids = seed_install(ws)
     ws.active.add(ids["snapshot"])
-    res = run_notebook(monkeypatch, ws, install_widgets())
+    res = run_notebook(monkeypatch, ws, install_call())
     assert res.raised and f"the job '[{APP}] Unity Gateway migration snapshot' has a run in progress" in res.status
     assert ws.log.count(("upload", f"{FOLDER}/files/notebook/run_account.py")) == 0
 
@@ -1041,7 +1156,7 @@ def test_uninstall_preview_changes_nothing(monkeypatch):
     ws = FakeWS()
     seed_install(ws, pending=[(A1, 2, RUN1)], logs=[A1])
     before = snapshot_of(ws)
-    res = run_notebook(monkeypatch, ws, uninstall_widgets(action="uninstall: preview"))
+    res = run_notebook(monkeypatch, ws, uninstall_call(action="uninstall: preview"))
     assert not res.raised and "uninstall preview: nothing changed" in res.status
     assert snapshot_of(ws) == before and ws.log.count(("rollback", A1, "SUCCEEDED")) == 0
     assert "Uninstall removes" in res.text and "Nothing was changed" in res.text
@@ -1051,7 +1166,7 @@ def test_uninstall_rolls_back_newest_first_and_removes_only_toolkit_paths(monkey
     ws = FakeWS()
     seed_install(ws, pending=[(A1, 2, RUN1), (A2, 1, RUN2)], logs=[A1, A2])
     ws.files[f"{FOLDER}/my_notes.txt"] = b"not the toolkit's"
-    res = run_notebook(monkeypatch, ws, uninstall_widgets(rollback_services="yes"))
+    res = run_notebook(monkeypatch, ws, uninstall_call(rollback_services=True))
     assert not res.raised, res.status
     rolled = [e[1] for e in ws.log if e[0] == "rollback"]
     assert rolled == [A2, A1]  # newest first
@@ -1068,7 +1183,7 @@ def test_needs_attention_is_retried_not_fatal(monkeypatch):
     ws = FakeWS()
     seed_install(ws, pending=[(A1, 2, RUN1), (A2, 1, RUN2)], logs=[A1, A2])
     ws.rollback_script[A2] = ["NEEDS_ATTENTION", "SUCCEEDED"]
-    res = run_notebook(monkeypatch, ws, uninstall_widgets(rollback_services="yes"))
+    res = run_notebook(monkeypatch, ws, uninstall_call(rollback_services=True))
     assert not res.raised, res.status
     assert [e[1] for e in ws.log if e[0] == "rollback"] == [A2, A1, A2]
     assert "pass 1 made progress" in res.text
@@ -1079,7 +1194,7 @@ def test_rollback_that_makes_no_progress_stops_with_the_run_ids(monkeypatch):
     ws = FakeWS()
     seed_install(ws, pending=[(A1, 2, RUN1)], logs=[A1])
     ws.rollback_script[A1] = ["FAILED"]
-    res = run_notebook(monkeypatch, ws, uninstall_widgets(rollback_services="yes"))
+    res = run_notebook(monkeypatch, ws, uninstall_call(rollback_services=True))
     assert res.raised and "didn't finish (the last pass made no progress)" in res.status
     assert A1 in res.status and "rollback --log" in res.status
     assert ws.jobs and f"{FOLDER}/ug_migration_toolkit.marker" in ws.files  # nothing else was removed
@@ -1095,7 +1210,7 @@ def test_uninstall_runs_a_rollback_dry_run_first_and_cites_it(monkeypatch):
     """The job refuses a rollback that doesn't cite a finished rollback dry run (0.10.3): uninstall must run one."""
     ws = FakeWS()
     seed_install(ws, pending=[(A1, 2, RUN1)], logs=[A1])
-    res = run_notebook(monkeypatch, ws, uninstall_widgets(rollback_services="yes"))
+    res = run_notebook(monkeypatch, ws, uninstall_call(rollback_services=True))
     assert not res.raised, res.status
     assert _attempts(ws, A1) == ["rollback_dry_run", "rollback"]
     applies = ws.tables["main.ug_migration.ug_migration_applies"]
@@ -1132,7 +1247,7 @@ def test_uninstall_goes_on_when_the_dry_run_only_keeps_objects(monkeypatch):
     ws = FakeWS()
     seed_install(ws, pending=[(A1, 2, RUN1)], logs=[A1])
     ws.dry_script[A1] = [("NEEDS_ATTENTION", {"would_delete": 1, "kept": 2, "kept_other_run": 2})]
-    res = run_notebook(monkeypatch, ws, uninstall_widgets(rollback_services="yes"))
+    res = run_notebook(monkeypatch, ws, uninstall_call(rollback_services=True))
     assert not res.raised, res.status
     assert _attempts(ws, A1) == ["rollback_dry_run", "rollback"]
 
@@ -1142,7 +1257,7 @@ def test_uninstall_stops_when_the_dry_run_had_errors_and_says_why(monkeypatch):
     ws = FakeWS()
     seed_install(ws, pending=[(A1, 2, RUN1)], logs=[A1])
     ws.dry_script[A1] = [("NEEDS_ATTENTION", {"would_delete": 1, "error": 1})]
-    res = run_notebook(monkeypatch, ws, uninstall_widgets(rollback_services="yes"))
+    res = run_notebook(monkeypatch, ws, uninstall_call(rollback_services=True))
     assert res.raised and "rollback refused after its dry run" in res.status and A1 in res.status
     assert "latest run of Jobs > [ug-migration-toolkit] Unity Gateway migration apply" in res.status
     assert "open the app's Apply page" not in res.status  # the app is stopped by then
@@ -1154,7 +1269,7 @@ def test_uninstall_stops_when_the_dry_run_failed(monkeypatch):
     ws = FakeWS()
     seed_install(ws, pending=[(A1, 2, RUN1)], logs=[A1])
     ws.dry_script[A1] = [("FAILED", {})]
-    res = run_notebook(monkeypatch, ws, uninstall_widgets(rollback_services="yes"))
+    res = run_notebook(monkeypatch, ws, uninstall_call(rollback_services=True))
     assert res.raised and "rollback dry run FAILED" in res.status
     assert _attempts(ws, A1) == ["rollback_dry_run"]  # no rollback after a failed dry run
 
@@ -1164,7 +1279,7 @@ def test_uninstall_retries_with_a_new_dry_run_each_pass(monkeypatch):
     ws = FakeWS()
     seed_install(ws, pending=[(A1, 2, RUN1), (A2, 1, RUN2)], logs=[A1, A2])
     ws.rollback_script[A1] = ["NEEDS_ATTENTION", "SUCCEEDED"]  # A2 succeeds in pass 1: progress, so pass 2 runs
-    res = run_notebook(monkeypatch, ws, uninstall_widgets(rollback_services="yes"))
+    res = run_notebook(monkeypatch, ws, uninstall_call(rollback_services=True))
     assert not res.raised, res.status
     assert _attempts(ws, A1) == ["rollback_dry_run", "rollback", "rollback_dry_run", "rollback"]
     ids = [r["dry_run_id"] for r in ws.tables["main.ug_migration.ug_migration_applies"]
@@ -1206,14 +1321,14 @@ def test_uninstall_counts_a_run_that_kept_only_a_shared_object_as_rolled_back(mo
     seed_install(ws, pending=[(A1, 2, RUN1)], logs=[A1])
     ws.rollback_script[A1] = ["NEEDS_ATTENTION"]
     ws.rollback_summary[A1] = _summary(kept=1, kept_other_run=1)
-    res = run_notebook(monkeypatch, ws, uninstall_widgets(rollback_services="yes"))
+    res = run_notebook(monkeypatch, ws, uninstall_call(rollback_services=True))
     assert not res.raised, res.status
     assert _attempts(ws, A1) == ["rollback_dry_run", "rollback"]  # one pass was enough
     # A kept object nothing explains still keeps it pending.
     ws2 = FakeWS()
     seed_install(ws2, pending=[(A1, 2, RUN1)], logs=[A1])
     ws2.rollback_script[A1] = ["NEEDS_ATTENTION"]
-    res = run_notebook(monkeypatch, ws2, uninstall_widgets(rollback_services="yes"))
+    res = run_notebook(monkeypatch, ws2, uninstall_call(rollback_services=True))
     assert res.raised and "didn't finish" in res.status
 
 
@@ -1223,9 +1338,9 @@ def test_uninstall_can_be_run_again_after_it_stopped_the_app(monkeypatch):
     ws = FakeWS()
     seed_install(ws, pending=[(A1, 2, RUN1)], logs=[A1])
     ws.rollback_script[A1] = ["FAILED", "SUCCEEDED"]
-    first = run_notebook(monkeypatch, ws, uninstall_widgets(rollback_services="yes"))
+    first = run_notebook(monkeypatch, ws, uninstall_call(rollback_services=True))
     assert first.raised and ws.apps[APP].compute_status.state == apps.ComputeState.STOPPED
-    second = run_notebook(monkeypatch, ws, uninstall_widgets(rollback_services="yes"))
+    second = run_notebook(monkeypatch, ws, uninstall_call(rollback_services=True))
     assert not second.raised, second.status
     assert APP not in ws.apps  # removed this time
     assert [e for e in ws.log if e[0] == "stop_app"] == [("stop_app", APP)]  # stopped once, not twice
@@ -1235,7 +1350,7 @@ def test_uninstall_waits_for_an_app_that_is_still_starting(monkeypatch):
     ws = FakeWS()
     seed_install(ws, pending=[(A1, 2, RUN1)], logs=[A1])
     ws.apps[APP].compute_status = apps.ComputeStatus(state=apps.ComputeState.STARTING)
-    res = run_notebook(monkeypatch, ws, uninstall_widgets(rollback_services="yes"))
+    res = run_notebook(monkeypatch, ws, uninstall_call(rollback_services=True))
     assert res.raised and "Nothing was changed" in res.status and "STARTING" in res.status
     assert ws.jobs and not [e for e in ws.log if e[0] in ("rollback", "rollback_dry_run", "delete_job")]
 
@@ -1244,7 +1359,7 @@ def test_timeout_says_still_running_and_how_to_continue(monkeypatch):
     ws = FakeWS()
     seed_install(ws, pending=[(A1, 2, RUN1)], logs=[A1])
     ws.rollback_script[A1] = ["TIMEOUT"]
-    res = run_notebook(monkeypatch, ws, uninstall_widgets(rollback_services="yes"))
+    res = run_notebook(monkeypatch, ws, uninstall_call(rollback_services=True))
     assert res.raised
     assert "still running: wait for it to finish (Jobs > [ug-migration-toolkit] Unity Gateway migration apply) and run " \
            "uninstall again" in res.status
@@ -1261,7 +1376,7 @@ def test_up_to_three_passes_then_stop(monkeypatch):
     ws.rollback_script[A2] = ["SUCCEEDED"]
     ws.rollback_script[a3] = ["NEEDS_ATTENTION", "SUCCEEDED"]
     ws.rollback_script[a4] = ["NEEDS_ATTENTION", "NEEDS_ATTENTION", "SUCCEEDED"]
-    res = run_notebook(monkeypatch, ws, uninstall_widgets(rollback_services="yes"))
+    res = run_notebook(monkeypatch, ws, uninstall_call(rollback_services=True))
     assert res.raised and "still pending after 3 passes" in res.status
     assert [e[1] for e in ws.log if e[0] == "rollback"].count(A1) == 3
     assert res.text.count("made progress") == 2
@@ -1271,7 +1386,7 @@ def test_drop_with_services_kept_and_logs_removed_is_refused(monkeypatch):
     ws = FakeWS()
     seed_install(ws, pending=[(A1, 2, RUN1)], logs=[A1])
     before = snapshot_of(ws)
-    res = run_notebook(monkeypatch, ws, uninstall_widgets(drop_data="yes", remove_logs="yes"))
+    res = run_notebook(monkeypatch, ws, uninstall_call(drop_data=True, remove_logs=True))
     assert res.raised and "the apply logs are needed" in res.status
     assert snapshot_of(ws) == before and ws.apps
 
@@ -1279,7 +1394,7 @@ def test_drop_with_services_kept_and_logs_removed_is_refused(monkeypatch):
 def test_drop_with_services_kept_warns_and_prints_the_rollback_command(monkeypatch):
     ws = FakeWS()
     seed_install(ws, pending=[(A1, 2, RUN1)], logs=[A1])
-    res = run_notebook(monkeypatch, ws, uninstall_widgets(drop_data="yes"))
+    res = run_notebook(monkeypatch, ws, uninstall_call(drop_data=True))
     assert not res.raised, res.status
     assert "WARNING: the results tables are removed while 1 apply run(s) keep their services" in res.text
     assert f'rollback --log "{FOLDER}/apply_logs/{A1}.jsonl"' in res.text
@@ -1295,7 +1410,7 @@ def test_drop_is_refused_when_the_results_schema_is_shared(monkeypatch):
         "tool": "ug-migration-toolkit", "Project": "unity-gateway-migration-toolkit", "app": "other", "role": "scan"},
         path="/Workspace/Users/x/other/files/notebook/run_scan")
     ws.jobs[other].parameters = [jobs.JobParameterDefinition("results_schema", "main.ug_migration")]
-    res = run_notebook(monkeypatch, ws, uninstall_widgets(drop_data="yes"))
+    res = run_notebook(monkeypatch, ws, uninstall_call(drop_data=True))
     assert res.raised and "is shared with the toolkit install of app other" in res.status
     assert APP in ws.apps and "main.ug_migration.ug_migration_applies" in ws.tables
 
@@ -1303,7 +1418,7 @@ def test_drop_is_refused_when_the_results_schema_is_shared(monkeypatch):
 def test_uninstall_of_an_unknown_name_stops_and_lists_the_installs(monkeypatch):
     ws = FakeWS()
     seed_install(ws)
-    res = run_notebook(monkeypatch, ws, uninstall_widgets(app_name="does-not-exist"))
+    res = run_notebook(monkeypatch, ws, uninstall_call(app_name="does-not-exist"))
     assert res.raised and "no install named does-not-exist; found: ug-migration-toolkit" in res.status
     assert APP in ws.apps and "Done." not in res.text
 
@@ -1312,7 +1427,7 @@ def test_uninstall_keeps_files_when_the_marker_is_not_this_apps(monkeypatch):
     ws = FakeWS()
     seed_install(ws)
     ws.files[f"{FOLDER}/ug_migration_toolkit.marker"] = json.dumps({"app": "someone-else"}).encode()
-    res = run_notebook(monkeypatch, ws, uninstall_widgets())
+    res = run_notebook(monkeypatch, ws, uninstall_call())
     assert not res.raised, res.status
     assert "kept the files in " + FOLDER in res.text
     # Nothing in the folder is deleted without this app's marker; the app and jobs still go.
@@ -1323,7 +1438,7 @@ def test_uninstall_keeps_files_when_the_marker_is_not_this_apps(monkeypatch):
 def test_drop_keeps_a_schema_the_toolkit_did_not_create(monkeypatch):
     ws = FakeWS()
     seed_install(ws, schema_comment="my team's schema")
-    res = run_notebook(monkeypatch, ws, uninstall_widgets(drop_data="yes"))
+    res = run_notebook(monkeypatch, ws, uninstall_call(drop_data=True))
     assert not res.raised, res.status
     assert "kept schema main.ug_migration (the toolkit didn't create it)" in res.text
     assert "main.ug_migration" in ws.schemas and "main.ug_migration.ug_migration_applies" not in ws.tables
@@ -1333,10 +1448,10 @@ def test_reinstall_right_after_uninstall_waits_for_the_app_to_go(monkeypatch):
     ws = FakeWS()
     seed_install(ws)
     ws.deleting_polls = 2
-    assert not run_notebook(monkeypatch, ws, uninstall_widgets()).raised
+    assert not run_notebook(monkeypatch, ws, uninstall_call()).raised
     assert APP not in ws.apps and APP not in ws.pending_delete  # the uninstall waited until the name was free
     ws.deleting_polls = 0
-    res = run_notebook(monkeypatch, ws, install_widgets())
+    res = run_notebook(monkeypatch, ws, install_call())
     assert not res.raised, res.status
     assert APP in ws.apps and ws.apps[APP].compute_status.state == apps.ComputeState.ACTIVE
 
@@ -1344,7 +1459,7 @@ def test_reinstall_right_after_uninstall_waits_for_the_app_to_go(monkeypatch):
 def test_install_leaves_a_schema_comment_it_did_not_make(monkeypatch):
     ws = FakeWS()
     ws.schemas["main.ug_migration"] = {"owner": ME, "comment": "my team's schema"}
-    res = run_notebook(monkeypatch, ws, install_widgets())
+    res = run_notebook(monkeypatch, ws, install_call())
     assert not res.raised, res.status
     assert ws.schemas["main.ug_migration"]["comment"] == "my team's schema"
 
@@ -1365,33 +1480,30 @@ def test_cutover_job_parameters_and_the_deadline_reach_the_jobs_and_app():
     assert "YYYY-MM-DD" in H["valid_deadline"]("30/03/2027")
 
 
-def test_legacy_deadline_widget_is_labelled_validated_and_passed_on(monkeypatch):
+def test_legacy_deadline_is_validated_and_passed_on(monkeypatch):
     ws = FakeWS()
-    res = run_notebook(monkeypatch, ws, install_widgets(deadline="next spring"))
-    assert res.raised and "Legacy deadline must be a date as YYYY-MM-DD" in res.status
+    res = run_notebook(monkeypatch, ws, install_call(deadline="next spring"))
+    assert res.raised and "deadline must be a date as YYYY-MM-DD" in res.status
     assert not ws.apps  # nothing created for a bad date
-    res2 = run_notebook(monkeypatch, ws, install_widgets(deadline="2027-06-01"))
+    res2 = run_notebook(monkeypatch, ws, install_call(deadline="2027-06-01"))
     assert not res2.raised, res2.status
-    assert res2.labels["deadline"].startswith("Advanced:")
     env = {e.name: e.value for e in ws.apps[APP].active_deployment.env_vars}
     assert env["UGMIG_DEADLINE"] == "2027-06-01"
     snap = [j for j in ws.jobs.values() if j.tags["role"] == "snapshot"][0]
     assert {p.name: p.default for p in snap.parameters}["deadline"] == "2027-06-01"
 
 
-def test_service_principal_install_needs_operators(monkeypatch):
+def test_service_principal_install_has_no_operator_until_an_admin_adds_one(monkeypatch):
     ws = FakeWS(me="0b1f7c2e-1234-4abc-9def-0123456789ab")
-    res = run_notebook(monkeypatch, ws, install_widgets())
-    assert res.raised and "set Install: Operators" in res.status
-    res2 = run_notebook(monkeypatch, ws, install_widgets(operators="boss@example.com"))
-    assert not res2.raised, res2.status
-    env = {e.name: e.value for e in ws.apps[APP].active_deployment.env_vars}
-    assert env["OPERATORS"] == "boss@example.com"
+    res = run_notebook(monkeypatch, ws, install_call())
+    assert not res.raised, res.status
+    assert ws.tables["main.ug_migration.ug_migration_operators"] == []
+    assert "Operators: (none)" in res.text and "Settings" in res.text
 
 
 def test_install_job_parameters_match_the_contract(monkeypatch):
     ws = FakeWS()
-    assert not run_notebook(monkeypatch, ws, install_widgets()).raised
+    assert not run_notebook(monkeypatch, ws, install_call()).raised
     by_role = {j.tags["role"]: {p.name: p.default for p in j.parameters} for j in ws.jobs.values()}
     assert by_role["apply"]["smoke_test"] == "false" and by_role["apply"]["force"] == "false"
     assert by_role["apply"]["grants"] == "false"
@@ -1415,38 +1527,37 @@ def test_job_specs_run_as_a_service_principal_or_the_installer():
 
 def test_install_with_run_as_sets_the_jobs_and_shares_the_folder(monkeypatch):
     ws = FakeWS()
-    res = run_notebook(monkeypatch, ws, install_widgets(run_as=SP_ID))
+    res = run_notebook(monkeypatch, ws, install_call(run_as=SP_ID))
     assert not res.raised, res.status
-    assert res.labels["run_as"].startswith("Advanced:") and "blank = jobs run as you" in res.labels["run_as"]
     assert all(j.run_as == jobs.JobRunAs(service_principal_name=SP_ID) for j in ws.jobs.values())
     ((typ, _, acl),) = ws.permission_updates
     assert typ == "directories" and acl[0].service_principal_name == SP_ID
     assert f"Jobs run as service principal {SP_ID}" in res.text
-    bad = run_notebook(monkeypatch, FakeWS(), install_widgets(run_as="not-a-uuid"))
+    bad = run_notebook(monkeypatch, FakeWS(), install_call(run_as="not-a-uuid"))
     assert bad.raised and "application ID" in bad.status
 
 
 def test_install_with_run_as_stops_early_without_the_service_principal_user_role(monkeypatch):
     ws = FakeWS()
     ws.sp_rules = [{"principals": [f"users/{ME}"], "role": "roles/servicePrincipal.manager"}]
-    res = run_notebook(monkeypatch, ws, install_widgets(run_as=SP_ID))
+    res = run_notebook(monkeypatch, ws, install_call(run_as=SP_ID))
     assert res.raised and "Service principal: User" in res.status and "Manager isn't enough" in res.status
     assert not ws.jobs and not ws.apps and not ws.files  # nothing was changed
     ok = FakeWS()
     ok.sp_rules = [{"principals": [f"users/{ME}"], "role": "roles/servicePrincipal.user"}]
-    res2 = run_notebook(monkeypatch, ok, install_widgets(run_as=SP_ID))
+    res2 = run_notebook(monkeypatch, ok, install_call(run_as=SP_ID))
     assert not res2.raised, res2.status
 
 
 def test_a_failed_app_create_is_explained_and_the_next_install_recreates_it(monkeypatch):
     ws = FakeWS()
     ws.create_fail = "Failed to create app service principal due to error: RESOURCE_EXHAUSTED: too many principals"
-    res = run_notebook(monkeypatch, ws, install_widgets())
+    res = run_notebook(monkeypatch, ws, install_call())
     assert res.raised and "couldn't create app" in res.status and "RESOURCE_EXHAUSTED" in res.status
     assert "run the installer again" in res.status and ws.apps[APP].compute_status.state == apps.ComputeState.ERROR
     ws.create_fail = None
     ws.log.clear()
-    res2 = run_notebook(monkeypatch, ws, install_widgets())
+    res2 = run_notebook(monkeypatch, ws, install_call())
     assert not res2.raised, res2.status
     names = [e[0] for e in ws.log if e[0] in ("delete_app", "create_app", "update_app")]
     assert names == ["delete_app", "create_app"]
@@ -1454,7 +1565,7 @@ def test_a_failed_app_create_is_explained_and_the_next_install_recreates_it(monk
 
 
 def test_install_says_the_first_snapshot_is_account_wide_before_it_starts(monkeypatch):
-    res = run_notebook(monkeypatch, FakeWS(), install_widgets())
+    res = run_notebook(monkeypatch, FakeWS(), install_call())
     assert not res.raised, res.status
     text = res.text
     notice = text.index("every workspace in the account")
@@ -1467,10 +1578,10 @@ def test_app_update_errors_surface_and_only_a_missing_api_falls_back(monkeypatch
     ws = FakeWS()
     seed_install(ws)
     ws.update_error = sdk_errors.PermissionDenied("not allowed to update this app")
-    res = run_notebook(monkeypatch, ws, install_widgets())
+    res = run_notebook(monkeypatch, ws, install_call())
     assert res.raised and "PermissionDenied" in res.status and "not allowed" in res.status
     ws.update_error = sdk_errors.NotImplemented("no partial update here")
-    res2 = run_notebook(monkeypatch, ws, install_widgets())
+    res2 = run_notebook(monkeypatch, ws, install_call())
     assert not res2.raised, res2.status
     assert "updated app" in res2.text
 

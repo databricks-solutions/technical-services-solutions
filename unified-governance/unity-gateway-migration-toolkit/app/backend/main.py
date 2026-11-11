@@ -3,8 +3,9 @@
 - Reads results from Delta through a SQL warehouse as the signed-in user (user authorization,
   `sql` scope), so Unity Catalog permissions on the results schema apply.
 - Starts the account snapshot, workspace scan and apply jobs as the app's service principal,
-  which has CAN_MANAGE_RUN on those jobs only. Only the users listed in OPERATORS can start jobs;
-  everyone else with access to the app can only view results.
+  which has CAN_MANAGE_RUN on those jobs only. Only operators can start jobs; everyone else with access to the app
+  can only view results. Operators are in the results schema's operators table (workspace admins edit it in
+  Settings; the app reads and writes it as its service principal), plus any listed in OPERATORS.
 - Execute and rollback requests must carry an explicit confirmation word.
 
 Prototype from Databricks Shared Technical Services, provided as is.
@@ -50,7 +51,12 @@ RESULTS_SCHEMA = os.environ.get("RESULTS_SCHEMA", "")
 SNAPSHOT_PREFIX = os.environ.get("SNAPSHOT_PREFIX", "ug_migration")
 JOBS = {"snapshot": os.environ.get("SNAPSHOT_JOB_ID", ""), "scan": os.environ.get("SCAN_JOB_ID", ""),
         "apply": os.environ.get("APPLY_JOB_ID", "")}
+# Operators set on the deployment (the bundle's operators variable, or the installer when it couldn't grant the app
+# access to the operators table). They can't be removed in Settings.
 OPERATORS = {e.strip().lower() for e in os.environ.get("OPERATORS", "").split(",") if e.strip()}
+OPERATORS_TABLE = "ug_migration_operators"
+OPERATORS_TTL_S = 30
+EMAIL_RE = re.compile(r"[^@\s,;`'\"]+@[^@\s,;`'\"]+\.[^@\s,;`'\"]+")
 IN_APP = bool(os.environ.get("DATABRICKS_APP_NAME"))  # set by Databricks Apps; unset when running locally
 APP_NAME = os.environ.get("DATABRICKS_APP_NAME", "")
 DEFAULT_APP_NAME = "ug-migration-toolkit"  # the installer's default; any other name is a second or test install
@@ -67,7 +73,7 @@ except ValueError:
     CENTRAL_WORKSPACES = []
 _HUB_ID: dict[str, str] = {"id": os.environ.get("UGMIG_HUB_WORKSPACE_ID", "").strip()}
 NOT_ALLOWLISTED = ("Workspace {ws} isn't in this app's central-mode allowlist. Re-run the installer with it in "
-                   "Advanced: Central mode: workspaces to manage.")
+                   "central_workspaces.")
 MAX_SCAN_AGE_DAYS = int(os.environ.get("UGMIG_MAX_SCAN_AGE_DAYS") or 14)
 EXPORT_ROW_LIMIT = 200_000
 IDENTITY_TTL_S = 300
@@ -108,6 +114,7 @@ app = FastAPI(title="Unity Gateway Migration")
 _sp: WorkspaceClient | None = None
 _identities: dict[str, tuple[float, str]] = {}  # sha256(token) -> (expires at, user name)
 _admins: dict[str, tuple[float, bool]] = {}  # sha256(token) -> (expires at, in the workspace admins group)
+_operators: dict[str, Any] = {"until": 0.0, "rows": [], "error": None}  # the operators table, read as the app
 _job_identities: dict[str, tuple[float, str]] = {}  # job kind -> (expires at, who its runs run as)
 _owners: dict[str, str] = {}  # job run id -> who started it, for runs this process started
 _started: dict[str, dict] = {}  # scan run id / apply id -> {"job_run_id", "at"}, for runs started but not yet stored
@@ -214,7 +221,7 @@ def require_run_access(request: Request, requested_by: Any) -> None:
     """A run's details and exports (results, request ids, replies, errors) are for the person who started it, the
     app's operators and workspace admins. Lists and the overview stay readable by everyone with access to the app."""
     user = who(request)
-    if LOCAL_DEV or user in OPERATORS or user == str(requested_by or "").strip().lower() or is_workspace_admin(request):
+    if LOCAL_DEV or user in operators() or user == str(requested_by or "").strip().lower() or is_workspace_admin(request):
         return
     raise HTTPException(403, "Only the person who started this run, the app's operators and workspace admins can "
                              "see its details and exports.")
@@ -242,9 +249,9 @@ def check_id(v: str, what: str) -> str:
 def require_operator(request: Request) -> None:
     if LOCAL_DEV:
         return
-    if who(request) not in OPERATORS:
+    if who(request) not in operators():
         raise HTTPException(403, "Only the app's operators can start scans, snapshots and apply runs. "
-                                 "Ask the person who installed the app to add you to the operators list.")
+                                 "Ask a workspace admin to add you in Settings.")
 
 
 def table(name: str) -> str:
@@ -264,7 +271,15 @@ def query(request: Request, sql: str, params: dict | None = None, missing_ok: bo
     """Rows of one SQL statement, run as the signed-in user. A missing table gives no rows (the toolkit's own tables
     before the first run). Checks on system tables pass missing_ok=False: they raise TableMissing instead, so a
     table the user can't see never reads as "no traffic"."""
-    w = user_client(request)
+    return _execute(user_client(request), sql, params, missing_ok)
+
+
+def app_query(sql: str, params: dict | None = None, missing_ok: bool = True) -> list[dict]:
+    """Like query, as the app's service principal. Only for the operators table, the one table it may read and edit."""
+    return _execute(sp(), sql, params, missing_ok)
+
+
+def _execute(w: WorkspaceClient, sql: str, params: dict | None, missing_ok: bool) -> list[dict]:
     resp = w.statement_execution.execute_statement(
         warehouse_id=WAREHOUSE_ID, statement=sql, wait_timeout="50s",
         parameters=[StatementParameterListItem(name=k, value=str(v)) for k, v in (params or {}).items()])
@@ -391,7 +406,78 @@ def starting_response(kind: str, item_id: str, job_run_id: str) -> JSONResponse:
 def whoami(request: Request) -> dict:
     user = verified_user(request)
     return {"email": user or "", "user_authorization": bool(request.headers.get("x-forwarded-access-token")),
-            "operator": bool(LOCAL_DEV or (user is not None and user in OPERATORS)), "workspace": sp().config.host}
+            "operator": bool(LOCAL_DEV or (user is not None and user in operators())), "workspace": sp().config.host}
+
+
+def operator_rows() -> list[dict]:
+    """The operators table, read as the app and kept for a few seconds. Unreadable or missing: no rows (fail closed),
+    and the reason is kept for Settings."""
+    now = time.time()
+    if _operators["until"] > now:
+        return _operators["rows"]
+    try:
+        rows, error = app_query(f"SELECT email, added_by, added_at FROM {table(OPERATORS_TABLE)} ORDER BY email",
+                                missing_ok=False), None
+    except TableMissing:
+        rows, error = [], ("The operators table doesn't exist, or the app can't read it: run the installer again (it "
+                           "creates the table and gives the app access).")
+    except HTTPException as e:
+        rows, error = [], str(e.detail)
+    _operators.update(until=now + OPERATORS_TTL_S, rows=rows, error=error)
+    return rows
+
+
+def operators() -> set[str]:
+    return OPERATORS | {str(r.get("email") or "").strip().lower() for r in operator_rows()}
+
+
+def _operator_list(request: Request) -> dict:
+    rows = operator_rows()
+    in_table = {str(r.get("email") or "").strip().lower(): r for r in rows}
+    listed = [{"email": e, "source": "app", "added_by": r.get("added_by"), "added_at": r.get("added_at")}
+              for e, r in sorted(in_table.items()) if e]
+    listed += [{"email": e, "source": "deployment"} for e in sorted(OPERATORS - set(in_table))]
+    return {"operators": listed, "can_edit": bool(LOCAL_DEV or is_workspace_admin(request)),
+            "error": _operators.get("error")}
+
+
+@app.get("/api/settings/operators")
+def list_operators(request: Request) -> dict:
+    who(request)
+    return _operator_list(request)
+
+
+class OperatorChange(BaseModel):
+    email: str = Field(max_length=254)
+    add: bool
+
+
+@app.post("/api/settings/operators")
+def change_operator(body: OperatorChange, request: Request) -> dict:
+    """Workspace admins add or remove an operator. The app writes the table as its service principal, with the
+    email as a bound parameter."""
+    user = who(request)
+    if not (LOCAL_DEV or is_workspace_admin(request)):
+        raise HTTPException(403, "Only workspace admins can change the operators.")
+    email = body.email.strip().lower()
+    if not EMAIL_RE.fullmatch(email):
+        raise HTTPException(400, "Enter one email address, like someone@example.com")
+    current = {str(r.get("email") or "").strip().lower() for r in operator_rows()}
+    if not body.add and email in OPERATORS and email not in current:
+        raise HTTPException(409, f"{email} is set on the app's deployment (OPERATORS), not here: remove it there "
+                                 "(the bundle's operators variable) and deploy again.")
+    if body.add and email in current or not body.add and email not in current:
+        return _operator_list(request)
+    sql = (f"INSERT INTO {table(OPERATORS_TABLE)} (email, added_by, added_at) VALUES (:email, :by, current_timestamp())"
+           if body.add else f"DELETE FROM {table(OPERATORS_TABLE)} WHERE lower(email) = :email")
+    try:
+        app_query(sql, {"email": email, "by": user} if body.add else {"email": email}, missing_ok=False)
+    except TableMissing:
+        raise HTTPException(409, "The operators table doesn't exist, or the app can't read it: run the installer "
+                                 "again (it creates the table and gives the app access).")
+    finally:
+        _operators["until"] = 0.0
+    return _operator_list(request)
 
 
 def hub_workspace_id() -> str:

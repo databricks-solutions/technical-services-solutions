@@ -33,7 +33,7 @@ from urllib.parse import urlsplit
 
 from databricks.sdk import WorkspaceClient
 
-__version__ = "0.10.3"
+__version__ = "0.11.0"
 DISCLAIMER = ("Prototype from Databricks Shared Technical Services, provided as is. It only reads unless you run apply or "
               "rollback, or snapshots; review results before acting.")
 

@@ -1,6 +1,6 @@
 # Unity Gateway Migration Toolkit: User Guide
 
-Version 0.10.3 (prototype)
+Version 0.11.0 (prototype)
 
 > Prototype from Databricks Shared Technical Services, provided as is. Planning and scans only read. Writes happen only when you start them. Review every result before you act on it.
 
@@ -11,6 +11,7 @@ Version 0.10.3 (prototype)
   - [Before you start](#before-you-start)
   - [Install the toolkit](#install-the-toolkit)
   - [Update and upgrade](#update-and-upgrade)
+  - [Upgrade notes: 0.10.3 to 0.11.0](#upgrade-notes-0103-to-0110)
   - [Upgrade notes: 0.10.2 to 0.10.3](#upgrade-notes-0102-to-0103)
   - [Upgrade notes: 0.10.1 to 0.10.2](#upgrade-notes-0101-to-0102)
   - [Upgrade notes: 0.10.0 to 0.10.1](#upgrade-notes-0100-to-0101)
@@ -34,7 +35,7 @@ Version 0.10.3 (prototype)
 - [7. Command line and bundle](#7-command-line-and-bundle)
 - [8. Reference](#8-reference)
   - [Deadline override](#deadline-override)
-  - [Installer widgets](#installer-widgets)
+  - [Installer settings](#installer-settings)
   - [Blockers and warnings](#blockers-and-warnings)
   - [Caller types](#caller-types)
   - [Typed confirmation words](#typed-confirmation-words)
@@ -106,8 +107,10 @@ A **legacy endpoint** is a v1 serving endpoint (`/serving-endpoints/<name>/invoc
 
 The installer notebook is the only file you import. It creates everything inside the workspace in about 5 minutes.
 
-1. Download `unity-gateway-migration-toolkit.zip` from the [release page](https://github.com/databricks-solutions/technical-services-solutions/releases/tag/unity-gateway-migration-toolkit-latest) and unzip it. In the workspace, go to your home folder, choose **Import**, and import `INSTALL_unity_gateway_migration_toolkit_0_10_3.py` from the zip's top folder.
-2. Open the notebook. Set **Install: Results catalog** (a catalog where you can create a schema) and **Install: SQL warehouse**. Leave the other widgets at their defaults ([Installer widgets](#installer-widgets)). If the widget panel shows widgets from an older installer, remove them once, then run again.
+1. In the workspace, go to your home folder, choose **Import**, then **URL**, and paste the installer's link:
+   `https://raw.githubusercontent.com/databricks-solutions/technical-services-solutions/main/unified-governance/unity-gateway-migration-toolkit/INSTALL_unity_gateway_migration_toolkit_0_11_0.py`
+   If the workspace can't reach GitHub, download `unity-gateway-migration-toolkit.zip` from the [release page](https://github.com/databricks-solutions/technical-services-solutions/releases/tag/unity-gateway-migration-toolkit-latest), unzip it, choose **Import**, and import `INSTALL_unity_gateway_migration_toolkit_0_11_0.py` from the zip's top folder.
+2. Open the notebook. The settings cell holds one call, `install(catalog=None, warehouse=None)`. Leave it for the defaults: the workspace's default catalog and the running SQL warehouse (an update keeps the ones the install has). Set a value to choose, for example `install(catalog="main", warehouse="Shared")`. The installer never guesses: with several running warehouses, or a default catalog that can't hold the results (`hive_metastore`), it stops and asks you to set one. Other settings are in [Installer settings](#installer-settings) and `help(install)`.
 3. Click **Run all**.
 
 It creates the toolkit files (default `/Workspace/Users/<you>/ug-migration-toolkit`), the results schema, three Lakeflow jobs (account snapshot, workspace scan and apply) and the **Unity Gateway Migration Toolkit** app.
@@ -116,7 +119,9 @@ It creates the toolkit files (default `/Workspace/Users/<you>/ug-migration-toolk
 
 **At the end** it prints the app link (**Compute > Apps > ug-migration-toolkit**), the job links and whether the first snapshot started. It also reports the target schema, that the weekly snapshot is paused, and that secret mapping is off.
 
-**Who the jobs run as.** You, unless you set **Advanced: Run jobs as service principal** to a service principal's application ID. Then all three jobs run as that service principal. You need its **Service principal: User** role (Settings > Identity and access > Service principals > the service principal > Permissions; creating the service principal only gives you Manager, and workspace admin isn't enough: the installer checks this before it changes anything). It needs the system table, results schema and target schema access in [Before you start](#before-you-start). The installer gives it CAN MANAGE on the install folder. Only people in **Install: Operators** can start jobs from the app.
+**Who the jobs run as.** You, unless you set `run_as=` to a service principal's application ID. Then all three jobs run as that service principal. You need its **Service principal: User** role (Settings > Identity and access > Service principals > the service principal > Permissions; creating the service principal only gives you Manager, and workspace admin isn't enough: the installer checks this before it changes anything). It needs the system table, results schema and target schema access in [Before you start](#before-you-start). The installer gives it CAN MANAGE on the install folder.
+
+**Operators.** Only operators can start jobs from the app. The first install makes you the first operator (a service principal running the installer isn't one). Workspace admins add and remove operators in the app, on the **Settings** tab. The list is the `ug_migration_operators` table in the results schema. The installer gives the app's service principal `SELECT` and `MODIFY` on that table only, plus `USE CATALOG` and `USE SCHEMA`. If you can't grant those (you don't own the catalog), the installer keeps the operators on the app instead, prints the `GRANT` statements for an owner to run, and Settings can't change them until you run the installer again. Anyone with `MODIFY` on the results schema (its owner, the jobs' identity) can also change the table, so keep that schema to the migration team.
 
 **The first snapshot is account-wide.** It reads account-wide system tables, so it covers every workspace in the account, not only this one. The installer says so before it starts the snapshot.
 
@@ -126,9 +131,9 @@ By default each workspace has its own install. In central mode, one install (the
 
 To turn it on, run the installer with:
 
-1. **Advanced: Run jobs as service principal** set to a service principal's application ID (you need its Service principal: User role, see [Who the jobs run as](#1-install)).
-2. **Advanced: Central mode: workspaces to manage** set to the workspace IDs to scan (comma-separated).
-3. **Advanced: Central mode: service principal OAuth secret** set to the `scope/key` of a secret that holds that service principal's OAuth client secret, in a scope the service principal can read.
+1. `run_as=` set to a service principal's application ID (you need its Service principal: User role, see [Who the jobs run as](#1-install)).
+2. `central_workspaces=` set to the workspace IDs to scan (a list, or text with commas).
+3. `central_secret=` set to the `scope/key` of a secret that holds that service principal's OAuth client secret, in a scope the service principal can read.
 
 Then add the service principal to each listed workspace as a workspace admin (an account admin can do it from the account console, or each workspace's admin by application ID). In each workspace it needs what the jobs need there: workspace admin (scan, pause, resume, tracking), `USE CATALOG`, `USE SCHEMA` and `CREATE SERVICE` on the target schema, `EXECUTE` on the services it tests, and READ on the secret scopes when it creates Unity Catalog secrets from workspace secrets (it reads that workspace's scopes).
 
@@ -142,12 +147,19 @@ Workspaces on the same metastore share Unity Catalog names: give each workspace 
 
 ### Update and upgrade
 
-Import the newer installer and run it with the same widgets. Results history is kept, and blank locations reuse the existing ones. The app keeps its settings, and the weekly snapshot keeps its paused or unpaused state. A downgrade is refused unless **Advanced: Allow downgrade** is `yes`.
+Import the newer installer and run it with the same settings. Results history is kept, and blank locations and the warehouse reuse the existing ones. The app keeps its settings and operators, and the weekly snapshot keeps its paused or unpaused state. A downgrade is refused unless `allow_downgrade=True`.
 
-- **From 0.8.0** (app `unity-gateway-migration`): the default name is now `ug-migration-toolkit`. To update in place, set **Install: App name** to `unity-gateway-migration`. To move to the new name, uninstall first (an app can't be renamed), then install.
+- **From 0.8.0** (app `unity-gateway-migration`): the default name is now `ug-migration-toolkit`. To update in place, set `app_name="unity-gateway-migration"`. To move to the new name, uninstall first (an app can't be renamed), then install.
 - **From 0.7.0** (app `ug-migration`): the same two choices apply.
 - **Bundle:** the app is now `ug-migration-bundle`. Run `databricks bundle plan` first. It creates a new app, so delete the old one by hand.
 - **Since 0.7.0:** grants are off by default, Execute needs a matching dry run, and scans older than 14 days and endpoints with legacy guardrails need confirmation or an acknowledgement. Account wave 0 is now `0: no legacy traffic`.
+
+#### Upgrade notes: 0.10.3 to 0.11.0
+
+- **No widgets.** The installer's settings are one `install(...)` call in its settings cell, and uninstall is `uninstall(preview=True)`, then `uninstall(preview=False)`. Import the 0.11.0 installer as a new notebook: old widgets don't carry over, and blank settings keep the existing install's catalog, schema, folder and warehouse.
+- **Defaults instead of placeholders.** `catalog=None` is the workspace's default catalog and `warehouse=None` the running warehouse on a first install. The installer stops and asks when it can't tell.
+- **Operators moved to the app.** The update moves the operators set on the app into the new `ug_migration_operators` table, once. Then workspace admins add and remove them in **Settings**. The installer no longer has an operators setting.
+- **Import by URL.** Workspace **Import > URL** with the installer's link on GitHub replaces download and unzip (the zip stays for workspaces without internet access).
 
 #### Upgrade notes: 0.10.2 to 0.10.3
 
@@ -198,7 +210,7 @@ Scan again: 0.10.1 finds more calls and fewer false ones. Tables and jobs don't 
 - **Notebooks.** Upload `ug_migration_*.py` and `notebook/` to a workspace folder, keeping the layout.
 - **Bundle.** See [Bundle](#bundle).
 
-Use one install method per workspace. For a second install side by side, set **Advanced: Allow a second install**. A second install shows a **Second install: <app name>** badge in the app header, so it's hard to confuse with the main one.
+Use one install method per workspace. For a second install side by side, set `second_install=True`. A second install shows a **Second install: <app name>** badge in the app header, so it's hard to confuse with the main one.
 
 ---
 
@@ -348,11 +360,11 @@ Apply creates provider services, model services and grants for **external model*
 1. **Target schema.** Choose it in the **Target schema for the new services** panel: it's prefilled from the scan (default `ai_gateway.migrated`), and you can change it without a new scan. The proposed service names follow what you type. Create the schema first: the apply identity needs `USE CATALOG`, `USE SCHEMA` and `CREATE SERVICE` on it. A dry run for one target doesn't unlock an execute for another.
 2. **Secrets.** Each new provider service needs its API key. Under **Provider API keys** choose one of:
    - **Reference Unity Catalog secrets (recommended):** name an existing Unity Catalog secret that holds each key, for example `"llm/openai": "secrets/ai_gateway.migrated.openai_key"`. It must be in an allowed secret schema (not necessarily the target schema), and the apply identity must be able to read it.
-   - **Create Unity Catalog secrets from the workspace secrets:** for endpoints that keep their key in a workspace secret (`{{secrets/scope/key}}`) and have no Unity Catalog secret yet. Pick a schema from the allowed secret schemas; the app proposes a name per secret (`<schema>.<scope>_<key>`), which you can change. The apply job reads each workspace secret with its own identity and stores the value in a new Unity Catalog secret, which the provider service then references. Values are never shown or logged. The dry run checks each workspace secret can be read (`would_create_secret`); execute creates them (`created_secret`). A secret that already exists under the chosen name is reused as is (`exists`; its value can't be compared, so check it holds the right key). Rollback deletes the secrets that run created, after the services that used them. Needs **Advanced: Allowed secret schemas**, and READ on each secret scope for the job identity.
-   - **Copy the workspace secret values into the provider service:** puts the key value itself into the provider service. Needs **Advanced: Allow reading secret values**. Keep it off unless you need it.
+   - **Create Unity Catalog secrets from the workspace secrets:** for endpoints that keep their key in a workspace secret (`{{secrets/scope/key}}`) and have no Unity Catalog secret yet. Pick a schema from the allowed secret schemas; the app proposes a name per secret (`<schema>.<scope>_<key>`), which you can change. The apply job reads each workspace secret with its own identity and stores the value in a new Unity Catalog secret, which the provider service then references. Values are never shown or logged. The dry run checks each workspace secret can be read (`would_create_secret`); execute creates them (`created_secret`). A secret that already exists under the chosen name is reused as is (`exists`; its value can't be compared, so check it holds the right key). Rollback deletes the secrets that run created, after the services that used them. Needs **`secret_schemas`** in the installer, and READ on each secret scope for the job identity.
+   - **Copy the workspace secret values into the provider service:** puts the key value itself into the provider service. Needs `allow_secret_read=True` in the installer. Keep it off unless you need it.
 
    An endpoint with a plaintext key (not a secret) is `manual`: the API hides the value, so store it as a Unity Catalog secret first.
-3. **Allowed secret schemas.** The schema of each secret must be in **Advanced: Allowed secret schemas**, or apply stops before any change.
+3. **Allowed secret schemas.** The schema of each secret must be in the installer's `secret_schemas`, or apply stops before any change.
 4. **Grants** are off unless you tick **Copy legacy endpoint permissions as EXECUTE / MANAGE grants**. Workspace-local `admins` and `users` are skipped and flagged.
 
 #### Dry run
@@ -478,18 +490,18 @@ To undo it, turn the setting off in the same place. Legacy pay-per-token calls w
 
 Before you uninstall, decide which Unity Gateway services to keep, usually the ones your callers use now. Uninstall removes the toolkit, not the services, unless you choose it.
 
-1. Set **Action** to `uninstall: preview` and run. It prints what would be removed and kept. Nothing changes.
-2. Set **Action** to `uninstall: remove` and run again.
+1. In the settings cell, replace the `install(...)` call with `uninstall(preview=True)` and run. It prints what would be removed and kept. Nothing changes. (For a second install, add `app_name=`.)
+2. Change it to `uninstall(preview=False)` and run again.
 
-Three **Uninstall** widgets, all `no` by default, choose what else goes:
+Three settings, all `False` by default, choose what else goes:
 
-- **Remove results tables.** `no` keeps the six `ug_migration_*` tables. `yes` drops them, and the schema if the toolkit made it and it's empty.
-- **Remove apply logs.** `no` keeps `<install folder>/apply_logs`, so kept services can be rolled back later.
-- **Roll back services created by apply.** `no` keeps the Unity Gateway services. `yes` rolls back every execute run still in place, before anything else is removed. For each run it first starts a rollback dry run, then the rollback that follows it (both with your user as `requested_by`). A run whose dry run fails, or has problems besides kept objects, stops the uninstall with its id and the reason.
+- **`drop_data`.** `False` keeps the seven `ug_migration_*` tables (results and operators). `True` drops them, and the schema if the toolkit made it and it's empty.
+- **`remove_logs`.** `False` keeps `<install folder>/apply_logs`, so kept services can be rolled back later.
+- **`rollback_services`.** `False` keeps the Unity Gateway services. `True` rolls back every execute run still in place, before anything else is removed. For each run it first starts a rollback dry run, then the rollback that follows it (both with your user as `requested_by`). A run whose dry run fails, or has problems besides kept objects, stops the uninstall with its id and the reason.
 
 **Always removed:** the app, its three jobs, the toolkit files and the install marker (the marker only when it names this app).
 
-**Refused, with nothing changed:** an app name that matches no install; a results schema or files shared with another install; removing apply logs while services are kept; dropping tables while an apply run has no log or still has services; a job with a run in progress; an app that isn't a toolkit app or was deployed by the bundle (set **Adopt existing app** to `yes`, or run `databricks bundle destroy`). **Allowed with a warning:** dropping tables while services are kept. The run prints the CLI rollback command for each apply run.
+**Refused, with nothing changed:** an app name that matches no install; a results schema or files shared with another install; removing apply logs while services are kept; dropping tables while an apply run has no log or still has services; a job with a run in progress; an app that isn't a toolkit app or was deployed by the bundle (set `adopt_app=True`, or run `databricks bundle destroy`). **Allowed with a warning:** dropping tables while services are kept. The run prints the CLI rollback command for each apply run.
 
 **A rollback that can't finish** stops the uninstall before anything else is removed. Wait for the run to finish (in Jobs), then run uninstall again. The app is left stopped.
 
@@ -623,9 +635,9 @@ databricks bundle destroy  -t dev --var ...                    # remove app, job
 |---|---|
 | `warehouse_id` | Warehouse the app reads results through |
 | `snapshot_catalog`, `snapshot_schema` | Where results go (must exist) |
-| `operators` | Users who can start runs. Dev defaults to you. Prod has no default, so pass `--var operators=...` |
+| `operators` | Users who can start runs. Dev defaults to you. Prod has no default, so pass `--var operators=...`. Workspace admins can add more in the app (**Settings**) once the operators table exists in the results schema |
 | `app_name` | Default `ug-migration-bundle`. Must differ from an installer app in the same workspace |
-| `secret_schemas`, `allow_secret_read_enabled` | Same meaning as the installer widgets |
+| `secret_schemas`, `allow_secret_read_enabled` | Same meaning as the installer's `secret_schemas` and `allow_secret_read` |
 | `deadline` | The legacy deadline, `YYYY-MM-DD`. Default: [the deadline](#the-deadline) |
 
 **Shared install (prod):** deploy while authenticated as a service principal with the [permissions](#before-you-start) above, so the jobs run as that principal. **Update:** unzip, run `databricks bundle plan`, then deploy with the same variables.
@@ -644,7 +656,7 @@ SELECT job_id, name FROM system.lakeflow.jobs WHERE tags['Project'] = 'unity-gat
 
 | Where | How to set it | Scope |
 |---|---|---|
-| Installer | Widget **Advanced: Legacy deadline (YYYY-MM-DD)** | Snapshot and scan jobs and the app. Run the installer again to change it |
+| Installer | `deadline="YYYY-MM-DD"` in `install(...)` | Snapshot and scan jobs and the app. Run the installer again to change it |
 | Bundle | Variable `deadline`, for example `--var deadline=2027-06-01` | Snapshot and scan jobs and the app |
 | CLI | `--deadline YYYY-MM-DD` on the planner and account view | That run only |
 | Environment | `UGMIG_DEADLINE=YYYY-MM-DD` | The default for the CLIs and the app |
@@ -652,31 +664,32 @@ SELECT job_id, name FROM system.lakeflow.jobs WHERE tags['Project'] = 'unity-gat
 
 For the CLIs the order is `--deadline`, then `UGMIG_DEADLINE`, then the built-in date. The value must be an ISO date, or the run stops before any call.
 
-### Installer widgets
+### Installer settings
 
-Exact labels and defaults, in order. Run the installer again with the same widgets to update.
+The settings cell calls `install(...)` or `uninstall(...)` with keyword arguments. A setting left out, or `None`, uses its default. A misspelled name stops the cell with a `TypeError`, and a value of the wrong type stops the install before anything changes. Run the installer again with the same settings to update.
 
-| # | Widget | Default | Notes |
-|---|---|---|---|
-| 1 | Action | `install` | `install`, `uninstall: preview` (changes nothing), `uninstall: remove` |
-| 2 | Install: Results catalog (a catalog where you can create a schema) | `<choose a catalog>` | Install stops until you pick one |
-| 3 | Install: SQL warehouse | the only warehouse, else `<choose a warehouse>` | A stopped warehouse is started |
-| 4 | Install: Operators (emails, comma-separated; blank = you) | blank | Required for a service principal |
-| 5 | Install: App name (2-30 lowercase letters, digits or hyphens) | `ug-migration-toolkit` | Can't be renamed later |
-| 6 | Advanced: Results schema (blank = ug_migration for the default app, else the app name with - as _) | blank | Blank reuses the schema of an existing install |
-| 7 | Advanced: Install folder (blank = your home folder/<app name> (ending -toolkit)) | blank | Default `/Workspace/Users/<you>/ug-migration-toolkit` |
-| 8 | Advanced: Adopt existing app (yes overwrites or deletes that app) | `no` | Also needed for an app or jobs the bundle deployed |
-| 9 | Advanced: Allow downgrade (an older version over a newer one) | `no` | |
-| 10 | Advanced: Allow a second install (other app name, results schema and install folder) | `no` | Needs its own results schema and folder |
-| 11 | Advanced: Allowed secret schemas (catalog.schema, comma-separated; blank = off) | blank | Blank keeps secret mapping off |
-| 12 | Advanced: Allow reading secret values (risk: apply copies legacy secret values, in plain text, into the new services; keep no unless needed) | `no` | |
-| 13 | Advanced: Legacy deadline (YYYY-MM-DD) | `2027-03-30` | Sets the job and app deadline. A bad date stops the install before anything is created |
-| 14 | Advanced: Run jobs as service principal (application ID; blank = jobs run as you) | blank | Must be an application ID (UUID). See [Who the jobs run as](#1-install) |
-| 15 | Advanced: Central mode: workspaces to manage (workspace IDs, comma-separated; blank = off) | blank | See [Central mode](#central-mode-optional-one-install-for-many-workspaces). Needs the run-as service principal |
-| 16 | Advanced: Central mode: service principal OAuth secret (secret scope/key holding the client secret; client ID comes from Run jobs as service principal) | blank | `scope/key` the service principal can read |
-| 17 | Uninstall: remove results tables (and the schema, if the toolkit made it and it's empty) | `no` | See [Uninstall](#6-uninstall-and-cleanup) |
-| 18 | Uninstall: remove apply logs (no = keep them, so kept services can be rolled back later) | `no` | |
-| 19 | Uninstall: roll back services created by apply (yes = remove them too) | `no` | |
+`install(...)`:
+
+| Setting | Default | Notes |
+|---|---|---|
+| `catalog` | the existing install's, else the workspace's default catalog | A catalog where you can create a schema. `hive_metastore`, `system` and `samples` aren't used |
+| `warehouse` | the existing install's, else the only running one, else the only one | A name or an ID. With several and none chosen, the install stops and lists them. A stopped warehouse is started |
+| `schema` | `ug_migration` for the default app, else the app name with `-` as `_` | Blank reuses the schema of an existing install |
+| `app_name` | `ug-migration-toolkit` | 2-30 lowercase letters, digits or hyphens. Can't be renamed later |
+| `folder` | `/Workspace/Users/<you>/<app name>` (ending `-toolkit`) | Blank reuses the folder of an existing install |
+| `run_as` | the jobs run as you | A service principal's application ID (UUID). See [Who the jobs run as](#1-install) |
+| `secret_schemas` | off | `catalog.schema` list apply may map Unity Catalog secrets from |
+| `allow_secret_read` | `False` | Risk: apply copies legacy secret values, in plain text, into the new services. Keep `False` unless needed |
+| `deadline` | `2027-03-30` | `YYYY-MM-DD`. Sets the job and app deadline. A bad date stops the install before anything is created |
+| `central_workspaces` | off | Workspace IDs. See [Central mode](#central-mode-optional-one-install-for-many-workspaces). Needs `run_as` |
+| `central_secret` | blank | `scope/key` holding the `run_as` service principal's OAuth client secret |
+| `adopt_app` | `False` | `True` overwrites an app of this name. Also needed for an app or jobs the bundle deployed |
+| `allow_downgrade` | `False` | `True` installs an older version over a newer one |
+| `second_install` | `False` | `True` allows a second install. Needs its own app name, results schema and folder |
+
+`uninstall(...)` takes `preview` (default `True`: changes nothing), `drop_data`, `remove_logs` and `rollback_services` (all `False`, see [Uninstall](#6-uninstall-and-cleanup)), `adopt_app`, and `catalog`, `warehouse`, `schema`, `app_name` and `folder` as above (blank finds them from the install).
+
+Operators aren't an installer setting: workspace admins change them in the app (**Settings**). See [Operators](#install-the-toolkit).
 
 ### Blockers and warnings
 
@@ -824,12 +837,13 @@ Grouped by where the problem shows up.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| "Install: Results catalog ... doesn't exist" | Catalog missing or not visible to you | Pick a catalog where you can create a schema |
-| "another toolkit install exists under app name ..." | A toolkit install (0.7.0, 0.8.0 or a bundle deploy) is present | Set **Install: App name** to that name to update it, uninstall it, or set **Allow a second install** |
+| "results catalog ... doesn't exist" or "set catalog=" | Catalog missing, not visible to you, or the default is `hive_metastore` | Set `catalog=` to a catalog where you can create a schema |
+| "set warehouse= to the name or ID of one of these SQL warehouses" | Several running warehouses and none chosen | Set `warehouse=` to one of the listed names or IDs |
+| "another toolkit install exists under app name ..." | A toolkit install (0.7.0, 0.8.0 or a bundle deploy) is present | Set `app_name=` to that name to update it, uninstall it, or set **Allow a second install** |
 | "an app named ... isn't a toolkit app" or "deployed by the bundle" | The name belongs to another app or the bundle | Choose another name, or set **Adopt existing app** to `yes` if it can be replaced |
 | "the SQL warehouse can't read ... system tables" | No `SELECT` on the system tables | An account admin runs the `GRANT` in the message |
 | "the SQL warehouse ... is <state>, not RUNNING" | It didn't start | Start it in SQL Warehouses, or pick another |
-| "you can't write to ..." or "install folder ... has files that aren't the toolkit's" | No privilege on the schema, or a folder that isn't empty | Run the `GRANT` in the message, or choose an empty **Advanced: Install folder** |
+| "you can't write to ..." or "install folder ... has files that aren't the toolkit's" | No privilege on the schema, or a folder that isn't empty | Run the `GRANT` in the message, or choose an empty `folder=` |
 | "this would downgrade the toolkit" | The installed version is newer | Install the newer version, or set **Allow downgrade** to `yes` |
 
 ### App
@@ -837,7 +851,8 @@ Grouped by where the problem shows up.
 | Symptom | Cause | Fix |
 |---|---|---|
 | 401 "No user token" | User authorization is off | Run the installer again (it sets the `sql` scope), or add `user_api_scopes: [sql]` to the bundle app |
-| 403 "Only the app's operators can start ..." | You aren't in **Install: Operators** | Add your email and run the installer again (bundle: `--var operators=...`) |
+| 403 "Only the app's operators can start ..." | You aren't an operator | Ask a workspace admin to add you in the app (**Settings**). Bundle: `--var operators=...` |
+| Settings: "The operators table doesn't exist, or the app can't read it" | Installed by an earlier version, or the installer couldn't grant the app access | Run the installer again; if it prints `GRANT` statements, have a catalog or schema owner run them |
 | 409 "... is already running" | One run of each job at a time | Wait, or open the run link in the message |
 | "No snapshot yet" | No snapshot in the results schema | **Refresh snapshot** (operators), or run the snapshot job once |
 | Pages are empty | No `SELECT` on the results schema, or another results schema | Grant `USE CATALOG`, `USE SCHEMA` and `SELECT`. Check the results schema on About |

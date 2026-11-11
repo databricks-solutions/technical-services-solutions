@@ -97,6 +97,8 @@ def env(monkeypatch):
     monkeypatch.setattr(main, "EXPORT_ROW_LIMIT", 200_000)
     monkeypatch.setattr(main, "_identities", {})
     monkeypatch.setattr(main, "_admins", {})
+    monkeypatch.setattr(main, "_operators", {"until": 0.0, "rows": [], "error": None})
+    monkeypatch.setattr(main, "app_query", lambda sql, params=None, missing_ok=True: [])  # an empty operators table
     monkeypatch.setattr(main, "_job_identities", {})
     monkeypatch.setattr(main, "_owners", {})
     monkeypatch.setattr(main, "_started", {})
@@ -1196,3 +1198,80 @@ def test_tracking_is_refused_for_endpoints_the_scan_doesnt_mark_trackable(env):
     r = _post(env, operation="enable_tracking", endpoints=["my-agent"])
     assert r.status_code == 400 and "Choose the scan" in r.json()["detail"]
     assert env.sdk.jobs.run_now.call_count == 0
+
+
+# ---- Operators in Settings: a table in the results schema, edited by workspace admins, read and written as the app
+
+
+def operators_table(monkeypatch, env, rows):
+    """The operators table behind main.app_query, recording what the app ran."""
+    calls = []
+
+    def fake(sql, params=None, missing_ok=True):
+        assert "ug_migration_operators" in sql, "the app's own identity reads and writes only the operators table"
+        calls.append((sql, dict(params or {})))
+        if sql.startswith("SELECT"):
+            return [dict(r) for r in rows]
+        if sql.startswith("INSERT"):
+            rows.append({"email": params["email"], "added_by": params["by"]})
+        elif sql.startswith("DELETE"):
+            rows[:] = [r for r in rows if r["email"] != params["email"]]
+        return []
+
+    monkeypatch.setattr(main, "app_query", fake)
+    return calls
+
+
+def test_an_operator_in_the_table_can_start_jobs(env, monkeypatch):
+    monkeypatch.setattr(main, "OPERATORS", set())
+    rows = []
+    operators_table(monkeypatch, env, rows)
+    assert env.client.post("/api/account/snapshot", json={}, headers=as_user(VIEWER_TOKEN)).status_code == 403
+    rows.append({"email": VIEWER_EMAIL})
+    main._operators["until"] = 0.0
+    assert env.client.post("/api/account/snapshot", json={}, headers=as_user(VIEWER_TOKEN)).status_code == 200
+    assert env.client.get("/api/whoami", headers=as_user(VIEWER_TOKEN)).json()["operator"] is True
+
+
+def test_an_unreadable_operators_table_fails_closed(env, monkeypatch):
+    monkeypatch.setattr(main, "OPERATORS", set())
+
+    def missing(sql, params=None, missing_ok=True):
+        raise main.TableMissing("no table")
+
+    monkeypatch.setattr(main, "app_query", missing)
+    assert env.client.post("/api/account/snapshot", json={}, headers=as_user(OP_TOKEN)).status_code == 403
+    r = env.client.get("/api/settings/operators", headers=as_user(OP_TOKEN)).json()
+    assert r["operators"] == [] and "run the installer again" in r["error"]
+
+
+def test_only_workspace_admins_change_operators_and_the_email_is_bound(env, monkeypatch):
+    rows = [{"email": "a@example.com", "added_by": "x"}]
+    calls = operators_table(monkeypatch, env, rows)
+    r = env.client.post("/api/settings/operators", json={"email": "b@example.com", "add": True}, headers=OP)
+    assert r.status_code == 403 and "workspace admins" in r.json()["detail"]  # an operator isn't enough
+    listed = env.client.get("/api/settings/operators", headers=OP).json()
+    assert listed["can_edit"] is False
+    assert [o["email"] for o in listed["operators"]] == ["a@example.com", OP_EMAIL]
+    assert listed["operators"][1]["source"] == "deployment"
+    monkeypatch.setattr(main, "is_workspace_admin", lambda request: True)
+    r = env.client.post("/api/settings/operators", json={"email": " B@Example.com ", "add": True}, headers=OP)
+    assert r.status_code == 200 and r.json()["can_edit"] is True
+    assert [o["email"] for o in r.json()["operators"]] == ["a@example.com", "b@example.com", OP_EMAIL]
+    insert = [c for c in calls if c[0].startswith("INSERT")]
+    assert insert == [(insert[0][0], {"email": "b@example.com", "by": OP_EMAIL})] and "b@example.com" not in insert[0][0]
+    r = env.client.post("/api/settings/operators", json={"email": "a@example.com", "add": False}, headers=OP)
+    assert [o["email"] for o in r.json()["operators"]] == ["b@example.com", OP_EMAIL]
+    r = env.client.post("/api/settings/operators", json={"email": OP_EMAIL, "add": False}, headers=OP)
+    assert r.status_code == 409 and "deployment" in r.json()["detail"]
+    for bad in ("not-an-email", "a@b.com,c@d.com", "x'@y.com"):
+        r = env.client.post("/api/settings/operators", json={"email": bad, "add": True}, headers=OP)
+        assert r.status_code == 400, bad
+
+
+def test_changing_operators_is_a_json_post_from_this_site(env, monkeypatch):
+    operators_table(monkeypatch, env, [])
+    monkeypatch.setattr(main, "is_workspace_admin", lambda request: True)
+    r = env.client.post("/api/settings/operators", json={"email": "b@example.com", "add": True},
+                        headers={**OP, "sec-fetch-site": "cross-site"})
+    assert r.status_code == 403

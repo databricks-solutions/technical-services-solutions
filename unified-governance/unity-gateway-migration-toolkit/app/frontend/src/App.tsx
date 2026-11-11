@@ -4,6 +4,7 @@ import Apply from "./Apply";
 import Cutover from "./Cutover";
 import Overview from "./Overview";
 import Scans from "./Scans";
+import Settings from "./Settings";
 import { Badge, Card, ErrorBoundary, Goto, LiveRegion, Notice, NavContext, PageHeader, Tabs, tabPanel } from "./ui";
 
 export const PRODUCT = "Unity Gateway Migration Toolkit";
@@ -16,7 +17,7 @@ export function deadlineText(iso?: string) {
     : "March 30, 2027";
 }
 
-const TABS = [["overview", "Overview"], ["scans", "Scans"], ["apply", "Apply"], ["cutover", "Verify & cut over"], ["about", "About"]] as const;
+const TABS = [["overview", "Overview"], ["scans", "Scans"], ["apply", "Apply"], ["cutover", "Verify & cut over"], ["settings", "Settings"], ["about", "About"]] as const;
 
 type Route = { tab: string; anchor: string | null; seq: number };
 
@@ -103,6 +104,7 @@ export default function App() {
             <div hidden={tab !== "scans"}><ErrorBoundary><Scans operator={operator} workspace={workspace} onApply={(id) => { setScanForApply(id); goto("apply"); }} /></ErrorBoundary></div>
             <div hidden={tab !== "apply"}><ErrorBoundary><Apply operator={operator} workspace={workspace} scanRunId={scanForApply} setScanRunId={setScanForApply} active={tab === "apply"} /></ErrorBoundary></div>
             <div hidden={tab !== "cutover"}><ErrorBoundary><Cutover operator={operator} workspace={workspace} maxScanAgeDays={config.data?.max_scan_age_days ?? 14} jobsRunAs={config.data?.jobs_run_as} active={tab === "cutover"} /></ErrorBoundary></div>
+            <div hidden={tab !== "settings"}><ErrorBoundary>{tab === "settings" && <Settings />}</ErrorBoundary></div>
             <div hidden={tab !== "about"}><About user={me.data} config={config.data} /></div>
           </div>
         </main>

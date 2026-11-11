@@ -179,11 +179,11 @@ def test_installer_central_mode_is_off_when_blank_and_validated_when_set():
     _, p = H["central_problems"]("adb-1", "scope/key", SP_ID)
     assert any("workspace IDs (numbers)" in x for x in p)
     _, p = H["central_problems"](REMOTE, "scope/key", "")
-    assert any("Run jobs as service principal" in x for x in p)
+    assert any("set run_as" in x for x in p)
     _, p = H["central_problems"](REMOTE, "not a ref", SP_ID)
     assert any("scope/key" in x for x in p)
     _, p = H["central_problems"]("", "scope/key", SP_ID)
-    assert any("no workspaces to manage" in x for x in p)
+    assert any("central_workspaces isn't" in x for x in p)
 
 
 def test_installer_passes_the_allowlist_identity_and_secret_to_the_scan_and_apply_jobs():

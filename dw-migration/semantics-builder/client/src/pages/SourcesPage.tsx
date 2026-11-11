@@ -30,6 +30,7 @@ import type {
   SourceReadiness,
 } from '../../../shared/readiness';
 import { api, useResource } from '../api';
+import { CertifyPanel } from '../components/CertifyPanel';
 import { FixEditor } from '../components/FixEditor';
 import { ColumnsEditor } from '../components/ColumnsEditor';
 import { OpenInCatalog } from '../components/OpenInCatalog';
@@ -363,7 +364,7 @@ export function SourcesPage() {
   const [edits, setEdits] = useState<FixEdits>({});
   const [sql, setSql] = useState<string[]>();
   const [adding, setAdding] = useState<'pick' | 'related'>();
-  const [tab, setTab] = useTab(['plan', 'relationships', 'tables', 'permissions'] as const, 'plan');
+  const [tab, setTab] = useTab(['plan', 'relationships', 'tables', 'certification', 'permissions'] as const, 'plan');
   const [search, setSearch] = useSearchParams();
   const openTable = (sourceId: string) =>
     setSearch(
@@ -514,6 +515,7 @@ export function SourcesPage() {
                 <Tabs.Trigger value="plan">Improvement plan ({openFixes.length})</Tabs.Trigger>
                 <Tabs.Trigger value="relationships">Relationships</Tabs.Trigger>
                 <Tabs.Trigger value="tables">Tables ({data.sources.length})</Tabs.Trigger>
+                <Tabs.Trigger value="certification">Certification</Tabs.Trigger>
                 <Tabs.Trigger value="permissions">Permissions</Tabs.Trigger>
               </Tabs.List>
 
@@ -685,6 +687,9 @@ export function SourcesPage() {
                     )}
                   </div>
                 </div>
+              </Tabs.Content>
+              <Tabs.Content value="certification">
+                <CertifyPanel projectId={projectId} />
               </Tabs.Content>
               <Tabs.Content value="permissions">
                 <div style={{ paddingTop: 16 }}>

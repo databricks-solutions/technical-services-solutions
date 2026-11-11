@@ -27,6 +27,7 @@ describe('checkStatement accepts the allowlist', () => {
     ['read', 'describe `my-catalog`.tpch.orders'],
     ['read', 'DESCRIBE CATALOG EXTENDED `my-catalog`'],
     ['read', 'SHOW GRANTS ON VIEW `main`.`sales`.`orders_mv`'],
+    ['read', 'DESCRIBE HISTORY `main`.`sales`.`orders` LIMIT 50'],
     ['ddl', "COMMENT ON TABLE `sandbox`.`gsb`.`orders` IS 'It\\'s a \\\\ test'"],
     ['ddl', "COMMENT ON TABLE samples.tpch.orders IS 'Customer orders'"],
     ['ddl', "COMMENT ON COLUMN sandbox.gsb.orders.o_orderkey IS 'it''s the key'"],
@@ -111,7 +112,7 @@ describe('checkStatement rejects everything else', () => {
     ['bad identifier', "COMMENT ON TABLE a.b.c;x IS 'y'"],
     ['too many name parts', "COMMENT ON TABLE a.b.c.d IS 'y'"],
     ['optimize', 'OPTIMIZE a.b.c'],
-    ['describe history', 'DESCRIBE HISTORY a.b.c'],
+    ['describe history with a bad limit', 'DESCRIBE HISTORY a.b.c LIMIT x'],
     ['describe catalog with schema', 'DESCRIBE CATALOG a.b'],
     ['copy into', "COPY INTO a.b.c FROM 's3://x'"],
   ])('%s', (_label, sql) => {

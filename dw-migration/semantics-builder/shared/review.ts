@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { CertSnapshot } from './certify';
 import type { TestCase, ValidationRun } from './designer';
 
 export interface Review {
@@ -8,7 +9,10 @@ export interface Review {
   /** Top-level project / sub-project. */
   project: string;
   subProject: string;
-  version: number;
+  /** A view version, or the data of the sub-project: its tables. */
+  kind: 'view' | 'data';
+  /** The view version. null for a data review. */
+  version: number | null;
   target: string | null;
   reviewer: string;
   requestedBy: string;
@@ -30,6 +34,8 @@ export interface ReviewDetail {
   statement: string | null;
   tests: TestCase[];
   validation: ValidationRun | null;
+  /** For a data review: the tables as the author asked. Else null, and the view fields above apply. */
+  data: CertSnapshot | null;
 }
 
 export interface ReviewList {

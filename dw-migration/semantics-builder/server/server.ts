@@ -14,6 +14,7 @@ import { ucDeps } from './uc/metadata';
 import { registerGenieRoutes } from './api/genie';
 import { registerPromoteRoutes } from './api/promote';
 import { registerReviewRoutes } from './api/review';
+import { registerCertifyRoutes } from './api/certify';
 import { registerLibraryRoutes } from './api/library';
 import { registerImportRoutes } from './api/import';
 import { registerGovernRoutes } from './api/govern';
@@ -54,6 +55,7 @@ createApp({
       registerDictionaryRoutes(app, pool, runFor);
       registerPromoteRoutes(app, pool, runFor, ucFor);
       registerReviewRoutes(app, pool, runFor, ucFor);
+      registerCertifyRoutes(app, pool, runFor, ucFor);
       registerLibraryRoutes(app, pool, runFor);
       registerImportRoutes(app, pool, ucFor);
       registerGovernRoutes(app, pool, runFor, ucFor);

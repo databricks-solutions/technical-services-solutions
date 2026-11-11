@@ -83,6 +83,7 @@ const DESCRIBE = new RegExp(
   'i'
 );
 const SHOW_GRANTS = new RegExp(`^SHOW\\s+GRANTS\\s+ON\\s+(?:TABLE|VIEW)\\s+${OBJ}$`, 'i');
+const HISTORY = new RegExp(`^DESCRIBE\\s+HISTORY\\s+${OBJ}(?:\\s+LIMIT\\s+\\d{1,4})?$`, 'i');
 const WRITE_KEYWORD =
   /\b(?:INSERT|UPDATE|DELETE|MERGE|CREATE|DROP|ALTER|TRUNCATE|GRANT|REVOKE|COPY|OPTIMIZE|VACUUM|REFRESH)\b/i;
 
@@ -102,7 +103,7 @@ export function checkStatement(sql: string): CheckedStatement {
     if (WRITE_KEYWORD.test(core)) throw new StatementRejected('read statements cannot write');
     return { kind: 'read', statement };
   }
-  if (DESCRIBE.test(core) || SHOW_GRANTS.test(core)) return { kind: 'read', statement };
+  if (DESCRIBE.test(core) || SHOW_GRANTS.test(core) || HISTORY.test(core)) return { kind: 'read', statement };
   if (DDL_PATTERNS.some((p) => p.test(core))) return { kind: 'ddl', statement };
   const drop = DROP_VIEW.exec(core);
   if (drop) {

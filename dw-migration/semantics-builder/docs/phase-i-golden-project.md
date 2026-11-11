@@ -41,6 +41,12 @@ A sub-project that passes all the gates is a golden project.
 
 ### i1. Certify the data
 
+Status: done 2026-11-11. Live on Net revenue: the checks ran on the 5 tables (the largest has 29,999,795 rows) and
+found a constant column (`o_shippriority`). A request to a placeholder reviewer, the reviewer page and cancel
+worked. Self-review and apply before approval are stopped. The tag SQL has not run yet: it needs a second person
+to approve. Notes: the tables were made with CLONE, so CLONE counts as a data change; the review is a `kind` of
+the h5 review (`gsb.review.kind = 'data'`, with a snapshot).
+
 On the tables of the sub-project (Sources & Readiness):
 
 - Data checks, read-only, as the user: row count, freshness (last change from the table history), and for each

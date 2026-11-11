@@ -57,4 +57,31 @@ describe.skipIf(!url)('reviewRepo on Postgres', () => {
     expect((await reviews.get('author@x.com', id)).id).toBe(id);
     await expect(reviews.get('someone@x.com', id)).rejects.toThrow('Review not found.');
   });
+
+  it('keeps a data review apart from the view reviews', async () => {
+    const snapshot = {
+      tables: [
+        {
+          fullName: 'main.sales.orders',
+          comment: '',
+          columns: [],
+          readinessScore: 80,
+          readiness: [],
+          data: { checks: [], checkedAt: '2026-11-11T00:00:00.000Z', checkedBy: 'author@x.com' },
+        },
+      ],
+    };
+    await reviews.request('author@x.com', sub, { reviewer: 'Rev@x.com' }, { kind: 'data', snapshot });
+    const latest = await reviews.latestData(sub);
+    expect(latest?.review).toMatchObject({ kind: 'data', version: null, reviewer: 'rev@x.com', status: 'pending' });
+    expect(latest?.snapshot.tables[0].fullName).toBe('main.sales.orders');
+    // The pending view review stays open, and the view state does not show the data review.
+    expect((await reviews.state(sub)).review).toMatchObject({ kind: 'view', status: 'pending' });
+    await expect(
+      reviews.request('author@x.com', sub, { reviewer: 'author@x.com' }, { kind: 'data', snapshot })
+    ).rejects.toThrow(/another person/);
+    await reviews.cancel('author@x.com', sub, 'data');
+    expect((await reviews.latestData(sub))?.review.status).toBe('cancelled');
+    expect((await reviews.state(sub)).review?.status).toBe('pending');
+  });
 });

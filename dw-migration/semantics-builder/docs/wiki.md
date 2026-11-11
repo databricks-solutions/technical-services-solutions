@@ -247,7 +247,38 @@ This tab shows the tables before a design exists. To see how the metric view use
 The Tables tab shows each table and its columns, like Catalog Explorer. You can change the table description and
 the column descriptions in place. The AI suggestions show in each cell.
 
-### 7.6 The Permissions tab
+### 7.6 The Certification tab
+
+Certify the tables before you build a metric view on them. Certification has three steps.
+
+1. **Run the data checks.** Click **Run the data checks**. The app reads each table one time, as you, with one
+   query, and reads the table history. It checks these items:
+
+   | Check | Fail or warning when |
+   | --- | --- |
+   | The table has rows | Fail: the table is empty. |
+   | The data changed in the last 30 days | Warning: the last data change in the history (a write, merge, update, delete or clone) is older. VACUUM, OPTIMIZE and metadata changes do not count. A view has no history. |
+   | Key columns have no nulls | Fail: a primary key column has a null. Warning: no primary key is declared. |
+   | Columns have values | Fail: a column is always null. Warning: a column is more than half null. |
+   | Text columns have no empty strings | Warning: a text column has empty or blank text. |
+   | Columns are not constant | Warning: a column has the same value in each row. |
+
+   The app checks the first 60 columns of a table. It keeps the check results only: counts, shares and column
+   names. It never keeps a value of the data.
+
+2. **Ask for certification.** Type the email of the reviewer, and click **Ask for certification**. The reviewer
+   gets a copy of the tables as they are at that time: the data checks, the readiness checks, and the table and
+   column descriptions. Send the reviewer the review link (see [17.2](#172-do-a-review-reviewer)).
+
+3. **Set the certification tag.** After the approval, click **Set the certification tag**. Examine the SQL, then
+   click **Run SQL**. The app runs one statement for each table, as you:
+   `ALTER TABLE ... SET TAGS ('system.certification_status' = 'certified')`. For a view, it uses `ALTER VIEW`.
+
+Each table shows its tag value from Unity Catalog now: **Certified**, **Deprecated**, or **Not certified**.
+
+If you add or remove a table after the request, the approval does not apply. Ask for a new review.
+
+### 7.7 The Permissions tab
 
 The Permissions tab shows your permissions on each source table. The app reads them live, as you, through the Unity
 Catalog API. You see only the tables that you can access.
@@ -577,7 +608,11 @@ If you do not have SELECT on the lineage tables, the dialog shows the field chan
 
 ## 17. Approvals and Reviews
 
-A sub-project can need approval before Promote. Another person must approve the exact version.
+A sub-project can need approval before Promote. Another person must approve the exact version. A reviewer also
+approves the data of a sub-project before you certify it (see [7.6](#76-the-certification-tab)).
+
+A data review shows each table read-only: the data checks, the readiness checks and the descriptions, as they were
+when the author asked. It has no impact, tests or YAML. Approve lets the author set the certification tag.
 
 ### 17.1 Ask for approval (author)
 
@@ -680,7 +715,7 @@ All SQL goes through one path in the server. These rules apply:
 
 1. **The model never writes SQL.** The AI proposes names and text only. The server makes each statement.
 2. **The server quotes each name and value.** It checks each name against the real table before it uses it.
-3. **An allowlist checks each statement.** The allowlist accepts reads, `DESCRIBE`, and a fixed set of metadata
+3. **An allowlist checks each statement.** The allowlist accepts reads, `DESCRIBE` (also `DESCRIBE HISTORY`), and a fixed set of metadata
    statements: comments, keys, tags, metric views, read grants and revokes, and the owner of a view. It accepts one
    statement at a time and no SQL comments.
 4. **You approve the exact SQL.** A change runs only with the statements that you examined. If the statements
@@ -708,7 +743,7 @@ The app keeps its data in Lakebase, in the schema `gsb`. The main tables are:
 | Table | Content |
 | --- | --- |
 | `project` | Projects and sub-projects, the target view, the Pages domain, the approval rule |
-| `source` | The source tables of each sub-project |
+| `source` | The source tables of each sub-project, and the results of their data checks (no data values) |
 | `readiness_report`, `recommendation` | The readiness scores and the fixes |
 | `semantic_brief`, `chat_session`, `project_memory` | The versions of the brief, the chat, and the facts that the advisor keeps |
 | `dictionary_entry` | The metric dictionary |
@@ -719,7 +754,7 @@ The app keeps its data in Lakebase, in the schema `gsb`. The main tables are:
 | `genie_space`, `genie_check` | The Genie spaces that the app made, and the verdicts |
 | `promotion` | Each Promote: version, target, YAML, status |
 | `drift_check` | The drift findings |
-| `review` | Each approval request and its decision |
+| `review` | Each approval request and its decision. A data review keeps a copy of the checks and descriptions |
 | `page_edit` | Your changes to the generated Pages |
 | `audit_log` | Each change: who, what, when, and the result |
 
@@ -739,6 +774,8 @@ keeps the record of the delete.
 | Set the owner and grants | Ownership of the view, or `MANAGE` |
 | Impact analysis | `SELECT` on `system.access.table_lineage` and `system.access.column_lineage` |
 | Ask Genie | `CAN USE` on the SQL warehouse, and access to Genie |
+| Run the data checks | `SELECT` on the source tables |
+| Set the certification tag | `APPLY TAG` on each table, or ownership, and a tag policy that lets you set the value |
 
 ## 26. Limits
 

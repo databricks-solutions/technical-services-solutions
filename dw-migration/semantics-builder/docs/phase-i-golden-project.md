@@ -60,6 +60,11 @@ On the tables of the sub-project (Sources & Readiness):
 
 ### i2. Score the Genie agent
 
+Status: done 2026-11-11. Live on Net revenue: the score was 78, and 89 after **Update the view and the space**. Genie
+kept the `column_configs` (entity matching and format assistance) on the 4 text dimensions of the metric view. The
+only gap is benchmarks (0 of 10). Notes: the app keeps a hash of the settings it last sent
+(`gsb.genie_space.config_hash`), so the score cannot see changes made in Genie.
+
 A checklist on the space settings, with a fix for each failed check where the app can make one: view and field
 descriptions, instructions, sample questions, at least 10 benchmarks, example SQL, and entity matching on text
 dimensions.

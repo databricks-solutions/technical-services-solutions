@@ -1,18 +1,21 @@
+import { createHash } from 'node:crypto';
 import type { Application, Request } from 'express';
 import { z } from 'zod';
 import type { LakebasePool } from '@databricks/appkit';
 import { askSchema, chatSchema } from '../../shared/genie';
-import type { ChatAnswer, GenieCheck, GenieView } from '../../shared/genie';
+import type { AgentScore, ChatAnswer, GenieCheck, GenieView } from '../../shared/genie';
 import { validateMetricView } from '../../shared/metricView';
 import type { SemanticBrief } from '../../shared/brief';
 import type { TestCase } from '../../shared/designer';
 import { createStatement, sandboxSchema, sandboxViewName } from '../designer/validate';
 import type { GenieDeps } from '../genie/client';
 import { readsView } from '../genie/onechat';
+import { scoreAgent } from '../genie/score';
 import { spaceConfig } from '../genie/space';
 import { fieldsUsed, verdictOf } from '../genie/verdict';
 import { runStatement } from '../sql/runner';
 import type { RunDeps } from '../sql/runner';
+import type { UcDeps } from '../uc/metadata';
 import { actorOf, handle, HttpError } from './http';
 import { designerRepo } from './designer';
 import { projectRepo } from './projects';
@@ -44,7 +47,8 @@ export function registerGenieRoutes(
   app: Application,
   db: Db,
   runFor: (req: Request) => RunDeps,
-  genieFor: (req: Request) => GenieDeps
+  genieFor: (req: Request) => GenieDeps,
+  ucFor: (req: Request) => UcDeps
 ) {
   const projects = projectRepo(db);
   const designs = designerRepo(db);
@@ -57,20 +61,43 @@ export function registerGenieRoutes(
     const sandbox = sandboxSchema();
     const validated = draft?.status === 'validated' ? draft : null;
     const sandboxView = validated && sandbox ? sandboxViewName(sandbox, validated.name, project.id) : null;
-    const { rows } = await db.query<{ space_id: string; view_name: string; created_at: Date }>(
-      'SELECT space_id, view_name, created_at FROM gsb.genie_space WHERE project_id = $1',
-      [project.id]
-    );
+    const { rows } = await db.query<{
+      space_id: string;
+      view_name: string;
+      config_hash: string | null;
+      created_at: Date;
+    }>('SELECT space_id, view_name, config_hash, created_at FROM gsb.genie_space WHERE project_id = $1', [project.id]);
     return { actor, project, draft: validated, sandboxView, space: rows[0] ?? null };
   }
 
+  type Ctx = Awaited<ReturnType<typeof context>>;
+
+  /**
+   * The text dimensions of the validated version, from the column types of its sandbox view in Unity Catalog, read
+   * as the user. null when the view does not exist yet or cannot be read.
+   */
+  async function textDimensions(req: Request, ctx: Ctx): Promise<string[] | null> {
+    if (!ctx.draft || !ctx.sandboxView) return null;
+    const dims = new Set((validateMetricView(ctx.draft.yaml).view?.dimensions ?? []).map((d) => d.name));
+    try {
+      const { columns = [] } = await ucFor(req).table(ctx.sandboxView);
+      return columns
+        .filter((c) => c.name && dims.has(c.name) && /^(string|varchar|char)/i.test(c.type_text ?? ''))
+        .map((c) => c.name!);
+    } catch {
+      return null;
+    }
+  }
+
   /** The space settings JSON the user reviews, built from the validated version. */
-  const configOf = (sandboxView: string, brief: SemanticBrief | null, tests: TestCase[]) =>
-    JSON.stringify(spaceConfig(sandboxView, brief, tests), null, 2);
+  const configOf = (sandboxView: string, brief: SemanticBrief | null, tests: TestCase[], text: string[] | null) =>
+    JSON.stringify(spaceConfig(sandboxView, brief, tests, text ?? []), null, 2);
+  const hashOf = (config: string) => createHash('sha256').update(config).digest('hex');
 
   async function view(req: Request): Promise<GenieView & { setup: string[]; config: string | null }> {
     const ctx = await context(req);
     const brief = await projects.latestBrief(ctx.project.id);
+    const text = await textDimensions(req, ctx);
     const { rows } = await db.query<CheckRow>(
       `SELECT id, engine, read, version, question, expected, verdict, detail, answer, sql, created_by, created_at
        FROM gsb.genie_check WHERE project_id = $1 ORDER BY created_at DESC LIMIT ${MAX_CHECKS}`,
@@ -84,7 +111,8 @@ export function registerGenieRoutes(
         : null,
       keyQuestions: brief?.brief.keyQuestions ?? [],
       setup: ctx.draft && ctx.sandboxView ? [createStatement(ctx.sandboxView, ctx.draft.yaml)] : [],
-      config: ctx.draft && ctx.sandboxView ? configOf(ctx.sandboxView, brief?.brief ?? null, ctx.draft.tests) : null,
+      config:
+        ctx.draft && ctx.sandboxView ? configOf(ctx.sandboxView, brief?.brief ?? null, ctx.draft.tests, text) : null,
       checks: rows.map((r) => ({
         id: r.id,
         engine: r.engine,
@@ -104,6 +132,27 @@ export function registerGenieRoutes(
 
   app.get('/api/projects/:id/genie', handle(view));
 
+  /** The rule-based score of the Genie agent: the design, the brief, the tests and the space settings. */
+  app.get(
+    '/api/projects/:id/genie/score',
+    handle(async (req): Promise<AgentScore | null> => {
+      const ctx = await context(req);
+      if (!ctx.draft || !ctx.sandboxView) return null;
+      const brief = (await projects.latestBrief(ctx.project.id))?.brief ?? null;
+      const text = await textDimensions(req, ctx);
+      const config = configOf(ctx.sandboxView, brief, ctx.draft.tests, text);
+      return scoreAgent({
+        view: validateMetricView(ctx.draft.yaml).view ?? null,
+        brief,
+        tests: ctx.draft.tests,
+        matched: text,
+        space: ctx.space
+          ? { current: ctx.space.view_name === ctx.sandboxView && ctx.space.config_hash === hashOf(config) }
+          : null,
+      });
+    })
+  );
+
   /**
    * Creates the sandbox view of the validated version, as reviewed, then one Genie space on it with the settings
    * from the design, as the user. A space on the same view is kept, and its settings are replaced.
@@ -118,7 +167,7 @@ export function registerGenieRoutes(
       if (statements.length !== setup.length || statements.some((s, i) => s !== setup[i]))
         throw new HttpError(409, 'The SQL changed since you reviewed it. Review it again.');
       const brief = await projects.latestBrief(ctx.project.id);
-      if (config !== configOf(ctx.sandboxView, brief?.brief ?? null, ctx.draft.tests))
+      if (config !== configOf(ctx.sandboxView, brief?.brief ?? null, ctx.draft.tests, await textDimensions(req, ctx)))
         throw new HttpError(409, 'The space settings changed since you reviewed them. Review them again.');
       for (const s of setup)
         await runStatement(s, { actor: ctx.actor, projectId: ctx.project.id, approved: true }, runFor(req));
@@ -127,9 +176,10 @@ export function registerGenieRoutes(
       if (ctx.space?.view_name === ctx.sandboxView) {
         await genie.updateSpace(ctx.space.space_id, config);
         await db.query(
-          `INSERT INTO gsb.audit_log (actor, action, project_id, target, outcome)
-           VALUES ($1, 'update_genie_space', $2, $3, 'succeeded')`,
-          [ctx.actor, ctx.project.id, ctx.space.space_id]
+          `WITH up AS (UPDATE gsb.genie_space SET config_hash = $4 WHERE project_id = $2 RETURNING project_id)
+           INSERT INTO gsb.audit_log (actor, action, project_id, target, outcome)
+           SELECT $1, 'update_genie_space', project_id, $3, 'succeeded' FROM up`,
+          [ctx.actor, ctx.project.id, ctx.space.space_id, hashOf(config)]
         );
       } else {
         const spaceId = await genie.createSpace(
@@ -140,13 +190,15 @@ export function registerGenieRoutes(
         if (ctx.space) await genie.trashSpace(ctx.space.space_id).catch(() => undefined);
         await db.query(
           `WITH up AS (
-             INSERT INTO gsb.genie_space (project_id, space_id, view_name, created_by) VALUES ($1, $2, $3, $4)
-             ON CONFLICT (project_id) DO UPDATE SET space_id = $2, view_name = $3, created_by = $4, created_at = now()
+             INSERT INTO gsb.genie_space (project_id, space_id, view_name, created_by, config_hash)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (project_id) DO UPDATE
+             SET space_id = $2, view_name = $3, created_by = $4, config_hash = $5, created_at = now()
              RETURNING project_id
            )
            INSERT INTO gsb.audit_log (actor, action, project_id, target, outcome)
            SELECT $4, 'create_genie_space', project_id, $2, 'succeeded' FROM up`,
-          [ctx.project.id, spaceId, ctx.sandboxView, ctx.actor]
+          [ctx.project.id, spaceId, ctx.sandboxView, ctx.actor, hashOf(config)]
         );
       }
       return view(req);

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Alert, Button, Input, Modal, PlusIcon, Tag, TrashIcon, Typography } from '@databricks/design-system';
 import type { GenieCheck, GenieEngine, GenieExpected, GenieVerdict, GenieView } from '../../../shared/genie';
 import { api, useResource } from '../api';
+import { AgentScorePanel } from './AgentScorePanel';
 import { DataState } from './DataState';
 import { SqlBlock } from './SqlBlock';
 import { FieldPick } from './TestEditor';
@@ -87,6 +88,7 @@ export function GeniePanel({
   const base = useResource<{ workspaceUrl: string | null }>('/api/config').data?.workspaceUrl;
   const [questions, setQuestions] = useState<Question[]>();
   const [reviewing, setReviewing] = useState(false);
+  const [updates, setUpdates] = useState(0);
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState<string>();
   const v = data.data;
@@ -102,6 +104,7 @@ export function GeniePanel({
       (next) => {
         setBusy(undefined);
         setReviewing(false);
+        setUpdates((n) => n + 1);
         data.setData(next);
       },
       (err: unknown) => {
@@ -133,6 +136,7 @@ export function GeniePanel({
     <DataState status={data.status} message={data.error} onRetry={data.reload}>
       {v && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <AgentScorePanel projectId={projectId} refreshKey={`${v.version}:${updates}`} />
           <Typography.Text color="secondary">
             Genie answers the business questions on the sandbox view of the validated version, as you. For each
             question, pick the measures and dimensions a correct answer uses; the app checks Genie&apos;s SQL against

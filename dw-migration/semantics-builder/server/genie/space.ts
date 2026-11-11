@@ -5,6 +5,7 @@ import { quoteId, quoteName } from '../readiness/profile';
 import { expectQuery } from '../designer/validate';
 
 const MAX_SAMPLES = 10;
+export const MAX_MATCHED = 50;
 const MAX_TEXT = 25_000;
 
 /** Stable ids: the same design gives the same JSON, so the reviewed JSON can be compared before it runs. */
@@ -19,9 +20,15 @@ const exampleQuery = (view: string, t: TestCase) =>
 /**
  * The Genie space settings (serialized_space version 2) from the design: the view, text instructions from the
  * brief, sample questions from the key questions, example SQL from the plain tests, and benchmarks from the
- * tests with an expected value. Field synonyms and descriptions come from the view itself.
+ * tests with an expected value. Field synonyms and descriptions come from the view itself. Text dimensions get
+ * entity matching and format assistance, so Genie maps the values that users type to the stored values.
  */
-export function spaceConfig(view: string, brief: SemanticBrief | null, tests: TestCase[]) {
+export function spaceConfig(
+  view: string,
+  brief: SemanticBrief | null,
+  tests: TestCase[],
+  textDimensions: string[] = []
+) {
   const lines = [
     `Answer with the metric view ${view}. Use MEASURE() for each measure and GROUP BY ALL.`,
     ...(brief
@@ -42,7 +49,25 @@ export function spaceConfig(view: string, brief: SemanticBrief | null, tests: Te
     ...(samples.length
       ? { config: { sample_questions: byId(samples.map((q) => ({ id: idOf('sample', q), question: [q] }))) } }
       : {}),
-    data_sources: { tables: [{ identifier: view }] },
+    data_sources: {
+      tables: [
+        {
+          identifier: view,
+          ...(textDimensions.length
+            ? {
+                column_configs: unique(textDimensions)
+                  .slice(0, MAX_MATCHED)
+                  .sort()
+                  .map((column_name) => ({
+                    column_name,
+                    enable_entity_matching: true,
+                    enable_format_assistance: true,
+                  })),
+              }
+            : {}),
+        },
+      ],
+    },
     instructions: {
       // Genie joins the content items with no separator, so the lines go in one item.
       text_instructions: [{ id: idOf('text', view), content: [lines.join('\n').slice(0, MAX_TEXT)] }],

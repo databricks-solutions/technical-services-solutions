@@ -496,11 +496,34 @@ run. The app makes the settings from the design:
 | Sample questions | The key questions of the brief (not more than 10). |
 | Example SQL | The tests that compare fields. The test name is the question. |
 | Benchmarks | The tests with an expected value. The answer is the SQL of the test, not the value. |
+| Entity matching and format assistance | The text dimensions (type string), from the sandbox view in Unity Catalog. Genie maps the values that users type, such as "asia", to the stored values, such as "ASIA". Not more than 50. |
 
 Synonyms and descriptions come from the view itself, so the settings do not repeat them. A test with an
 expected value is not also an example, so Genie cannot copy its SQL. When the design changes, click
 **Update the view and the space**. The app replaces all the settings of the space. Changes made in Genie to
 the settings are lost.
+
+The first time, the sandbox view does not exist yet, so the settings have no entity matching. Click **Update the
+view and the space** one more time to add it.
+
+### 14.0.1 The Genie agent score
+
+The **Test with Genie** tab starts with the Genie agent score, from 0 to 100. The score uses rules only. A pass
+counts one point, a warning half a point. 80 or more is ready.
+
+| Check | Pass | Fix |
+| --- | --- | --- |
+| The view has a description | The metric view has a comment. | Metric Designer |
+| Fields have descriptions | 80% of the fields or more. A warning from 30%. | Metric Designer |
+| Fields have synonyms | 50% of the fields or more. A warning for fewer. | Metric Designer |
+| The space has instructions | A confirmed brief with glossary terms or rules. A warning for the goal only. | Intent & Context |
+| At least 3 sample questions | 3 key questions or more in the brief. | Intent & Context |
+| At least 3 example SQL queries | 3 tests or more with no expected value. | Tests |
+| At least 10 benchmarks | 10 tests or more with an expected value. | Tests, or **Use as a test** in the Genie panel |
+| Text dimensions use entity matching | The app can read the column types of the sandbox view. | The app adds it to the settings |
+| The space has the settings of this design | The last update of the space used the settings of the latest validated version. | **Update the view and the space** |
+
+The app knows only the settings that it sent. It does not see changes that someone makes in Genie.
 
 ### 14.1 The Genie panel
 

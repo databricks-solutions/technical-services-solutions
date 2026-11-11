@@ -62,7 +62,7 @@ createApp({
       registerPagesRoutes(app, pool, domainsDeps());
       registerDriftRoutes(app, pool, runFor, ucFor);
       registerDiscoverRoutes(app, ucFor);
-      registerGenieRoutes(app, pool, runFor, (req) => genieDeps(asUser(req)));
+      registerGenieRoutes(app, pool, runFor, (req) => genieDeps(asUser(req)), ucFor);
       // The workspace URL for Catalog Explorer links. Apps set DATABRICKS_HOST; nothing is hardcoded.
       const host = process.env.DATABRICKS_HOST?.trim().replace(/\/+$/, '') ?? '';
       const workspaceUrl = host ? (host.startsWith('http') ? host : `https://${host}`) : null;

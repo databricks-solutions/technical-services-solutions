@@ -72,4 +72,12 @@ describe('spaceConfig', () => {
   it('gives the same JSON for the same design', () => {
     expect(JSON.stringify(spaceConfig('c.s.v', brief, tests))).toBe(JSON.stringify(c));
   });
+
+  it('turns on entity matching for the text dimensions, sorted by name', () => {
+    const t = spaceConfig('c.s.v', brief, tests, ['Region', 'Nation', 'Region']).data_sources.tables[0];
+    expect(t.column_configs).toEqual([
+      { column_name: 'Nation', enable_entity_matching: true, enable_format_assistance: true },
+      { column_name: 'Region', enable_entity_matching: true, enable_format_assistance: true },
+    ]);
+  });
 });

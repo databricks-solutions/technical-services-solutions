@@ -26,6 +26,20 @@ export interface GenieCheck {
   createdAt: string;
 }
 
+/** One check of the Genie agent score. fix names the sub-project page to open, such as designer?tab=model. */
+export interface AgentCheck {
+  id: string;
+  label: string;
+  status: 'pass' | 'warn' | 'fail';
+  detail: string;
+  fix: { label: string; path: string } | null;
+}
+
+export interface AgentScore {
+  score: number;
+  checks: AgentCheck[];
+}
+
 export interface GenieView {
   /** The design version the space can be built on: the latest validated one with a sandbox view. */
   version: number | null;

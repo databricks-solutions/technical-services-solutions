@@ -19,7 +19,7 @@ resource "azurerm_private_dns_zone_virtual_network_link" "control_plane" {
   name                  = "lnk-${local.prefix}-dp-control-plane"
   resource_group_name   = local.dp_rg_name
   private_dns_zone_name = azurerm_private_dns_zone.control_plane.name
-  virtual_network_id    = azurerm_virtual_network.dp_vnet.id
+  virtual_network_id    = local.vnet_id
   tags                  = local.tags
 }
 
@@ -42,7 +42,7 @@ resource "azurerm_private_dns_zone_virtual_network_link" "dbfs_dfs" {
   name                  = "lnk-${local.prefix}-dp-dbfs-dfs"
   resource_group_name   = local.dp_rg_name
   private_dns_zone_name = azurerm_private_dns_zone.dbfs_dfs.name
-  virtual_network_id    = azurerm_virtual_network.dp_vnet.id
+  virtual_network_id    = local.vnet_id
   tags                  = local.tags
 }
 
@@ -50,7 +50,7 @@ resource "azurerm_private_dns_zone_virtual_network_link" "dbfs_blob" {
   name                  = "lnk-${local.prefix}-dp-dbfs-blob"
   resource_group_name   = local.dp_rg_name
   private_dns_zone_name = azurerm_private_dns_zone.dbfs_blob.name
-  virtual_network_id    = azurerm_virtual_network.dp_vnet.id
+  virtual_network_id    = local.vnet_id
   tags                  = local.tags
 }
 

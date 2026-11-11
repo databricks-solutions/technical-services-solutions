@@ -44,7 +44,7 @@ resource "azurerm_databricks_workspace" "dp_workspace" {
   # VNet injection: use dp_public and dp_private subnets and their NSG associations.
   # storage_account_name is the workspace root (DBFS) storage; must be unique and alphanumeric.
   custom_parameters {
-    virtual_network_id                                   = azurerm_virtual_network.dp_vnet.id
+    virtual_network_id                                   = local.vnet_id
     private_subnet_name                                  = azurerm_subnet.dp_private.name
     public_subnet_name                                   = azurerm_subnet.dp_public.name
     public_subnet_network_security_group_association_id  = azurerm_subnet_network_security_group_association.dp_public.id

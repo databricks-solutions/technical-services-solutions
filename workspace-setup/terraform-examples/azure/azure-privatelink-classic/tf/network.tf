@@ -8,14 +8,28 @@
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# Virtual network
+# Virtual network — create new or look up existing
 # -----------------------------------------------------------------------------
 resource "azurerm_virtual_network" "dp_vnet" {
+  count               = local.create_new_vnet ? 1 : 0
   name                = "vnet-${local.prefix}-dp"
   location            = local.dp_rg_location
   resource_group_name = local.dp_rg_name
   address_space       = [var.cidr_dp]
   tags                = local.tags
+
+  lifecycle {
+    precondition {
+      condition     = var.cidr_dp != null
+      error_message = "cidr_dp is required when creating a new VNet (existing_vnet_name is not set)."
+    }
+  }
+}
+
+data "azurerm_virtual_network" "dp_vnet" {
+  count               = local.create_new_vnet ? 0 : 1
+  name                = var.existing_vnet_name
+  resource_group_name = var.existing_vnet_resource_group_name
 }
 
 # -----------------------------------------------------------------------------
@@ -104,7 +118,7 @@ resource "azurerm_network_security_rule" "dp_azfrontdoor" {
 resource "azurerm_subnet" "dp_public" {
   name                            = "snet-${local.prefix}-dp-public"
   resource_group_name             = local.dp_rg_name
-  virtual_network_name            = azurerm_virtual_network.dp_vnet.name
+  virtual_network_name            = local.vnet_name
   address_prefixes                = [var.subnet_workspace_cidrs[0]]
   default_outbound_access_enabled = false
 
@@ -141,7 +155,7 @@ resource "azurerm_subnet_nat_gateway_association" "dp_public" {
 resource "azurerm_subnet" "dp_private" {
   name                            = "snet-${local.prefix}-dp-private"
   resource_group_name             = local.dp_rg_name
-  virtual_network_name            = azurerm_virtual_network.dp_vnet.name
+  virtual_network_name            = local.vnet_name
   address_prefixes                = [var.subnet_workspace_cidrs[1]]
   default_outbound_access_enabled = false
 
@@ -180,7 +194,7 @@ resource "azurerm_subnet_nat_gateway_association" "dp_private" {
 resource "azurerm_subnet" "dp_plsubnet" {
   name                              = "snet-${local.prefix}-dp-privatelink"
   resource_group_name               = local.dp_rg_name
-  virtual_network_name              = azurerm_virtual_network.dp_vnet.name
+  virtual_network_name              = local.vnet_name
   address_prefixes                  = [var.subnet_private_endpoint_cidr]
   default_outbound_access_enabled   = false
   private_endpoint_network_policies = "Enabled"

@@ -108,7 +108,7 @@ def test_downgrade_needs_widget_and_compares_numbers():
     assert H["downgrade_problem"]("0.7.0", "0.8.0", allow=False) is None
     assert H["downgrade_problem"]("", "0.8.0", allow=False) is None
     assert H["downgrade_problem"]("0.10.0", "0.9.0", allow=False) is not None
-    assert "17. Allow downgrade (custom setup)" in H["downgrade_problem"]("0.8.0", "0.7.0", allow=False)
+    assert "17. Allow downgrade (custom setup: 4. Setup = custom)" in H["downgrade_problem"]("0.8.0", "0.7.0", allow=False)
 
 
 def test_marker_status():
@@ -632,7 +632,7 @@ class FakeWS:
 
         class Apps:
             def list(self_inner, page_size=None):
-                return list(ws.apps.values())
+                return [_without_env_values(a) for a in ws.apps.values()]  # names only, like the real API
 
             def get(self_inner, name):
                 if name in ws.pending_delete:
@@ -736,7 +736,7 @@ def app_obj(name, desc=DESC, env=None):
 
 
 def seed_install(ws, app=APP, folder=FOLDER, results="main.ug_migration", version="0.9.0", pending=(), logs=(),
-                 tables=True, schema_comment=None):
+                 tables=True, schema_comment=None, operators=(ME,)):
     """A complete install made by the installer: app, jobs, schema, tables, marker, files and apply runs.
     pending: (apply_id, created_count, run_id) for execute runs that still have services in place."""
     ws.apps[app] = app_obj(app, env={"RESULTS_SCHEMA": results, "UGMIG_VERSION": version})
@@ -756,8 +756,10 @@ def seed_install(ws, app=APP, folder=FOLDER, results="main.ug_migration", versio
         ws.next_job += 1
     ws.schemas[results] = {"owner": ME, "comment": schema_comment if schema_comment is not None
                            else f"Unity Gateway migration app results (app: {app})"}
-    ws.files[f"{folder}/{'ug_migration_toolkit.marker'}"] = json.dumps(
-        {"app": app, "version": version, "results": results, "folder": folder, "installed_by": ME}).encode()
+    marker = {"app": app, "version": version, "results": results, "folder": folder, "installed_by": ME}
+    if operators is not None:  # a 0.11 marker records them; operators=None is an install from before 0.11.0
+        marker["operators"] = list(operators)
+    ws.files[f"{folder}/{'ug_migration_toolkit.marker'}"] = json.dumps(marker).encode()
     ws.files[f"{folder}/files/notebook/run_apply"] = b"# x"
     ws.files[f"{folder}/output/account/snapshot.json"] = b"{}"
     if tables:
@@ -962,7 +964,7 @@ def test_fresh_install_creates_everything_and_says_what_next(monkeypatch):
     assert "Compute > Apps > ug-migration-toolkit" in text
     assert "First steps" in text and "Start scan" in text
     assert "paused" in text and "unpause" in text
-    assert "11. Allowed secret schemas (custom setup)" in text  # how to turn on secret mapping
+    assert "set 4. Setup to custom and click Run all, then set 11. Allowed secret schemas" in text  # secret mapping
     # The schema for new model services is created in the catalog picked, and named everywhere it matters.
     assert ws.schemas["main.ug_migrated"]["comment"] == f"Unity Gateway model services created by the migration toolkit (app: {APP})"
     assert "ai_gateway.migrated" not in ws.schemas
@@ -1444,7 +1446,7 @@ def test_cutover_job_parameters_and_the_deadline_reach_the_jobs_and_app():
 def test_legacy_deadline_widget_is_labelled_validated_and_passed_on(monkeypatch):
     ws = FakeWS()
     res = run_notebook(monkeypatch, ws, install_widgets(deadline="next spring"))
-    assert res.raised and "Legacy deadline (custom setup) must be a date as YYYY-MM-DD" in res.status
+    assert res.raised and "Legacy deadline (custom setup: 4. Setup = custom) must be a date as YYYY-MM-DD" in res.status
     assert not ws.apps  # nothing created for a bad date
     res2 = run_notebook(monkeypatch, ws, install_widgets(deadline="2027-06-01"))
     assert not res2.raised, res2.status
@@ -1458,7 +1460,7 @@ def test_legacy_deadline_widget_is_labelled_validated_and_passed_on(monkeypatch)
 def test_service_principal_install_needs_operators(monkeypatch):
     ws = FakeWS(me="0b1f7c2e-1234-4abc-9def-0123456789ab")
     res = run_notebook(monkeypatch, ws, install_widgets())
-    assert res.raised and "set 6. Operators (custom setup)" in res.status
+    assert res.raised and "set 6. Operators (custom setup: 4. Setup = custom)" in res.status
     res2 = run_notebook(monkeypatch, ws, install_widgets(operators="boss@example.com"))
     assert not res2.raised, res2.status
     env = {e.name: e.value for e in ws.apps[APP].active_deployment.env_vars}
@@ -1735,25 +1737,65 @@ def test_built_notebooks_are_both_committed_and_the_uninstaller_has_no_payload(t
     assert un.stat().st_size < 200_000 < pathlib.Path(path).stat().st_size
 
 
-def test_an_update_from_0_10_says_the_operators_couldnt_be_read_and_records_them_from_now_on(monkeypatch):
+def test_an_update_from_0_10_asks_for_the_operators_once_then_keeps_them(monkeypatch):
+    """Installs before 0.11.0 didn't record the operators, and the Apps API doesn't return them: the update asks once
+    (a FIX, nothing changed) instead of silently resetting who can start jobs."""
     ws = FakeWS()
-    seed_install(ws)  # a 0.10-style marker: no operators; the app's env values can't be read back
+    seed_install(ws, operators=None)
+    before = snapshot_of(ws)
     res = run_notebook(monkeypatch, ws, {"__mode__": "install", "02_warehouse": WH_LABEL})
-    assert not res.raised, res.status
-    assert f"[NOTE] Operators: the current list can't be read back" in res.text and f"set to {ME}" in res.text
-    assert json.loads(ws.files[f"{FOLDER}/ug_migration_toolkit.marker"])["operators"] == [ME]
+    assert res.raised and "the operators of this install" in res.status and "6. Operators" in res.status
+    assert snapshot_of(ws) == before
+    ok = run_notebook(monkeypatch, ws, install_widgets(operators="boss@example.com,ops@example.com"))
+    assert not ok.raised, ok.status
+    assert json.loads(ws.files[f"{FOLDER}/ug_migration_toolkit.marker"])["operators"] == ["boss@example.com", "ops@example.com"]
     again = run_notebook(monkeypatch, ws, {"__mode__": "install", "02_warehouse": WH_LABEL})
-    assert "[NOTE] Operators" not in again.text and "kept from the existing install: operators" in again.text
+    assert not again.raised and "kept from the existing install: operators" in again.text
+    assert _env(ws)["OPERATORS"] == "boss@example.com,ops@example.com"
 
 
-def test_updating_an_install_doesnt_need_the_second_install_flag_when_another_exists(monkeypatch):
+def test_create_target_current_keeps_a_saved_no(monkeypatch):
     ws = FakeWS()
-    assert not run_notebook(monkeypatch, ws, install_widgets()).raised
-    other = install_widgets(app_name="ugmig-ux", results_schema="ugmig_ux", second_install="yes",
-                            install_folder="/Workspace/Users/admin@example.com/ugmig-ux-toolkit")
-    assert not run_notebook(monkeypatch, ws, other).raised
-    res = run_notebook(monkeypatch, ws, {"__mode__": "install", "02_warehouse": WH_LABEL})  # update the main one
+    assert not run_notebook(monkeypatch, ws, install_widgets(create_target="no")).raised
+    assert "main.ug_migrated" not in ws.schemas
+    res = run_notebook(monkeypatch, ws, install_widgets(app_name=APP))  # custom, 8 left at "current"
     assert not res.raised, res.status
-    fresh = run_notebook(monkeypatch, ws, install_widgets(app_name="third-app", results_schema="third",
-                                                         install_folder="/Workspace/Users/admin@example.com/third-toolkit"))
-    assert fresh.raised and "another toolkit install exists" in fresh.status  # a new one still needs it
+    assert "main.ug_migrated" not in ws.schemas and "8. Create the schema = no" in res.text
+
+
+def test_turning_central_mode_off_also_drops_its_secret(monkeypatch):
+    ws = FakeWS()
+    assert not run_notebook(monkeypatch, ws, install_widgets(run_as=SP_ID, central_workspaces="111",
+                                                             central_secret="s/k")).raised
+    res = run_notebook(monkeypatch, ws, install_widgets(central_workspaces="none"))
+    assert not res.raised, res.status
+    scan = [j for j in ws.jobs.values() if j.tags["role"] == "scan"][0]
+    params = {p.name: p.default for p in scan.parameters}
+    assert params["central_workspaces"] == "" and params["central_secret"] == ""
+
+
+def test_a_target_you_cant_see_is_a_note_not_a_crash(monkeypatch):
+    ws = FakeWS()
+    real_make = ws.make
+
+    def make():
+        client = real_make()
+        get = client.schemas.get
+
+        def schemas_get(full):
+            if full == "main.ug_migrated":
+                raise sdk_errors.PermissionDenied("User does not have USE SCHEMA on Schema 'main.ug_migrated'")
+            return get(full)
+        client.schemas.get = schemas_get
+        return client
+    ws.make = make
+    res = run_notebook(monkeypatch, ws, install_widgets())
+    assert not res.raised, res.status
+    assert "[NOTE] Schema for new model services: couldn't check main.ug_migrated" in res.text
+
+
+def test_uninstall_results_schema_must_be_catalog_dot_schema(monkeypatch):
+    ws = FakeWS()
+    seed_install(ws)
+    res = run_notebook(monkeypatch, ws, uninstall_widgets("uninstall: preview", results_schema="main"))
+    assert res.raised and "6. Results schema must be catalog.schema" in res.status

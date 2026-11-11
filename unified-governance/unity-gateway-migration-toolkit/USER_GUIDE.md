@@ -98,7 +98,7 @@ The short version, with what the install creates, is in [INSTALL.md](INSTALL.md)
 
 | Task | What you need |
 |---|---|
-| Install | Workspace admin, `USE CATALOG` and `CREATE SCHEMA` on the catalog you pick (the toolkit creates its results schema and the schema for new model services there), and `CAN USE` on a SQL warehouse |
+| Install | Permission to create Databricks Apps and jobs (usually a workspace admin), `USE CATALOG` and `CREATE SCHEMA` on the catalog you pick (the toolkit creates its results schema and the schema for new model services there), and `CAN USE` on a SQL warehouse |
 | Traffic and account view | `SELECT` on `system.serving.endpoint_usage`, `system.serving.served_entities`, `system.ai_gateway.usage` and `system.access.workspaces_latest`. By default only account admins can query them |
 | Scan | Read access to the endpoints and to the folders, jobs, queries, dashboards, apps and pipelines you scan |
 | Apply | `USE CATALOG`, `USE SCHEMA` and `CREATE SERVICE` on the schema for new model services (the installer creates it and grants this to the jobs' service principal when it can), `MANAGE` or ownership to grant, and read access to each secret in the map |
@@ -149,7 +149,7 @@ Workspaces on the same metastore share Unity Catalog names: give each workspace 
 
 ### Update and upgrade
 
-Import the newer installer and click **Run all**, with no widgets changed. The installer finds the install in the workspace (the default app name, or the only toolkit install there) and keeps its settings: catalog and schemas, install folder, warehouse, operators, the jobs' service principal, the schema for new model services, secret mapping, deadline and central mode. The run lists what it kept. Results history is kept, and the weekly snapshot keeps its paused or unpaused state. To change a setting, use custom setup; `none` clears one. A downgrade is refused unless **17. Allow downgrade** is `yes`.
+Import the newer installer and click **Run all**, with no widgets changed. The installer finds the install in the workspace (the default app name, or the only toolkit install there) and keeps its settings: catalog and schemas, install folder, warehouse, operators, the jobs' service principal, the schema for new model services, secret mapping, deadline and central mode. The run lists what it kept. An install from 0.10 or earlier didn't record its operators, and the Apps API doesn't return them, so its first update asks for them once (a FIX: set **4. Setup** to `custom`, Run all, fill in **6. Operators**, Run all again). Results history is kept, and the weekly snapshot keeps its paused or unpaused state. To change a setting, use custom setup; `none` clears one. A downgrade is refused unless **17. Allow downgrade** is `yes`.
 
 - **From 0.8.0** (app `unity-gateway-migration`): the default name is now `ug-migration-toolkit`. When it's the only install in the workspace, the installer updates it in place with no widgets set (or set **5. App name** to `unity-gateway-migration`). To move to the new name, uninstall first (an app can't be renamed), then install.
 - **From 0.7.0** (app `ug-migration`): the same two choices apply.
@@ -163,7 +163,7 @@ The install is simpler. The results tables, jobs and app don't change shape; run
 - **Four widgets, numbered.** The notebook shows **1. Catalog**, **2. SQL warehouse**, **3. Schema for new model services** and **4. Setup**. Everything else is in custom setup (widgets 5 to 18). The widget names changed (`results_catalog` is now `01_catalog`, and so on, see [Installer widgets](#installer-widgets)), so a job that runs the installer with parameters needs the new names. The numbers keep the panel in order: it sorts widgets by name.
 - **Uninstall is its own notebook,** `UNINSTALL_unity_gateway_migration_toolkit_0_11_0.py`, with `preview` as its default. The install notebook has no uninstall options any more.
 - **The schema for new model services is created for you,** as `<catalog>.ug_migrated` in the catalog you pick, unless you name another one in widget 3. The scan form and Apply prefill it from the install. **Existing installs keep their target** (until now always `ai_gateway.migrated`): an update never moves it, and never creates a schema in another catalog. To change it, enter a schema in widget 3.
-- **Updates keep every setting.** A fresh installer notebook has empty widgets; blank now keeps the warehouse, operators, run-as service principal, secret mapping, deadline and central mode the install already uses. Before, blank widgets reset them (for example, the jobs went back to running as you).
+- **Updates keep every setting.** A fresh installer notebook has empty widgets; blank now keeps the warehouse, operators, run-as service principal, secret mapping, deadline and central mode the install already uses. Before, blank widgets reset them (for example, the jobs went back to running as you). **Operators, once:** 0.10 didn't record them and Databricks doesn't return them, so the first update to 0.11.0 stops with a FIX that asks for them in **6. Operators** (custom setup). Later updates keep them.
 - **One checklist** before anything changes, then the list of what the install creates or updates.
 
 #### Upgrade notes: 0.10.2 to 0.10.3
@@ -691,7 +691,7 @@ The widget panel sorts widgets by name, so each name starts with its number (`01
 | 5 | `05_app_name` | App name | `ug-migration-toolkit`, or the only install here | 2-30 lowercase letters, digits or hyphens. Can't be renamed later |
 | 6 | `06_operators` | Operators who can start jobs in the app | you | Emails, comma-separated. Required when the installer runs as a service principal |
 | 7 | `07_run_as` | Run jobs as service principal | you | An application ID (UUID). See [Who the jobs run as](#1-install) |
-| 8 | `08_create_target` | Create the schema in 3 if it's missing | `yes` | `no`: you create it; the SQL is printed |
+| 8 | `08_create_target` | Create the schema in 3 if it's missing | `current` (yes for a new install) | `no`: you create it; the SQL is printed |
 | 9 | `09_results_schema` | Results schema name | `ug_migration` (another app name: the name with `-` as `_`) | |
 | 10 | `10_install_folder` | Install folder | `/Workspace/Users/<you>/ug-migration-toolkit` | |
 | 11 | `11_secret_schemas` | Allowed secret schemas | off | `catalog.schema`, comma-separated |
@@ -874,6 +874,8 @@ The installer prints one checklist before it changes anything. Each `FIX` line h
 | "the SQL warehouse ... is <state>, not RUNNING" | It didn't start | Start it in SQL Warehouses, or pick another |
 | "you can't write to ..." or "install folder ... has files that aren't the toolkit's" | No privilege on the schema, or a folder that isn't empty | Run the `GRANT` in the message, or choose an empty **10. Install folder** |
 | "this would downgrade the toolkit" | The installed version is newer | Install the newer version, or set **17. Allow downgrade** to `yes` |
+| "the operators of this install ... can't be read back" | The first update of an install from 0.10 or earlier | Set **4. Setup** to `custom`, Run all, fill in **6. Operators**, Run all again |
+| A red "Nothing was changed" error after the checklist | A FIX item stopped the install, as designed | Fix each FIX line, then Run all again |
 | "Custom setup: widgets 5 to 18 are now in the widget panel" | The first run with **4. Setup** = `custom` | Set the widgets you need, then Run all again |
 | Old widgets (`results_catalog`, `action`, ...) in the panel | A notebook from 0.10 or earlier, updated in place | Import the new installer as a new notebook, or remove the old widgets once |
 

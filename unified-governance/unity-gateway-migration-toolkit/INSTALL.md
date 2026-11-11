@@ -6,10 +6,10 @@ One notebook installs everything inside your workspace in about 5 minutes. No CL
 
 | Need | Why | If it's missing |
 |---|---|---|
-| Workspace admin | The installer creates an app and three jobs | Ask a workspace admin to run the installer |
+| Permission to create Databricks Apps and jobs (usually a workspace admin) | The installer creates an app and three jobs | Ask a workspace admin to run the installer |
 | A catalog where you have `USE CATALOG` and `CREATE SCHEMA` | The toolkit creates its two schemas there (below) | The checklist prints the `GRANT` to send the catalog owner |
 | `CAN USE` on a SQL warehouse | The app and jobs query through it | Ask a workspace admin for one |
-| `SELECT` on four system tables: `system.serving.endpoint_usage`, `system.serving.served_entities`, `system.ai_gateway.usage`, `system.access.workspaces_latest` | Legacy endpoints and their traffic come from them | The checklist prints the `GRANT` to send an account admin |
+| `USE CATALOG` on `system`, and `SELECT` on four system tables: `system.serving.endpoint_usage`, `system.serving.served_entities`, `system.ai_gateway.usage`, `system.access.workspaces_latest` | Legacy endpoints and their traffic come from them | The checklist prints the `GRANT` to send an account admin |
 
 ## What it creates
 
@@ -19,7 +19,7 @@ One notebook installs everything inside your workspace in about 5 minutes. No CL
 | Schema for new model services | `<catalog>.ug_migrated` | Empty until you run Apply. The service names end up in your callers' code (`<catalog>.ug_migrated.<service>`), so pick the schema you want to keep. Already have one? Enter it in widget 3 |
 | Toolkit files | `/Workspace/Users/<you>/ug-migration-toolkit` | Replaced on every update |
 | Three jobs | `[ug-migration-toolkit] Unity Gateway migration snapshot`, `workspace scan`, `apply` | Started from the app. Tagged `Project = unity-gateway-migration-toolkit`. The weekly snapshot is paused |
-| The app | `ug-migration-toolkit` (Compute > Apps) | Where you work, from Overview to Enforce |
+| The app | `ug-migration-toolkit` (Compute > Apps) | Where you work: Overview, Scans, Apply, Verify & cut over. Only operators (default: you) can start jobs in it; others can view |
 
 The install never changes your endpoints or code. Changes happen later, only when you start them in the app.
 
@@ -37,7 +37,7 @@ The install never changes your endpoints or code. Changes happen later, only whe
 
 3. Click **Run all**.
 
-Before anything changes, the notebook checks everything and prints one checklist:
+Before anything changes, the notebook checks everything and prints one checklist (shortened here):
 
 ```
 Checklist:
@@ -48,7 +48,7 @@ Checklist:
   [OK  ] Schema for new model services: main.ug_migrated doesn't exist: it will be created
 ```
 
-- **FIX** stops the install, and nothing is changed. Fix each FIX item (the message has the exact `GRANT` or the screen to open), then Run all again.
+- **FIX** stops the install. Nothing is created or changed (a stopped SQL warehouse may have been started for the checks). The cell then ends with a red "Nothing was changed" error: that's expected. Fix each FIX item (the message has the exact `GRANT` or the screen to open), then Run all again.
 - **NOTE** doesn't stop it. For example, if the schema for new model services can't be created, the install goes on, scans work, and Apply waits until the schema exists. The SQL to create it is printed.
 
 When it finishes, it prints the app link. Open the app, wait a few minutes for the first snapshot, then go to **Scans** and click **Start scan**.
@@ -57,16 +57,18 @@ When it finishes, it prints the app link. Open the app, wait a few minutes for t
 
 Import the newer installer and click **Run all**, with no widgets changed. It finds the install already in the workspace and keeps its settings: catalog and schemas, warehouse, operators, the jobs' service principal, central mode and secret mapping. The run lists what it kept.
 
+**Updating from 0.10 or earlier:** those installs didn't record their operators, and Databricks doesn't return them, so the first update asks for them once (a FIX). Set **4. Setup** to `custom`, Run all, enter the operators in **6. Operators** (your email alone is fine), then Run all again. Later updates keep them.
+
 ## Custom setup
 
 Set **4. Setup** to `custom` and click **Run all**. Widgets 5 to 18 appear, and the run stops so you can set them. Set what you need, then Run all again. Blank keeps the default, or what the install already uses. `none` clears a setting.
 
 | Widget | Use it for |
 |---|---|
-| 5. App name | A second install, or an install from before 0.9 (`unity-gateway-migration`) |
+| 5. App name | A second install. An older install (`unity-gateway-migration` from 0.8, `ug-migration` from 0.7) is found without it when it's the only one |
 | 6. Operators | Who can start jobs in the app. Default: you |
 | 7. Run jobs as service principal | A shared install. You need the service principal's **Service principal: User** role |
-| 8. Create the schema in 3 if it's missing | `no` if you'll create it yourself. The SQL is printed |
+| 8. Create the schema in 3 if it's missing | `no` if you'll create it yourself (the SQL is printed). `current` keeps the install's choice (yes for a new install) |
 | 9, 10. Results schema name, install folder | Other locations |
 | 11, 12. Allowed secret schemas, allow reading secret values | Secret mapping in Apply |
 | 13. Legacy deadline | A date other than March 30, 2027 |

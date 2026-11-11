@@ -70,7 +70,8 @@ Installs the toolkit in this workspace. No CLI, Git or local setup.
 3. Click **Run all** (about 5 minutes). The app link is printed at the end.
 
 **Before anything changes**, the notebook runs every check and prints one checklist: what passed, what to fix (with
-the exact SQL or screen), and what it will create. If something needs fixing, nothing is changed.
+the exact SQL or screen), and what it will create. If something needs fixing, nothing is created or changed, and the run
+ends with a red "Nothing was changed" error that lists the fixes: that's expected.
 
 **What it creates**
 - In the catalog you pick: the results schema `ug_migration` (scan results and history), and the schema for new
@@ -80,10 +81,12 @@ the exact SQL or screen), and what it will create. If something needs fixing, no
 - Three jobs the app starts (account snapshot, workspace scan, apply), tagged `Project = unity-gateway-migration-toolkit`.
 - The **Unity Gateway Migration Toolkit** app. The first snapshot starts at the end; it reads account-wide system tables.
 
-**What you need:** to be a workspace admin, `USE CATALOG` and `CREATE SCHEMA` on the catalog, `CAN USE` on the
-warehouse, and `SELECT` on the system tables (if it's missing, the checklist prints the GRANT to send an account admin).
+**What you need:** permission to create apps and jobs (usually a workspace admin), `USE CATALOG` and `CREATE SCHEMA`
+on the catalog, `CAN USE` on the warehouse, and `SELECT` on the system tables (if it's missing, the checklist prints
+the GRANT to send an account admin).
 
-**To update**, import the newer installer and click Run all. It finds the install and keeps its settings.
+**To update**, import the newer installer and click Run all. It finds the install and keeps its settings. (From 0.10
+or earlier it asks once for the operators, who can start jobs in the app: Databricks doesn't return them.)
 
 **Custom setup** (set **4. Setup** to `custom`, then Run all): more widgets appear for the app name, operators, a
 service principal for the jobs, central mode, secret mapping and more. To remove the toolkit, use the UNINSTALL notebook

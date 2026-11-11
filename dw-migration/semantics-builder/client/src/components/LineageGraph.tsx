@@ -64,7 +64,7 @@ export function LineageGraph({ ontology }: { ontology: Ontology }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <LineageCanvas
-        label={`Lineage of ${ontology.entities.length} table${ontology.entities.length === 1 ? '' : 's'} and ${ontology.links.length} join${ontology.links.length === 1 ? '' : 's'}`}
+        label={`Relationships of ${ontology.entities.length} table${ontology.entities.length === 1 ? '' : 's'} and ${ontology.links.length} join${ontology.links.length === 1 ? '' : 's'}`}
         nodes={nodes}
         edges={edges}
       />

@@ -1,0 +1,709 @@
+# STS Semantics Builder: how the app works
+
+This wiki tells how the app works, step by step. It uses ASD-STE100 Simplified Technical English.
+
+For the configuration and the deployment, read the [README](../README.md). For the design decisions, read the
+phase documents in this folder.
+
+## Contents
+
+1. [What the app does](#1-what-the-app-does)
+2. [Words that this wiki uses](#2-words-that-this-wiki-uses)
+3. [Identity and access](#3-identity-and-access)
+4. [The parts of the app](#4-the-parts-of-the-app)
+5. [Projects and sub-projects](#5-projects-and-sub-projects)
+6. [Overview](#6-overview)
+7. [Sources & Readiness](#7-sources--readiness)
+8. [Intent & Context](#8-intent--context)
+9. [Metric dictionary](#9-metric-dictionary)
+10. [Modeling patterns](#10-modeling-patterns)
+11. [Metric Designer](#11-metric-designer)
+12. [Tests and validation](#12-tests-and-validation)
+13. [Optimize](#13-optimize)
+14. [Ask Genie](#14-ask-genie)
+15. [Publish: Promotion](#15-publish-promotion)
+16. [Impact analysis](#16-impact-analysis)
+17. [Approvals and Reviews](#17-approvals-and-reviews)
+18. [Publish: Governance](#18-publish-governance)
+19. [Publish: Drift](#19-publish-drift)
+20. [Publish: Pages](#20-publish-pages)
+21. [Metric views library](#21-metric-views-library)
+22. [The SQL path and its safety rules](#22-the-sql-path-and-its-safety-rules)
+23. [The AI advisor](#23-the-ai-advisor)
+24. [The data that the app keeps](#24-the-data-that-the-app-keeps)
+25. [Permissions that users need](#25-permissions-that-users-need)
+26. [Limits](#26-limits)
+27. [Troubleshooting](#27-troubleshooting)
+
+## 1. What the app does
+
+The app helps a data team make Unity Catalog metric views. A metric view is a Unity Catalog view. It has a YAML
+definition with measures (for example Net Revenue) and dimensions (for example Customer Region).
+
+The app does these tasks:
+
+- It helps you select the source tables, and it finds the problems in their metadata.
+- It helps you write a business brief: the goal, the audience, the questions, the measures and the dimensions.
+- It makes a design of the metric view, with AI or from a template.
+- It tests the design in a sandbox schema.
+- It measures the speed and the cost of the design, and it tests the design with Genie.
+- It puts the metric view in Unity Catalog, with an owner and read grants.
+- It finds the changes that other persons make to the view after that.
+
+A person must examine and approve each change before it runs. The AI does not change data or metadata.
+
+## 2. Words that this wiki uses
+
+| Word | Meaning |
+| --- | --- |
+| Project | A group of related KPI areas, for example "Order fulfilment". |
+| Sub-project | One KPI area in a project. One sub-project makes one metric view. |
+| Brief | The Semantic Brief. It tells what the metric view must show and for whom. |
+| Design | The YAML of the metric view. Each change makes a new version of the design. |
+| Version | One saved state of the design. A version does not change after you save it. |
+| Sandbox schema | A schema for tests only. The app makes draft views there. The bundle variable `sandbox_schema` sets it. |
+| Sandbox view | The draft metric view in the sandbox schema. |
+| Target view | The real view in Unity Catalog (`catalog.schema.view`). |
+| Promote | The step that puts a validated version in the target view. |
+| Validated | All the tests of the version passed in the sandbox. |
+| Consumer | A Genie space, dashboard, job, notebook, query, alert or app that reads the view. |
+| Reviewer | A person that the author names to approve a version before Promote. |
+| Audit log | A table that keeps a record of each change: who, what, when and the result. |
+
+## 3. Identity and access
+
+### 3.1 Two identities
+
+The app uses two identities. Each identity has a different job.
+
+| Identity | What it does |
+| --- | --- |
+| You (the signed-in user) | All data reads, all SQL, all Unity Catalog reads, all model calls and all Genie calls. |
+| The app service principal | It keeps the app data in Lakebase (schema `gsb`). It writes MLflow traces with metadata only. It reads the list of published Discover domains for Pages. |
+
+The app service principal never reads customer data.
+
+### 3.2 On-behalf-of access
+
+The Databricks Apps proxy sends your token to the app. The app uses this token for each call to Databricks. Thus
+the app can do only the things that you can do. Unity Catalog permissions apply as usual.
+
+If the proxy does not send your identity, the app stops the request. It does not use the service principal
+instead.
+
+### 3.3 Scopes
+
+The app asks for these scopes when you sign in for the first time:
+
+| Scope | Why the app needs it |
+| --- | --- |
+| `sql` | Queries on the SQL warehouse, approved DDL, Query History |
+| `serving.serving-endpoints` | Calls to the model for the AI advisor |
+| `catalog.catalogs:read`, `catalog.schemas:read`, `catalog.tables:read` | The Unity Catalog pickers and table metadata |
+| `genie` | Ask Genie and Ask Genie One |
+
+When the scopes change, you must give your consent again on your next visit.
+
+### 3.4 Who sees a project
+
+A project is private. Only the person who made the project can see it and change it. The only exception is a
+review: a reviewer can see one version of one sub-project, read-only. Refer to
+[Approvals and Reviews](#17-approvals-and-reviews).
+
+## 4. The parts of the app
+
+### 4.1 The screen
+
+- **The left navigation** has **All projects**, **Metric views**, **Reviews** and the list of your projects.
+  When a person asks you for a review, the Reviews item shows the number of open reviews.
+- **The header** has the app name and the theme selector (light, dark or system).
+- **A sub-project** has these tabs, in order: Overview, Sources & Readiness, Intent & Context, Metric Designer,
+  Optimize and Publish. A green mark shows a tab that is complete.
+
+### 4.2 The system
+
+```mermaid
+flowchart LR
+  U[Browser] -->|Apps proxy, your token| A[App: Express server and React client]
+  A -->|as you, SQL allowlist| W[SQL warehouse]
+  A -->|as you, read-only| UC[Unity Catalog API]
+  A -->|as you| G[Genie]
+  A -->|as you| M[Model serving endpoint]
+  A -->|app service principal| L[(Lakebase: gsb schema)]
+  W --> S[Sandbox schema]
+  W --> T[Target views]
+```
+
+- The client is React with the Databricks design system (Du Bois).
+- The server is Node.js with Express and Databricks AppKit.
+- The app keeps its data in Lakebase Postgres, in the schema `gsb`. The app applies the database migrations
+  when it starts.
+
+## 5. Projects and sub-projects
+
+A project is a group. A sub-project does the work. Each sub-project makes one metric view.
+
+To make a project:
+
+1. Click **All projects**.
+2. Click **New project**.
+3. Type a name and the business goal.
+4. Click **Create project**.
+
+To make a sub-project:
+
+1. Open the project.
+2. Click **New sub-project**.
+3. Type a name, for example "Net revenue".
+4. Click **Create sub-project**.
+
+To delete a project, open the project and click **Delete project**. The app shows the sandbox views of the project. You
+can remove these views before the app deletes the project. The app does not remove the target views in Unity
+Catalog.
+
+## 6. Overview
+
+The Overview tab has two parts:
+
+- **Next** shows the next step for this sub-project, with a button that opens that step.
+- **About** shows the status of each step. Each label opens the place where you change that item.
+
+| Label | What it shows |
+| --- | --- |
+| Sources | The number of tables, the readiness score and the number of open fixes |
+| Brief | The version of the brief, and if it is confirmed |
+| Design | The latest version of the design, and if it is validated |
+| Unity Catalog | The target view, the promoted version, and the number of newer versions |
+| Health | The result of the last drift check |
+| Pages | The number of Pages, and the Discover domain |
+| Last activity | The date and time of the last change |
+
+## 7. Sources & Readiness
+
+This tab helps you select the source tables and make their metadata better before the design.
+
+### 7.1 Select the tables
+
+1. Open **Sources & Readiness**.
+2. In the Unity Catalog tree, select the tables. The tree shows only the tables that you can read.
+3. Click **Check how they relate**. The app finds the joins between the tables.
+4. Click **Assess sources**. The app reads the metadata of each table and calculates a score.
+
+### 7.2 The readiness score
+
+The score is from 0 to 100. The app calculates a score for each table, then it combines them. Each area has a
+weight:
+
+| Area | Weight | What the app checks |
+| --- | --- | --- |
+| Documentation | 30 | The table has a description. The columns have descriptions. |
+| Keys and relationships | 30 | The primary key is declared. The foreign keys are declared. |
+| Data types | 15 | Dates use the date or timestamp type. Amounts use a number type. |
+| Naming clarity | 10 | Column names are clear, not short codes. |
+| Brief coverage | 15 | Each measure and dimension of the brief has a source column. |
+
+The app also checks that you can read each table.
+
+### 7.3 The Plan tab
+
+The Plan tab shows the fixes that make the score better. Each fix has the exact SQL. Examples:
+
+- Add a comment to a table or a column.
+- Declare a primary key or a foreign key.
+- Add a tag.
+
+The AI can suggest the text of a comment. You can accept, change or dismiss each suggestion.
+
+To apply a fix:
+
+1. Click the fix.
+2. Read the SQL.
+3. Click **Run SQL**.
+
+The fix runs one time, as you. The app writes it in the audit log before and after it runs.
+
+> **Caution:** Apply the primary keys before the foreign keys that refer to them. Otherwise the foreign key
+> statement fails.
+
+### 7.4 The Relationships tab
+
+The Relationships tab shows how the tables can join, column to column. The fact tables are on the left.
+
+- A solid arrow is a declared foreign key.
+- A dashed arrow is a join that the app found from the key names. Declare it in the Plan tab to document the
+  model.
+
+The tab also shows two warnings:
+
+- **Brief items with no source column.** Add a table that has these items, or change the brief.
+- **Tables with no join.** A metric view must have a join path from the fact table to each table.
+
+This tab shows the tables before a design exists. To see how the metric view uses the tables, open
+**Metric Designer**, **Model**.
+
+### 7.5 The Tables tab
+
+The Tables tab shows each table and its columns, like Catalog Explorer. You can change the table description and
+the column descriptions in place. The AI suggestions show in each cell.
+
+### 7.6 The Permissions tab
+
+The Permissions tab shows your permissions on each source table. The app reads them live, as you, through the Unity
+Catalog API. You see only the tables that you can access.
+
+The app never runs GRANT statements on the source tables. When a permission is missing, the tab shows the owner of
+the table. Send the request to that owner.
+
+## 8. Intent & Context
+
+This tab makes the Semantic Brief. The brief tells the AI and the reviewers what the metric view must do.
+
+The brief has these sections: title, business goal, audience, key questions, measures, dimensions, time grains,
+candidate sources, glossary, assumptions and open questions.
+
+To make the brief:
+
+1. Click **Generate brief**. The AI makes a draft from the sources and your project description.
+2. To change the draft, type a request in the chat. For example: "Add the order priority as a dimension."
+3. To fill empty sections, click **Suggest the empty sections with AI**.
+4. Edit the text directly if necessary.
+5. Click **Confirm brief**.
+
+Each change makes a new version of the brief. The design uses the confirmed brief.
+
+## 9. Metric dictionary
+
+The metric dictionary keeps the certified definitions of your company. All sub-projects use the same
+dictionary.
+
+You can import a dictionary from Excel, CSV, Markdown, or a file in a Unity Catalog volume.
+
+The app uses the dictionary in these places:
+
+- The design uses the certified name, the formula and the description of a measure.
+- The design shows a warning when a measure has the same name as a certified measure but a different formula.
+- Pages for Discover use the certified definitions.
+
+## 10. Modeling patterns
+
+Modeling patterns are examples of common metric types. Examples are ratios, windows (for example the value of
+the prior year) and semi-additive measures (for example a balance at the end of the month).
+
+You can try a pattern on your tables in the sandbox. The app compares the result with the expected output of
+the pattern. Then you can start a design from the pattern.
+
+## 11. Metric Designer
+
+This tab makes the YAML of the metric view.
+
+### 11.1 Start a design
+
+You can start a design in four ways:
+
+| Method | AI | Result |
+| --- | --- | --- |
+| **Generate a new design** | Yes | The AI makes a design from the brief, the sources and the dictionary. |
+| **Start from a template** | No | The app makes a design from the fact table and the joins. |
+| **Start from a pattern** | No | The app uses a modeling pattern. |
+| **Import** (Metric views library) | No | The app reads a metric view that exists in Unity Catalog. |
+
+### 11.2 The Model tab
+
+The Model tab shows the lineage of the metric view on a canvas:
+
+- The source tables, with the join conditions.
+- The metric view as the output, with its number of measures and dimensions.
+
+Click a table to see the fields that read it. Use the zoom buttons or the minimap to move on the canvas.
+
+Click **Edit fields** to change the measures and the dimensions in a table. Click **Add a field** to make a field
+in a form. In the form, you select the table, the column and the aggregation (SUM, COUNT, COUNT_DISTINCT, AVG, MIN
+or MAX) or the date grain (DAY, WEEK, MONTH, QUARTER or YEAR).
+
+### 11.3 The YAML tab
+
+The YAML tab shows the definition. You can edit the YAML directly. The app checks the YAML when you save it. The
+check finds these problems:
+
+- A field that refers to a column that does not exist.
+- A window measure that refers to a dimension that does not exist.
+- A measure that has the same name as a certified measure but a different formula.
+
+An error stops the validation. A warning does not stop it.
+
+### 11.4 Fix with AI
+
+Type a request in **Fix with AI**, for example "Add a measure for the average discount". The AI makes a new
+version. Read the change before you validate it.
+
+### 11.5 History
+
+The History tab lists each version: who made it, when, and how (generated, edited, template, pattern, imported
+or restored).
+
+To go back to an older version:
+
+1. Open **History**.
+2. Click **Restore** on the version.
+
+The app copies that version as a new version. It does not delete the newer versions. A restored version keeps the
+status (validated or not) of the version that it copies.
+
+## 12. Tests and validation
+
+### 12.1 Tests
+
+A test is a question that the metric view must answer. There are two kinds of tests:
+
+| Kind | What it checks |
+| --- | --- |
+| **Plain SQL test** | 1 to 4 measures, by up to 3 dimensions. The app runs the query on the metric view. It also runs plain SQL with the same meaning, from the YAML. The two results must be equal. |
+| **Expected value test** | 1 measure, with up to 5 filters (dimension equals value). The result must be in the tolerance of an expected value, for example a total from the legacy report. |
+
+Window measures (for example the value of the prior year) have no plain SQL form. The app runs them but it does
+not compare them. The result says so.
+
+### 12.2 Make an expected value test
+
+1. Open **Metric Designer**, **Tests**.
+2. Click **Edit tests by hand**.
+3. Click **Add a test**, and type a name.
+4. Select **Check against an expected value**.
+5. Select one measure.
+6. Click **Add a filter**. Select a dimension and type the value, for example `Customer Region` equals `ASIA`.
+7. Type the expected value and the tolerance in percent, for example 0.5.
+8. Click **Save the tests**. The app makes a new version.
+
+### 12.3 Validate
+
+1. Click **Validate in sandbox**.
+2. Read the SQL. It makes the sandbox view.
+3. Click **Run SQL**.
+
+The app does these steps:
+
+1. It makes the sandbox view `<sandbox_schema>.<view>__gsb_<id>`, as you.
+2. It runs each test, as you.
+3. It shows the result of each test: passed, failed or error.
+4. If all tests pass, the version becomes **validated**.
+
+### 12.4 What the app keeps
+
+The app keeps only these results: pass or fail, the number of rows, the difference in percent for an expected
+value test, and the SQL. It never keeps the values that a query returns.
+
+Example of a result: "1.24% below the expected value. The tolerance is 0.5%."
+
+### 12.5 Remove the sandbox view
+
+Click **Remove sandbox view**. Read the SQL, then click **Run SQL**. The app uses the same name for each
+validation of a sub-project, so it replaces the old sandbox view each time.
+
+## 13. Optimize
+
+This tab makes the design faster, cheaper and easier to use.
+
+### 13.1 Best practices
+
+The app checks the design against these rules:
+
+- The view has a description.
+- Each measure and dimension has a description.
+- Measures have synonyms and a display name.
+- Money, ratios and dates have a format.
+- Ratios cannot divide by zero (they use `NULLIF`).
+- Dimensions are business attributes, not keys or free text.
+- Non-additive measures are known.
+
+Each finding has a fix. You can apply the fix, which makes a new version.
+
+### 13.2 Stress test
+
+The stress test runs a set of queries on the sandbox view: the tests, and each dimension with the measures that
+it can show. The app records the time of each query, and finds slow queries, spill to disk and queries with no
+file pruning.
+
+### 13.3 Materialization
+
+For slow queries, the app suggests materializations: one for each set of dimensions. A query with only additive
+measures can use a wider materialization (rollup). You can try a materialization in the sandbox. The app then
+reads the query plan to make sure that the query uses it.
+
+### 13.4 Cost and budget
+
+The app calculates the warehouse time of the stress test and compares it with the last run. You can set a monthly
+budget. The app tells you when the expected use is more than the budget.
+
+## 14. Ask Genie
+
+This part of Optimize tests the design with Genie before you promote it.
+
+- **Ask Genie** uses a Genie space on the sandbox view. The app can make the space for you.
+- **Ask Genie One** uses Genie One. Genie One is not bound to a space, so the app puts the name of the sandbox
+  view in the question.
+
+To test a question:
+
+1. Type a business question, for example "Net revenue by region in 2024".
+2. Select the fields that the answer must use.
+3. Click **Ask Genie** or **Ask Genie One**.
+
+The app reads the SQL that Genie wrote and compares the fields with your selection. The verdict is one of:
+matches, different, needs review, or no answer. The answer also shows if Genie One searched knowledge that other
+users wrote. The app does not compare result values yet.
+
+## 15. Publish: Promotion
+
+Publish has a left pane with four tasks: Promotion, Governance, Drift and Pages. Governance and Drift are
+available after the first Promote.
+
+### 15.1 Set the target
+
+1. Open **Publish**, **Promotion**.
+2. Type the target view as `catalog.schema.view`. You cannot use the sandbox schema.
+3. Click **Save the target**.
+
+### 15.2 Promote
+
+1. Click **Promote version N**. The button is available only for the latest validated version.
+2. Read the dialog: the warning, the impact and the SQL.
+3. If the view in Unity Catalog was changed outside the app, the dialog shows its YAML. Select **Replace the
+   changes made outside the app** to continue.
+4. Click **Run SQL**.
+
+The app runs `CREATE OR REPLACE VIEW ... WITH METRICS`, as you. The queries, dashboards and Genie spaces on the
+view see the new definition immediately.
+
+The app compares the SQL that you examined with the SQL that it runs. If the design changed after you opened
+the dialog, the app stops and tells you to examine it again.
+
+### 15.3 Roll back
+
+1. Open **Metric Designer**, **History**.
+2. Restore the older version.
+3. Validate it, if necessary.
+4. Promote it.
+
+## 16. Impact analysis
+
+The Promote dialog and the review page show the impact of the new version.
+
+### 16.1 Field changes
+
+The app compares the fields of the new version with the view that is in Unity Catalog now:
+
+| Change | Meaning |
+| --- | --- |
+| Removed | The field is not in the new version. |
+| Renamed | A field has a new name but the same expression. |
+| New expression | The field has the same name but a different expression or window. |
+| Added | The field is new. |
+| Global filter changed | Each measure can change. |
+
+### 16.2 Consumers
+
+The app reads the system tables `system.access.table_lineage` and `system.access.column_lineage` for the last 90
+days. For each consumer, it shows:
+
+- The type: Genie space, dashboard, alert, app, job, pipeline, notebook, query, or ad hoc queries.
+- A link to the consumer in the workspace.
+- The number of users and queries. It does not show user names or query text.
+- The date of the last read.
+- The removed or changed fields that the consumer read.
+
+When a consumer reads a field that the version removes or renames, the dialog shows a red warning. These queries
+fail after Promote.
+
+The app does not use the query text in Query History, because many workspaces redact it. It uses the column
+lineage instead.
+
+> **Note:** Lineage does not record each read. Thus the list can be incomplete.
+
+If you do not have SELECT on the lineage tables, the dialog shows the field changes only, and tells you why.
+
+## 17. Approvals and Reviews
+
+A sub-project can need approval before Promote. Another person must approve the exact version.
+
+### 17.1 Ask for approval (author)
+
+1. Open **Publish**, **Promotion**.
+2. Select **Promote needs approval by another person**.
+3. Type the email of the reviewer. You cannot type your own email.
+4. Type a note for the reviewer, if necessary.
+5. Click **Ask for approval of version N**.
+6. Click **Copy the review link**, and send the link to the reviewer. The app does not send email.
+
+The **Promote** button stays unavailable until the reviewer approves this version.
+
+A new request cancels the request that is open. To stop a request, click **Cancel the request**.
+
+### 17.2 Do a review (reviewer)
+
+1. Open the review link, or click **Reviews** in the left navigation.
+2. Read the review page. It shows:
+   - The project, the sub-project, the version, the author and the note.
+   - The impact, calculated with your own Unity Catalog permissions.
+   - The test results of the version.
+   - The new YAML, the YAML in Unity Catalog now, and the SQL that Promote runs.
+3. Type a comment. A comment is necessary to reject.
+4. Click **Approve version N** or **Reject**.
+
+Approve does not promote the version. The author must promote it.
+
+### 17.3 Rules
+
+- The reviewer sees only the version of the request. The reviewer cannot open the sub-project.
+- The author cannot approve their own version. The API and the database both stop it.
+- An approval is for one version only. A new version needs a new approval.
+- The app writes each request, cancel and decision in the audit log.
+
+## 18. Publish: Governance
+
+Governance sets who owns the view and who can read it.
+
+- **Owner:** select a user, a group or a service principal. The app runs `ALTER VIEW ... OWNER TO`, as you.
+- **Read grants:** add or remove `SELECT` for users and groups. The app shows the SQL before it runs.
+
+> **Caution:** Set the owner before you add a materialization. The app cannot change the owner of a materialized
+> view.
+
+## 19. Publish: Drift
+
+Drift is a change in Unity Catalog that the app did not make. The app compares Unity Catalog with the promoted
+version and finds five kinds of drift:
+
+| Kind | Example |
+| --- | --- |
+| Schema | A column of a source table was removed or changed type. |
+| Definition | A person changed the YAML of the view outside the app. |
+| Governance | The owner or the grants changed, or a source table has a row filter or a column mask. |
+| Usage | The last refresh of the materialization did not succeed. |
+| Data | A total moved from its baseline, or has no value now. This kind is optional, because it reads data. |
+
+The app checks for drift when you click **Check drift**. It also checks your promoted views one time each day,
+when you open the app. There is no scheduled job.
+
+## 20. Publish: Pages
+
+Pages are UC Semantics Pages in Discover. A Page explains a metric, a glossary term or an entity to business
+users and to Genie.
+
+The app makes draft Pages from the certified dictionary, the brief glossary and the metric view. Pages and Genie
+Code have no API, so the app cannot write to Discover. Instead, the app makes a file and a prompt for the Genie
+Code bulk import.
+
+To make the Pages:
+
+1. Open **Publish**, **Pages**.
+2. Select the Discover domain. If the list is empty, type the domain name.
+3. Edit the Pages. The description has a maximum of 160 characters.
+4. Click **Download N Pages for bulk import**.
+5. Click **Open Discover**, then **Copy the prompt**.
+6. In Discover, open Genie Code, attach the file and paste the prompt.
+
+Genie Code makes draft Pages. A domain curator publishes them.
+
+> **Note:** The domain list needs the `MANAGE DISCOVER` permission for the app service principal. Without it,
+> you must type the domain name. Copy the name from Discover, **Manage Domains**.
+
+## 21. Metric views library
+
+Click **Metric views** in the left navigation. The page has two tabs.
+
+- **Optimized semantics** lists the metric views that the app manages for you: the target, the promoted version,
+  the latest version, and the health.
+- **Adopt** lists the metric views in Unity Catalog that the app does not manage yet. Click **Adopt** to bring a
+  view into a project. The app reads its YAML, its source tables, and makes a brief draft and tests.
+
+**Discover and consolidate KPIs** scans schemas for metric views and SQL views. It finds the same KPI in more
+than one view, shows the differences in the formulas, and proposes one definition. You can import it, or add it to
+the dictionary as certified.
+
+## 22. The SQL path and its safety rules
+
+All SQL goes through one path in the server. These rules apply:
+
+1. **The model never writes SQL.** The AI proposes names and text only. The server makes each statement.
+2. **The server quotes each name and value.** It checks each name against the real table before it uses it.
+3. **An allowlist checks each statement.** The allowlist accepts reads, `DESCRIBE`, and a fixed set of metadata
+   statements: comments, keys, tags, metric views, read grants and revokes, and the owner of a view. It accepts one
+   statement at a time and no SQL comments.
+4. **You approve the exact SQL.** A change runs only with the statements that you examined. If the statements
+   change, the app stops.
+5. **The SQL runs as you.** Unity Catalog permissions apply.
+6. **The audit log keeps a record.** The app writes each change before and after it runs.
+7. **Draft views stay in the sandbox.** The sandbox schema comes from the configuration, never from a request.
+
+## 23. The AI advisor
+
+The AI advisor uses one model serving endpoint. The bundle variable `serving_endpoint_name` sets it.
+
+- The AI makes drafts: the brief, the design, the comments and the fixes. A person examines each draft.
+- The app sends the user text and the catalog metadata to the model in a block named `untrusted_data`. The model
+  must not follow instructions in that block.
+- The app checks the model output against a schema. If the output is not correct, the app asks the model one more
+  time, then it stops.
+- The MLflow traces keep only metadata: the prompt id and version, the time, the tokens and the result. They do
+  not keep the prompts, the answers or the catalog details.
+
+## 24. The data that the app keeps
+
+The app keeps its data in Lakebase, in the schema `gsb`. The main tables are:
+
+| Table | Content |
+| --- | --- |
+| `project` | Projects and sub-projects, the target view, the Pages domain, the approval rule |
+| `source` | The source tables of each sub-project |
+| `readiness_report`, `recommendation` | The readiness scores and the fixes |
+| `semantic_brief`, `chat_session`, `project_memory` | The versions of the brief, the chat, and the facts that the advisor keeps |
+| `dictionary_entry` | The metric dictionary |
+| `pattern_run` | The tries of modeling patterns |
+| `metric_view_draft` | The versions of the design: YAML, explanations, tests and issues |
+| `validation_run` | The test results (no result values) |
+| `stress_run`, `stress_query` | The stress test runs and the time of each query |
+| `genie_space`, `genie_check` | The Genie spaces that the app made, and the verdicts |
+| `promotion` | Each Promote: version, target, YAML, status |
+| `drift_check` | The drift findings |
+| `review` | Each approval request and its decision |
+| `page_edit` | Your changes to the generated Pages |
+| `audit_log` | Each change: who, what, when, and the result |
+
+The app does not keep query results, Genie answers, or user names of consumers.
+
+When you delete a project, the database deletes its sub-projects, versions, runs and reviews. The audit log
+keeps the record of the delete.
+
+## 25. Permissions that users need
+
+| Task | Permission |
+| --- | --- |
+| Select and assess tables | `USE CATALOG`, `USE SCHEMA` and `SELECT` on the source tables |
+| Apply metadata fixes | Ownership of the table, or `MODIFY` (it depends on the statement) |
+| Validate | `USE SCHEMA` and `CREATE TABLE` in the sandbox schema |
+| Promote | `USE SCHEMA` and `CREATE TABLE` in the target schema, and `SELECT` on the source tables |
+| Set the owner and grants | Ownership of the view, or `MANAGE` |
+| Impact analysis | `SELECT` on `system.access.table_lineage` and `system.access.column_lineage` |
+| Ask Genie | `CAN USE` on the SQL warehouse, and access to Genie |
+
+## 26. Limits
+
+- Ask Genie checks the fields in the SQL of Genie. It does not compare result values yet.
+- Discover and consolidate reads metric views and SQL views only.
+- Impact analysis uses lineage. Lineage does not record each read.
+- The drift check runs when you ask for it, and one time each day when you open the app.
+- The app cannot write Pages to Discover. Genie Code bulk import does this.
+- A project has one owner. Reviews are the only way to share a version.
+- The app does not send email.
+
+## 27. Troubleshooting
+
+| Problem | Cause | Action |
+| --- | --- | --- |
+| "Invalid scope" | Your token is older than a new app scope. | Sign out of the app and sign in again. Give your consent. |
+| A fix fails with `PERMISSION_DENIED` | You cannot change the table. For example, `samples` is read-only. | Use a copy of the table in a catalog that you own. |
+| A foreign key fails | The primary key that it refers to is not declared. | Apply the primary key fix first. |
+| "The SQL changed since you reviewed it" | The design or the plan changed after you opened the dialog. | Close the dialog and open it again. |
+| "Version N needs approval" | The sub-project needs approval. | Ask for approval, or clear **Promote needs approval by another person**. |
+| "Cannot read lineage" | You do not have SELECT on the lineage tables. | Ask an admin for SELECT, or promote with the field changes only. |
+| The domain list is empty in Pages | The app service principal does not have `MANAGE DISCOVER`. | Type the domain name. |

@@ -264,6 +264,8 @@ lineage canvas uses React Flow and keeps its attribution link.
 
 ## Design notes
 
+For a detailed guide to how the app works, read the [wiki](docs/wiki.md).
+
 The phase plans and their decisions are in [`docs/`](docs):
 [metric designer](docs/phase-b-metric-designer.md),
 [playground](docs/phase-c-playground.md),

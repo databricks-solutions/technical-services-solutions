@@ -47,8 +47,8 @@ test('pick sources, check how they relate, and assess them', async ({ page }) =>
   // The assessment runs on add and ends with a score.
   await expect(page.getByRole('region', { name: 'Semantic readiness' })).toBeVisible({ timeout: 180_000 });
   await expect(page.getByRole('tab', { name: /Improvement plan/ })).toBeVisible();
-  await page.getByRole('tab', { name: 'Lineage' }).click();
-  await expect(page.getByRole('group', { name: /Lineage of 3 tables/ })).toBeVisible();
+  await page.getByRole('tab', { name: 'Relationships' }).click();
+  await expect(page.getByRole('group', { name: /Relationships of 3 tables/ })).toBeVisible();
   await page.getByRole('tab', { name: 'Permissions' }).click();
   await expect(page.getByRole('table')).toContainText('Read sandbox_source.bakehouse.sales_transactions');
 });

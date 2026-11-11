@@ -363,7 +363,7 @@ export function SourcesPage() {
   const [edits, setEdits] = useState<FixEdits>({});
   const [sql, setSql] = useState<string[]>();
   const [adding, setAdding] = useState<'pick' | 'related'>();
-  const [tab, setTab] = useTab(['plan', 'lineage', 'tables', 'permissions'] as const, 'plan');
+  const [tab, setTab] = useTab(['plan', 'relationships', 'tables', 'permissions'] as const, 'plan');
   const [search, setSearch] = useSearchParams();
   const openTable = (sourceId: string) =>
     setSearch(
@@ -512,7 +512,7 @@ export function SourcesPage() {
             <Tabs.Root componentId="gsb.sources.tabs" value={tab} onValueChange={setTab}>
               <Tabs.List>
                 <Tabs.Trigger value="plan">Improvement plan ({openFixes.length})</Tabs.Trigger>
-                <Tabs.Trigger value="lineage">Lineage</Tabs.Trigger>
+                <Tabs.Trigger value="relationships">Relationships</Tabs.Trigger>
                 <Tabs.Trigger value="tables">Tables ({data.sources.length})</Tabs.Trigger>
                 <Tabs.Trigger value="permissions">Permissions</Tabs.Trigger>
               </Tabs.List>
@@ -580,14 +580,28 @@ export function SourcesPage() {
                 </div>
               </Tabs.Content>
 
-              <Tabs.Content value="lineage">
+              <Tabs.Content value="relationships">
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 16 }}>
                   <Typography.Text color="secondary">
-                    How the tables join, column to column, with fact tables on the left. Solid arrows are declared
+                    How the tables can join, column to column, with fact tables on the left. Solid arrows are declared
                     foreign keys. Dashed arrows are joins suggested by the key names; declare them in the improvement
                     plan to document the model.
                   </Typography.Text>
                   {assessed ? <LineageGraph ontology={data.ontology} /> : null}
+                  <Typography.Text>
+                    To see how the metric view uses these tables, open{' '}
+                    <Typography.Link
+                      componentId="gsb.sources.open_model"
+                      href={`/projects/${parentId}/sub/${projectId}/designer`}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        void navigate(`/projects/${parentId}/sub/${projectId}/designer`);
+                      }}
+                    >
+                      Metric Designer, Model
+                    </Typography.Link>
+                    .
+                  </Typography.Text>
                   {data.ontology.unmapped.length > 0 && (
                     <Alert
                       componentId="gsb.sources.unmapped"

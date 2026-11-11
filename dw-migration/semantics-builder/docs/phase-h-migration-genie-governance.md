@@ -142,6 +142,7 @@ alerts, Designer density, Metric views page layout, keyboard focus.
 2. h3 (tests are the base for h2, h5, h7 and h8)
 3. h4, then h5
 4. h1.2 and h2
+   Then phase i (the golden project, `docs/phase-i-golden-project.md`), before h6 and h7.
 5. h6
 6. h7 (dbt, LookML, then TMSL/TMDL, Tableau, Cognos, MicroStrategy, SSAS MD), then h8
 7. h9 runs after each step, and as one full pass at the end

@@ -1033,9 +1033,15 @@ def protection_from_runs(runs: list[dict], apply_id: str) -> tuple[dict, set]:
 
 
 def rollback(w: WorkspaceClient, log_path: str, execute: bool, protect=None, apply_id: str | None = None,
-             released=None, force: bool = False, audit_path: str | None = None) -> list[dict]:
+             released=None, force: bool = False, audit_path: str | None = None,
+             only: set | None = None) -> list[dict]:
     """Delete only what this run's log says it created or reused, and only where the object still carries
     this run's apply mark (or is a reused object whose owning run was rolled back). Newest first.
+
+    only: the (type, name) keys a rollback dry run listed as would_delete. When given, an object that is not in it
+    is kept (reason: not in the rollback dry run), whatever the live checks say now. Between the dry run and the
+    rollback another run can be rolled back, which releases objects the dry run kept, and force can make a changed
+    object deletable; neither may delete something the person never saw in the dry run.
 
     Each result is appended to audit_path as it happens (when executing), so a cancelled rollback still
     leaves a record. When audit_path is the source log, a rollback_complete marker is written at the end, only if
@@ -1146,6 +1152,11 @@ def rollback(w: WorkspaceClient, log_path: str, execute: bool, protect=None, app
             if key not in done and key in created_here:
                 emit({"type": typ, "name": name, "action": "note",
                       "reason": "create was interrupted; the object exists and carries this run's mark"})
+            if execute and only is not None and key not in only:
+                emit({"type": typ, "name": name, "action": "kept", "not_in_dry_run": True,
+                      "reason": "not in the rollback dry run that was confirmed (something changed after it ran, for "
+                                "example another run was rolled back); run a new rollback dry run to see it"})
+                continue
             if not execute:
                 deleted.add(key)
                 emit({"type": typ, "name": name, "action": "would_delete"})
@@ -1262,7 +1273,8 @@ TEST_TIMEOUT_SECONDS = 120
 SERVICE_NAME_RE = re.compile(r"[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+")
 ENDPOINT_NAME_RE = re.compile(r"[A-Za-z0-9_\-]+")
 DRY_RUN_TTL_HOURS = 24  # an execute must follow a successful dry run of the same settings started this recently
-DRY_RUN_GATED = ("apply", "test_call", "pause_legacy", "enable_tracking", "guardrail_check")  # resume and apply rollback have no dry run
+DRY_RUN_GATED = ("apply", "test_call", "pause_legacy", "enable_tracking", "guardrail_check")  # resume has no dry run
+# An apply rollback follows its own dry run (mode rollback_dry_run, rollback_gate_error).
 PAUSE_TRAFFIC_HOURS = 24  # pause refuses an endpoint with legacy requests this recent, unless force is set
 # AI Gateway settings that PUT /ai-gateway re-sends: the companion script's list plus usage tracking.
 # An endpoint with any other setting set is refused, because the PUT would drop it.
@@ -1315,6 +1327,68 @@ def dry_run_gate_error(dry: dict | None, operation: str, fingerprint: str | None
         return f"that dry run is more than {DRY_RUN_TTL_HOURS} hours old; run a dry run again"
     if used_by:
         return f"that dry run was already used by execute {used_by}; run a new dry run"
+    return None
+
+
+ROLLBACK_DRY_RUN_OK = ("SUCCEEDED", "NEEDS_ATTENTION")  # finished rollback dry runs that can unlock a rollback
+
+
+def rollback_dry_run_problem(status: str | None, summary) -> str | None:
+    """Why a rollback dry run can't unlock a rollback, or None when it can.
+
+    A dry run lists what the rollback would delete (would_delete) and what it keeps (kept). It ends NEEDS_ATTENTION
+    whenever it kept something, which is normal: that object stays either way. But run_outcome also sets
+    NEEDS_ATTENTION for error items (an object it couldn't read), and the rollback could then delete an object the dry
+    run never listed. So NEEDS_ATTENTION unlocks the rollback only when every problem item is "kept"; a summary that
+    can't be read is refused (fail closed)."""
+    if status == "SUCCEEDED":
+        return None
+    if status != "NEEDS_ATTENTION":
+        return "that rollback dry run didn't finish; run it again"
+    if isinstance(summary, str):
+        try:
+            summary = json.loads(summary)
+        except ValueError:
+            summary = None
+    if not isinstance(summary, dict):
+        return "that rollback dry run's summary can't be read, so what it checked is unknown; run it again"
+    bad = {a: summary[a] for a in PROBLEM_ACTIONS if a != "kept" and summary.get(a)}
+    if bad:
+        return (f"that rollback dry run has problems other than kept objects ({', '.join(f'{a} {n}' for a, n in bad.items())}), "
+                "so the rollback could delete something it didn't list; fix the cause and run it again")
+    return None
+
+
+def rollback_gate_error(dry: dict | None, rollback_of: str, requested_by: str = "", now: datetime | None = None,
+                        used_by: str | None = None) -> str | None:
+    """Why an apply rollback can't delete anything yet: it must follow a finished, recent rollback dry run of the
+    same execute run (mode rollback_dry_run), which showed what it would delete. Same rules as dry_run_gate_error:
+    the same requester when recorded, at most DRY_RUN_TTL_HOURS old, and good for one rollback."""
+    if dry is None:
+        return "rollback needs dry_run_id: the apply_id of a finished rollback dry run of the same execute run"
+    if dry.get("mode") != "rollback_dry_run" or (dry.get("operation") or "apply") != "apply":
+        return "that run isn't a rollback dry run; run a rollback dry run of this execute run first"
+    if (dry.get("rollback_of") or "") != (rollback_of or ""):
+        return "that rollback dry run is of another execute run; run a rollback dry run of this one"
+    # NEEDS_ATTENTION is a finished dry run too: rollback marks every object it keeps (another run uses it, it
+    # existed before, it changed since apply) as "kept", which counts as a problem. But not when other problems are
+    # in it (rollback_dry_run_problem): a failed, running or errored dry run is refused.
+    problem = rollback_dry_run_problem(dry.get("status"), dry.get("summary"))
+    if problem:
+        return problem
+    # Unlike the execute gate, an empty requester is refused: this is the only path that deletes. The job's
+    # requested_by is a parameter, so this is a consistency check (the right person's dry run), not an authorization
+    # control: who may start the job is decided by the job's permissions and the app's operator check.
+    if not (requested_by or "").strip():
+        return "a rollback needs requested_by (who is rolling back)"
+    if not (dry.get("requested_by") or "").strip():
+        return "that rollback dry run has no recorded requester; run a new one with requested_by set"
+    if dry.get("requested_by") != requested_by:
+        return "that rollback dry run was started by someone else; run your own first"
+    if dry_run_expired(dry.get("started_at"), now):
+        return f"that rollback dry run is more than {DRY_RUN_TTL_HOURS} hours old; run it again"
+    if used_by:
+        return f"that rollback dry run was already used by rollback {used_by}; run a new one"
     return None
 
 

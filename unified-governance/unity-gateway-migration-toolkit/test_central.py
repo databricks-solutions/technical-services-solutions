@@ -286,13 +286,16 @@ def test_apply_notebook_rollback_acts_on_the_workspace_of_the_run_it_undoes(monk
     hub, remote, seen = _remote_harness(monkeypatch)
     monkeypatch.setattr(store, "apply_log_from_items", lambda *a, **k: 0)
     src = {"mode": "execute", "operation": "apply", "status": "SUCCEEDED", "job_run_id": "1", "workspace_id": REMOTE}
+    rb = ta.rollback_dry_rows(ta.OTHER)
     calls = ta._notebook(monkeypatch, {"apply_id": ta.APPLY, "results_schema": "c.s", "mode": "rollback",
-                                       "rollback_of": ta.OTHER, "job_run_id": "5"}, hub, apply_rows={ta.OTHER: src})
+                                       "rollback_of": ta.OTHER, "job_run_id": "5", "dry_run_id": ta.RB_DRY,
+                                       "requested_by": ta.ROLLER}, hub,
+                         apply_rows={ta.OTHER: src}, dry_rows=rb)
     assert seen == [REMOTE] and calls["upserts"][0]["workspace_id"] == REMOTE
     with pytest.raises(ValueError, match="doesn't match"):
         ta._notebook(monkeypatch, {"apply_id": ta.APPLY, "results_schema": "c.s", "mode": "rollback",
-                                   "rollback_of": ta.OTHER, "job_run_id": "5", "target_workspace_id": OTHER},
-                     hub, apply_rows={ta.OTHER: src})
+                                   "rollback_of": ta.OTHER, "job_run_id": "5", "target_workspace_id": OTHER,
+                                   "dry_run_id": ta.RB_DRY, "requested_by": ta.ROLLER}, hub, apply_rows={ta.OTHER: src}, dry_rows=rb)
 
 
 def test_apply_notebook_refuses_a_scan_of_another_workspace(monkeypatch):
@@ -396,8 +399,9 @@ def test_rollback_targets_the_workspace_of_the_execute_run(central):
     row = _execute_row()
     row["workspace_id"] = REMOTE
     central.store["applies"].append(row)
-    r = central.client.post("/api/applies", json={"mode": "rollback", "rollback_of": EXEC, "confirm": "ROLLBACK"},
-                            headers=OP)
+    from test_app import ROLLBACK_BODY, _rollback_dry_row
+    central.store["applies"].append(_rollback_dry_row())
+    r = central.client.post("/api/applies", json=ROLLBACK_BODY, headers=OP)
     assert r.status_code == 200, r.text
     assert central.sdk.jobs.run_now.call_args.kwargs["job_parameters"]["target_workspace_id"] == REMOTE
 

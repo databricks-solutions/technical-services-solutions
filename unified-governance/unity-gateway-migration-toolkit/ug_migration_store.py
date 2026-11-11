@@ -336,6 +336,19 @@ def apply_log_from_items(spark, schema: str, apply_id: str, path: str, durable_l
     return n
 
 
+def rollback_dry_run_deletes(spark, schema: str, dry_run_id: str) -> set[tuple[str, str]]:
+    """The (type, name) keys a rollback dry run listed as would_delete: the only objects the rollback that follows it
+    may delete. The id is a bound parameter."""
+    rows = spark.sql(f"SELECT payload FROM {q(schema)}.ug_migration_apply_items WHERE apply_id = :id",
+                     args={"id": str(dry_run_id)}).collect()
+    keys = set()
+    for r in rows:
+        item = json.loads(r["payload"])
+        if item.get("action") == "would_delete" and item.get("type") and item.get("name"):
+            keys.add((item["type"], item["name"]))
+    return keys
+
+
 def _is_rollback_entry(e: dict) -> bool:
     """Entries a rollback needs: objects this run created, reused or updated, and the grants it added."""
     if not e.get("execute"):
@@ -581,10 +594,10 @@ def ug_request_lookup(request_id) -> tuple[str, dict]:
 
 
 def dry_run_used(schema: str, dry_run_id: str) -> tuple[str, dict]:
-    """The execute runs that already followed a dry run (column apply_id). Each dry run is good for one execute, so
+    """The execute (or rollback) runs that already followed a dry run (column apply_id). Each dry run is good for one, so
     a non-empty result refuses the next one. Rows written before dry_run_id existed have it NULL and match nothing."""
     return (f"SELECT apply_id FROM {q(schema)}.ug_migration_applies "
-            "WHERE dry_run_id = :dry_run_id AND mode = 'execute' ORDER BY started_at LIMIT 1",
+            "WHERE dry_run_id = :dry_run_id AND mode IN ('execute', 'rollback') ORDER BY started_at LIMIT 1",
             {"dry_run_id": str(dry_run_id or "")})
 
 

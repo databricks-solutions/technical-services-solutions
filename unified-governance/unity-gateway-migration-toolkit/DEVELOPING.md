@@ -26,7 +26,7 @@ Change the version in every place below, then run `check_release.py`:
 - `version` in `app/frontend/package-lock.json`, in two places: the top level and `packages[""]`. `check_release.py` doesn't check the lock file, so check it by hand (or let `npm version --no-git-tag-version` update both).
 - `toolkit_version` in `databricks.yml` (its `default`).
 
-Then commit the regenerated root installer. Customer file names carry the version, for example `unity-gateway-migration-toolkit-0.10.2.zip` and `INSTALL_unity_gateway_migration_toolkit_0_10_2.py`. `check_release.py` fails if any guide still names an installer file of another version.
+Then commit the regenerated root installer. Customer file names carry the version, for example `unity-gateway-migration-toolkit-0.10.3.zip` and `INSTALL_unity_gateway_migration_toolkit_0_10_3.py`. `check_release.py` fails if any guide still names an installer file of another version.
 
 Check the bundle from the zip:
 

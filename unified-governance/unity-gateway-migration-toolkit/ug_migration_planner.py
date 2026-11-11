@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import bisect
 import csv
 import json
 import os
@@ -32,7 +33,7 @@ from urllib.parse import urlsplit
 
 from databricks.sdk import WorkspaceClient
 
-__version__ = "0.10.2"
+__version__ = "0.10.3"
 DISCLAIMER = ("Prototype from Databricks Shared Technical Services, provided as is. It only reads unless you run apply or "
               "rollback, or snapshots; review results before acting.")
 
@@ -1333,10 +1334,18 @@ AGENT_TRAFFIC_UNKNOWN = ("traffic unknown: agent endpoints can't turn on usage t
 # Knowledge Assistant and Supervisor Agent endpoints: Databricks builds and runs them, so there is no code to change.
 AGENT_BRICKS_NEED = ("Agent Bricks {what}: not retired by this deadline, and its LLM calls are Databricks-managed, "
                      "so there is no code to change. Knowledge Assistant and Supervisor Agent are legacy offerings "
-                     "with Genie Agents as the replacement: plan the move there. If it uses an AI Search index, it "
-                     "breaks under Enforce (see the AI Search findings)")
+                     "with Genie Agents as the replacement: plan the move there. A Knowledge Assistant depends on AI "
+                     "Search (every source, files included, syncs into an index), so it and the Supervisor agents "
+                     "that use it break under Enforce (see the agent_bricks_vector_search blocker)")
 AGENT_BRICKS_ACTION = ("no code change; plan the move to Genie Agents, the replacement for Knowledge Assistant and "
-                       "Supervisor Agent. Before enforcing, check that it doesn't use an AI Search index")
+                       "Supervisor Agent. Knowledge Assistants, and Supervisor agents that use one, block Enforce")
+# The Enforce limitations: Knowledge Assistant and Supervisor agents that depend on AI Search don't work with Enforce
+# on. A Knowledge Assistant always does: a files or volume source syncs into the assistant's own index (measured
+# Nov 5, 2026: a files-source assistant created its own AI Search endpoint and index). Lower this only if the Agent
+# Bricks team confirms they work with Enforce on.
+AGENT_BRICKS_BLOCK_ACTION = ("keep Enforce off while it's in use: Agent Bricks agents that depend on AI Search don't "
+                             "work with Enforce on, and every Knowledge Assistant does (its sources sync into an AI "
+                             "Search index). Plan the move to Genie Agents")
 
 
 def annotate_agent_bricks(rows: list[PlanRow], agent_bricks: dict[str, str]) -> None:
@@ -1392,7 +1401,8 @@ GENERIC_NAMES = {"test", "default", "model", "llm", "chat", "prod", "dev", "demo
 KEY_CONTEXT_RE = re.compile(r"(endpoint|model|serving|llm|embed)\w*['\"]?\s*[:=(,]\s*$", re.I)
 MODEL_KEY_RE = re.compile(r"\bmodel\w*['\"]?\s*[:=]\s*$", re.I)  # `model=`, `"model":` just before a name
 # Databricks SDK serving_endpoints.query(...): a call the SDK makes to a serving endpoint, not to a gateway route.
-SDK_QUERY_RE = re.compile(r"serving_endpoints\s*\.\s*query\s*\(")
+# serving_endpoints_data_plane.query (ServingEndpointsDataPlaneAPI) calls the same /serving-endpoints route.
+SDK_QUERY_RE = re.compile(r"serving_endpoints(?:_data_plane)?\s*\.\s*query\s*\(")
 # MLflow deployments client (mlflow.deployments.get_deploy_client("databricks")): predict(endpoint=...) always calls
 # /serving-endpoints/<endpoint>/invocations, so a Unity Gateway service name can't go there either.
 MLFLOW_PREDICT_RE = re.compile(r"\.\s*predict\s*\([^()]*$")  # the name sits inside an open .predict( call
@@ -1428,6 +1438,109 @@ def scrub(line: str | None) -> str | None:
 
 
 MAX_FIX_LINE = 5000
+
+
+CALL_WINDOW = 4000  # how far into a call's arguments a short or common name still counts as an argument
+_CALL_TOKEN_RE = re.compile(r'"""|\'\'\'|"|\'|#|//|--|\(|\)')
+_CALL_TOKEN_PY_RE = re.compile(r'"""|\'\'\'|"|\'|#|\(|\)')  # Python: `//` is floor division and `--` is minus
+# `se = w.serving_endpoints` (an alias of the SDK's serving endpoints API) and the mention of the MLflow client
+# An alias of the API: `se = w.serving_endpoints`, `se = WorkspaceClient(profile="x").serving_endpoints_data_plane`
+SERVING_ALIAS_RE = re.compile(r"\b(\w+)\s*=\s*(?:[\w.]|\([^()\n]*\))*\bserving_endpoints(?:_data_plane)?\b(?![\w.(])")
+DEPLOY_CLIENT_MENTION_RE = re.compile(r"\bget_deploy_client\b")  # also `import get_deploy_client as gdc`
+
+
+def _escaped(text: str, i: int) -> bool:
+    """True if the character at i is preceded by an odd number of backslashes."""
+    n = 0
+    while i - 1 - n >= 0 and text[i - 1 - n] == "\\":
+        n += 1
+    return n % 2 == 1
+
+
+def _is_python(asset: str, text: str) -> bool:
+    """True when the file is clearly Python, so `//` and `--` aren't comments. Unknown files keep every comment
+    style: reading `//` as a comment by mistake is the safe direction (an extra warning, not a missed caller)."""
+    path = asset.split(" [cell ", 1)[0].lower()
+    return path.endswith((".py", ".ipynb")) or " [cell " in asset or text.startswith("# Databricks notebook source")
+
+
+def _call_still_open(text: str, start: int, at: int, python: bool = False) -> bool:
+    """True if the call whose "(" ends at start is still open at position at. Parentheses inside strings (single,
+    double, triple quoted) and comments (# everywhere, // and -- outside Python) don't count, so
+    `content="Rules: 1) be brief"` doesn't close the call. Uncertain cases (a string or comment that runs to at) read as still open: the safe direction, because a
+    name counted by mistake is a warning, while a name missed can list an endpoint under "Can be closed now"."""
+    depth, i = 1, start
+    while i < at:
+        m = (_CALL_TOKEN_PY_RE if python else _CALL_TOKEN_RE).search(text, i, at)
+        if not m:
+            return True
+        tok, i = m.group(), m.end()
+        if tok in ('"""', "'''", '"', "'"):
+            while True:
+                j = text.find(tok, i, at)
+                if j == -1:
+                    return True
+                i = j + len(tok)
+                if not _escaped(text, j):
+                    break
+        elif tok in ("#", "//", "--"):
+            nl = text.find("\n", i, at)
+            if nl == -1:
+                return True
+            i = nl + 1
+        elif tok == "(":
+            depth += 1
+        else:
+            depth -= 1
+            if depth == 0:
+                return False
+    return True
+
+
+class _CallContext:
+    """Where a name sits relative to calls in one file. Everything is computed lazily and once per file, so a file
+    with thousands of short-name matches costs one pass for each call kind, not one per match."""
+
+    def __init__(self, text: str, python: bool = False):
+        self.text = text
+        self.python = python
+        self._ends: dict[str, list[int]] = {}
+        self._deploy: bool | None = None
+        self._sdk_re: re.Pattern | None = None
+
+    def uses_deploy_client(self) -> bool:
+        """The file mentions get_deploy_client (the MLflow deployments client): its .predict( calls hit
+        /serving-endpoints. Any model has a .predict, so this is what makes a predict( call count."""
+        if self._deploy is None:
+            self._deploy = bool(DEPLOY_CLIENT_MENTION_RE.search(self.text))
+        return self._deploy
+
+    def _sdk_query_re(self) -> re.Pattern:
+        if self._sdk_re is None:
+            aliases = sorted(set(SERVING_ALIAS_RE.findall(self.text)))
+            if aliases:
+                alt = "|".join(re.escape(a) for a in aliases)
+                self._sdk_re = re.compile(SDK_QUERY_RE.pattern + r"|\b(?:" + alt + r")\s*\.\s*query\s*\(")
+            else:
+                self._sdk_re = SDK_QUERY_RE
+        return self._sdk_re
+
+    def _inside(self, key: str, regex: re.Pattern, at: int) -> bool:
+        ends = self._ends.get(key)
+        if ends is None:
+            ends = self._ends[key] = [m.end() for m in regex.finditer(self.text)]
+        k = bisect.bisect_right(ends, at) - 1  # right: a "(" that ends where the name starts, query("llm"), counts
+        while k >= 0 and at - ends[k] <= CALL_WINDOW:  # the nearest calls first; a closed one may precede an open one
+            if _call_still_open(self.text, ends[k], at, self.python):
+                return True
+            k -= 1
+        return False
+
+    def in_sdk_query(self, at: int) -> bool:
+        return self._inside("sdk", self._sdk_query_re(), at)
+
+    def in_predict(self, at: int) -> bool:
+        return self._inside("predict", PREDICT_CALL_RE, at)
 
 
 def _balanced_args(text: str, open_paren: int) -> str:
@@ -1597,6 +1710,7 @@ class Scanner:
 
     def _scan_lines(self, asset_type: str, asset: str, text: str) -> None:
         lines = text.split("\n")
+        ctx = _CallContext(text, _is_python(asset, text))
 
         def line_of(pos: int) -> int:
             return text.count("\n", 0, pos) + 1
@@ -1715,14 +1829,25 @@ class Scanner:
                     name = m.group(2)
                     if name in hits:
                         continue
-                    if name in self.generic and not KEY_CONTEXT_RE.search(line[:m.start()]):
-                        continue  # a short or common name needs a key or call context to count
                     at = line_start + m.start()
-                    if SDK_QUERY_RE.search(text[max(0, at - GATEWAY_WINDOW):at]):
+                    in_sdk_query = bool(SDK_QUERY_RE.search(text[max(0, at - GATEWAY_WINDOW):at]))
+                    # Same line, as before; or inside an open predict( that spans lines, in a file that uses the MLflow
+                    # deployments client (that client's predict always calls /serving-endpoints, so no gateway rewrite).
+                    in_predict = bool(MLFLOW_PREDICT_RE.search(line[:m.start()])) \
+                        or (ctx.uses_deploy_client() and ctx.in_predict(at))
+                    if name in self.generic and not KEY_CONTEXT_RE.search(line[:m.start()]):
+                        # A short or common name needs a key or call context to count: inside the arguments of a
+                        # serving_endpoints.query(...) call, or of a predict(...) call in a file that uses the
+                        # MLflow deployments client (any model has a .predict).
+                        in_sdk_query = ctx.in_sdk_query(at)
+                        in_predict = (in_predict or ctx.in_predict(at)) and ctx.uses_deploy_client()
+                        if not (in_sdk_query or in_predict):
+                            continue
+                    if in_sdk_query:
                         # Never rewritten: the SDK call has no gateway form to map onto (see the suggestion).
                         self._add(asset_type, asset, i, "sdk_serving_query", m.group(0), name,
                                   self._sdk_query_suggestion(name), fixable=False)
-                    elif MLFLOW_PREDICT_RE.search(line[:m.start()]):
+                    elif in_predict:
                         # Never rewritten: the MLflow deployments client only reaches /serving-endpoints/.
                         self._add(asset_type, asset, i, "mlflow_deployments_predict", m.group(0), name,
                                   self._mlflow_predict_suggestion(name), fixable=False)
@@ -2113,63 +2238,209 @@ def scan_local(scanner: Scanner, paths: list[str], max_bytes: int = 2_000_000) -
     _log(f"  scanned {files} local files ({len(texts)} distinct) under {', '.join(paths)}")
 
 
-def scan_agent_bricks(w: WorkspaceClient, scanner: Scanner) -> None:
-    """Knowledge Assistants backed by AI Search indexes and Supervisor Agents that use them.
+MAX_TOOL_PAGES = 100  # a Supervisor Agent's tool pages read at most this many (100 tools each)
 
-    Agent Bricks agents on AI Search break when Unity Gateway is enforced; file and volume
-    sources keep working.
+
+def supervisor_tools(w: WorkspaceClient, parent: str) -> list[dict]:
+    """A Supervisor Agent's tools as the API returns them: every tool type with its spec, all pages.
+
+    The SDK's typed Tool keeps the specs of only some tool types (knowledge_assistant, genie_space, app, ...), and
+    drops the ones for vector_search_index, serving_endpoint and supervisor_agent, so the raw JSON is what shows
+    what a Supervisor depends on. There is no fallback to the typed tools: without those specs a dependent
+    Supervisor would read clean. A failure raises, and the caller counts the Supervisor as unreadable (a coverage
+    gap). A page is tried twice, so one transient error doesn't make the scan incomplete."""
+    out, token, seen = [], None, set()
+    for _ in range(MAX_TOOL_PAGES):
+        query = {"page_size": 100, **({"page_token": token} if token else {})}
+        for attempt in (1, 2):
+            try:
+                page = _get(w, f"/api/2.1/{parent}/tools", query)
+                break
+            except Exception:
+                if attempt == 2:
+                    raise
+                time.sleep(2)
+        if not isinstance(page, dict):
+            raise ValueError(f"unexpected response listing the tools of {parent}")
+        out += [t for t in page.get("tools") or [] if isinstance(t, dict)]
+        token = page.get("next_page_token")
+        if not isinstance(token, str) or not token:  # the last page
+            return out
+        if token in seen:  # a token that repeats: the rest can't be read, so this list is incomplete
+            raise ValueError(f"the tools of {parent} repeat a page token, so they can't all be read")
+        seen.add(token)
+    raise ValueError(f"the tools of {parent} span more than {MAX_TOOL_PAGES} pages; the rest weren't read")
+
+
+_TOOL_BOOKKEEPING = ("name", "tool_id", "id", "description", "tool_type")
+
+
+def _tool_strings(tool: dict) -> list[str]:
+    """Every string value in a tool's spec (the field named like its tool_type; else every nested value but the
+    tool's own bookkeeping), so a tool is matched by what it points at without knowing the spec's field names."""
+    kind = tool.get("tool_type")
+    spec = tool.get(kind) if isinstance(kind, str) else None
+    roots = [spec] if spec is not None else [v for k, v in tool.items() if k not in _TOOL_BOOKKEEPING]
+    out: list[str] = []
+
+    def walk(x):
+        if isinstance(x, str):
+            out.append(x)
+        elif isinstance(x, dict):
+            for v in x.values():
+                walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+    for r in roots:
+        walk(r)
+    return out
+
+
+def _names_in(strings: list[str], ref: str) -> bool:
+    """True if ref is one of the strings, or a path segment of one (serving-endpoints/<name>/invocations, a URL)."""
+    for s in strings:
+        if s == ref or ref in re.split(r"[/?#:]", s):
+            return True
+    return False
+
+
+def supervisor_dependencies(supervisors: dict[str, dict], kas: dict[str, str],
+                            ka_endpoints: dict[str, str]) -> dict[str, list[tuple[str, str, str]]]:
+    """The Supervisor Agents that depend on AI Search, with why: {supervisor name: [(pattern, target, text)]}.
+
+    Agent Bricks agents that depend on AI Search don't work with Enforce on. A Supervisor depends on it through:
+    a knowledge_assistant tool (every Knowledge Assistant does), a vector_search_index tool, a serving_endpoint
+    tool that is a Knowledge Assistant's endpoint (or another dependent Supervisor's), or a supervisor_agent tool
+    (or an endpoint tool) pointing at a dependent Supervisor. Nested Supervisors are followed until nothing changes.
+    supervisors is {name: {"label", "endpoint", "tools": [raw tool dicts]}}; kas {Knowledge Assistant name: display}."""
+    # Every way a tool can name a Supervisor -> the Supervisors it may mean. Names, ids and endpoints are unique; a
+    # display name can be shared, and then a tool naming it may mean any of them: it depends when any of them does
+    # (the safe direction: an extra finding to check, never a dependent Supervisor that reads clean).
+    by_ref: dict[str, set] = {}
+    for name, info in supervisors.items():
+        display = str(info.get("label") or "").removeprefix("supervisor agent ")
+        for ref in (name, name.rsplit("/", 1)[-1], info.get("endpoint"), display):
+            if ref:
+                by_ref.setdefault(ref, set()).add(name)
+    found: dict[str, list[tuple[str, str, str]]] = {}
+
+    def add(name: str, pattern: str, target: str, text: str) -> bool:
+        if any(p == pattern and t == target for p, t, _ in found.get(name, [])):
+            return False
+        found.setdefault(name, []).append((pattern, target, text))
+        return True
+
+    for name, info in supervisors.items():  # direct dependencies
+        for t in info["tools"]:
+            kind, tool = t.get("tool_type"), t.get("tool_id") or str(t.get("name") or "?").rsplit("/", 1)[-1]
+            strings = _tool_strings(t)
+            if kind == "knowledge_assistant":
+                spec = t.get("knowledge_assistant") if isinstance(t.get("knowledge_assistant"), dict) else {}
+                ka_ref = str(spec.get("knowledge_assistant_id") or spec.get("name") or "")
+                hit = (next((v for k, v in kas.items() if ka_ref and (ka_ref in k or k.endswith(ka_ref))), None)
+                       or next((v for k, v in ka_endpoints.items() if _names_in(strings, k)), None)
+                       or ka_ref or "a knowledge assistant")
+                add(name, "supervisor_uses_vs_ka", hit,
+                    f"tool {tool} uses knowledge assistant {hit}, which depends on AI Search")
+            elif kind == "vector_search_index":
+                target = next(iter(strings), "an AI Search index")
+                add(name, "supervisor_uses_vs_index", target, f"tool {tool} is an AI Search index ({target})")
+            elif kind == "serving_endpoint":
+                for ep, display in ka_endpoints.items():
+                    if _names_in(strings, ep):
+                        add(name, "supervisor_uses_vs_ka", display,
+                            f"tool {tool} calls the endpoint of knowledge assistant {display}, which depends on AI Search")
+    changed = True
+    while changed:  # a Supervisor that uses a dependent Supervisor depends too (also through its endpoint)
+        changed = False
+        for name, info in supervisors.items():
+            for t in info["tools"]:
+                if t.get("tool_type") not in ("supervisor_agent", "serving_endpoint"):
+                    continue
+                strings = _tool_strings(t)
+                for ref, children in by_ref.items():
+                    if not _names_in(strings, ref):
+                        continue
+                    for child in sorted(children):
+                        if child == name or child not in found:
+                            continue
+                        tool = t.get("tool_id") or str(t.get("name") or "?").rsplit("/", 1)[-1]
+                        changed |= add(name, "supervisor_uses_supervisor", supervisors[child]["label"],
+                                       f"tool {tool} uses {supervisors[child]['label']}, which depends on AI Search")
+    return found
+
+
+def scan_agent_bricks(w: WorkspaceClient, scanner: Scanner) -> None:
+    """Knowledge Assistants and the Supervisor Agents that use them: all of them depend on AI Search.
+
+    Agent Bricks agents that depend on AI Search don't work with Enforce on. Every Knowledge Assistant does: an
+    AI Search index source directly, and a files or volume source through the assistant's own index. So every
+    assistant is a finding (an index source also names its embedding endpoint), and so is every Supervisor Agent
+    with a Knowledge Assistant tool.
     """
-    vs_kas: dict[str, str] = {}
+    kas: dict[str, str] = {}  # every Knowledge Assistant: name -> display name
+    ka_endpoints: dict[str, str] = {}  # Knowledge Assistant serving endpoint -> display name
     n_ka = n_sa = bad_ka = bad_sa = 0
     try:
         for ka in w.knowledge_assistants.list_knowledge_assistants():
             n_ka += 1
             if getattr(ka, "endpoint_name", None):
                 scanner.agent_bricks[ka.endpoint_name] = f"knowledge assistant {ka.display_name or ka.name}"
+                ka_endpoints[ka.endpoint_name] = ka.display_name or ka.name
+            kas[ka.name] = ka.display_name or ka.name
+            readable = True
             try:
                 sources = list(w.knowledge_assistants.list_knowledge_sources(parent=ka.name))
             except Exception:
                 bad_ka += 1
-                continue
-            for src in sources:
-                if src.index and src.index.index_name:
-                    embed = None
-                    try:
-                        spec = w.vector_search_indexes.get_index(src.index.index_name).delta_sync_index_spec
-                        cols = spec.embedding_source_columns if spec and spec.embedding_source_columns else []
-                        embed = next((c.embedding_model_endpoint_name for c in cols if c.embedding_model_endpoint_name), None)
-                    except Exception:
-                        pass
-                    vs_kas[ka.name] = ka.display_name or ka.name
-                    scanner._add("knowledge_assistant", f"knowledge assistant {ka.display_name or ka.name}", None,
-                                 "ka_vector_search_source", src.index.index_name, embed,
-                                 f"source {src.index.index_name} is an AI Search index"
-                                 + (f" embedded with {embed}" if embed else "")
-                                 + ": breaks under Enforce, and at the legacy deadline if the index embeds with a "
-                                   "databricks-* endpoint. Use a UC volume or files source, or plan the move to "
-                                   "Genie Agents")
+                readable, sources = False, []  # still a finding: every Knowledge Assistant depends on AI Search
+            label = f"knowledge assistant {ka.display_name or ka.name}"
+            index_sources = [src for src in sources
+                             if getattr(src, "index", None) and getattr(src.index, "index_name", None)]
+            if not index_sources:
+                kinds = sorted({str(getattr(src, "source_type", None) or "unknown") for src in sources})
+                what = (f"sources ({', '.join(kinds)}) sync" if kinds else "its sources sync" if not readable
+                        else "it has no sources yet; any source it gets syncs")
+                scanner._add("knowledge_assistant", label, None, "ka_ai_search",
+                             getattr(ka, "endpoint_name", None) or ka.name, None,
+                             f"{what} into the assistant's own AI Search index, so it doesn't work with Enforce on"
+                             + ("" if readable else " (its sources couldn't be read)"))
+            for src in index_sources:
+                embed = None
+                try:
+                    spec = w.vector_search_indexes.get_index(src.index.index_name).delta_sync_index_spec
+                    cols = spec.embedding_source_columns if spec and spec.embedding_source_columns else []
+                    embed = next((c.embedding_model_endpoint_name for c in cols if c.embedding_model_endpoint_name), None)
+                except Exception:
+                    pass
+                scanner._add("knowledge_assistant", label, None,
+                             "ka_vector_search_source", src.index.index_name, embed,
+                             f"source {src.index.index_name} is an AI Search index"
+                             + (f" embedded with {embed}" if embed else "")
+                             + ": breaks under Enforce, and at the legacy deadline if the index embeds with a "
+                               "databricks-* endpoint. Plan the move to Genie Agents")
     except Exception as error:
         _log(f"  could not list Knowledge Assistants: {error}")
         scanner.note("knowledge_assistants", f"failed: {str(error)[:120]}")
     scanner.note("knowledge_assistants", f"partial: {bad_ka} unreadable" if bad_ka else "ok")
+    supervisors: dict[str, dict] = {}  # name -> {"label", "endpoint", "tools"}
     try:
         for sa in w.supervisor_agents.list_supervisor_agents():
             n_sa += 1
-            if getattr(sa, "endpoint_name", None):
-                scanner.agent_bricks[sa.endpoint_name] = f"supervisor agent {sa.display_name or sa.name}"
+            label = f"supervisor agent {sa.display_name or sa.name}"
+            endpoint = getattr(sa, "endpoint_name", None)
+            if endpoint:
+                scanner.agent_bricks[endpoint] = label
             try:
-                tools = list(w.supervisor_agents.list_tools(parent=sa.name))
+                tools = supervisor_tools(w, sa.name)
             except Exception:
                 bad_sa += 1
                 continue
-            for t in tools:
-                ka_ref = t.knowledge_assistant
-                ka_name = getattr(ka_ref, "knowledge_assistant_id", None) or getattr(ka_ref, "name", None) if ka_ref else None
-                hit = next((v for k, v in vs_kas.items() if ka_name and (ka_name in k or k.endswith(str(ka_name)))), None)
-                if hit:
-                    scanner._add("supervisor_agent", f"supervisor agent {sa.display_name or sa.name}", None,
-                                 "supervisor_uses_vs_ka", hit, None,
-                                 f"tool {t.name} uses knowledge assistant {hit}, which is backed by AI Search")
+            supervisors[sa.name] = {"label": label, "endpoint": endpoint, "tools": tools}
+        for name, reasons in supervisor_dependencies(supervisors, kas, ka_endpoints).items():
+            for pattern, target, text in reasons:
+                scanner._add("supervisor_agent", supervisors[name]["label"], None, pattern, target, None, text)
     except Exception as error:
         _log(f"  could not list Supervisor Agents: {error}")
         scanner.note("supervisor_agents", f"failed: {str(error)[:120]}")
@@ -2575,6 +2846,9 @@ def _gateway_body(ep: LegacyEndpoint) -> dict:
 
 
 NOT_SCANNED = "not scanned"  # coverage values that are notes (what was left out), not gaps
+VOLUMES_NOTE = (f"{NOT_SCANNED}: files in Unity Catalog volumes and DBFS aren't searched. A script there that calls "
+                "a legacy endpoint shows only as traffic (none if it didn't run in the window): check them, or scan a "
+                "copy with --local-path")
 UNATTRIBUTED_NOTE = "unattributed"  # coverage["v1_unattributed"]: v1 requests not matched to an endpoint (a warning)
 # Serving-endpoint resources declared by an app or bundle. Other app references are config values (warnings).
 RESOURCE_PATTERNS = {"app_serving_endpoint_resource", "bundle_serving_endpoint_resource"}
@@ -2617,7 +2891,7 @@ KIND_NAMES = {"system_ppt": "Databricks pay-per-token (system)", "external_model
 ACTION_NAMES = {"use_system_ai": "Use a system.ai model", "create_model_service": "Create a Unity Gateway service",
                 "out_of_scope": "Out of scope (custom model or agent)", "manual": "Manual (see needs)"}
 STATUS_MEANING = {
-    "READY": "no blockers, full scan.",
+    "READY": "no blockers, and no coverage gaps (the notes say what the scan never searches).",
     "READY_WITH_WARNINGS": "no blockers; review warnings first.",
     "BLOCKED": "enforcing now breaks the calls listed below.",
     "INCOMPLETE": "nothing blocking found, but part of the scan didn't run; fix the listed gap and re-run.",
@@ -2868,8 +3142,7 @@ def readiness(rows: list[PlanRow], refs: list[ClientReference], traffic_ok: bool
                                   "AI Search index embeds with a legacy endpoint", AI_SEARCH_KEEP_ACTION))
         elif x.asset_type in ("knowledge_assistant", "supervisor_agent"):
             blockers.append(_flag("agent_bricks_vector_search", x.asset, x.suggestion,
-                                  "Agent Bricks agent uses AI Search",
-                                  "check its AI Search index and embedding model before enforcing"))
+                                  "Agent Bricks agent uses AI Search", AGENT_BRICKS_BLOCK_ACTION))
         elif x.pattern in RESOURCE_PATTERNS:
             blockers.append(_flag("app_resource", x.asset.removeprefix("app "),
                                   f"serving endpoint resource {x.legacy_endpoint}",
@@ -3392,6 +3665,8 @@ def _run(w, out_dir, warehouse_id, days, target_catalog, target_schema, scan_roo
                                       f"(defaults {', '.join(DEFAULT_SCAN_ROOTS)} narrowed)")
         else:
             coverage["scan_roots"] = "ok"
+        # Never walked, whatever the roots: say so, so READY isn't read as "every file was searched".
+        coverage["volumes_dbfs"] = VOLUMES_NOTE
         toolkit_paths: list[str] = []
         toolkit_apps: list[str] = []
         app_roots = app_source_roots(w, coverage, toolkit_paths, toolkit_apps)

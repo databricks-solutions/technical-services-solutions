@@ -1,6 +1,6 @@
 # Unity Gateway Migration Toolkit: User Guide
 
-Version 0.10.2 (prototype)
+Version 0.10.3 (prototype)
 
 > Prototype from Databricks Shared Technical Services, provided as is. Planning and scans only read. Writes happen only when you start them. Review every result before you act on it.
 
@@ -11,6 +11,7 @@ Version 0.10.2 (prototype)
   - [Before you start](#before-you-start)
   - [Install the toolkit](#install-the-toolkit)
   - [Update and upgrade](#update-and-upgrade)
+  - [Upgrade notes: 0.10.2 to 0.10.3](#upgrade-notes-0102-to-0103)
   - [Upgrade notes: 0.10.1 to 0.10.2](#upgrade-notes-0101-to-0102)
   - [Upgrade notes: 0.10.0 to 0.10.1](#upgrade-notes-0100-to-0101)
   - [Upgrade notes: 0.9.0 to 0.10.0](#upgrade-notes-090-to-0100)
@@ -105,7 +106,7 @@ A **legacy endpoint** is a v1 serving endpoint (`/serving-endpoints/<name>/invoc
 
 The installer notebook is the only file you import. It creates everything inside the workspace in about 5 minutes.
 
-1. Download `unity-gateway-migration-toolkit.zip` from the [release page](https://github.com/databricks-solutions/technical-services-solutions/releases/tag/unity-gateway-migration-toolkit-latest) and unzip it. In the workspace, go to your home folder, choose **Import**, and import `INSTALL_unity_gateway_migration_toolkit_0_10_2.py` from the zip's top folder.
+1. Download `unity-gateway-migration-toolkit.zip` from the [release page](https://github.com/databricks-solutions/technical-services-solutions/releases/tag/unity-gateway-migration-toolkit-latest) and unzip it. In the workspace, go to your home folder, choose **Import**, and import `INSTALL_unity_gateway_migration_toolkit_0_10_3.py` from the zip's top folder.
 2. Open the notebook. Set **Install: Results catalog** (a catalog where you can create a schema) and **Install: SQL warehouse**. Leave the other widgets at their defaults ([Installer widgets](#installer-widgets)). If the widget panel shows widgets from an older installer, remove them once, then run again.
 3. Click **Run all**.
 
@@ -147,6 +148,18 @@ Import the newer installer and run it with the same widgets. Results history is 
 - **From 0.7.0** (app `ug-migration`): the same two choices apply.
 - **Bundle:** the app is now `ug-migration-bundle`. Run `databricks bundle plan` first. It creates a new app, so delete the old one by hand.
 - **Since 0.7.0:** grants are off by default, Execute needs a matching dry run, and scans older than 14 days and endpoints with legacy guardrails need confirmation or an acknowledgement. Account wave 0 is now `0: no legacy traffic`.
+
+#### Upgrade notes: 0.10.2 to 0.10.3
+
+Scan again. The results tables don't change. The apply job gains a `rollback_dry_run` mode, and a rollback now needs one first; the installer or bundle updates the job.
+
+- **Short endpoint names.** An endpoint with a short or common name (`llm`, `chat`, `test`, or under 6 characters) is now found inside a `serving_endpoints.query(...)` or MLflow `predict(...)` call. Before, such a call was missed, and an endpoint with no traffic could be listed as one to close.
+- **Rollback has a dry run in the app, and deletes only what it listed.** **Roll back: dry run** lists what would be deleted; the rollback itself follows it and deletes only those objects (the app, the job and uninstall; the command-line rollback keeps its own dry run, without `--execute`, and reads the workspace when it runs). Anything else, even something that became deletable since the dry run (another run was rolled back in between, or `force` is on), is kept and the result says "not in the rollback dry run". A rollback started without a matching rollback dry run is refused by the app and by the job, and both runs need `requested_by`. **Uninstall** with "roll back services" runs the rollback dry run first, then the rollback.
+- **Uninstall fixes.** A run that kept only objects another run uses (a shared provider or secret) now counts as rolled back, the same as in the app; before, the uninstall counted only fully successful rollbacks and stopped on such a run for good ("no progress"). Running uninstall again after it stopped the app no longer fails on the already-stopped app; an app that is still starting makes it stop with a message before anything changes.
+- **Supervisor Agents that depend on AI Search block Enforce.** A Supervisor with a `vector_search_index` tool, a `serving_endpoint` tool that is a Knowledge Assistant's endpoint, or a `supervisor_agent` tool pointing at a Supervisor that depends on AI Search (nested ones are followed) is an `agent_bricks_vector_search` blocker, like one with a `knowledge_assistant` tool. The scan reads the tools' raw JSON, because the SDK's typed tool drops the specs of those tool types.
+- **Call context for short names.** A short or common name now counts inside the arguments of an open `serving_endpoints.query(...)` or `serving_endpoints_data_plane.query(...)` call (also through an alias such as `se = w.serving_endpoints` or `se = WorkspaceClient().serving_endpoints`) or of a `predict(...)` call in a file that mentions `get_deploy_client`. Parentheses inside strings and comments don't end the call, and a call can be 4,000 characters long. Scanning a large file with thousands of such names takes well under a second.
+- **Knowledge Assistants block Enforce.** Every Knowledge Assistant is now an `agent_bricks_vector_search` blocker, not only one with an AI Search index source: a files or volume source syncs into the assistant's own AI Search index, and Agent Bricks agents that depend on AI Search don't work with Enforce on. So is every Supervisor Agent with a Knowledge Assistant tool. 0.10.2 gave a files-source assistant only a warning.
+- **Volumes and DBFS.** Readiness now says that files in Unity Catalog volumes and DBFS aren't searched (a note, `volumes_dbfs`).
 
 #### Upgrade notes: 0.10.1 to 0.10.2
 
@@ -370,7 +383,7 @@ The run ends `SUCCEEDED`, or `NEEDS_ATTENTION` if any item needs a look ([Result
 
 #### Roll back
 
-Click **Roll back** and type `ROLLBACK`. Each execute run can be rolled back once. The rollback dry run shows exactly what execute will delete, including provider services. A rollback that only keeps objects that existed before the apply run (reused, without the toolkit's mark) still counts as rolled back. Rollback deletes only the objects that run created, and only while they still carry the toolkit's mark. It never revokes grants: a deleted service takes its grants with it, and a kept service keeps them, listed as `kept` grant rows so you can revoke them by hand. A provider is deleted only after rollback checks every catalog and schema it can see for services that still use it. If it can't check, it keeps the provider.
+Click **Roll back: dry run**. It lists what rollback would delete, including provider services, and deletes nothing. On its results, click **Delete these objects** and type `ROLLBACK`. In the app, the apply job and uninstall, the rollback deletes only the objects its dry run listed: it reads the workspace again, and anything that wasn't listed (for example an object another run was using when you ran the dry run, and that run has been rolled back since) is kept, and the result says so. Run a new rollback dry run to see it. The rollback must follow a finished rollback dry run of the same execute run, started by you in the last 24 hours, and each rollback dry run is good for one rollback. The job also needs `requested_by` on both runs and compares them; that is a check that the dry run is yours, not an authorization control (who may start the job is its permissions). If the dry run has nothing to delete, **Record the rollback** runs it anyway, so the execute run counts as rolled back where everything left is gone, used by another run, or older than the run. A dry run that keeps some objects (another run uses them, they existed before, or they changed since apply) shows **Needs attention**; it still unlocks the rollback of what it would delete. A dry run with any other problem (an object it couldn't read, or "no created objects found") doesn't: the page says why, and you run it again after fixing the cause. Each execute run can be rolled back once. A rollback that only keeps objects that existed before the apply run (reused, without the toolkit's mark) still counts as rolled back. Rollback deletes only the objects that run created, and only while they still carry the toolkit's mark. It never revokes grants: a deleted service takes its grants with it, and a kept service keeps them, listed as `kept` grant rows so you can revoke them by hand. A provider is deleted only after rollback checks every catalog and schema it can see for services that still use it. If it can't check, it keeps the provider.
 
 **Rolling back after callers have moved breaks their traffic**, because it deletes the services they call. Move the callers back first, or accept the outage. A pause run isn't rolled back here. Resume it in [step 3](#step-3-pause-one-legacy-endpoint).
 
@@ -472,7 +485,7 @@ Three **Uninstall** widgets, all `no` by default, choose what else goes:
 
 - **Remove results tables.** `no` keeps the six `ug_migration_*` tables. `yes` drops them, and the schema if the toolkit made it and it's empty.
 - **Remove apply logs.** `no` keeps `<install folder>/apply_logs`, so kept services can be rolled back later.
-- **Roll back services created by apply.** `no` keeps the Unity Gateway services. `yes` rolls back every execute run still in place, before anything else is removed.
+- **Roll back services created by apply.** `no` keeps the Unity Gateway services. `yes` rolls back every execute run still in place, before anything else is removed. For each run it first starts a rollback dry run, then the rollback that follows it (both with your user as `requested_by`). A run whose dry run fails, or has problems besides kept objects, stops the uninstall with its id and the reason.
 
 **Always removed:** the app, its three jobs, the toolkit files and the install marker (the marker only when it names this app).
 
@@ -680,7 +693,7 @@ The `type` is the stable name in `readiness.json`. The label and action are what
 | `unresolved_endpoint_call` | Blocker | Code calls a serving endpoint the scan can't name | Find which endpoint the call reaches at run time. A legacy one: rewrite the client as the finding says (changing only the name gives a 404). A custom model or feature serving one: no change, and putting its name in the code or a config value lets the next scan confirm it |
 | `tabular_endpoint_call` | Warning | Code sends tabular input to an endpoint the scan can't name | Usually a custom model endpoint, which needs no change. Confirm which endpoint it calls |
 | `external_model_on_ppt` | Blocker | External model endpoint forwards to a pay-per-token endpoint | Move its callers to the `system.ai` model, or to the model service Apply creates (a pay-per-token destination on the same model, keeping rate limits and the inference table), before enforcing |
-| `agent_bricks_vector_search` | Blocker | Agent Bricks agent uses AI Search | Check its index and embedding model before enforcing |
+| `agent_bricks_vector_search` | Blocker | Agent Bricks agent uses AI Search | Every Knowledge Assistant (any source: a files or volume source syncs into the assistant's own AI Search index), and every Supervisor Agent with a Knowledge Assistant tool. Agent Bricks agents that depend on AI Search don't work with Enforce on, so keep Enforce off while they're in use, and plan the move to Genie Agents |
 | `app_resource` | Blocker | App declares a legacy serving endpoint resource | Replace it with the Unity Gateway service, grant `EXECUTE`, call `/ai-gateway/` |
 | `ai_query_custom` | Blocker | ai_query calls a model with no Unity Gateway service yet | Keep the call, or switch it to a `system.ai` model |
 | `platform_managed_traffic` | Warning | Databricks-managed callers use this endpoint | You can't change these callers. Confirm with your account team |
@@ -692,7 +705,7 @@ The `type` is the stable name in `readiness.json`. The label and action are what
 | `custom_endpoint_inner_call` | Blocker on a `databricks-*` endpoint (or an external model that forwards to one), else Warning | A serving endpoint calls this endpoint from its model code | A `System Service Principal` caller is usually a custom agent's automatic authentication. Enforce stops `databricks-*` endpoints, so those calls fail once it's on. Re-log that agent with explicit credentials to call the model service. If it's a custom model endpoint, turn on its usage tracking (agent endpoints can't) |
 | `no_traffic_in_window` | Warning | No requests in the window and usage tracking is off | Confirm with owners that no infrequent job calls it |
 | `agent_endpoint` | Warning | Agent endpoint: the LLM calls inside it must move | The endpoint isn't retired and its callers need no change. Move the LLM calls inside it to `system.ai` or model services: Model Serving's automatic authentication can't call Unity Gateway services, so re-log the agent with explicit credentials, or move it to Databricks Apps. Agent endpoints can't turn on usage tracking, so their traffic is usually unknown: confirm with the owner that it is still used, or check its inference table or MLflow traces |
-| `agent_bricks_endpoint` | Warning | Agent Bricks agent: a legacy offering, replaced by Genie Agents | A Knowledge Assistant or Supervisor Agent endpoint. No code to change: plan the move to Genie Agents, and check that it doesn't use an AI Search index before enforcing |
+| `agent_bricks_endpoint` | Warning | Agent Bricks agent: a legacy offering, replaced by Genie Agents | A Knowledge Assistant or Supervisor Agent endpoint. No code to change: plan the move to Genie Agents. Knowledge Assistants, and Supervisor Agents that use one, also get an `agent_bricks_vector_search` blocker |
 
 Code-reference warnings (for example `sdk_serving_query`) carry their fix in CODE_FIXES.md. Traffic from Databricks-managed callers only is a warning. Traffic that also has customer-owned callers is a `legacy_traffic` blocker. `v2_off_failing_calls` replaces the plain v2 blocker for an endpoint (its traffic and call sites are folded in, so nothing is counted twice). It needs at least 10 v2 requests in the window, and at least 95% of them failed (no status code, status 0, or status 501, which is what a turned-off v2 gateway returns; 403 and 404 aren't counted, because they usually come from the caller). The readiness blockers come in this order: `unity_gateway_unavailable`, `v2_off_failing_calls`, then the rest.
 
@@ -891,7 +904,7 @@ Grouped by where the problem shows up.
   - v2 workspace endpoints aren't paused or tracked in the app. Their traffic shows in step 1, and their callers move with the code fix.
   - `databricks-*` endpoints can't be tracked in the app, and the API may refuse a pause of one.
   - One endpoint per pause run, and no batch pause.
-  - Pause refusals match names, tags and tasks. The job doesn't check traffic before a pause, so the acknowledgement is the only gate.
+  - Pause refusals match names, tags and tasks. The job also checks the last 24 hours of traffic before a pause: it refuses an endpoint that still has requests, or whose traffic can't be read, unless `force` is set from the command line.
   - Usage tracking can't be turned off in the app. Resume has no dry run and no force.
   - Test call services come from the scan's targets or from names you type. The app can't list `system.ai` services with your token.
   - Rate limits and policies on `system.ai` targets aren't copied or set.

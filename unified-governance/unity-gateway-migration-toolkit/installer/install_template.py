@@ -93,6 +93,7 @@ import json
 import re
 import sys
 import time
+import uuid
 import zipfile
 from datetime import datetime, timedelta
 
@@ -471,6 +472,34 @@ def target_schema_lines(me: str) -> list[str]:
     return [f"CREATE SCHEMA IF NOT EXISTS {t};",
             f"GRANT USE CATALOG ON CATALOG `{TARGET_CATALOG}` TO `{me}`;",
             f"GRANT USE SCHEMA, CREATE SERVICE ON SCHEMA {t} TO `{me}`;"]
+
+
+# What a rollback run's summary counts as problems (ug_migration_apply.PROBLEM_ACTIONS; a test checks they agree).
+PROBLEM_ACTIONS = ("error", "manual", "mismatch", "kept", "needs_attention", "smoke_failed", "test_failed", "refused",
+                   "missing", "protection_lost", "check_failed")
+
+
+def rollback_done(status, summary) -> bool:
+    """Whether a rollback run counts as rolled back: the app's rule (ug_migration_store.rollback_done; a test checks
+    they agree). SUCCEEDED does. NEEDS_ATTENTION does when every object it kept was kept only because another apply
+    run still uses it or it existed before the apply run, and nothing else needs attention: a run that reused a
+    shared provider or secret keeps it on purpose and is rolled back. Before, only SUCCEEDED counted here, so such a
+    run stayed pending and the uninstall stopped on it for good."""
+    if status == "SUCCEEDED":
+        return True
+    if status != "NEEDS_ATTENTION":
+        return False
+    try:
+        s = json.loads(summary or "{}") if not isinstance(summary, dict) else summary
+    except (TypeError, ValueError):
+        s = {}
+    if not isinstance(s, dict):
+        s = {}
+    if "kept_other_run" not in s:  # written before this rule: NEEDS_ATTENTION counted as done
+        return True
+    if s.get("kept", 0) != s.get("kept_other_run", 0) + s.get("kept_preexisting", 0):
+        return False
+    return not any(s.get(a) for a in PROBLEM_ACTIONS if a != "kept")
 
 
 # HELPERS-END
@@ -914,22 +943,24 @@ def apply_job_ids() -> list[int]:
 
 
 def pending_rows() -> list[dict]:
-    """Execute runs in the results schema whose services are still in place (no successful rollback), newest first."""
+    """Execute runs in the results schema whose services are still in place (no finished rollback), newest first."""
     try:
         rows = spark.sql(f"""
             SELECT a.apply_id, a.job_run_id, count(i.payload) AS created FROM `{CATALOG}`.`{SCHEMA}`.ug_migration_applies a
             LEFT JOIN `{CATALOG}`.`{SCHEMA}`.ug_migration_apply_items i
               ON i.apply_id = a.apply_id AND get_json_object(i.payload, '$.action') = 'created'
-            WHERE a.mode = 'execute' AND a.apply_id NOT IN (
-              SELECT rollback_of FROM `{CATALOG}`.`{SCHEMA}`.ug_migration_applies
-              WHERE mode = 'rollback' AND status = 'SUCCEEDED' AND rollback_of IS NOT NULL)
+            WHERE a.mode = 'execute'
             GROUP BY a.apply_id, a.job_run_id, a.started_at ORDER BY a.started_at DESC""").collect()
+        rolled = spark.sql(f"""
+            SELECT rollback_of, status, summary FROM `{CATALOG}`.`{SCHEMA}`.ug_migration_applies
+            WHERE mode = 'rollback' AND rollback_of IS NOT NULL""").collect()
     except Exception as e:  # no results tables yet: nothing was applied from this install
         if "TABLE_OR_VIEW_NOT_FOUND" in str(e) or "SCHEMA_NOT_FOUND" in str(e):
             return []
         raise
+    done = {r["rollback_of"] for r in rolled if rollback_done(r["status"], r["summary"])}
     return [{"apply_id": r["apply_id"], "job_run_id": str(r["job_run_id"] or ""), "created": r["created"]}
-            for r in rows if r["created"]]
+            for r in rows if r["created"] and r["apply_id"] not in done]
 
 
 def log_apply_ids() -> set[str]:
@@ -948,25 +979,47 @@ def apply_state() -> dict:
     return {"pending": pending, "unmatched": [r for r in rows if r["apply_id"] not in mine_ids], "logs": logs}
 
 
-def rollback_status(apply_id: str) -> str:
-    rows = spark.sql(f"SELECT status FROM `{CATALOG}`.`{SCHEMA}`.ug_migration_applies WHERE mode = 'rollback' "
-                     f"AND rollback_of = '{apply_id}' ORDER BY started_at DESC LIMIT 1").collect()
+def run_status(run_id: str) -> str:
+    """Status of one apply-job run in the results table, by the apply_id the installer gave it."""
+    rows = spark.sql(f"SELECT status FROM `{CATALOG}`.`{SCHEMA}`.ug_migration_applies WHERE apply_id = :id",
+                     args={"id": run_id}).collect()
     return rows[0]["status"] if rows else "not recorded"
 
 
-def roll_back_once(job_id: int, apply_id: str) -> str:
-    """One rollback run. Returns its status (SUCCEEDED, NEEDS_ATTENTION, FAILED, ...), or 'still running'."""
-    print("rolling back apply", apply_id, "...")
+def run_apply_job(job_id: int, params: dict) -> str | None:
+    """Start the apply job and wait for it. Returns 'still running' on a timeout, else None: a failed run is not an
+    error here, because its row in the apply table says how far it got (or that the job refused to start it)."""
     try:
-        w.jobs.run_now(job_id=job_id, job_parameters={
-            "mode": "rollback", "rollback_of": apply_id, "results_schema": RESULTS, "requested_by": me}).result(
-            timeout=ROLLBACK_TIMEOUT)
+        w.jobs.run_now(job_id=job_id, job_parameters=params).result(timeout=ROLLBACK_TIMEOUT)
     except TimeoutError:
         return "still running"
     except Exception as e:  # the run failed; its row in the apply table says how far it got
-        print("  the rollback run ended with an error:", str(e)[:300])
-    status = rollback_status(apply_id)
+        print("  the run ended with an error:", str(e)[:300])
+    return None
+
+
+def roll_back_once(job_id: int, apply_id: str) -> str:
+    """One rollback of an execute run: a rollback dry run first, then the rollback that follows it. The job refuses a
+    rollback that doesn't cite a finished dry run of the same execute run by the same requested_by, so the installer
+    runs both with its own ids. Returns the status (SUCCEEDED, NEEDS_ATTENTION, FAILED, ...), or 'still running'."""
+    print("rolling back apply", apply_id, "...")
+    base = {"rollback_of": apply_id, "results_schema": RESULTS, "requested_by": me}
+    dry_id, rollback_id = str(uuid.uuid4()), str(uuid.uuid4())
+    print("  rollback dry run", dry_id[:8], "...")
+    if run_apply_job(job_id, {**base, "mode": "rollback_dry_run", "apply_id": dry_id}) == "still running":
+        return "still running"
+    dry = run_status(dry_id)
+    print("  dry run status:", dry)
+    if dry in RUNNING_STATES:
+        return "still running"
+    if dry not in ("SUCCEEDED", "NEEDS_ATTENTION"):
+        return f"rollback dry run {dry}"
+    if run_apply_job(job_id, {**base, "mode": "rollback", "apply_id": rollback_id, "dry_run_id": dry_id}) == "still running":
+        return "still running"
+    status = run_status(rollback_id)
     print("  status:", status)
+    if status == "not recorded":  # the job refused it (for example, the dry run had errors besides kept objects)
+        return f"rollback refused after its dry run {dry_id}"
     return "still running" if status in RUNNING_STATES else status
 
 
@@ -996,6 +1049,12 @@ def roll_back_all(st: dict) -> dict:
             if s == "still running":
                 lines.append(f"- {p['apply_id']}: still running: wait for it to finish (Jobs > [{APP_NAME}] Unity Gateway "
                              "migration apply) and run uninstall again")
+            elif s.startswith(("rollback refused", "rollback dry run")):
+                # The app is stopped by now, so its Apply page can't be the first place to look: the job run says why.
+                lines.append(f"- {p['apply_id']}: {s}: see why in the latest run of Jobs > [{APP_NAME}] Unity Gateway "
+                             "migration apply (its output names the object it couldn't read or the check that refused "
+                             "it), fix the cause, and run uninstall again. Or roll it back from the command line: "
+                             + rollback_command(FOLDER, p["apply_id"]))
             else:
                 lines.append(f"- {p['apply_id']}: {s}: open the app's Apply page for this run to see why, fix the cause "
                              "(the message names the grant or object), and run uninstall again. Or roll it back from the "
@@ -1033,10 +1092,19 @@ if UNINSTALL:
         dbutils.notebook.exit("uninstall preview: nothing changed")
     if blocked:
         raise ValueError("Nothing was changed. Fix these first:\n- " + "\n- ".join(blocked))
-    # 1. Stop the app first, so no new apply run starts while the rollback runs.
+    # 1. Stop the app first, so no new apply run starts while the rollback runs. A run after a stuck uninstall finds it
+    # already stopped (the messages say "run uninstall again"), and the API refuses to stop an app whose compute
+    # isn't active, so only an active app is stopped.
     if EXISTING_APP is not None:
-        print("stopping app", APP_NAME, "...")
-        w.apps.stop_and_wait(APP_NAME)
+        state = w.apps.get(APP_NAME).compute_status.state
+        if state == apps.ComputeState.ACTIVE:
+            print("stopping app", APP_NAME, "...")
+            w.apps.stop_and_wait(APP_NAME)
+        elif state in (apps.ComputeState.STOPPED, apps.ComputeState.ERROR):
+            print("app", APP_NAME, "is", state.value, ": nothing to stop")
+        else:  # starting, updating, deleting: it may still become active, so wait for it
+            raise ValueError(f"Nothing was changed: the app {APP_NAME} is {state.value if state else 'in an unknown state'}. "
+                             "Wait until it is ACTIVE or STOPPED in Compute > Apps, then run uninstall again")
     busy = active_job_names()
     if busy:
         raise ValueError("Uninstall stopped: these jobs have a run in progress: " + ", ".join(busy) + ". Wait for them to "

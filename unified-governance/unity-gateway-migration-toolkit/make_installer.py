@@ -64,15 +64,15 @@ INTRO = {
     "install": """\
 Installs the toolkit in this workspace. No CLI, Git or local setup.
 
-1. Click **Run all** once. The widgets appear at the top and the run stops ("The widgets are ready").
-2. Pick **1. Catalog** and **2. SQL warehouse**. Leave **3. Schema for new model services** blank: the installer creates
-   `<catalog>.ug_migrated` for you. If you already have a schema for them, or want another name, enter it as
-   `catalog.schema`.
-3. Click **Run all** again (about 5 minutes). The app link is printed at the end.
+1. Click **Run all**. The first run only previews: it adds the widgets at the top (prefilled with this workspace's
+   default catalog and a SQL warehouse), runs every check, prints a checklist and what it would create, and changes
+   nothing.
+2. Check the widgets: **1. Catalog** (the toolkit creates its schemas there), **2. SQL warehouse**, and **3. Schema for
+   new model services** (blank: `<catalog>.ug_migrated` is created for you; or enter `catalog.schema` of one you have).
+3. Click **Run all** again to install (about 5 minutes). The app link is printed at the end.
 
-**Before anything changes**, the notebook runs every check and prints one checklist: what passed, what to fix (with
-the exact SQL or screen), and what it will create. If something needs fixing, nothing is created or changed, and the run
-ends with a red "Nothing was changed" error that lists the fixes: that's expected.
+The checklist marks each check OK, FIX or NOTE. If anything needs fixing, nothing is created or changed, and the message
+says exactly what to grant or set.
 
 **What it creates**
 - In the catalog you pick: the results schema `ug_migration` (scan results and history), and the schema for new
@@ -86,29 +86,36 @@ ends with a red "Nothing was changed" error that lists the fixes: that's expecte
 on the catalog, `CAN USE` on the warehouse, and `SELECT` on the system tables (if it's missing, the checklist prints
 the GRANT to send an account admin).
 
-**To update**, import the newer installer and click Run all. It finds the install and keeps its settings. (From 0.10
-or earlier it asks once for the operators, who can start jobs in the app: Databricks doesn't return them.)
+**Optional settings** (app name, operators, a service principal for the jobs, central mode, secret mapping and more)
+are in the cell titled **Optional settings**, below the widgets. Most installs leave it as is.
 
-**Custom setup:** set **4. Setup** to `custom` and widgets 5 to 18 appear (if they don't, click Run all: it adds them
-and stops). They cover the app name, operators, a service principal for the jobs, central mode, secret mapping and
-more. To remove the toolkit, use the UNINSTALL notebook
-from the same zip.""",
+**To update**, import the newer installer and click Run all. It finds the install and keeps its settings. (From 0.10
+or earlier it asks once for the operators, who can start jobs in the app: Databricks doesn't return them.) To remove
+the toolkit, use the UNINSTALL notebook from the same zip.""",
     "uninstall": """\
 Removes a toolkit install from this workspace.
 
-1. Leave **1. Action** at `preview` and click **Run all**. It lists what would be removed and kept, and changes nothing.
+1. Click **Run all**. **1. Action** starts at `preview`: it lists what would be removed and kept, and changes nothing.
 2. Choose what else goes (widgets 3 to 5), set **1. Action** to `remove`, and click Run all again.
 
 Model services created by Apply stay unless you set **3** to `yes`. Schemas that hold services are never removed.
 Uninstall refuses while a toolkit job is running.""",
 }
 TITLE = {"install": "Install the Unity Gateway Migration Toolkit", "uninstall": "Uninstall the Unity Gateway Migration Toolkit"}
-PROMPT = {"install": "Pick 1. Catalog and 2. SQL warehouse above, then Run all",
+PROMPT = {"install": "Check 1. Catalog, 2. SQL warehouse and 3. Schema above, then Run all",
           "uninstall": "Run all with 1. Action = preview first: it changes nothing"}
 
 
 def render(tpl: str, mode: str, version: str, payload: str) -> str:
     intro = "\n".join("# MAGIC" + (" " + line if line else "") for line in INTRO[mode].splitlines())
+    # The Optional settings cell is for the installer only: the markers go, and in UNINSTALL the whole cell goes.
+    block = re.compile(r"# COMMAND ----------\n\n# INSTALL-ONLY-BEGIN\n.*?# INSTALL-ONLY-END\n\n", re.S)
+    if not block.search(tpl):
+        sys.exit("installer/install_template.py: the INSTALL-ONLY block (Optional settings cell) is missing")
+    if mode == "install":
+        tpl = tpl.replace("# INSTALL-ONLY-BEGIN\n", "").replace("# INSTALL-ONLY-END\n", "")
+    else:
+        tpl = block.sub("", tpl)
     return (tpl.replace("__TITLE__", TITLE[mode]).replace("__INTRO__", intro).replace("__PROMPT__", PROMPT[mode])
             .replace("__MODE__", mode).replace("__VERSION__", version).replace("__PAYLOAD__", payload))
 

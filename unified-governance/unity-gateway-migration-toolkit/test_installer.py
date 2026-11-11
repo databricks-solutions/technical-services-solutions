@@ -12,6 +12,7 @@ import io
 import json
 import pathlib
 import re
+import tempfile
 import time
 import uuid
 import zipfile
@@ -108,7 +109,7 @@ def test_downgrade_needs_widget_and_compares_numbers():
     assert H["downgrade_problem"]("0.7.0", "0.8.0", allow=False) is None
     assert H["downgrade_problem"]("", "0.8.0", allow=False) is None
     assert H["downgrade_problem"]("0.10.0", "0.9.0", allow=False) is not None
-    assert "17. Allow downgrade (custom setup: 4. Setup = custom)" in H["downgrade_problem"]("0.8.0", "0.7.0", allow=False)
+    assert "allow_downgrade (in the Optional settings cell)" in H["downgrade_problem"]("0.8.0", "0.7.0", allow=False)
 
 
 def test_marker_status():
@@ -351,6 +352,7 @@ class FakeWS:
         self.next_run = 500
         self.clock = 0
         self.sp_rules = None  # grant rules on the run-as SP's rule set; None = the API isn't reachable
+        self.current_catalog = "main"  # the workspace's default catalog (SELECT current_catalog())
 
     # ---- seeding helpers
     def add_table(self, key, rows=()):
@@ -361,6 +363,8 @@ class FakeWS:
         s = " ".join(stmt.split())
         self.log.append(("sql", s[:100]))
         rows = []
+        if s == "SELECT current_catalog()":
+            rows = [(self.current_catalog,)]
         if "FROM system.access.workspaces_latest" in s:
             rows = [("acct-1",)]
         m = re.match(r"DROP TABLE IF EXISTS `(\w+)`\.`(\w+)`\.ug_migration_(\w+)", s)
@@ -829,7 +833,14 @@ def run_notebook(monkeypatch, ws, widgets=None):
     """Runs the notebook cell by cell. Widgets not given keep the notebook's own defaults."""
     monkeypatch.setattr(sdk_pkg, "WorkspaceClient", lambda *a, **k: ws.make())
     vals = dict(widgets or {})
-    text = _notebook_text(vals.pop("__mode__", "install"))
+    interactive = vals.pop("__interactive__", False)  # default: a job run (the context has a jobId), so no preview
+    settings_cell = vals.pop("__settings__", None)  # values typed into the Optional settings cell
+    flag = pathlib.Path(tempfile.mkdtemp()) / "preview.json"
+    text = _notebook_text(vals.pop("__mode__", "install")).replace("/tmp/ugmig_install_preview.json", str(flag))
+    if settings_cell:
+        for k, v in settings_cell.items():
+            text, n = re.subn(rf'^(    "{k}": )""', rf'\g<1>{json.dumps(v)}', text, count=1, flags=re.M)
+            assert n == 1, k
     cells = text.split("\n# COMMAND ----------\n")
     out = []
     labels = {}
@@ -853,7 +864,8 @@ def run_notebook(monkeypatch, ws, widgets=None):
         raise NBExit(value)
 
     ns = {
-        "dbutils": _ns(widgets=Widgets(), notebook=_ns(exit=exit_)),
+        "dbutils": _ns(widgets=Widgets(), notebook=_ns(exit=exit_, entry_point=_ns(getDbutils=lambda: _ns(notebook=lambda: _ns(
+            getContext=lambda: _ns(safeToJson=lambda: json.dumps({"attributes": {} if interactive else {"jobId": "1"}}))))))),
         "displayHTML": lambda html: out.append(re.sub(r"<[^>]+>", " ", html)),
         "spark": _ns(sql=ws.sql),
         "print": lambda *a, **k: out.append(" ".join(str(x) for x in a)),
@@ -870,25 +882,22 @@ def run_notebook(monkeypatch, ws, widgets=None):
 
 
 # The widget names, by the short names the tests use (the panel numbers them so it shows them in order).
-INSTALL_NAMES = {"results_catalog": "01_catalog", "warehouse": "02_warehouse", "target": "03_target", "setup": "04_setup",
-                 "app_name": "05_app_name", "operators": "06_operators", "run_as": "07_run_as",
-                 "create_target": "08_create_target", "results_schema": "09_results_schema",
-                 "install_folder": "10_install_folder", "secret_schemas": "11_secret_schemas",
-                 "allow_secret_read": "12_allow_secret_read", "deadline": "13_deadline",
-                 "central_workspaces": "14_central_workspaces", "central_secret": "15_central_secret",
-                 "adopt_app": "16_adopt_app", "allow_downgrade": "17_allow_downgrade", "second_install": "18_second_install"}
-QUICK = ("results_catalog", "warehouse", "target", "setup")
+INSTALL_NAMES = {"results_catalog": "01_catalog", "warehouse": "02_warehouse", "target": "03_target"}
+# Everything else is an optional setting: the tests pass them as job parameters of the same name (setting() reads
+# those first, then the Optional settings cell).
+OPTIONAL_KEYS = ("app_name", "operators", "run_as", "create_target", "results_schema", "install_folder", "secret_schemas",
+                 "allow_secret_read", "deadline", "central_workspaces", "central_secret", "adopt_app", "allow_downgrade",
+                 "second_install")
 UNINSTALL_NAMES = {"action": "01_action", "app_name": "02_app_name", "rollback_services": "03_rollback_services",
                    "drop_data": "04_drop_data", "remove_logs": "05_remove_logs", "results_schema": "06_results_schema",
                    "adopt_app": "07_adopt_app"}
 
 
 def install_widgets(**kw):
-    """Install widgets by short name. Any custom-setup widget turns on custom setup (4. Setup = custom)."""
+    """Install widgets by short name, plus optional settings (as job parameters of the same name)."""
     vals = {"results_catalog": "main", "warehouse": WH_LABEL, **kw}
-    if any(k not in QUICK for k in vals):
-        vals.setdefault("setup", "custom")
-    return {"__mode__": "install", **{INSTALL_NAMES[k]: v for k, v in vals.items()}}
+    assert all(k in INSTALL_NAMES or k in OPTIONAL_KEYS for k in vals), vals
+    return {"__mode__": "install", **{INSTALL_NAMES.get(k, k): v for k, v in vals.items()}}
 
 
 def uninstall_widgets(action="uninstall: remove", **kw):
@@ -910,75 +919,99 @@ def test_widgets_are_the_first_code_cell_and_the_prompt_follows(mode):
     assert "__" not in cells[0].replace("__init__", "")  # every placeholder filled in
     assert ("Installs the toolkit in this workspace" if mode == "install" else "Removes a toolkit install") in cells[0]
     assert f'MODE = "{mode}"' in cells[1] and "dbutils.widgets" in cells[1]
-    assert f'if "{mode}" == "install":' in cells[2]  # the custom-setup cell
-    assert cells[3].strip().endswith("then Run all" if mode == "install" else "it changes nothing")
-    assert "# MAGIC %pip" in cells[4]
-
-
-def test_the_custom_cell_reruns_alone_fast_and_reads_only_widgets(monkeypatch):
-    """With "Run accessed commands" (the panel default), choosing custom reruns only the cell that reads 4. Setup. That
-    cell must make no API calls and must not need anything an earlier cell defined: after the pip cell restarted
-    Python, it runs alone."""
-    cells = _notebook_text("install").split("\n# COMMAND ----------\n")
-    assert 'dbutils.widgets.get("04_setup")' in cells[2] and 'dbutils.widgets.get("04_setup")' not in cells[1]
-    assert "WorkspaceClient" not in cells[2] and "w." not in cells[2].replace("dbutils.widgets.", "")
-    vals = {"01_catalog": "main", "02_warehouse": WH_LABEL, "03_target": "", "04_setup": "custom"}
-    labels = {}
-
-    class Widgets:
-        def text(self, name, default, label=""):
-            labels[name] = label
-            vals.setdefault(name, default)
-        dropdown = lambda self, name, default, choices=None, label="": Widgets.text(self, name, default, label)
-
-        def get(self, name):
-            return vals[name]
-
-        def remove(self, name):
-            vals.pop(name)
-
-    exits = []
-    ns = {"dbutils": _ns(widgets=Widgets(), notebook=_ns(exit=exits.append))}  # a fresh Python: nothing else defined
-    exec(compile(cells[2], "custom-cell", "exec"), ns)
-    assert len(labels) == 14 and exits and exits[0].startswith("Custom setup: widgets 5 to 18")
-    vals["04_setup"] = "quick"
-    exec(compile(cells[2], "custom-cell", "exec"), {"dbutils": ns["dbutils"]})
-    assert set(vals) == {"01_catalog", "02_warehouse", "03_target", "04_setup"}  # back to the four
+    assert cells[2].strip().endswith("then Run all" if mode == "install" else "it changes nothing")
+    assert "# MAGIC %pip" in cells[3]
+    if mode == "install":  # the Optional settings cell follows the pip cell, titled, every value blank
+        assert cells[4].startswith("\n# DBTITLE 1,Optional settings") and "OPTIONAL_SETTINGS = {" in cells[4]
+        keys = re.findall(r'^    "(\w+)": "",', cells[4], re.M)
+        assert tuple(keys) == OPTIONAL_KEYS
+    else:
+        assert "OPTIONAL_SETTINGS = {" not in "".join(cells) and "INSTALL-ONLY" not in "".join(cells)
 
 
 def _labels(monkeypatch, widgets):
     return run_notebook(monkeypatch, FakeWS(), widgets).labels
 
 
-def test_quick_setup_shows_four_widgets_numbered_in_panel_order(monkeypatch):
+def test_the_install_notebook_has_three_numbered_widgets(monkeypatch):
     lab = _labels(monkeypatch, install_widgets())
-    assert list(lab) == ["01_catalog", "02_warehouse", "03_target", "04_setup"]
+    assert list(lab) == ["01_catalog", "02_warehouse", "03_target"]
     assert sorted(lab) == list(lab)  # the panel sorts by name: the number keeps the order
-    assert [lab[k].split(" ", 1)[0] for k in lab] == ["1.", "2.", "3.", "4."]
+    assert [lab[k].split(" ", 1)[0] for k in lab] == ["1.", "2.", "3."]
     assert "blank = <catalog>.ug_migrated, created for you" in lab["03_target"]
-    assert not any(k.startswith(("uninstall", "action")) for k in lab)  # no uninstall options in the install notebook
 
 
-def test_custom_setup_adds_numbered_widgets_and_stops_once_to_let_you_set_them(monkeypatch):
-    ws = FakeWS()
-    first = run_notebook(monkeypatch, ws, {"__mode__": "install", "01_catalog": "main", "02_warehouse": WH_LABEL,
-                                           "04_setup": "custom"})
-    assert first.status.startswith("exit: Custom setup: widgets 5 to 18 are now in the widget panel")
-    assert not ws.apps and not ws.jobs  # nothing ran
-    lab = first.labels
-    assert len(lab) == 18 and sorted(lab) == list(lab)
-    assert [lab[k].split(" ", 1)[0] for k in lab] == [f"{n}." for n in range(1, 19)]
-    assert "risk" in lab["12_allow_secret_read"] and "overwrites it" in lab["16_adopt_app"]
-    assert "none = you" in lab["07_run_as"] and "you create it" in lab["08_create_target"]
-    second = run_notebook(monkeypatch, ws, install_widgets(app_name=APP))  # a custom widget is set: it installs
-    assert not second.raised, second.status
-
-
-def test_quick_setup_removes_the_custom_widgets(monkeypatch):
-    vals = install_widgets(app_name=APP, setup="quick")
+def test_widgets_from_an_earlier_build_are_removed_from_the_panel(monkeypatch):
+    vals = {"__mode__": "install", "__interactive__": True, "01_catalog": "main", "02_warehouse": WH_LABEL,
+            "04_setup": "custom", "05_app_name": "", "13_deadline": ""}
     res = run_notebook(monkeypatch, FakeWS(), vals)
     assert not res.raised, res.status
-    assert "05_app_name" not in res.labels
+    assert set(res.labels) == {"01_catalog", "02_warehouse", "03_target"}
+
+
+def test_optional_settings_cell_values_are_used(monkeypatch):
+    ws = FakeWS()
+    res = run_notebook(monkeypatch, ws, {**install_widgets(), "__settings__": {"deadline": "2027-06-01",
+                                                                             "operators": "a@x.com,b@x.com"}})
+    assert not res.raised, res.status
+    assert _env(ws)["UGMIG_DEADLINE"] == "2027-06-01" and _env(ws)["OPERATORS"] == "a@x.com,b@x.com"
+    # a job parameter of the same name wins over the cell
+    res2 = run_notebook(monkeypatch, ws, {**install_widgets(deadline="2027-07-01"), "__settings__": {"deadline": "2027-06-01"}})
+    assert not res2.raised and _env(ws)["UGMIG_DEADLINE"] == "2027-07-01"
+
+
+def _preview(ws, monkeypatch, **widgets):
+    return run_notebook(monkeypatch, ws, {"__mode__": "install", "__interactive__": True, **widgets})
+
+
+def test_first_interactive_run_previews_with_defaults_and_changes_nothing(monkeypatch):
+    ws = FakeWS()
+    res = _preview(ws, monkeypatch)  # a freshly imported notebook: no widgets yet
+    assert res.status == ("exit: Preview: nothing was changed. If this looks right, click Run all again to install. To "
+                          "change something first, set the widgets at the top or the Optional settings cell."), res.status
+    assert snapshot_of(ws) == snapshot_of(FakeWS())
+    assert not [e for e in ws.log if e[0] in ("create_job", "reset_job", "create_app", "deploy_app", "upload")]
+    text = res.text
+    assert "[OK  ] Results schema: main.ug_migration doesn't exist: the install creates it" in text
+    assert "[OK  ] Schema for new model services: main.ug_migrated doesn't exist: it will be created" in text
+    assert "This install would create or update:" in text and f"App: {APP}" in text
+    # the defaults it picked: the workspace's default catalog and the only warehouse
+    again = run_notebook(monkeypatch, ws, {"__mode__": "install", "__interactive__": True, "01_catalog": "main",
+                                           "02_warehouse": WH_LABEL})  # the widgets exist now: this run installs
+    assert not again.raised and APP in ws.apps, again.status
+
+
+def test_preview_with_a_fix_says_so_without_an_error(monkeypatch):
+    ws = FakeWS()
+    ws.denied.add("system.serving.endpoint_usage")
+    res = _preview(ws, monkeypatch)
+    assert res.status == "exit: Preview: nothing was changed. Fix the FIX items in the checklist above, then click Run all again."
+    assert "[FIX ] the SQL warehouse can't read system.serving.endpoint_usage" in res.text
+    assert snapshot_of(ws) == snapshot_of(FakeWS())
+
+
+def test_preview_without_a_default_catalog_asks_for_one(monkeypatch):
+    ws = FakeWS()
+    ws.current_catalog = "hive_metastore"  # not usable, and two catalogs to choose from
+    res = _preview(ws, monkeypatch)
+    assert res.status.startswith("exit: Preview: nothing was changed. Set these, then click Run all again: choose 1. Catalog")
+    assert res.labels and snapshot_of(ws) == snapshot_of(FakeWS())
+
+
+def test_a_job_run_never_previews(monkeypatch):
+    ws = FakeWS()
+    res = run_notebook(monkeypatch, ws, {"__mode__": "install", "01_catalog": "main", "02_warehouse": WH_LABEL})
+    assert not res.raised and APP in ws.apps, res.status
+
+
+def test_an_update_keeps_catalog_and_warehouse_unless_you_pick_others(monkeypatch):
+    ws = FakeWS()
+    ws.warehouses["ffff0000"] = {"name": "aaa-first", "state": "RUNNING"}  # sorts first: a new install would pick it
+    seed_install(ws)
+    res = _preview(ws, monkeypatch)
+    assert res.labels["01_catalog"].startswith("1. Catalog (keep the current one")
+    assert "using the results schema of the existing install: main.ug_migration" in res.text
+    assert res.status.startswith("exit: Preview: nothing was changed")
 
 
 def test_uninstall_notebook_widgets(monkeypatch):
@@ -1002,7 +1035,7 @@ def test_fresh_install_creates_everything_and_says_what_next(monkeypatch):
     assert "Compute > Apps > ug-migration-toolkit" in text
     assert "First steps" in text and "Start scan" in text
     assert "paused" in text and "unpause" in text
-    assert "set 4. Setup to custom and click Run all, then set 11. Allowed secret schemas" in text  # secret mapping
+    assert "set secret_schemas in the Optional settings cell" in text  # how to turn on secret mapping
     # The schema for new model services is created in the catalog picked, and named everywhere it matters.
     assert ws.schemas["main.ug_migrated"]["comment"] == f"Unity Gateway model services created by the migration toolkit (app: {APP})"
     assert "ai_gateway.migrated" not in ws.schemas
@@ -1017,36 +1050,21 @@ def test_fresh_install_creates_everything_and_says_what_next(monkeypatch):
 
 def test_install_refuses_without_a_catalog_and_changes_nothing(monkeypatch):
     ws = FakeWS()
-    res = run_notebook(monkeypatch, ws, {"__mode__": "install", "02_warehouse": WH_LABEL})
-    assert res.status.startswith("exit: The widgets are ready at the top of the notebook. Pick 1. Catalog")
+    res = run_notebook(monkeypatch, ws, {"__mode__": "install", "01_catalog": "<choose a catalog>", "02_warehouse": WH_LABEL})
+    assert res.raised and "choose 1. Catalog" in res.status
     assert snapshot_of(ws) == snapshot_of(FakeWS()) and not ws.apps
-    assert not any(e[0] in ("sql_warehouse", "sql") for e in ws.log)  # it stopped before the checks
 
 
-def test_first_run_of_a_fresh_notebook_only_sets_up_the_widgets(monkeypatch):
-    """A freshly imported notebook has no widgets; the first Run all creates them and stops (before the pip cell)."""
+def test_a_running_warehouse_is_preselected_and_none_means_choose(monkeypatch):
     ws = FakeWS()
-    res = run_notebook(monkeypatch, ws, {"__mode__": "install"})
-    assert res.status.startswith("exit: The widgets are ready"), res.status
-    assert list(res.labels) == ["01_catalog", "02_warehouse", "03_target", "04_setup"]
-    assert not ws.apps and not ws.jobs and not ws.schemas
-    ws.apps["other-app"] = app_obj("other-app", desc="Something else")  # another app, listed first: paging matters
-    assert run_notebook(monkeypatch, ws, {"__mode__": "install"}).status.startswith("exit: The widgets are ready")
-    seed_install(ws)  # with an install here, a blank run is an update, so it doesn't stop
-    upd = run_notebook(monkeypatch, ws, {"__mode__": "install", "02_warehouse": WH_LABEL})
-    assert not upd.status.startswith("exit: The widgets are ready"), upd.status
-
-
-def test_several_warehouses_need_a_choice_and_one_is_preselected(monkeypatch):
-    ws = FakeWS()
-    ws.warehouses["ffff0000"] = {"name": "other", "state": "RUNNING"}
+    ws.warehouses = {"ffff0000": {"name": "aaa-stopped", "state": "STOPPED"}, WH_ID: {"name": "serverless", "state": "RUNNING"}}
     res = run_notebook(monkeypatch, ws, {"__mode__": "install", "01_catalog": "main"})
-    assert res.raised and "choose 2. SQL warehouse" in res.status
-    assert not ws.apps
-    ws2 = FakeWS()  # one warehouse: no choice needed
+    assert not res.raised, res.status
+    assert ws.apps[APP].resources[0].sql_warehouse.id == WH_ID  # the running one, though another sorts first by name
+    ws2 = FakeWS()
+    ws2.warehouses = {}
     res2 = run_notebook(monkeypatch, ws2, {"__mode__": "install", "01_catalog": "main"})
-    assert not res2.raised, res2.status
-    assert APP in ws2.apps
+    assert res2.raised and "choose 2. SQL warehouse" in res2.status and not ws2.apps
 
 
 def test_rerun_keeps_job_ids(monkeypatch):
@@ -1154,7 +1172,7 @@ def test_bundle_deployed_app_needs_adopt(monkeypatch):
     ws = FakeWS()
     seed_install(ws, app="ug-migration-bundle", folder=f"/Workspace/Users/{ME}/ug-migration-bundle-toolkit")
     res = run_notebook(monkeypatch, ws, install_widgets(app_name="ug-migration-bundle"))
-    assert res.raised and "deployed by the bundle" in res.status and "Adopt existing app" in res.status
+    assert res.raised and "deployed by the bundle" in res.status and "adopt_app (in the Optional settings cell)" in res.status
     res2 = run_notebook(monkeypatch, ws, install_widgets(app_name="ug-migration-bundle", adopt_app="yes"))
     assert not res2.raised, res2.status
 
@@ -1499,11 +1517,10 @@ def test_cutover_job_parameters_and_the_deadline_reach_the_jobs_and_app():
 def test_legacy_deadline_widget_is_labelled_validated_and_passed_on(monkeypatch):
     ws = FakeWS()
     res = run_notebook(monkeypatch, ws, install_widgets(deadline="next spring"))
-    assert res.raised and "Legacy deadline (custom setup: 4. Setup = custom) must be a date as YYYY-MM-DD" in res.status
+    assert res.raised and "deadline (in the Optional settings cell) must be a date as YYYY-MM-DD" in res.status
     assert not ws.apps  # nothing created for a bad date
     res2 = run_notebook(monkeypatch, ws, install_widgets(deadline="2027-06-01"))
     assert not res2.raised, res2.status
-    assert res2.labels["13_deadline"].startswith("13. Legacy deadline")
     env = {e.name: e.value for e in ws.apps[APP].active_deployment.env_vars}
     assert env["UGMIG_DEADLINE"] == "2027-06-01"
     snap = [j for j in ws.jobs.values() if j.tags["role"] == "snapshot"][0]
@@ -1513,7 +1530,7 @@ def test_legacy_deadline_widget_is_labelled_validated_and_passed_on(monkeypatch)
 def test_service_principal_install_needs_operators(monkeypatch):
     ws = FakeWS(me="0b1f7c2e-1234-4abc-9def-0123456789ab")
     res = run_notebook(monkeypatch, ws, install_widgets())
-    assert res.raised and "set 6. Operators (custom setup: 4. Setup = custom)" in res.status
+    assert res.raised and "set operators (in the Optional settings cell)" in res.status
     res2 = run_notebook(monkeypatch, ws, install_widgets(operators="boss@example.com"))
     assert not res2.raised, res2.status
     env = {e.name: e.value for e in ws.apps[APP].active_deployment.env_vars}
@@ -1548,7 +1565,6 @@ def test_install_with_run_as_sets_the_jobs_and_shares_the_folder(monkeypatch):
     ws = FakeWS()
     res = run_notebook(monkeypatch, ws, install_widgets(run_as=SP_ID))
     assert not res.raised, res.status
-    assert res.labels["07_run_as"].startswith("7. Run jobs as service principal") and "blank = you" in res.labels["07_run_as"]
     assert all(j.run_as == jobs.JobRunAs(service_principal_name=SP_ID) for j in ws.jobs.values())
     ((typ, _, acl),) = ws.permission_updates
     assert typ == "directories" and acl[0].service_principal_name == SP_ID
@@ -1704,7 +1720,7 @@ def test_target_schema_that_exists_is_used_as_is(monkeypatch):
 
 
 @pytest.mark.parametrize("setup, expect", [
-    ({"create_target": "no"}, "8. Create the schema = no"),
+    ({"create_target": "no"}, "create_target is no (Optional settings cell)"),
     ({"target": "nocat.svc"}, "catalog nocat doesn't exist"),
     ({"no_create": True}, "couldn't create main.ug_migrated"),
 ])
@@ -1797,7 +1813,7 @@ def test_an_update_from_0_10_asks_for_the_operators_once_then_keeps_them(monkeyp
     seed_install(ws, operators=None)
     before = snapshot_of(ws)
     res = run_notebook(monkeypatch, ws, {"__mode__": "install", "02_warehouse": WH_LABEL})
-    assert res.raised and "the operators of this install" in res.status and "6. Operators" in res.status
+    assert res.raised and "the operators of this install" in res.status and "operators in the Optional settings cell" in res.status
     assert snapshot_of(ws) == before
     ok = run_notebook(monkeypatch, ws, install_widgets(operators="boss@example.com,ops@example.com"))
     assert not ok.raised, ok.status
@@ -1807,13 +1823,13 @@ def test_an_update_from_0_10_asks_for_the_operators_once_then_keeps_them(monkeyp
     assert _env(ws)["OPERATORS"] == "boss@example.com,ops@example.com"
 
 
-def test_create_target_current_keeps_a_saved_no(monkeypatch):
+def test_a_blank_create_target_keeps_a_saved_no(monkeypatch):
     ws = FakeWS()
     assert not run_notebook(monkeypatch, ws, install_widgets(create_target="no")).raised
     assert "main.ug_migrated" not in ws.schemas
-    res = run_notebook(monkeypatch, ws, install_widgets(app_name=APP))  # custom, 8 left at "current"
+    res = run_notebook(monkeypatch, ws, install_widgets())  # create_target left blank: the saved "no" is kept
     assert not res.raised, res.status
-    assert "main.ug_migrated" not in ws.schemas and "8. Create the schema = no" in res.text
+    assert "main.ug_migrated" not in ws.schemas and "create_target is no" in res.text
 
 
 def test_turning_central_mode_off_also_drops_its_secret(monkeypatch):

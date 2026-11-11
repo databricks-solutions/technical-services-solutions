@@ -67,7 +67,7 @@ except ValueError:
     CENTRAL_WORKSPACES = []
 _HUB_ID: dict[str, str] = {"id": os.environ.get("UGMIG_HUB_WORKSPACE_ID", "").strip()}
 NOT_ALLOWLISTED = ("Workspace {ws} isn't in this app's central-mode allowlist. Re-run the installer with it in "
-                   "14. Central mode: workspaces to manage (custom setup).")
+                   "central_workspaces (Optional settings cell).")
 MAX_SCAN_AGE_DAYS = int(os.environ.get("UGMIG_MAX_SCAN_AGE_DAYS") or 14)
 
 
@@ -1209,7 +1209,7 @@ def start_apply(body: ApplyRequest, request: Request) -> dict:
                                          "values into the provider services.")
             if not SECRET_SCHEMAS:
                 raise HTTPException(400, "Creating Unity Catalog secrets needs an allowed secret schema. Re-run the "
-                                         "installer in custom setup, with 11. Allowed secret schemas set.")
+                                         "installer with secret_schemas set in its Optional settings cell.")
         for k, v in body.uc_secret_map.items():
             m = SECRET_REF_RE.fullmatch(str(v))
             if not SECRET_KEY_RE.fullmatch(k) or not m:

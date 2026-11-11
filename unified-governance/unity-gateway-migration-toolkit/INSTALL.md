@@ -26,56 +26,58 @@ The install never changes your endpoints or code. Changes happen later, only whe
 ## Install
 
 1. Download `unity-gateway-migration-toolkit.zip` from the [release page](https://github.com/databricks-solutions/technical-services-solutions/releases/tag/unity-gateway-migration-toolkit-latest) and unzip it. In the workspace, open your home folder, choose **Import**, and import `INSTALL_unity_gateway_migration_toolkit_0_11_0.py` from the zip's top folder.
-2. Open the notebook and click **Run all** once. A new notebook has no widgets yet: this first run adds them at the top and stops ("The widgets are ready"). Then set them:
+2. Open the notebook and click **Run all**. The first run is a **preview**: it adds three widgets at the top, prefilled with this workspace's default catalog and a running SQL warehouse, runs every check, and prints what it would create. It changes nothing.
+3. Check the widgets, and change any you want:
 
-   | Widget | What to set |
+   | Widget | What it is |
    |---|---|
-   | **1. Catalog** | The catalog for the toolkit's two schemas |
-   | **2. SQL warehouse** | Preselected when there's only one |
-   | **3. Schema for new model services** | Leave blank to have `<catalog>.ug_migrated` created for you. Or enter `catalog.schema` of a schema you already have, or want created |
-   | **4. Setup** | Leave at `quick` |
+   | **1. Catalog** | Where the toolkit creates its two schemas |
+   | **2. SQL warehouse** | What the app and jobs query through |
+   | **3. Schema for new model services** | Blank: `<catalog>.ug_migrated` is created for you. Or enter `catalog.schema` of a schema you already have, or want created |
 
-3. Click **Run all** again.
+4. Click **Run all** again to install (about 5 minutes).
 
-Before anything changes, the notebook checks everything and prints one checklist (shortened here):
+The checklist (shortened here) looks like this, in the preview and again in the install:
 
 ```
 Checklist:
   [OK  ] Databricks Apps: you can create apps
   [OK  ] Catalog: main (the results schema goes here)
   [OK  ] SQL warehouse: Serverless Starter Warehouse (0123456789abcdef) is running
-  [FIX ] the SQL warehouse can't read system.serving.endpoint_usage (...): ask an account admin to run: GRANT ...
+  [FIX ] the SQL warehouse can't read system.serving.endpoint_usage (the snapshot and scans need SELECT on it). Ask an account admin to run: GRANT ...
   [OK  ] Schema for new model services: main.ug_migrated doesn't exist: it will be created
 ```
 
-- **FIX** stops the install. Nothing is created or changed (a stopped SQL warehouse may have been started for the checks). The cell then ends with a red "Nothing was changed" error: that's expected. Fix each FIX item (the message has the exact `GRANT` or the screen to open), then Run all again.
+- **FIX** stops the install. Nothing is created or changed (a stopped SQL warehouse may have been started for the checks). Fix each FIX item (the message has the exact `GRANT` or what to set), then Run all again. In the preview it ends with "Preview: nothing was changed"; on an install run, the cell ends with a red "Nothing was changed" error, which is expected.
 - **NOTE** doesn't stop it. For example, if the schema for new model services can't be created, the install goes on, scans work, and Apply waits until the schema exists. The SQL to create it is printed.
 
 When it finishes, it prints the app link. Open the app, wait a few minutes for the first snapshot, then go to **Scans** and click **Start scan**.
 
+## Optional settings
+
+Below the widgets, a cell titled **Optional settings** holds everything else, each with a comment. Most installs leave it as is. To change a setting, edit its value in that cell and click Run all. Blank (`""`) keeps the default, or what the install already in the workspace uses; `"none"` clears a setting.
+
+| Setting | Use it for |
+|---|---|
+| `app_name` | A second install. An older install (`unity-gateway-migration` from 0.8, `ug-migration` from 0.7) is found without it when it's the only one |
+| `operators` | Who can start jobs in the app. Default: you |
+| `run_as` | A shared install: the jobs run as this service principal (its application ID). You need its **Service principal: User** role |
+| `create_target` | `"no"` if you'll create schema 3 yourself (the SQL is printed). Default: yes |
+| `results_schema`, `install_folder` | Other locations |
+| `secret_schemas`, `allow_secret_read` | Secret mapping in Apply |
+| `deadline` | A date other than March 30, 2027 |
+| `central_workspaces`, `central_secret` | One install that also manages other workspaces |
+| `adopt_app`, `allow_downgrade`, `second_install` | Special cases. The checklist tells you when you need one |
+
+A job that runs the installer can pass the same names as parameters (`app_name`, `operators`, ...), and the widgets as `01_catalog`, `02_warehouse` and `03_target`. A job run never previews.
+
 ## Update
 
-Import the newer installer and click **Run all**, with no widgets changed. It finds the install already in the workspace and keeps its settings: catalog and schemas, warehouse, operators, the jobs' service principal, central mode and secret mapping. The run lists what it kept.
+Import the newer installer and click **Run all**. With an install already in the workspace, the widgets start at "keep the current one" and every setting is kept: catalog and schemas, warehouse, operators, the jobs' service principal, central mode and secret mapping. The first run previews what it would change; the next Run all updates. The run lists what it kept.
 
-**Updating from 0.10 or earlier:** those installs didn't record their operators, and Databricks doesn't return them, so the first update asks for them once (a FIX). Set **4. Setup** to `custom`, Run all, enter the operators in **6. Operators** (your email alone is fine), then Run all again. Later updates keep them.
+**Updating from 0.10 or earlier:** those installs didn't record their operators, and Databricks doesn't return them, so the first update asks for them once (a FIX). Enter them in `operators` in the Optional settings cell (your email alone is fine), then Run all again. Later updates keep them.
 
-## Custom setup
-
-Set **4. Setup** to `custom`. Widgets 5 to 18 appear in the panel within a few seconds. If they don't (the widget panel's **On widget change** setting is **Do nothing**, or the notebook hasn't run yet in this session), click **Run all**: the first run adds them and stops. Set what you need, then Run all again. Blank keeps the default, or what the install already uses. `none` clears a setting.
-
-| Widget | Use it for |
-|---|---|
-| 5. App name | A second install. An older install (`unity-gateway-migration` from 0.8, `ug-migration` from 0.7) is found without it when it's the only one |
-| 6. Operators | Who can start jobs in the app. Default: you |
-| 7. Run jobs as service principal | A shared install. You need the service principal's **Service principal: User** role |
-| 8. Create the schema in 3 if it's missing | `no` if you'll create it yourself (the SQL is printed). `current` keeps the install's choice (yes for a new install) |
-| 9, 10. Results schema name, install folder | Other locations |
-| 11, 12. Allowed secret schemas, allow reading secret values | Secret mapping in Apply |
-| 13. Legacy deadline | A date other than March 30, 2027 |
-| 14, 15. Central mode | One install that also manages other workspaces |
-| 16 to 18. Adopt an existing app, allow downgrade, allow a second install | Special cases. The checklist tells you when you need one |
-
-The [user guide](USER_GUIDE.md#installer-widgets) has every widget, and [Troubleshooting](USER_GUIDE.md#9-troubleshooting) maps each installer message to its fix.
+The [user guide](USER_GUIDE.md#installer-widgets) lists the widgets and settings, and [Troubleshooting](USER_GUIDE.md#9-troubleshooting) maps each installer message to its fix.
 
 ## Uninstall
 

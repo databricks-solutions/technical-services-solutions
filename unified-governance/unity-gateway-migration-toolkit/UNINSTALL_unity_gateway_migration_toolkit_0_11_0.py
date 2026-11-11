@@ -4,7 +4,7 @@
 # MAGIC
 # MAGIC Removes a toolkit install from this workspace.
 # MAGIC
-# MAGIC 1. Leave **1. Action** at `preview` and click **Run all**. It lists what would be removed and kept, and changes nothing.
+# MAGIC 1. Click **Run all**. **1. Action** starts at `preview`: it lists what would be removed and kept, and changes nothing.
 # MAGIC 2. Choose what else goes (widgets 3 to 5), set **1. Action** to `remove`, and click Run all again.
 # MAGIC
 # MAGIC Model services created by Apply stay unless you set **3** to `yes`. Schemas that hold services are never removed.
@@ -14,51 +14,85 @@
 
 # COMMAND ----------
 
-# Widgets 1 to 4 (install) or 1 to 7 (uninstall). make_installer builds two notebooks from this template: INSTALL (MODE
+# The widgets: 3 (install) or 7 (uninstall). make_installer builds two notebooks from this template: INSTALL (MODE
 # install) and UNINSTALL. Widget names start with a two-digit number: the panel sorts by name, so the number keeps them
-# in order.
+# in order. This cell runs before the pip cell, on the runtime's own SDK (0.20.0 on serverless, seen live), so it only
+# uses calls that SDK has, and the REST API for apps.
 MODE = "uninstall"
+import json as _json
 from databricks.sdk import WorkspaceClient
 
 w = WorkspaceClient()
-CHOOSE_CATALOG, CHOOSE_WAREHOUSE = "<choose a catalog>", "<choose a warehouse>"
+CHOOSE_CATALOG, CHOOSE_WAREHOUSE, KEEP = "<choose a catalog>", "<choose a warehouse>", "<keep the current one>"
+PREVIEW_FLAG = "/tmp/ugmig_install_preview.json"  # the first interactive run of a new notebook only previews
+
+
+def _widget_exists(name):
+    try:
+        dbutils.widgets.get(name)
+        return True
+    except Exception:  # noqa: BLE001 (a missing widget raises a runtime-specific error)
+        return False
+
+
+def _in_job():
+    try:
+        ctx = _json.loads(dbutils.notebook.entry_point.getDbutils().notebook().getContext().safeToJson())
+        return bool((ctx.get("attributes") or ctx).get("jobId"))
+    except Exception:  # noqa: BLE001 (can't tell: treat it as interactive)
+        return False
+
+
+def _toolkit_app_here():
+    token = None
+    for _ in range(50):
+        page = w.api_client.do("GET", "/api/2.0/apps", query={"page_size": 100, **({"page_token": token} if token else {})})
+        if any((a.get("description") or "").startswith("Unity Gateway Migration Toolkit") for a in page.get("apps") or []):
+            return True
+        token = page.get("next_page_token")
+        if not token:
+            return False
+    return True  # too many apps to tell: treat it as an update (nothing is preselected)
+
+
 if MODE == "install":
+    _first_look = not _widget_exists("01_catalog") and not _in_job()  # the panel was empty until this run
+    try:
+        _update = _toolkit_app_here()
+    except Exception:  # noqa: BLE001
+        _update = False
     try:
         catalog_names = sorted({c.name for c in w.catalogs.list() if c.name})
     except Exception:  # can't list catalogs: the dropdown only offers the placeholder, and the install asks you to choose
         catalog_names = []
     warehouses = sorted(w.warehouses.list(), key=lambda x: (x.state is None or x.state.value != "RUNNING", x.name or ""))
     wh_labels = [f"{x.name} ({x.id})" for x in warehouses]
-    if len(wh_labels) > 1:  # several warehouses: the user picks one (an update reuses the install's own)
-        wh_choices, wh_default = [CHOOSE_WAREHOUSE] + wh_labels, CHOOSE_WAREHOUSE
-    elif wh_labels:  # exactly one: preselected
-        wh_choices, wh_default = wh_labels, wh_labels[0]
-    else:
-        wh_choices, wh_default = [CHOOSE_WAREHOUSE], CHOOSE_WAREHOUSE
-    dbutils.widgets.dropdown("01_catalog", CHOOSE_CATALOG, [CHOOSE_CATALOG] + catalog_names,
-                             "1. Catalog (the toolkit creates its schemas here)")
+    if _update:  # an install is here: blank keeps its catalog and warehouse, so nothing is preselected
+        cat_choices, cat_default = [KEEP] + catalog_names, KEEP
+        wh_choices, wh_default = [KEEP] + wh_labels, KEEP
+    else:  # a new install: preselect the workspace's default catalog and a running warehouse (the preview shows both)
+        try:
+            current = spark.sql("SELECT current_catalog()").collect()[0][0]
+        except Exception:  # noqa: BLE001
+            current = ""
+        usable = [c for c in catalog_names if c not in ("system", "samples", "hive_metastore", "__databricks_internal")]
+        cat_default = current if current in usable else (usable[0] if len(usable) == 1 else CHOOSE_CATALOG)
+        cat_choices = [CHOOSE_CATALOG] + catalog_names
+        wh_default = wh_labels[0] if wh_labels else CHOOSE_WAREHOUSE  # running ones first
+        wh_choices = ([CHOOSE_WAREHOUSE] if len(wh_labels) != 1 else []) + wh_labels
+    dbutils.widgets.dropdown("01_catalog", cat_default, cat_choices,
+                             "1. Catalog (the toolkit creates its schemas here)" if not _update else
+                             "1. Catalog (keep the current one, or pick another)")
     dbutils.widgets.dropdown("02_warehouse", wh_default, wh_choices, "2. SQL warehouse")
-    dbutils.widgets.text("03_target", "", "3. Schema for new model services (blank = <catalog>.ug_migrated, created for you)")
-    dbutils.widgets.dropdown("04_setup", "quick", ["quick", "custom"],
-                             "4. Setup (custom shows options 5 to 18; if they don't appear, click Run all)")
-    # A fresh notebook in a workspace with no install yet: the first Run all only sets up the widgets (next cell). This
-    # cell runs before the pip cell, on the runtime's own SDK, which can be too old for apps.list (0.20.0 on serverless,
-    # seen live): so the REST API, directly.
-    def _toolkit_app_here():
-        token = None
-        for _ in range(50):
-            page = w.api_client.do("GET", "/api/2.0/apps", query={"page_size": 100, **({"page_token": token} if token else {})})
-            if any((a.get("description") or "").startswith("Unity Gateway Migration Toolkit") for a in page.get("apps") or []):
-                return True
-            token = page.get("next_page_token")
-            if not token:
-                return False
-        return True  # too many apps to tell: the checks decide
-
-    try:
-        _NO_INSTALL_HERE = not _toolkit_app_here()
-    except Exception:  # noqa: BLE001 (can't tell: the checks decide)
-        _NO_INSTALL_HERE = False
+    dbutils.widgets.text("03_target", "", "3. Schema for new model services (blank = <catalog>.ug_migrated, created for you)"
+                         if not _update else "3. Schema for new model services (blank = keep the current one)")
+    for _old in ("04_setup", "05_app_name", "06_operators", "07_run_as", "08_create_target", "09_results_schema",
+                 "10_install_folder", "11_secret_schemas", "12_allow_secret_read", "13_deadline", "14_central_workspaces",
+                 "15_central_secret", "16_adopt_app", "17_allow_downgrade", "18_second_install"):
+        if _widget_exists(_old) and not _in_job():  # left in the panel by an earlier build of this notebook
+            dbutils.widgets.remove(_old)
+    with open(PREVIEW_FLAG, "w") as _f:  # read (and removed) by the configuration cell, after pip restarts Python
+        _json.dump({"preview": _first_look}, _f)
 else:
     dbutils.widgets.dropdown("01_action", "preview", ["preview", "remove"], "1. Action (preview changes nothing)")
     dbutils.widgets.text("02_app_name", "", "2. App name (blank = the only install in this workspace)")
@@ -71,56 +105,6 @@ else:
     dbutils.widgets.text("06_results_schema", "", "6. Results schema (catalog.schema; only if the run asks for it)")
     dbutils.widgets.dropdown("07_adopt_app", "no", ["no", "yes"],
                              "7. Also remove an app the installer didn't make (bundle or same name; only if the run asks for it)")
-
-# COMMAND ----------
-
-# Custom setup widgets (install only). This cell reads 4. Setup, so with the widget panel's default "On widget change:
-# Run accessed commands", choosing custom reruns just this cell and widgets 5 to 18 appear. It makes no API calls (so
-# it reruns in a moment) and defines everything it uses: it may rerun alone, after the pip cell restarted Python.
-if "uninstall" == "install":
-    _CUSTOM = ["05_app_name", "06_operators", "07_run_as", "08_create_target", "09_results_schema", "10_install_folder",
-               "11_secret_schemas", "12_allow_secret_read", "13_deadline", "14_central_workspaces", "15_central_secret",
-               "16_adopt_app", "17_allow_downgrade", "18_second_install"]
-
-    def _widget_exists(name):
-        try:
-            dbutils.widgets.get(name)
-            return True
-        except Exception:  # noqa: BLE001 (a missing widget raises a runtime-specific error)
-            return False
-
-    if dbutils.widgets.get("04_setup") == "custom":
-        _just_added = not any(_widget_exists(n) for n in _CUSTOM)
-        T, D = dbutils.widgets.text, dbutils.widgets.dropdown
-        T("05_app_name", "", "5. App name (blank = ug-migration-toolkit, or the install already here)")
-        T("06_operators", "", "6. Operators who can start jobs in the app (emails, comma-separated; blank = you, or the current list)")
-        T("07_run_as", "", "7. Run jobs as service principal (application ID; blank = you, or the current one; none = you)")
-        D("08_create_target", "current", ["current", "yes", "no"],
-          "8. Create the schema in 3 if it's missing (current = yes, or the install's choice; no = you create it, the SQL is printed)")
-        T("09_results_schema", "", "9. Results schema name (blank = ug_migration, or the current one)")
-        T("10_install_folder", "", "10. Install folder (blank = your home folder/ug-migration-toolkit, or the current one)")
-        T("11_secret_schemas", "", "11. Allowed secret schemas (catalog.schema, comma-separated; blank = off, or the current list; none = off)")
-        D("12_allow_secret_read", "current", ["current", "no", "yes"],
-          "12. Allow reading secret values (risk: apply copies legacy secret values, in plain text, into the new services)")
-        T("13_deadline", "", "13. Legacy deadline (YYYY-MM-DD; blank = 2027-03-30, or the current one)")
-        T("14_central_workspaces", "", "14. Central mode: workspaces to manage (workspace IDs; blank = off, or the current list; none = off)")
-        T("15_central_secret", "", "15. Central mode: OAuth secret of the service principal in 7 (scope/key; blank = the current one)")
-        D("16_adopt_app", "no", ["no", "yes"], "16. Adopt an existing app with this name (yes overwrites it)")
-        D("17_allow_downgrade", "no", ["no", "yes"], "17. Allow downgrade (an older version over a newer one)")
-        D("18_second_install", "no", ["no", "yes"], "18. Allow a second install (needs its own app name, results schema and folder)")
-        if _just_added:  # the new widgets have their defaults: let the user set them before anything runs
-            dbutils.notebook.exit("Custom setup: widgets 5 to 18 are now in the widget panel. Set the ones you need "
-                                  "(blank keeps the defaults or the current install's settings), then click Run all again.")
-    else:
-        for _name in _CUSTOM:
-            if _widget_exists(_name):
-                dbutils.widgets.remove(_name)
-    # The first Run all of a freshly imported notebook: the widget panel was empty until now, so stop here instead of
-    # failing later with "choose 1. Catalog". (An update needs no widgets: it reads the install already here.)
-    if globals().get("_NO_INSTALL_HERE") and dbutils.widgets.get("01_catalog") == "<choose a catalog>":
-        dbutils.notebook.exit("The widgets are ready at the top of the notebook. Pick 1. Catalog and 2. SQL warehouse "
-                              "(and 3, if you want another schema for new model services), then click Run all again. "
-                              "For more options, set 4. Setup to custom.")
 
 # COMMAND ----------
 
@@ -140,6 +124,7 @@ import base64
 import dataclasses
 import io
 import json
+import os
 import re
 import sys
 import time
@@ -159,6 +144,8 @@ LEGACY_APP = "unity-gateway-migration"  # the default app name in 0.8.0
 BUNDLE_APP = "ug-migration-bundle"  # the bundle's default app name (databricks.yml)
 CHOOSE_CATALOG = "<choose a catalog>"  # the widget placeholders: same text as in the widget cell
 CHOOSE_WAREHOUSE = "<choose a warehouse>"
+KEEP_CURRENT = "<keep the current one>"
+PREVIEW_FLAG_PATH = "/tmp/ugmig_install_preview.json"  # written by the widget cell
 TARGET_SCHEMA_NAME = "ug_migrated"  # the default schema for new model services, in the catalog picked in 1
 LEGACY_TARGET = "ai_gateway.migrated"  # the fixed default before 0.11.0; installs that used it keep it
 CLEAR_WORDS = ("none", "off")  # typed in a custom widget, clears a setting the install already has
@@ -227,7 +214,7 @@ def version_key(v: str) -> tuple:
 
 def downgrade_problem(prev: str, now: str, allow: bool) -> str | None:
     if prev and version_key(prev) > version_key(now) and not allow:
-        return (f"this would downgrade the toolkit from {prev} to {now}: set 17. Allow downgrade (custom setup: 4. Setup = custom) = yes to do it anyway")
+        return (f"this would downgrade the toolkit from {prev} to {now}: set allow_downgrade (in the Optional settings cell) = yes to do it anyway")
     return None
 
 
@@ -288,7 +275,7 @@ def parse_secret_schemas(raw: str) -> tuple[list[str], str | None]:
     schemas = split_list(raw)
     bad = [s for s in schemas if not re.fullmatch(rf"{NAME}\.{NAME}", s)]
     if bad:
-        return schemas, "11. Allowed secret schemas (custom setup: 4. Setup = custom) must be catalog.schema, comma-separated: " + ", ".join(bad)
+        return schemas, "secret_schemas (in the Optional settings cell) must be catalog.schema, comma-separated: " + ", ".join(bad)
     return schemas, None
 
 
@@ -300,7 +287,7 @@ def valid_deadline(text: str) -> str | None:
     try:
         datetime.strptime(text, "%Y-%m-%d")
     except (TypeError, ValueError):
-        return f"13. Legacy deadline (custom setup: 4. Setup = custom) must be a date as YYYY-MM-DD (not {text!r})"
+        return f"deadline (in the Optional settings cell) must be a date as YYYY-MM-DD (not {text!r})"
     return None
 
 
@@ -325,10 +312,10 @@ def shared_state(others: list[dict], results: str, folder: str) -> list[dict]:
 
 
 def valid_run_as(application_id: str) -> str | None:
-    """Problem with 7. Run jobs as service principal (custom setup: 4. Setup = custom), or None. Blank is fine (the jobs run as the installer)."""
+    """Problem with run_as (in the Optional settings cell), or None. Blank is fine (the jobs run as the installer)."""
     if application_id and not re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
                                            application_id):
-        return ("7. Run jobs as service principal (custom setup: 4. Setup = custom) must be the service principal's application ID (a UUID like "
+        return ("run_as (in the Optional settings cell) must be the service principal's application ID (a UUID like "
                 f"12345678-1234-1234-1234-123456789012), not {application_id!r}")
     return None
 
@@ -344,18 +331,18 @@ def central_problems(workspaces: str, secret_ref: str, run_as: str) -> tuple[lis
         if not p:
             continue
         if not re.fullmatch(r"[0-9]{1,20}", p):
-            problems.append(f"14. Central mode: workspaces (custom setup: 4. Setup = custom) takes workspace IDs (numbers), not {p!r}")
+            problems.append(f"central_workspaces (in the Optional settings cell) takes workspace IDs (numbers), not {p!r}")
         elif p not in ids:
             ids.append(p)
     ref = (secret_ref or "").strip()
     if ids or ref:
         if not ids:
-            problems.append("15. Central mode: OAuth secret (custom setup: 4. Setup = custom) is set, but no workspaces to manage")
+            problems.append("central_secret (in the Optional settings cell) is set, but no workspaces to manage")
         if not run_as:
             problems.append("central mode scans other workspaces as a service principal: set 7. Run jobs as "
                             "service principal to its application ID")
         if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", ref):
-            problems.append("15. Central mode: OAuth secret (custom setup: 4. Setup = custom) must be scope/key (the secret "
+            problems.append("central_secret (in the Optional settings cell) must be scope/key (the secret "
                             "holding that service principal's OAuth client secret)")
     return ids, problems
 
@@ -573,7 +560,7 @@ def app_name_for(raw: str, existing: list[str], uninstall: bool) -> tuple[str, s
         return DEFAULT_APP, None, None
     if len(names) == 1:
         return names[0], f"found the install of app {names[0]} in this workspace: {'removing' if uninstall else 'updating'} it", None
-    widget = "2. App name" if uninstall else "5. App name (custom setup: 4. Setup = custom)"
+    widget = "2. App name" if uninstall else "app_name (in the Optional settings cell)"
     return DEFAULT_APP, None, f"this workspace has several toolkit installs ({', '.join(names)}): set {widget} to one of them"
 
 
@@ -663,45 +650,60 @@ MODE = "uninstall"
 
 
 def widget(name: str, default: str = "") -> str:
-    """A widget's value, or default when it isn't on the panel (quick setup has only 1 to 4)."""
+    """A widget's value (or a job parameter of that name), or default when there is none."""
     try:
         return dbutils.widgets.get(name)
     except Exception:  # noqa: BLE001 (a missing widget raises a runtime-specific error)
         return default
 
 
-# Read the widgets only. The values are settled after the existing install is read (blank keeps what it uses).
+def setting(key: str) -> str:
+    """An optional setting: a job parameter of that name, else the Optional settings cell. Blank keeps the default or
+    what the install here already uses."""
+    v = widget(key).strip()
+    return v or str((globals().get("OPTIONAL_SETTINGS") or {}).get(key) or "").strip()
+
+
+# Read the widgets and settings only. The values are settled after the existing install is read (blank keeps it).
 UNINSTALL = MODE == "uninstall"
 ACTION = ("uninstall: remove" if widget("01_action") == "remove" else "uninstall: preview") if UNINSTALL else "install"
 PREVIEW = ACTION == "uninstall: preview"
-CUSTOM_SETUP = not UNINSTALL and widget("04_setup") == "custom"
-APP_RAW = widget("02_app_name" if UNINSTALL else "05_app_name")
+# The first interactive Run all of a new notebook previews: the widget cell decided it (before pip restarted Python).
+INSTALL_PREVIEW = False
+if not UNINSTALL:
+    try:
+        with open(PREVIEW_FLAG_PATH) as _f:
+            INSTALL_PREVIEW = bool(json.load(_f).get("preview"))
+        os.remove(PREVIEW_FLAG_PATH)
+    except (OSError, ValueError):
+        INSTALL_PREVIEW = False
+APP_RAW = widget("02_app_name") if UNINSTALL else setting("app_name")
 if UNINSTALL:
     _given = widget("06_results_schema").replace("`", "").strip()
     if _given and "." not in _given:
         raise ValueError(f"Nothing was changed: 6. Results schema must be catalog.schema, not {_given!r}")
     CATALOG_PICKED, SCHEMA_RAW = (_given.split(".", 1) + [""])[:2] if "." in _given else ("", "")
 else:
-    CATALOG_PICKED, SCHEMA_RAW = widget("01_catalog").strip(), widget("09_results_schema")
-CATALOG_GIVEN = CATALOG_PICKED not in ("", CHOOSE_CATALOG)
+    CATALOG_PICKED, SCHEMA_RAW = widget("01_catalog").strip(), setting("results_schema")
+CATALOG_GIVEN = CATALOG_PICKED not in ("", CHOOSE_CATALOG, KEEP_CURRENT)
 CATALOG = CATALOG_PICKED if CATALOG_GIVEN else ""
 SCHEMA_GIVEN = bool(SCHEMA_RAW.strip())
 _wh = re.search(r"\(([0-9a-f]+)\)$", widget("02_warehouse")) if not UNINSTALL else None
 WAREHOUSE_GIVEN = _wh.group(1) if _wh else ""
 TARGET_RAW = widget("03_target") if not UNINSTALL else ""
-OPERATORS_RAW = widget("06_operators")
-RUN_AS_RAW = widget("07_run_as")
-CREATE_TARGET_RAW = widget("08_create_target")
-FOLDER_RAW = widget("10_install_folder")
+OPERATORS_RAW = setting("operators")
+RUN_AS_RAW = setting("run_as")
+CREATE_TARGET_RAW = setting("create_target")
+FOLDER_RAW = setting("install_folder")
 FOLDER_GIVEN = bool(FOLDER_RAW.strip())
-SECRET_SCHEMAS_RAW = widget("11_secret_schemas")
-ALLOW_SECRET_READ_RAW = widget("12_allow_secret_read", "current")
-DEADLINE_RAW = widget("13_deadline")
-CENTRAL_WORKSPACES_RAW = widget("14_central_workspaces")
-CENTRAL_SECRET_RAW = widget("15_central_secret")
-ADOPT = widget("07_adopt_app" if UNINSTALL else "16_adopt_app") == "yes"
-ALLOW_DOWNGRADE = widget("17_allow_downgrade") == "yes"
-SECOND_INSTALL = widget("18_second_install") == "yes"
+SECRET_SCHEMAS_RAW = setting("secret_schemas")
+ALLOW_SECRET_READ_RAW = setting("allow_secret_read") or "current"
+DEADLINE_RAW = setting("deadline")
+CENTRAL_WORKSPACES_RAW = setting("central_workspaces")
+CENTRAL_SECRET_RAW = setting("central_secret")
+ADOPT = (widget("07_adopt_app") if UNINSTALL else setting("adopt_app")) == "yes"
+ALLOW_DOWNGRADE = setting("allow_downgrade") == "yes"
+SECOND_INSTALL = setting("second_install") == "yes"
 DROP = widget("04_drop_data") == "yes"
 REMOVE_LOGS = widget("05_remove_logs") == "yes"
 ROLLBACK = widget("03_rollback_services") == "yes"
@@ -848,7 +850,7 @@ def adopt_existing_locations() -> None:
         if not SCHEMA_GIVEN and CATALOG_GIVEN and CATALOG != rc:
             raise ValueError(f"{'6. Results schema' if UNINSTALL else '1. Catalog'} is {CATALOG}, but app {APP_NAME} already keeps its results in "
                              f"{results}. Pick catalog {rc} to update it, or choose another App name for a second install "
-                             "(18. Allow a second install (custom setup: 4. Setup = custom) = yes)")
+                             "(second_install (in the Optional settings cell) = yes)")
         if not SCHEMA_GIVEN:
             CATALOG, SCHEMA = rc, rs
             print("using the results schema of the existing install:", results)
@@ -863,7 +865,7 @@ def adopt_existing_locations() -> None:
             FOLDER = folder
             print("using the install folder of the existing install:", FOLDER)
         elif FOLDER != folder:
-            raise ValueError(f"app {APP_NAME} is installed in {folder}, not {FOLDER}: leave 10. Install folder (custom setup: 4. Setup = custom) blank "
+            raise ValueError(f"app {APP_NAME} is installed in {folder}, not {FOLDER}: leave install_folder (in the Optional settings cell) blank "
                              "to update it, or choose another App name for a second install")
     FILES = f"{FOLDER}/files"
     MARKER = f"{FOLDER}/{MARKER_NAME}"
@@ -896,7 +898,7 @@ RUN_AS = pick(RUN_AS_RAW, SAVED["run_as"], "")
 run_as_problem = valid_run_as(RUN_AS)
 TARGET, target_problem = parse_target(pick(TARGET_RAW, SAVED["target"] or SAVED_MARKER.get("target", ""),
                                            f"{CATALOG}.{TARGET_SCHEMA_NAME}" if CATALOG else LEGACY_TARGET))
-CREATE_TARGET = pick("" if CREATE_TARGET_RAW == "current" else CREATE_TARGET_RAW,
+CREATE_TARGET = pick(CREATE_TARGET_RAW,
                      {True: "yes", False: "no"}.get(SAVED_MARKER.get("create_target"), ""), "yes") == "yes"
 SECRET_SCHEMAS, secret_problem = parse_secret_schemas(pick(SECRET_SCHEMAS_RAW, SAVED["secret_schemas"], ""))
 ALLOW_SECRET_READ = (ALLOW_SECRET_READ_RAW if ALLOW_SECRET_READ_RAW in ("yes", "no") else SAVED["allow_secret_read"]) == "yes"
@@ -914,15 +916,15 @@ kept = [label for label, raw, saved in (
     ("secret schemas", SECRET_SCHEMAS_RAW, SAVED["secret_schemas"]), ("deadline", DEADLINE_RAW, SAVED["deadline"]),
     ("central mode", CENTRAL_WORKSPACES_RAW, SAVED["central_workspaces"])) if not raw.strip() and saved]
 if kept and not UNINSTALL:
-    print("kept from the existing install: " + ", ".join(kept) + " (custom setup changes them; 'none' clears one)")
+    print("kept from the existing install: " + ", ".join(kept) + " (the Optional settings cell changes them; 'none' clears one)")
 
 problems = []
 if CATALOG_GIVEN and not re.fullmatch(NAME, CATALOG):
     problems.append("1. Catalog must use letters, digits and underscores")
 if not re.fullmatch(NAME, SCHEMA):
-    problems.append("9. Results schema (custom setup: 4. Setup = custom) must use letters, digits and underscores")
+    problems.append("results_schema (in the Optional settings cell) must use letters, digits and underscores")
 if valid_folder(FOLDER):
-    problems.append(valid_folder(FOLDER) + f" (10. Install folder (custom setup: 4. Setup = custom) is {FOLDER!r})")
+    problems.append(valid_folder(FOLDER) + f" (install_folder (in the Optional settings cell) is {FOLDER!r})")
 for _p in (secret_problem, deadline_problem, run_as_problem):
     if _p:
         problems.append(_p)
@@ -937,8 +939,10 @@ if not UNINSTALL:
         problems.append("choose 2. SQL warehouse (none found: ask a workspace admin to create one or give you CAN USE "
                         "on one)")
     if IS_SP and not split_list(pick(OPERATORS_RAW, SAVED_OPERATORS, "")):
-        problems.append("this runs as a service principal, so set 6. Operators (custom setup: 4. Setup = custom) to the emails of the people "
+        problems.append("this runs as a service principal, so set operators (in the Optional settings cell) to the emails of the people "
                         "who can start jobs in the app")
+if problems and INSTALL_PREVIEW:  # the first run of a new notebook: say what to set, without an error
+    dbutils.notebook.exit("Preview: nothing was changed. Set these, then click Run all again: " + "; ".join(problems))
 if problems:
     raise ValueError("Nothing was changed. Fix the widgets first: " + "; ".join(problems))
 print(f"{ACTION}: app {APP_NAME}, results {RESULTS}, folder {FOLDER}" + ("" if UNINSTALL else
@@ -1067,7 +1071,7 @@ def target_check(create_now: bool) -> tuple[str, str, str]:
                                    f"needs USE CATALOG, USE SCHEMA and CREATE SERVICE on it; if not, create it:\n      {sql_lines(who)}")
     sql = sql_lines(who)
     if not CREATE_TARGET:
-        return "note", "missing", (f"{TARGET} doesn't exist, and 8. Create the schema = no. Create it before you use "
+        return "note", "missing", (f"{TARGET} doesn't exist, and create_target is no (Optional settings cell). Create it before you use "
                                    f"Apply (scans work without it):\n      {sql}")
     try:
         cat_info = w.catalogs.get(cat)
@@ -1098,21 +1102,21 @@ def preflight() -> tuple[list[str], list[str], str]:
     passed("Databricks Apps", "you can create apps")
     if OPERATORS_UNKNOWN:  # once, for installs before 0.11.0: never shrink or grow who can start jobs silently
         found.append("the operators of this install (who can start jobs in the app) can't be read back: Databricks "
-                     "doesn't return an app's settings, and installs before 0.11.0 didn't record them. Set 4. Setup to "
-                     "custom, click Run all, enter them in 6. Operators (your email alone is fine), then Run all again. "
-                     "From then on, updates keep them")
+                     "doesn't return an app's settings, and installs before 0.11.0 didn't record them. Enter them in "
+                     "operators in the Optional settings cell (your email alone is fine), then Run all again. From "
+                     "then on, updates keep them")
     unnamed = [j["name"] for j in INSTALLS if not j["app"]]
     if unnamed:
         notes.append(f"{len(unnamed)} toolkit job(s) deployed by the bundle have no app name and aren't managed by this "
                      "installer (left alone): " + ", ".join(unnamed))
     if EXISTING_APP and not is_toolkit_app(EXISTING_APP.description) and not ADOPT:
         found.append(f"an app named {APP_NAME} exists and isn't a toolkit app: " + (
-            "choose another App name, or set 16. Adopt existing app (custom setup: 4. Setup = custom) = yes if it can be replaced" if not UNINSTALL
+            "choose another App name, or set adopt_app (in the Optional settings cell) = yes if it can be replaced" if not UNINSTALL
             else "uninstall won't delete it (set 7. Also remove an app the installer didn't make = yes to delete it anyway)"))
     bundle_jobs = [j["name"] for j in MINE if bundle_made(j["name"], APP_NAME)]
     if (bundle_jobs or (EXISTING_APP and APP_NAME == BUNDLE_APP)) and not ADOPT:
         found.append(f"the app {APP_NAME} and its jobs were deployed by the bundle (databricks bundle deploy), not by this "
-                     "installer: " + ("set 16. Adopt existing app (custom setup: 4. Setup = custom) = yes to take them over, or choose another App name"
+                     "installer: " + ("set adopt_app (in the Optional settings cell) = yes to take them over, or choose another App name"
                                       if not UNINSTALL else "set 7. Also remove an app the installer didn't make = yes to remove them here, "
                                       "or remove them with the bundle (databricks bundle destroy)"))
     # Other installs, by app name (jobs and apps), and what they share with this one.
@@ -1136,13 +1140,13 @@ def preflight() -> tuple[list[str], list[str], str]:
         # Only a new install needs the flag: updating one that is already here never adds a second install (the
         # shared-location checks below still apply).
         if foreign and not SECOND_INSTALL and not (MINE or EXISTING_APP):
-            found.append("another toolkit install exists under app name " + ", ".join(foreign) + ": set 5. App name (custom setup: 4. Setup = custom) "
+            found.append("another toolkit install exists under app name " + ", ".join(foreign) + ": set app_name (in the Optional settings cell) "
                          "to that name to update it, or uninstall it first (to run two side by side, set 18. Allow a "
                          "second install = yes, with other results schema and install folder)")
         for c in clash:
             label = "results schema" if c["kind"] == "results" else "install folder"
             found.append(f"the {label} {RESULTS if c['kind'] == 'results' else FOLDER} is used by the toolkit install of app "
-                         f"{c['app']}: choose another {label} (custom setup: 4. Setup = custom)")
+                         f"{c['app']}: choose another {label} (Optional settings cell)")
     for name in active_job_names():
         found.append(f"the job '{name}' has a run in progress: wait for it to finish in Jobs, then run again")
     if not found:
@@ -1150,10 +1154,10 @@ def preflight() -> tuple[list[str], list[str], str]:
     if not UNINSTALL:
         if MARKER_KIND == "other":
             found.append(f"the install folder {FOLDER} belongs to another toolkit install (marker app {MARKER_APP or '?'}): "
-                         "choose another 10. Install folder (custom setup: 4. Setup = custom)")
+                         "choose another install_folder (in the Optional settings cell)")
         elif MARKER_KIND == "missing" and any(c not in TOOLKIT_NAMES for c in folder_children(FOLDER)):
             found.append(f"the install folder {FOLDER} has files that aren't the toolkit's and no toolkit marker, so the "
-                         "installer won't touch them: choose an empty folder (10. Install folder (custom setup: 4. Setup = custom))")
+                         "installer won't touch them: choose an empty folder (install_folder (in the Optional settings cell))")
         try:
             cat = w.catalogs.get(CATALOG)
         except DatabricksError as e:  # missing, or no USE CATALOG (PermissionDenied)
@@ -1170,12 +1174,12 @@ def preflight() -> tuple[list[str], list[str], str]:
             except DatabricksError as e:  # it exists, but you can't read it
                 schema = None
                 found.append(f"you can't read the results schema {RESULTS} ({str(e)[:120]}): ask its owner for USE SCHEMA, "
-                             "CREATE TABLE and MODIFY, or choose another results schema (9. Results schema (custom setup: 4. Setup = custom))")
+                             "CREATE TABLE and MODIFY, or choose another results schema (results_schema (in the Optional settings cell))")
             if schema:
                 owner_app = re.search(r"\(app: ([a-z0-9_-]+)\)", schema.comment or "")
                 if owner_app and owner_app.group(1) != APP_NAME:
                     found.append(f"results schema {RESULTS} belongs to app {owner_app.group(1)}: choose another results schema "
-                                 "(9. Results schema (custom setup: 4. Setup = custom))")
+                                 "(results_schema (in the Optional settings cell))")
                 elif schema.owner != me and not can_use("schema", RESULTS, {"ALL_PRIVILEGES", "CREATE_TABLE", "MODIFY"}):
                     found.append(f"you can't write to {RESULTS}: ask the owner of the schema ({schema.owner}) to run: GRANT "
                                  f"USE SCHEMA, CREATE TABLE, MODIFY ON SCHEMA `{CATALOG}`.`{SCHEMA}` TO `{me}`")
@@ -1209,14 +1213,16 @@ def preflight() -> tuple[list[str], list[str], str]:
             found.append(problem)
         else:
             passed("Version", f"update {prev} -> {TOOLKIT_VERSION}" if prev else f"new install of {TOOLKIT_VERSION}")
-        if not found and cat is not None and schema is None:  # the probe: create the schema as the last check
+        if INSTALL_PREVIEW and not found and cat is not None and schema is None:  # a preview creates nothing
+            passed("Results schema", f"{RESULTS} doesn't exist: the install creates it (needs CREATE SCHEMA on {CATALOG})")
+        elif not found and cat is not None and schema is None:  # the probe: create the schema as the last check
             err = run_sql(f"CREATE SCHEMA IF NOT EXISTS `{CATALOG}`.`{SCHEMA}` COMMENT 'Unity Gateway migration app results "
                           f"(app: {APP_NAME})'")
             if err:
                 found.append(f"you can't create {RESULTS} ({err[:200]}). " + create_schema_fix(CATALOG, cat.owner, me))
             else:
                 passed("Results schema", f"created {RESULTS}")
-        state, TARGET_STATE["state"], detail = target_check(create_now=not found)
+        state, TARGET_STATE["state"], detail = target_check(create_now=not found and not INSTALL_PREVIEW)
         CHECKS.append((state, "Schema for new model services", detail))
         return found, notes, note
     return found, notes, "uninstall"
@@ -1463,6 +1469,14 @@ if UNINSTALL:
 # COMMAND ----------
 
 print("Checklist:\n" + "\n".join(checklist_lines(CHECKS + [("fix", p, "") for p in PROBLEMS])))
+if INSTALL_PREVIEW:  # the first interactive run of a new notebook: the checks, what would be made, and nothing else
+    if not PROBLEMS:
+        print("This install would create or update:\n" + "\n".join(
+            creates_lines(FOLDER, RESULTS, TARGET, TARGET_STATE["state"], APP_NAME, JOB_IDENTITY)))
+    dbutils.notebook.exit("Preview: nothing was changed. " + (
+        "Fix the FIX items in the checklist above, then click Run all again." if PROBLEMS else
+        "If this looks right, click Run all again to install. To change something first, set the widgets at the top or "
+        "the Optional settings cell."))
 if PROBLEMS:
     raise ValueError("Nothing was changed. Fix the FIX items in the checklist above, then Run all again:\n- "
                      + "\n- ".join(PROBLEMS))
@@ -1554,7 +1568,7 @@ if RUN_AS and TARGET_STATE["state"] in ("exists", "created"):
 
 SPECS = job_specs(APP_NAME, FOLDER, RESULTS, WAREHOUSE_ID, SECRET_SCHEMAS, ALLOW_SECRET_READ, DEADLINE, RUN_AS,
                   CENTRAL_WORKSPACES, CENTRAL_SECRET, TARGET)
-print(f"The jobs run as {JOB_IDENTITY}" + ("" if RUN_AS else " (set 7. Run jobs as service principal (custom setup: 4. Setup = custom) to change it)"))
+print(f"The jobs run as {JOB_IDENTITY}" + ("" if RUN_AS else " (set run_as (in the Optional settings cell) to change it)"))
 JOB_IDS = {}
 
 
@@ -1706,9 +1720,9 @@ print(snapshot_note)
 print(f"The weekly snapshot job is paused. To run it every Monday at 06:00 UTC, open Jobs > [{APP_NAME}] Unity Gateway "
       "migration snapshot, and unpause its schedule.")
 print(target_note)
-print("Unity Catalog secret mapping is off. To turn it on, set 4. Setup to custom and click Run all, then set 11. Allowed "
-      "secret schemas to the catalog.schema that holds the secrets (for example main.secrets) and Run all again; grant the "
-      "apply job's identity READ on them.")
+print("Unity Catalog secret mapping is off. To turn it on, set secret_schemas in the Optional settings cell to the "
+      "catalog.schema that holds the secrets (for example main.secrets) and Run all again; grant the apply job's identity "
+      "READ on them.")
 print(f"Results: {RESULTS}. Operators: {', '.join(OPERATOR_LIST) or '(none)'}. Jobs run as {JOB_IDENTITY}. Version {TOOLKIT_VERSION}. "
       f"The user guide is in {FILES}/USER_GUIDE.md.")
 displayHTML(f"""

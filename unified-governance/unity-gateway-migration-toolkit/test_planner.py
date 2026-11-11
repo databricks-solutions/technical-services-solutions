@@ -1554,6 +1554,23 @@ def test_short_names_in_calls_with_strings_comments_long_arguments_and_aliases(c
     assert _short_name_refs(name, code) == want
 
 
+@pytest.mark.parametrize("asset, code, want", [
+    # Python: `//` is floor division, so the ")" after it closes the call and the later string isn't an argument
+    ("/Repos/a/job.py", 'w.serving_endpoints.query(name=ep, max_tokens=n // 2)\nprint("llm")', []),
+    ("/Users/a/nb", '# Databricks notebook source\nw.serving_endpoints.query(name=ep, max_tokens=n // 2)\nprint("llm")',
+     []),
+    ("/Repos/a/job.py", 'w.serving_endpoints.query(name=ep, max_tokens=n -- 2)\nprint("llm")', []),
+    # still found in Python: a "#" comment with a ")" inside the call
+    ("/Repos/a/job.py", 'w.serving_endpoints.query(\n    # 1) the endpoint\n    name="llm")', ["sdk_serving_query"]),
+    # a file of unknown language keeps reading `//` as a comment: the safe direction (an extra warning)
+    ("/Repos/a/app.js", 'w.serving_endpoints.query(name=ep, max_tokens=n // 2)\nprint("llm")', ["sdk_serving_query"]),
+])
+def test_floor_division_in_python_isnt_a_comment(asset, code, want):
+    sc = m.Scanner(["llm"], {}, [])
+    sc.scan_text("notebook", asset, code)
+    assert [r.pattern for r in sc.refs if r.legacy_endpoint == "llm"] == want
+
+
 @pytest.mark.parametrize("code", [
     'sk_model.predict(\n    pd.DataFrame({"route": ["proj-a-gpt"]}))',   # spans lines
     'sk_model.predict(pd.DataFrame({"route": ["proj-a-gpt"]}))',          # one line: the same as on main

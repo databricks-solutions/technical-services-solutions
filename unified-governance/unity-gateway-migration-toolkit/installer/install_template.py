@@ -981,8 +981,8 @@ def apply_state() -> dict:
 
 def run_status(run_id: str) -> str:
     """Status of one apply-job run in the results table, by the apply_id the installer gave it."""
-    rows = spark.sql(f"SELECT status FROM `{CATALOG}`.`{SCHEMA}`.ug_migration_applies "
-                     f"WHERE apply_id = '{run_id}'").collect()
+    rows = spark.sql(f"SELECT status FROM `{CATALOG}`.`{SCHEMA}`.ug_migration_applies WHERE apply_id = :id",
+                     args={"id": run_id}).collect()
     return rows[0]["status"] if rows else "not recorded"
 
 

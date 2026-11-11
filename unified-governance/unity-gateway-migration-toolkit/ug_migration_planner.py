@@ -1442,6 +1442,7 @@ MAX_FIX_LINE = 5000
 
 CALL_WINDOW = 4000  # how far into a call's arguments a short or common name still counts as an argument
 _CALL_TOKEN_RE = re.compile(r'"""|\'\'\'|"|\'|#|//|--|\(|\)')
+_CALL_TOKEN_PY_RE = re.compile(r'"""|\'\'\'|"|\'|#|\(|\)')  # Python: `//` is floor division and `--` is minus
 # `se = w.serving_endpoints` (an alias of the SDK's serving endpoints API) and the mention of the MLflow client
 # An alias of the API: `se = w.serving_endpoints`, `se = WorkspaceClient(profile="x").serving_endpoints_data_plane`
 SERVING_ALIAS_RE = re.compile(r"\b(\w+)\s*=\s*(?:[\w.]|\([^()\n]*\))*\bserving_endpoints(?:_data_plane)?\b(?![\w.(])")
@@ -1456,14 +1457,21 @@ def _escaped(text: str, i: int) -> bool:
     return n % 2 == 1
 
 
-def _call_still_open(text: str, start: int, at: int) -> bool:
+def _is_python(asset: str, text: str) -> bool:
+    """True when the file is clearly Python, so `//` and `--` aren't comments. Unknown files keep every comment
+    style: reading `//` as a comment by mistake is the safe direction (an extra warning, not a missed caller)."""
+    path = asset.split(" [cell ", 1)[0].lower()
+    return path.endswith((".py", ".ipynb")) or " [cell " in asset or text.startswith("# Databricks notebook source")
+
+
+def _call_still_open(text: str, start: int, at: int, python: bool = False) -> bool:
     """True if the call whose "(" ends at start is still open at position at. Parentheses inside strings (single,
-    double, triple quoted) and comments (# // --) don't count, so `content="Rules: 1) be brief"` doesn't close the
-    call. Uncertain cases (a string or comment that runs to at) read as still open: the safe direction, because a
+    double, triple quoted) and comments (# everywhere, // and -- outside Python) don't count, so
+    `content="Rules: 1) be brief"` doesn't close the call. Uncertain cases (a string or comment that runs to at) read as still open: the safe direction, because a
     name counted by mistake is a warning, while a name missed can list an endpoint under "Can be closed now"."""
     depth, i = 1, start
     while i < at:
-        m = _CALL_TOKEN_RE.search(text, i, at)
+        m = (_CALL_TOKEN_PY_RE if python else _CALL_TOKEN_RE).search(text, i, at)
         if not m:
             return True
         tok, i = m.group(), m.end()
@@ -1493,8 +1501,9 @@ class _CallContext:
     """Where a name sits relative to calls in one file. Everything is computed lazily and once per file, so a file
     with thousands of short-name matches costs one pass for each call kind, not one per match."""
 
-    def __init__(self, text: str):
+    def __init__(self, text: str, python: bool = False):
         self.text = text
+        self.python = python
         self._ends: dict[str, list[int]] = {}
         self._deploy: bool | None = None
         self._sdk_re: re.Pattern | None = None
@@ -1522,7 +1531,7 @@ class _CallContext:
             ends = self._ends[key] = [m.end() for m in regex.finditer(self.text)]
         k = bisect.bisect_right(ends, at) - 1  # right: a "(" that ends where the name starts, query("llm"), counts
         while k >= 0 and at - ends[k] <= CALL_WINDOW:  # the nearest calls first; a closed one may precede an open one
-            if _call_still_open(self.text, ends[k], at):
+            if _call_still_open(self.text, ends[k], at, self.python):
                 return True
             k -= 1
         return False
@@ -1701,7 +1710,7 @@ class Scanner:
 
     def _scan_lines(self, asset_type: str, asset: str, text: str) -> None:
         lines = text.split("\n")
-        ctx = _CallContext(text)
+        ctx = _CallContext(text, _is_python(asset, text))
 
         def line_of(pos: int) -> int:
             return text.count("\n", 0, pos) + 1

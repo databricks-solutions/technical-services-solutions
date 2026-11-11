@@ -353,7 +353,7 @@ class FakeWS:
         self.tables[key] = list(rows)
 
     # ---- SQL emulation (spark.sql) on the results tables
-    def sql(self, stmt):
+    def sql(self, stmt, args=None):
         s = " ".join(stmt.split())
         self.log.append(("sql", s[:100]))
         rows = []
@@ -393,10 +393,10 @@ class FakeWS:
             rows = [{"rollback_of": r["rollback_of"], "status": r["status"], "summary": r.get("summary", "{}")}
                     for r in self.tables[f"{full}.ug_migration_applies"]
                     if r["mode"] == "rollback" and r.get("rollback_of")]
-        m = re.search(r"SELECT status FROM .*ug_migration_applies WHERE apply_id = '([^']+)'", s)
-        if m:  # one run's row, by the apply_id the installer gave it
+        if re.search(r"SELECT status FROM .*ug_migration_applies WHERE apply_id = :id$", s):
+            assert args and set(args) == {"id"}  # one run's row, by the apply_id the installer gave it, bound
             hits = [r for r in self.tables.get(f"{self.results_schema()}.ug_migration_applies", [])
-                    if r["apply_id"] == m[1]]
+                    if r["apply_id"] == args["id"]]
             rows = [{"status": hits[-1]["status"]}] if hits else []
         return _ns(collect=lambda: rows)
 

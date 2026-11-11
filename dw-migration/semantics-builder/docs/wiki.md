@@ -478,9 +478,11 @@ Each answer shows:
 To make a test from an answer:
 
 1. Click **Use as a test**. Metric Designer opens on **Tests**, and the editor shows the question as a new test.
-2. Examine the test. If the answer is one number for one measure, with no group and no filter, the test checks
-   that measure against the number, with a tolerance of 0.5%. Else the test compares the fields with plain SQL.
-3. Add the filters that the question used, if necessary.
+2. Examine the test. If the answer is one number for one measure, with no group, the test checks that measure
+   against the number, with a tolerance of 0.5%. The filters of Genie's SQL become the filters of the test.
+   Else the test compares the fields with plain SQL.
+3. Examine the filters. A test filter is "equals". Genie can use a pattern, for example `ILIKE '%ASIA%'`. The
+   app makes it "equals ASIA". If the data has more values that contain ASIA, the numbers are different.
 4. Click **Save the tests**. The app makes a new version. Then validate it.
 
 The app does not store the questions or the answers. The conversation stays in Databricks, as you. **New chat**

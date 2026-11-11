@@ -25,6 +25,7 @@ import { DESCRIPTION_MAX, importPrompt, pagesBundle, piiWarnings } from '../../.
 import type { DomainList, PageDraft, PagesView } from '../../../shared/pages';
 import { api, useResource } from '../api';
 import { DataState } from './DataState';
+import { SqlBlock } from './SqlBlock';
 
 const KIND: Record<PageDraft['kind'], string> = {
   term: 'Business term',
@@ -155,6 +156,7 @@ export function PagesPanel({ projectId, title }: { projectId: string; title: str
   const [done, setDone] = useState<number>();
   const base = useResource<{ workspaceUrl: string | null }>('/api/config').data?.workspaceUrl;
   const [copied, setCopied] = useState(false);
+  const [script, setScript] = useState<string>();
   const v = data.data;
   const current = domain ?? v?.domain ?? '';
   const included = v?.pages.filter((p) => p.include) ?? [];
@@ -376,6 +378,18 @@ export function PagesPanel({ projectId, title }: { projectId: string; title: str
               >
                 Download {included.length} Page{included.length === 1 ? '' : 's'} for bulk import
               </Button>
+              <Button
+                componentId="gsb.pages.commands"
+                disabled={busy || !v.domain || !included.length || (flagged.length > 0 && !checked)}
+                onClick={() =>
+                  void api<{ script: string }>(`/api/projects/${projectId}/pages/commands`, {}).then(
+                    (r) => setScript(r.script),
+                    (err: unknown) => setError((err as Error).message)
+                  )
+                }
+              >
+                Make the API commands
+              </Button>
               {!v.domain && <Typography.Text color="secondary">Save a domain first.</Typography.Text>}
             </div>
             {done !== undefined && (
@@ -417,6 +431,42 @@ export function PagesPanel({ projectId, title }: { projectId: string; title: str
           </>
         )}
       </DataState>
+      <Modal
+        componentId="gsb.pages.commands_modal"
+        title="Create the Pages with the API"
+        visible={!!script}
+        footer={null}
+        onCancel={() => setScript(undefined)}
+      >
+        {script && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <Typography.Text>
+              The app cannot call the Pages API: apps cannot get its permission scope. Run this script in your terminal,
+              as you, with the Databricks CLI and jq. It finds the domain by its name, then creates each Page as a
+              draft. A second run does not make copies of Pages that exist. A curator of the domain publishes them.
+            </Typography.Text>
+            <SqlBlock label="Script (read it before you run it)" sql={script} />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Button componentId="gsb.pages.commands_copy" onClick={() => void navigator.clipboard.writeText(script)}>
+                Copy
+              </Button>
+              <Button
+                componentId="gsb.pages.commands_download"
+                icon={<DownloadIcon />}
+                onClick={() => {
+                  const a = document.createElement('a');
+                  a.href = URL.createObjectURL(new Blob([script], { type: 'text/x-shellscript' }));
+                  a.download = 'create-pages.sh';
+                  a.click();
+                  URL.revokeObjectURL(a.href);
+                }}
+              >
+                Download create-pages.sh
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
       {editing && (
         <EditModal
           page={editing}

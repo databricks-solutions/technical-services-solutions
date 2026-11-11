@@ -72,3 +72,21 @@ export function accessRequest(principals: Principal[]): string {
  */
 export const accessCommand = (spaceId: string, principals: Principal[]) =>
   `databricks permissions update genie ${spaceId} --json '${JSON.stringify(JSON.parse(accessRequest(principals)))}'`;
+
+export const ACCURACY_TARGET = 85;
+
+export interface Gate {
+  id: 'certified' | 'approved' | 'promoted' | 'accuracy' | 'agent';
+  label: string;
+  pass: boolean;
+  detail: string;
+  /** The sub-project page that fixes it, such as sources?tab=certification. */
+  fix: string | null;
+}
+
+/** The golden project: each gate of each sub-project in the agent, and the agent itself. */
+export interface GoldenView {
+  golden: boolean;
+  agent: Gate;
+  subProjects: { projectId: string; name: string; gates: Gate[] }[];
+}

@@ -100,15 +100,25 @@ CAN RUN to the audience. Promote updates it.
 
 ### i5. Golden project
 
+Status: done 2026-11-11, on the main project (the user's choice), for the sub-projects in the project Genie agent.
+The gates: certified tables, an approved promoted version, the view promoted, Genie accuracy of 85% or more on the
+latest benchmark run of the promoted version (runs now store their design version), and an up-to-date project
+agent. Live on Order fulfilment: not golden yet. Net revenue has 0 of 5 tables certified, no approval of version 2,
+and no benchmark run on version 2 (the 100% run was on version 7); the project agent is up to date.
+
 The Overview shows the path and the status of each gate: certified tables, a validated and approved view,
 a promoted view, and Genie accuracy at or above the target (default 85%). The sub-project gets a "Golden" tag
 when all gates pass.
 
-### i6. Write Pages to Discover (blocked 2026-11-11)
+### i6. Write Pages to Discover
 
-Blocked: the deploy rejected the `knowledge` scope ("The specified scope knowledge is not a valid scope"). The
-Apps docs list the scopes an app can ask for, and `knowledge` is not one. Options: the app makes the CLI or REST
-calls for the author to run (like the CAN RUN command of i4), or wait for Apps to add the scope.
+Status: done 2026-11-11, as a script that the user runs. The deploy rejected the `knowledge` scope ("The specified
+scope knowledge is not a valid scope"); the Apps docs do not list it. **Make the API commands** makes a shell script
+of `databricks api post /api/2.0/knowledge/pages` calls: it finds the domain id by its tag key, sends each Page as a
+DRAFT with a fixed `request_id`, and quotes all text for the shell. Checked with a fake CLI and hostile text (quotes,
+`$(...)`, backticks): the body came back unchanged and nothing ran. Live: the domain saved on the test project
+(`sts_semantics_builder_test`) is no longer in the domain list, so the script would stop there.
+Also on 2026-11-11: the deprecated `serving.serving-endpoints` scope became `model-serving`; model calls still work.
 
 The Knowledge Pages API (Beta, `/api/2.0/knowledge/pages`) can create, read, update and delete Pages. Create makes a
 DRAFT by default; it takes `domain` (`domains/{id}`), `display_name`, `body`, `synonyms`, `description`, and an

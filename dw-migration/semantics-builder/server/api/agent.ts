@@ -3,11 +3,15 @@ import type { Application, Request } from 'express';
 import { z } from 'zod';
 import type { LakebasePool } from '@databricks/appkit';
 import { accessBody, accessCommand, agentBody } from '../../shared/agent';
-import type { AgentCandidate, AgentView } from '../../shared/agent';
+import type { AgentCandidate, AgentView, GoldenView } from '../../shared/agent';
 import type { TuningChange } from '../../shared/genie';
 import { validateMetricView } from '../../shared/metricView';
 import type { GenieDeps } from '../genie/client';
+import { golden } from '../genie/golden';
+import type { SubFacts } from '../genie/golden';
 import { agentConfig } from '../genie/space';
+import type { RunDeps } from '../sql/runner';
+import { readStatus } from './certify';
 import type { AgentPart } from '../genie/space';
 import type { UcDeps } from '../uc/metadata';
 import { designerRepo } from './designer';
@@ -29,7 +33,8 @@ export function registerAgentRoutes(
   app: Application,
   db: Db,
   genieFor: (req: Request) => GenieDeps,
-  ucFor: (req: Request) => UcDeps
+  ucFor: (req: Request) => UcDeps,
+  runFor: (req: Request) => RunDeps
 ) {
   const projects = projectRepo(db);
   const designs = designerRepo(db);
@@ -181,6 +186,56 @@ export function registerAgentRoutes(
       const ctx = await context(req);
       if (!ctx.agent) throw new HttpError(409, 'Create the Genie agent first.');
       return { command: accessCommand(ctx.agent.space_id, principals) };
+    })
+  );
+
+  /**
+   * The golden project gates: for each sub-project in the agent (or each promoted one, before the agent exists),
+   * certified tables, an approved promoted version and Genie accuracy; and an up-to-date agent. Tags are read as the
+   * user.
+   */
+  app.get(
+    '/api/projects/:id/golden',
+    handle(async (req): Promise<GoldenView> => {
+      const ctx = await context(req);
+      const agent = await view(req, ctx);
+      const ids = ctx.agent?.sub_projects ?? ctx.candidates.map((c) => c.projectId);
+      const run = runFor(req);
+      const facts: SubFacts[] = await Promise.all(
+        ctx.candidates
+          .filter((c) => ids.includes(c.projectId))
+          .map(async (c) => {
+            const [tables, approved, last] = await Promise.all([
+              db.query<{ full_name: string }>('SELECT full_name FROM gsb.source WHERE project_id = $1', [c.projectId]),
+              db.query<{ ok: boolean }>(
+                `SELECT EXISTS (SELECT 1 FROM gsb.review WHERE project_id = $1 AND kind = 'view' AND version = $2
+                   AND status = 'approved') AS ok`,
+                [c.projectId, c.version]
+              ),
+              db.query<{ num_correct: number; num_questions: number; finished_at: Date }>(
+                `SELECT num_correct, num_questions, finished_at FROM gsb.genie_eval
+                 WHERE project_id = $1 AND status = 'done' AND version = $2 ORDER BY created_at DESC LIMIT 1`,
+                [c.projectId, c.version]
+              ),
+            ]);
+            const names = tables.rows.map((t) => t.full_name);
+            const status = names.length
+              ? await readStatus(names, ctx.actor, run).catch(() => new Map<string, string>())
+              : new Map<string, string>();
+            const r = last.rows[0];
+            return {
+              projectId: c.projectId,
+              name: c.name,
+              view: c.view,
+              version: c.version,
+              tables: names.length,
+              certified: names.filter((n) => status.get(n.toLowerCase()) === 'certified').length,
+              approved: approved.rows[0]?.ok ?? false,
+              run: r ? { correct: r.num_correct, questions: r.num_questions, at: r.finished_at.toISOString() } : null,
+            };
+          })
+      );
+      return golden(agent.agent ? { exists: true, current: agent.agent.current } : null, facts);
     })
   );
 }

@@ -98,7 +98,7 @@ The app asks for these scopes when you sign in for the first time:
 | Scope | Why the app needs it |
 | --- | --- |
 | `sql` | Queries on the SQL warehouse, approved DDL, Query History |
-| `serving.serving-endpoints` | Calls to the model for the AI advisor |
+| `model-serving` | Calls to the model for the AI advisor (it replaces the deprecated `serving.serving-endpoints`) |
 | `catalog.catalogs:read`, `catalog.schemas:read`, `catalog.tables:read` | The Unity Catalog pickers and table metadata |
 | `genie` | Ask Genie and Ask Genie One |
 
@@ -151,10 +151,13 @@ To make a project:
 3. Type a name and the business goal.
 4. Click **Create project**.
 
+A project page has four tabs: **Sub-projects**, **Golden project**, **Genie agent** and **Metric dictionary**. The
+**New** menu has **New sub-project**, **New Genie agent** and **Metric dictionary**; the last two open their tabs.
+
 To make a sub-project:
 
 1. Open the project.
-2. Click **New sub-project**.
+2. Click **New**, then **New sub-project**.
 3. Type a name, for example "Net revenue".
 4. Click **Create sub-project**.
 
@@ -162,12 +165,28 @@ To delete a project, open the project and click **Delete project**. The app show
 can remove these views before the app deletes the project. The app does not remove the target views in Unity
 Catalog.
 
-### 5.1 The Genie agent of a project
+### 5.1 The golden project
+
+The **Golden project** tab of a project shows the path from certified data to a trusted Genie agent. The project gets
+the **Golden** tag when all gates pass. The gates apply to each sub-project in the Genie agent of the project. Before
+the agent exists, they apply to each sub-project with a promoted view.
+
+| Gate | Pass when |
+| --- | --- |
+| The tables are certified | Each source table has the tag `system.certification_status = certified` (see [7.6](#76-the-certification-tab)). The app reads the tags as you. |
+| The promoted version is approved | A reviewer approved the version that is in Unity Catalog (see [17](#17-approvals-and-reviews)). |
+| The view is promoted | A version is in Unity Catalog. |
+| Genie accuracy is 85% or more | The latest benchmark run of the promoted version has at least one benchmark, and 85% or more are correct (see [14.0.2](#1402-optimize-with-benchmarks)). Benchmarks run on the latest validated version, so run them, then promote that version. |
+| The project Genie agent is up to date | The agent exists and has the settings of the promoted versions. |
+
+Each gate that does not pass has **Open**, which goes to the page that fixes it. Click **Check again** after a change.
+
+### 5.2 The Genie agent of a project
 
 The production Genie agent belongs to the project, not to a sub-project. It is one Genie space on the promoted
 views of the sub-projects that you choose. Choose related sub-projects, so Genie can answer questions across them.
 
-1. Open the project. The **Genie agent** section lists each sub-project with a promoted view.
+1. Open the project, then the **Genie agent** tab. It lists each sub-project with a promoted view.
 2. Select the sub-projects for the agent.
 3. Click **Create the Genie agent**. Examine the space settings, then click **Create the agent**. The app creates
    the space as you, in your workspace folder.
@@ -325,8 +344,8 @@ Each change makes a new version of the brief. The design uses the confirmed brie
 
 ## 9. Metric dictionary
 
-The metric dictionary keeps the certified definitions of your company. All sub-projects use the same
-dictionary.
+The metric dictionary keeps the certified definitions of your company. All sub-projects of a project use the same
+dictionary. Open it on the **Metric dictionary** tab of the project.
 
 You can import a dictionary from Excel, CSV, Markdown, or a file in a Unity Catalog volume.
 
@@ -763,6 +782,20 @@ Genie Code makes draft Pages. A domain curator publishes them.
 > **Note:** The domain list needs the `MANAGE DISCOVER` permission for the app service principal. Without it,
 > you must type the domain name. Copy the name from Discover, **Manage Domains**.
 
+### 20.1 Create the Pages with the API
+
+**Make the API commands** makes a shell script. It creates each included Page as a draft with the Knowledge Pages
+API (Beta), as the person who runs it. The app cannot call this API itself: apps cannot get its `knowledge` scope.
+
+1. Click **Make the API commands**. The same rules as the download apply: a saved domain, and the flagged Pages
+   checked.
+2. Read the script. Click **Copy** or **Download create-pages.sh**.
+3. Run it in your terminal. It needs the Databricks CLI and `jq`. If you use CLI profiles, set
+   `DATABRICKS_CONFIG_PROFILE` first.
+
+The script finds the domain id by its name, and stops if no domain has that name. Each Page has a fixed request
+id, so a second run makes no copy while the first draft exists. A curator of the domain publishes the drafts.
+
 ## 21. Metric views library
 
 Click **Metric views** in the left navigation. The page has two tabs.
@@ -852,8 +885,8 @@ keeps the record of the delete.
 - Discover and consolidate reads metric views and SQL views only.
 - Impact analysis uses lineage. Lineage does not record each read.
 - The drift check runs when you ask for it, and one time each day when you open the app.
-- The app cannot write Pages to Discover. Genie Code bulk import does this. Apps cannot get the `knowledge` scope
-  that the Pages API needs.
+- The app cannot write Pages to Discover: apps cannot get the `knowledge` scope that the Pages API needs. Use Genie
+  Code bulk import, or **Make the API commands** (see [20](#20-publish-pages)).
 - The app cannot change who can use a Genie space. Apps cannot get the `access-management` scope.
 - A project has one owner. Reviews are the only way to share a version.
 - The app does not send email.

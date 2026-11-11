@@ -1,7 +1,8 @@
+import { createHash } from 'node:crypto';
 import type { Application, Request } from 'express';
 import { z } from 'zod';
 import type { LakebasePool } from '@databricks/appkit';
-import { domainSchema, pageEditSchema, pageKeySchema } from '../../shared/pages';
+import { domainSchema, pageEditSchema, pageKeySchema, pagesScript } from '../../shared/pages';
 import type { DomainList, PageDraft, PagesView } from '../../shared/pages';
 import { validateMetricView } from '../../shared/metricView';
 import { loadDictionary } from '../dictionary/store';
@@ -14,11 +15,17 @@ import { projectRepo } from './projects';
 type Db = Pick<LakebasePool, 'query' | 'connect'>;
 const idParam = z.object({ id: z.uuid() });
 const exportedBody = z.object({ pages: z.number().int().min(0).max(500) });
+/** A fixed UUID (version 4 layout) for each Page of a sub-project, so a second run of the script makes no copy. */
+export function requestIdOf(projectId: string, key: string): string {
+  const h = createHash('sha256').update(`${projectId}\n${key}`).digest('hex');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-${((parseInt(h[16], 16) & 3) | 8).toString(16)}${h.slice(17, 20)}-${h.slice(20, 32)}`;
+}
 type Edit = Pick<PageDraft, 'title' | 'synonyms' | 'description' | 'body' | 'include'>;
 
 /**
- * Pages for UC Semantics Discover. Pages have no API, so the app drafts them from its own content, the user edits
- * them, and downloads one file for Genie Code bulk import. Nothing is written to Discover from here.
+ * Pages for UC Semantics Discover. The app drafts them from its own content and the user edits them. Apps cannot get
+ * the knowledge scope of the Pages API, so the user downloads one file for Genie Code bulk import, or runs the script
+ * of API calls as themselves. Nothing is written to Discover from here.
  */
 export function registerPagesRoutes(app: Application, db: Db, domains: DomainsDeps) {
   const projects = projectRepo(db);
@@ -149,6 +156,27 @@ export function registerPagesRoutes(app: Application, db: Db, domains: DomainsDe
       await view(req);
       await audit(actorOf(req), 'export_pages', id, { pages });
       return { ok: true };
+    })
+  );
+
+  /**
+   * The script that creates the included Pages as drafts with the Knowledge Pages API. The user runs it as
+   * themselves; the app cannot call the API (apps cannot get the knowledge scope).
+   */
+  app.post(
+    '/api/projects/:id/pages/commands',
+    handle(async (req) => {
+      const v = await view(req);
+      if (!v.domain) throw new HttpError(409, 'Save a domain first.');
+      const included = v.pages.filter((p) => p.include);
+      if (!included.length) throw new HttpError(409, 'Include at least one Page.');
+      const { id } = idParam.parse(req.params);
+      const script = pagesScript(
+        v.domain,
+        included.map((p) => ({ ...p, requestId: requestIdOf(id, p.key) }))
+      );
+      await audit(actorOf(req), 'prepare_pages_commands', id, { pages: included.length });
+      return { script, pages: included.length };
     })
   );
 }

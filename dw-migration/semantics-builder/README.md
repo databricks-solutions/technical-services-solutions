@@ -38,6 +38,7 @@ A Databricks App that helps data teams design, validate, optimize, publish and g
 | Metric views library      | All your metric views, their promoted and latest versions, and health. Import a metric view made outside the app.                                                                               | Available |
 | Genie chat                | The **Genie** header button opens a side panel on every sub-project page: chat with Genie Agent (follow-ups, SQL, a small result table) or Genie One on the sandbox view. **Use as a test** adds the question as a test. | Available |
 | Genie agent               | On the project page: one production Genie space on the promoted views of the sub-projects you choose, with their briefs, tests and kept changes. The app makes the CAN RUN command for the audience. | Available |
+| Golden project            | On the project page: the gates from certified tables to an approved, promoted view, Genie accuracy of 85% or more, and an up-to-date project Genie agent. | Available |
 | Data certification        | Sources & Readiness, **Certification**: read-only data checks (rows, freshness, nulls, empty strings, constant columns), a named reviewer approves the tables, then you set the governed tag `system.certification_status = certified` with SQL you examine. | Available |
 | Reviews                   | Promote can need approval. The author names a reviewer by email; the reviewer sees that version read-only (impact, tests, YAML, SQL) and approves or rejects it.                                | Available |
 | Discover and consolidate  | Scan schemas for metric views and SQL views, group the same KPI across views, show formula conflicts, propose one definition, import it, or add it to a dictionary as certified.                | Available |
@@ -159,7 +160,7 @@ The app calls Databricks as the user. The bundle sets these scopes in `user_api_
 | Scope                                                                  | Used for                                       |
 | ---------------------------------------------------------------------- | ---------------------------------------------- |
 | `sql`                                                                  | Warehouse queries, approved DDL, Query History |
-| `serving.serving-endpoints`                                            | Model calls                                    |
+| `model-serving`                                                        | Model calls                                    |
 | `catalog.catalogs:read`, `catalog.schemas:read`, `catalog.tables:read` | UC pickers and metadata                        |
 | `genie`                                                                | Ask Genie (Genie space) and Ask Genie One      |
 

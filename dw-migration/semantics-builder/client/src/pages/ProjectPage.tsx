@@ -7,6 +7,7 @@ import {
   DropdownMenu,
   OverflowIcon,
   PlusIcon,
+  Tabs,
   TrashIcon,
   Tag,
   Typography,
@@ -17,8 +18,12 @@ import { PROJECTS_CHANGED, useResource } from '../api';
 import { DataState } from '../components/DataState';
 import { AgentPanel } from '../components/AgentPanel';
 import { DictionaryPanel } from '../components/DictionaryPanel';
+import { GoldenPanel } from '../components/GoldenPanel';
 import { DeleteProjectModal } from '../components/DeleteProjectModal';
 import { NewProjectModal, subPath } from './ProjectsPage';
+import { useTab } from '../useTab';
+
+const TABS = ['subprojects', 'golden', 'agent', 'dictionary'] as const;
 
 function SubProjectCard({
   parentId,
@@ -120,10 +125,32 @@ export function ProjectPage() {
   const [deleting, setDeleting] = useState<{ id: string; kind: 'project' | 'sub-project' }>();
   const project = projects.data?.find((p) => p.id === parentId);
   const status = projects.status === 'ready' && !project ? 'error' : projects.status;
+  // One tab at a time, so the page does not scroll through every section.
+  const [tab, setTab] = useTab(TABS, 'subprojects');
   const newButton = (
     <Button componentId="gsb.project.new_sub" type="primary" icon={<PlusIcon />} onClick={() => setCreating(true)}>
       New sub-project
     </Button>
+  );
+  const newMenu = (
+    <DropdownMenu.Root modal={false}>
+      <DropdownMenu.Trigger asChild>
+        <Button componentId="gsb.project.new" type="primary" icon={<PlusIcon />}>
+          New
+        </Button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Content align="end">
+        <DropdownMenu.Item componentId="gsb.project.new_sub_item" onClick={() => setCreating(true)}>
+          New sub-project
+        </DropdownMenu.Item>
+        <DropdownMenu.Item componentId="gsb.project.new_agent" onClick={() => setTab('agent')}>
+          New Genie agent
+        </DropdownMenu.Item>
+        <DropdownMenu.Item componentId="gsb.project.new_dictionary" onClick={() => setTab('dictionary')}>
+          Metric dictionary
+        </DropdownMenu.Item>
+      </DropdownMenu.Content>
+    </DropdownMenu.Root>
   );
 
   return (
@@ -138,7 +165,7 @@ export function ProjectPage() {
               <Typography.Text color="secondary">{project.description ?? 'No business goal yet.'}</Typography.Text>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
-              {newButton}
+              {newMenu}
               <DropdownMenu.Root modal={false}>
                 <DropdownMenu.Trigger asChild>
                   <Button componentId="gsb.project.more" icon={<OverflowIcon />} aria-label="More actions" />
@@ -158,27 +185,54 @@ export function ProjectPage() {
               </DropdownMenu.Root>
             </div>
           </div>
-          {project.subProjects.length ? (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))', gap: 16 }}>
-              {project.subProjects.map((s) => (
-                <SubProjectCard
-                  key={s.id}
-                  parentId={project.id}
-                  sub={s}
-                  onDelete={() => setDeleting({ id: s.id, kind: 'sub-project' })}
-                />
-              ))}
-            </div>
-          ) : (
-            <DataState
-              status="empty"
-              emptyTitle="No sub-projects yet"
-              message="A sub-project builds one metric view, for example Revenue or Returns. The AI guides you from intent to a validated design."
-              emptyAction={newButton}
-            />
-          )}
-          <AgentPanel projectId={project.id} />
-          <DictionaryPanel projectId={project.id} />
+          <Tabs.Root componentId="gsb.project.tabs" value={tab} onValueChange={setTab}>
+            <Tabs.List>
+              <Tabs.Trigger value="subprojects">Sub-projects ({project.subProjects.length})</Tabs.Trigger>
+              <Tabs.Trigger value="golden">Golden project</Tabs.Trigger>
+              <Tabs.Trigger value="agent">Genie agent</Tabs.Trigger>
+              <Tabs.Trigger value="dictionary">Metric dictionary</Tabs.Trigger>
+            </Tabs.List>
+            <Tabs.Content value="subprojects">
+              <div style={{ paddingTop: 16 }}>
+                {project.subProjects.length ? (
+                  <div
+                    style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))', gap: 16 }}
+                  >
+                    {project.subProjects.map((s) => (
+                      <SubProjectCard
+                        key={s.id}
+                        parentId={project.id}
+                        sub={s}
+                        onDelete={() => setDeleting({ id: s.id, kind: 'sub-project' })}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <DataState
+                    status="empty"
+                    emptyTitle="No sub-projects yet"
+                    message="A sub-project builds one metric view, for example Revenue or Returns. The AI guides you from intent to a validated design."
+                    emptyAction={newButton}
+                  />
+                )}
+              </div>
+            </Tabs.Content>
+            <Tabs.Content value="golden">
+              <div style={{ paddingTop: 16 }}>
+                <GoldenPanel projectId={project.id} />
+              </div>
+            </Tabs.Content>
+            <Tabs.Content value="agent">
+              <div style={{ paddingTop: 16 }}>
+                <AgentPanel projectId={project.id} />
+              </div>
+            </Tabs.Content>
+            <Tabs.Content value="dictionary">
+              <div style={{ paddingTop: 16 }}>
+                <DictionaryPanel projectId={project.id} />
+              </div>
+            </Tabs.Content>
+          </Tabs.Root>
           {deleting && (
             <DeleteProjectModal
               projectId={deleting.id}

@@ -45,7 +45,7 @@ resources:
       # Metadata comes from the Unity Catalog API (read-only scopes); the warehouse runs queries and approved DDL.
       user_api_scopes:
         - sql
-        - serving.serving-endpoints
+        - model-serving
         - catalog.catalogs:read
         - catalog.schemas:read
         - catalog.tables:read

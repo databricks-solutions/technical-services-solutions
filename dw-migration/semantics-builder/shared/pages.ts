@@ -121,3 +121,40 @@ export function pagesBundle(view: PagesView, title: string): string {
     ...pages.map((p) => pageMarkdown(p, view.domain ?? '')),
   ].join('\n');
 }
+
+/** Quotes text for a POSIX shell: inside single quotes, a quote becomes '\''. */
+export const shellQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+
+/**
+ * A shell script that creates the Pages as drafts with the Knowledge Pages API, as the person who runs it. Apps cannot
+ * get the knowledge scope, so the app cannot call the API itself. The script finds the domain id by its name, and
+ * each request id is fixed, so a second run does not make a second draft while the first one exists.
+ */
+export function pagesScript(
+  domain: string,
+  pages: (Pick<PageDraft, 'title' | 'synonyms' | 'description' | 'body'> & { requestId: string })[]
+): string {
+  const lines = [
+    '#!/bin/sh',
+    `# Creates ${pages.length} draft Page${pages.length === 1 ? '' : 's'} in UC Semantics Discover, as you.`,
+    '# Made by the STS Semantics Builder. Read it before you run it. It needs the Databricks CLI and jq.',
+    '# If you use CLI profiles, set DATABRICKS_CONFIG_PROFILE before you run it.',
+    'set -eu',
+    `DOMAIN=$(databricks api get /api/2.0/domains | jq -r --arg k ${shellQuote(domain)} '[.domains[] | select(.tag_key == $k) | .name][0] // empty')`,
+    `[ -n "$DOMAIN" ] || { echo ${shellQuote(`No Discover domain is named ${domain}.`)} >&2; exit 1; }`,
+  ];
+  for (const p of pages) {
+    const page = {
+      display_name: p.title,
+      description: p.description,
+      synonyms: p.synonyms,
+      body: p.body,
+      state: 'DRAFT',
+    };
+    lines.push(
+      `echo ${shellQuote(`Page: ${p.title}`)}`,
+      `databricks api post ${shellQuote(`/api/2.0/knowledge/pages?request_id=${p.requestId}`)} --json "$(jq -n --arg domain "$DOMAIN" ${shellQuote(`${JSON.stringify(page)} + {domain: $domain}`)})"`
+    );
+  }
+  return `${lines.join('\n')}\n`;
+}

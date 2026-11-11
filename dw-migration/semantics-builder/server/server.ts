@@ -57,7 +57,7 @@ createApp({
       registerPromoteRoutes(app, pool, runFor, ucFor);
       registerReviewRoutes(app, pool, runFor, ucFor);
       registerCertifyRoutes(app, pool, runFor, ucFor);
-      registerAgentRoutes(app, pool, (req) => genieDeps(asUser(req)), ucFor);
+      registerAgentRoutes(app, pool, (req) => genieDeps(asUser(req)), ucFor, runFor);
       registerLibraryRoutes(app, pool, runFor);
       registerImportRoutes(app, pool, ucFor);
       registerGovernRoutes(app, pool, runFor, ucFor);

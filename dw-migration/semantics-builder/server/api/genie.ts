@@ -540,8 +540,9 @@ export function registerGenieRoutes(
       const runId = await genieFor(req).startEval(ctx.space.space_id);
       const { config } = await settingsOf(req, ctx);
       await db.query(
-        `INSERT INTO gsb.genie_eval (project_id, space_id, eval_run_id, config_hash, created_by) VALUES ($1, $2, $3, $4, $5)`,
-        [ctx.project.id, ctx.space.space_id, runId, hashOf(config), ctx.actor]
+        `INSERT INTO gsb.genie_eval (project_id, space_id, eval_run_id, config_hash, created_by, version)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [ctx.project.id, ctx.space.space_id, runId, hashOf(config), ctx.actor, ctx.draft!.version]
       );
       await audit(ctx.actor, 'run_genie_benchmarks', ctx.project.id, ctx.space.space_id);
       return tuningView(req, ctx);
@@ -646,9 +647,9 @@ export function registerGenieRoutes(
         ]);
         const runId = await genie.startEval(ctx.space.space_id);
         await db.query(
-          `INSERT INTO gsb.genie_eval (project_id, space_id, eval_run_id, config_hash, tuning_id, created_by)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [ctx.project.id, ctx.space.space_id, runId, hashOf(trial), tuningId, ctx.actor]
+          `INSERT INTO gsb.genie_eval (project_id, space_id, eval_run_id, config_hash, tuning_id, created_by, version)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [ctx.project.id, ctx.space.space_id, runId, hashOf(trial), tuningId, ctx.actor, ctx.draft!.version]
         );
       } catch (err) {
         await db.query(`UPDATE gsb.genie_tuning SET status = 'failed', error = $2, decided_at = now() WHERE id = $1`, [

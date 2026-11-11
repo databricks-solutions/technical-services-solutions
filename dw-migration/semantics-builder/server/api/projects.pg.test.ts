@@ -61,7 +61,7 @@ describe.skipIf(!url)('projectRepo on Postgres', () => {
     expect(top?.subProjects).toMatchObject([{ id: rows[0].id, name: 'Old', stage: 'intent', sources: 1 }]);
     await pool.query('DROP SCHEMA gsb CASCADE');
     await migrate(pool, all);
-  });
+  }, 60_000); // It applies every migration twice; a slow machine needs more than 5 seconds.
 
   it('nests sub-projects under their project and reports their stage', async () => {
     const parent = await repo.create('n@x.com', { name: 'Sales' });

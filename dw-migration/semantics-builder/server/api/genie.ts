@@ -1,13 +1,13 @@
 import type { Application, Request } from 'express';
 import { z } from 'zod';
 import type { LakebasePool } from '@databricks/appkit';
-import { askSchema } from '../../shared/genie';
-import type { GenieCheck, GenieView } from '../../shared/genie';
+import { askSchema, chatSchema } from '../../shared/genie';
+import type { ChatAnswer, GenieCheck, GenieView } from '../../shared/genie';
 import { validateMetricView } from '../../shared/metricView';
 import { createStatement, sandboxSchema, sandboxViewName } from '../designer/validate';
 import type { GenieDeps } from '../genie/client';
 import { readsView } from '../genie/onechat';
-import { verdictOf } from '../genie/verdict';
+import { fieldsUsed, verdictOf } from '../genie/verdict';
 import { runStatement } from '../sql/runner';
 import type { RunDeps } from '../sql/runner';
 import { actorOf, handle, HttpError } from './http';
@@ -199,6 +199,40 @@ export function registerGenieRoutes(
         ]
       );
       return view(req);
+    })
+  );
+
+  /**
+   * The Genie chat panel. Genie Agent asks the space on the sandbox view, with follow-ups. Genie One answers each
+   * question alone. The app stores nothing: the conversation stays in Databricks, as the user.
+   */
+  app.post(
+    '/api/projects/:id/genie/chat',
+    handle(async (req): Promise<ChatAnswer> => {
+      const { question, engine, conversationId } = chatSchema.parse(req.body);
+      const ctx = await context(req);
+      if (!ctx.draft || !ctx.sandboxView) throw new HttpError(409, 'Validate the design before you ask Genie.');
+      const parsed = validateMetricView(ctx.draft.yaml).view;
+      const names = {
+        measures: parsed?.measures.map((m) => m.name) ?? [],
+        dimensions: parsed?.dimensions.map((d) => d.name) ?? [],
+      };
+      const fields = (sql: string | null) => (sql ? fieldsUsed(sql, names) : { measures: [], dimensions: [] });
+      if (engine === 'one') {
+        const a = await genieFor(req).askOne(`${question}\n\nAnswer with the metric view ${ctx.sandboxView} only.`);
+        return {
+          conversationId: null,
+          text: a.text.slice(0, 20_000),
+          sql: a.sql,
+          fields: fields(a.sql),
+          table: null,
+          read: { assets: a.assets, snippets: a.snippets },
+          suggested: [],
+        };
+      }
+      if (!ctx.space) throw new HttpError(409, 'Create the Genie space first: Optimize, Test with Genie.');
+      const a = await genieFor(req).chat(ctx.space.space_id, question, conversationId);
+      return { ...a, text: a.text.slice(0, 20_000), fields: fields(a.sql), read: null };
     })
   );
 }

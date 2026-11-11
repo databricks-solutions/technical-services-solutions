@@ -56,6 +56,9 @@ Items marked "verify" were not confirmed in the docs and are checked live before
    - The answer shows what Genie read (the existing "read" check), and a "Use as a test" action that turns a
      question into a measure test (h3).
    - Conversations stay in Databricks. The app stores only the conversation id, never the answer text.
+   - Status (2026-11-11): built. The panel opens on sub-project pages (the Metric views page has no single view
+     to scope it to). The conversation id stays in the browser only. Genie One stays on the current endpoint and
+     answers each question alone, without the SSE proxy, until the documented API is on (h1.1).
 
 ### h2. Genie space setup from the design (#12)
 

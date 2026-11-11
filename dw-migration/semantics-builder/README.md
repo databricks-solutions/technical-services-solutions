@@ -36,6 +36,7 @@ A Databricks App that helps data teams design, validate, optimize, publish and g
 | Publish                   | A left pane with four tasks: Promotion (promote a validated version, restore an older one), Governance (owner and read grants), Drift, and Pages.                                               | Available |
 | Pages for Discover        | Draft UC Semantics Pages from the certified dictionary, the brief glossary and the metric view. Pick the domain, edit the Pages, download one file, and copy the Genie Code bulk import prompt. | Available |
 | Metric views library      | All your metric views, their promoted and latest versions, and health. Import a metric view made outside the app.                                                                               | Available |
+| Genie chat                | The **Genie** header button opens a side panel on every sub-project page: chat with Genie Agent (follow-ups, SQL, a small result table) or Genie One on the sandbox view. **Use as a test** adds the question as a test. | Available |
 | Reviews                   | Promote can need approval. The author names a reviewer by email; the reviewer sees that version read-only (impact, tests, YAML, SQL) and approves or rejects it.                                | Available |
 | Discover and consolidate  | Scan schemas for metric views and SQL views, group the same KPI across views, show formula conflicts, propose one definition, import it, or add it to a dictionary as certified.                | Available |
 | Drift and health          | Schema, definition, governance, usage and data (opt-in totals) drift. Runs on demand and once a day when you open the app.                                                                      | Available |
@@ -62,6 +63,8 @@ A typical path for one KPI area. Each page shows the next step.
 6. **Optimize.** Fix best-practice findings, run a stress test, try materialization in the sandbox, and set
    a monthly budget. In **Ask Genie**, create a Genie space on the sandbox view, pick the expected fields for
    each business question, and click **Ask Genie** or **Ask Genie One**. The app checks the fields in the SQL.
+   At any step, click **Genie** in the header to chat about the sandbox view. **Use as a test** opens the
+   question as a new test in Metric Designer, Tests. The app stores no question or answer.
 7. **Publish.** In **Promotion**, set the target view (`catalog.schema.view`, not the sandbox), then
    **Promote**. The Promote dialog shows the **Impact**: the fields that this version removes, renames or
    changes against the view in UC, and who read the view in the last 90 days (Genie spaces, dashboards, jobs,

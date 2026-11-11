@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import type { MouseEvent, ReactNode } from 'react';
 import {
   createBrowserRouter,
@@ -18,11 +18,14 @@ import {
   HomeIcon,
   NavList,
   NavListSidebar,
+  SparkleIcon,
+  Button,
   SimpleSelect,
   SimpleSelectOption,
   Typography,
 } from '@databricks/design-system';
 import { ErrorBoundary } from './ErrorBoundary';
+import { GenieChat } from './components/GenieChat';
 import { ThemeProvider, useThemePreference } from './theme';
 import type { ThemePreference } from './theme';
 import { DesignerPage } from './pages/DesignerPage';
@@ -63,6 +66,7 @@ function Shell() {
   const sub = useMatch('/projects/:parentId/sub/:projectId/*')?.params;
   const projects = useResource<ProjectSummary[]>('/api/projects');
   const reviews = useResource<ReviewList>('/api/reviews');
+  const [genieOpen, setGenieOpen] = useState(false);
   const toReview = reviews.data?.toMe.filter((r) => r.status === 'pending').length ?? 0;
   const { refresh } = projects;
   const refreshReviews = reviews.refresh;
@@ -187,13 +191,47 @@ function Shell() {
           <Typography.Title level={3} withoutMargins>
             STS Semantics Builder
           </Typography.Title>
-          <ThemeSelect />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <Button
+              componentId="gsb.shell.genie"
+              icon={<SparkleIcon />}
+              aria-pressed={genieOpen}
+              disabled={!sub?.projectId}
+              title={sub?.projectId ? 'Ask Genie about this sub-project' : 'Open a sub-project to ask Genie'}
+              onClick={() => setGenieOpen(!genieOpen)}
+            >
+              Genie
+            </Button>
+            <ThemeSelect />
+          </div>
         </header>
-        <main style={{ flex: 1, overflow: 'auto', padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <ErrorBoundary>
-            <Outlet context={projects} />
-          </ErrorBoundary>
-        </main>
+        <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
+          <main
+            style={{
+              flex: 1,
+              minWidth: 0,
+              overflow: 'auto',
+              padding: 24,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 16,
+            }}
+          >
+            <ErrorBoundary>
+              <Outlet context={projects} />
+            </ErrorBoundary>
+          </main>
+          {genieOpen && sub?.projectId && sub.parentId && (
+            <ErrorBoundary>
+              <GenieChat
+                key={sub.projectId}
+                parentId={sub.parentId}
+                projectId={sub.projectId}
+                onClose={() => setGenieOpen(false)}
+              />
+            </ErrorBoundary>
+          )}
+        </div>
       </div>
     </div>
   );

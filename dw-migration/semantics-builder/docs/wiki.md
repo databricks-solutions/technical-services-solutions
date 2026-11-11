@@ -116,7 +116,8 @@ review: a reviewer can see one version of one sub-project, read-only. Refer to
 
 - **The left navigation** has **All projects**, **Metric views**, **Reviews** and the list of your projects.
   When a person asks you for a review, the Reviews item shows the number of open reviews.
-- **The header** has the app name and the theme selector (light, dark or system).
+- **The header** has the app name, the **Genie** button and the theme selector (light, dark or system). The
+  Genie button is available on the pages of a sub-project. Refer to 14.1.
 - **A sub-project** has these tabs, in order: Overview, Sources & Readiness, Intent & Context, Metric Designer,
   Optimize and Publish. A green mark shows a tab that is complete.
 
@@ -451,6 +452,39 @@ To test a question:
 The app reads the SQL that Genie wrote and compares the fields with your selection. The verdict is one of:
 matches, different, needs review, or no answer. The answer also shows if Genie One searched knowledge that other
 users wrote. The app does not compare result values yet.
+
+### 14.1 The Genie panel
+
+The Genie panel is a chat about the sandbox view of the validated version. It stays open when you go to a
+different tab of the same sub-project.
+
+1. Open a sub-project.
+2. Click **Genie** in the header. The panel opens on the right side.
+3. In **Ask**, select the engine:
+   - **Genie Agent** uses the Genie space of the sub-project. You can ask follow-up questions in the same
+     conversation. Make the space first: **Optimize**, **Test with Genie**, **Create the Genie space**.
+   - **Genie One** answers each question alone. It does not keep the conversation.
+4. Type a question and push Enter.
+
+Each answer shows:
+
+- the text of the answer;
+- the fields of the view that the SQL uses;
+- the objects that Genie One read, and if it searched workspace knowledge;
+- a result table of not more than 20 rows and 10 columns (Genie Agent only);
+- the SQL that Genie ran;
+- suggested questions. Click one to ask it.
+
+To make a test from an answer:
+
+1. Click **Use as a test**. Metric Designer opens on **Tests**, and the editor shows the question as a new test.
+2. Examine the test. If the answer is one number for one measure, with no group and no filter, the test checks
+   that measure against the number, with a tolerance of 0.5%. Else the test compares the fields with plain SQL.
+3. Add the filters that the question used, if necessary.
+4. Click **Save the tests**. The app makes a new version. Then validate it.
+
+The app does not store the questions or the answers. The conversation stays in Databricks, as you. **New chat**
+starts a new conversation. When you reload the page, the panel is empty.
 
 ## 15. Publish: Promotion
 

@@ -2,6 +2,7 @@ import { getExecutionContext, getWarehouseId, isInUserContext } from '@databrick
 import type { RunAsUser } from '../sql/runner';
 import { parseOneChat } from './onechat';
 import type { OneChatAnswer } from './onechat';
+import type { GenieTable } from '../../shared/genie';
 
 /** Genie One answers stream; a longer one is cut here. */
 const MAX_STREAM_BYTES = 4 * 1024 * 1024;
@@ -11,11 +12,38 @@ export interface GenieAnswer {
   sql: string | null;
 }
 
+/** Rows and columns a chat answer shows. More are cut. */
+export const CHAT_ROWS = 20;
+export const CHAT_COLUMNS = 10;
+
+export interface GenieChatAnswer extends GenieAnswer {
+  conversationId: string;
+  table: GenieTable | null;
+  suggested: string[];
+}
+
+/** The first rows and columns of a Genie query result. */
+export function tableOf(res: {
+  manifest?: { schema?: { columns?: { name?: string }[] }; truncated?: boolean };
+  result?: { data_array?: (string | null)[][] };
+}): GenieTable | null {
+  const columns = res.manifest?.schema?.columns?.map((c) => c.name ?? '') ?? [];
+  if (!columns.length) return null;
+  const all = res.result?.data_array ?? [];
+  return {
+    columns: columns.slice(0, CHAT_COLUMNS),
+    rows: all.slice(0, CHAT_ROWS).map((r) => r.slice(0, CHAT_COLUMNS)),
+    truncated: all.length > CHAT_ROWS || columns.length > CHAT_COLUMNS || !!res.manifest?.truncated,
+  };
+}
+
 /** Genie calls, always as the calling user (OBO). Needs the dashboards.genie app scope. */
 export interface GenieDeps {
   createSpace(view: string, title: string, description: string): Promise<string>;
   trashSpace(spaceId: string): Promise<void>;
   ask(spaceId: string, question: string): Promise<GenieAnswer>;
+  /** A new conversation, or a follow-up when the conversation id is set. */
+  chat(spaceId: string, question: string, conversationId?: string): Promise<GenieChatAnswer>;
   /** Genie One (OneChat): not bound to a space, so it can read other data and workspace knowledge. */
   askOne(question: string): Promise<OneChatAnswer>;
 }
@@ -60,6 +88,38 @@ export function genieDeps(runAsUser: RunAsUser): GenieDeps {
             .filter(Boolean)
             .join('\n\n'),
           sql: attachments.find((a) => a.query?.query)?.query?.query ?? null,
+        };
+      }),
+    chat: (spaceId, question, conversationId) =>
+      runAsUser(async () => {
+        const genie = client().genie;
+        const message = await (
+          conversationId
+            ? await genie.createMessage({ space_id: spaceId, conversation_id: conversationId, content: question })
+            : await genie.startConversation({ space_id: spaceId, content: question })
+        ).wait();
+        if (message.error?.error) throw new Error(`Genie: ${message.error.error}`);
+        const attachments = message.attachments ?? [];
+        const query = attachments.find((a) => a.query?.query);
+        let table: GenieTable | null = null;
+        if (query?.attachment_id) {
+          const res = await genie.getMessageAttachmentQueryResult({
+            space_id: spaceId,
+            conversation_id: message.conversation_id,
+            message_id: message.message_id,
+            attachment_id: query.attachment_id,
+          });
+          table = res.statement_response ? tableOf(res.statement_response) : null;
+        }
+        return {
+          conversationId: message.conversation_id,
+          text: attachments
+            .map((a) => a.text?.content ?? '')
+            .filter(Boolean)
+            .join('\n\n'),
+          sql: query?.query?.query ?? null,
+          table,
+          suggested: attachments.flatMap((a) => a.suggested_questions?.questions ?? []).slice(0, 3),
         };
       }),
     askOne: (question) =>

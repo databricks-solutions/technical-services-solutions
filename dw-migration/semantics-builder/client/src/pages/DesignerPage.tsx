@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router';
+import { useLocation, useNavigate, useParams } from 'react-router';
 import { useTab } from '../useTab';
 import {
   Alert,
@@ -16,7 +16,14 @@ import {
   Tag,
   Typography,
 } from '@databricks/design-system';
-import type { DesignDraft, DesignerView, TestResult, ValidationPlan, ValidationRun } from '../../../shared/designer';
+import type {
+  DesignDraft,
+  DesignerView,
+  TestCase,
+  TestResult,
+  ValidationPlan,
+  ValidationRun,
+} from '../../../shared/designer';
 import { validateMetricView } from '../../../shared/metricView';
 import type { MetricViewIssue } from '../../../shared/metricView';
 import { api, useResource } from '../api';
@@ -253,6 +260,13 @@ function Designer({
   const [plan, setPlan] = useState<ValidationPlan>();
   const [error, setError] = useState<string>();
   const [editingTests, setEditingTests] = useState(false);
+  // "Use as a test" in the Genie panel sends a test here. The editor opens with it; Save makes a new version.
+  const location = useLocation();
+  const added = (location.state as { test?: TestCase } | null)?.test;
+  const closeTests = () => {
+    setEditingTests(false);
+    if (added) void navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
+  };
   const dirty = yaml !== draft.yaml;
 
   const live = useMemo(() => validateMetricView(yaml), [yaml]);
@@ -526,18 +540,19 @@ function Designer({
               result with plain SQL derived from the YAML, or checks one measure against an expected value, for example
               a total from the legacy report. The app keeps only pass or fail and the difference in percent.
             </Typography.Text>
-            {editingTests && saved ? (
+            {(editingTests || added) && saved ? (
               <TestEditor
-                tests={draft.tests}
+                key={added?.name ?? 'tests'}
+                tests={added ? [...draft.tests, added] : draft.tests}
                 view={saved}
                 saving={busy === 'save'}
-                onCancel={() => setEditingTests(false)}
+                onCancel={closeTests}
                 onSave={(tests) =>
                   run(
                     'save',
                     `/api/projects/${projectId}/designs`,
                     { baseVersion: draft.version, yaml: draft.yaml, tests },
-                    () => setEditingTests(false)
+                    closeTests
                   )
                 }
               />

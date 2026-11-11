@@ -41,6 +41,24 @@ if MODE == "install":
     dbutils.widgets.text("03_target", "", "3. Schema for new model services (blank = <catalog>.ug_migrated, created for you)")
     dbutils.widgets.dropdown("04_setup", "quick", ["quick", "custom"],
                              "4. Setup (custom shows options 5 to 18; if they don't appear, click Run all)")
+    # A fresh notebook in a workspace with no install yet: the first Run all only sets up the widgets (next cell). This
+    # cell runs before the pip cell, on the runtime's own SDK, which can be too old for apps.list (0.20.0 on serverless,
+    # seen live): so the REST API, directly.
+    def _toolkit_app_here():
+        token = None
+        for _ in range(50):
+            page = w.api_client.do("GET", "/api/2.0/apps", query={"page_size": 100, **({"page_token": token} if token else {})})
+            if any((a.get("description") or "").startswith("Unity Gateway Migration Toolkit") for a in page.get("apps") or []):
+                return True
+            token = page.get("next_page_token")
+            if not token:
+                return False
+        return True  # too many apps to tell: the checks decide
+
+    try:
+        _NO_INSTALL_HERE = not _toolkit_app_here()
+    except Exception:  # noqa: BLE001 (can't tell: the checks decide)
+        _NO_INSTALL_HERE = False
 else:
     dbutils.widgets.dropdown("01_action", "preview", ["preview", "remove"], "1. Action (preview changes nothing)")
     dbutils.widgets.text("02_app_name", "", "2. App name (blank = the only install in this workspace)")
@@ -97,6 +115,12 @@ if "uninstall" == "install":
         for _name in _CUSTOM:
             if _widget_exists(_name):
                 dbutils.widgets.remove(_name)
+    # The first Run all of a freshly imported notebook: the widget panel was empty until now, so stop here instead of
+    # failing later with "choose 1. Catalog". (An update needs no widgets: it reads the install already here.)
+    if globals().get("_NO_INSTALL_HERE") and dbutils.widgets.get("01_catalog") == "<choose a catalog>":
+        dbutils.notebook.exit("The widgets are ready at the top of the notebook. Pick 1. Catalog and 2. SQL warehouse "
+                              "(and 3, if you want another schema for new model services), then click Run all again. "
+                              "For more options, set 4. Setup to custom.")
 
 # COMMAND ----------
 

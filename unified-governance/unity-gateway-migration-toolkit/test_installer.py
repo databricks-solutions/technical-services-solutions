@@ -704,6 +704,12 @@ class FakeWS:
                     ws.apps.pop(name, None)
 
         def rule_set(method, path, query=None):
+            if path == "/api/2.0/apps":  # the REST list, as the widget cell reads it (the runtime's SDK may be too old)
+                names = sorted(ws.apps)
+                start = int((query or {}).get("page_token") or 0)
+                size = 1  # one app per page, so paging is exercised
+                page = [{"name": n, "description": ws.apps[n].description} for n in names[start:start + size]]
+                return {"apps": page, **({"next_page_token": str(start + size)} if start + size < len(names) else {})}
             if ws.sp_rules is None:
                 raise sdk_errors.PermissionDenied("no access")
             assert path == "/api/2.0/preview/accounts/access-control/rule-sets" and "acct-1" in query["name"]
@@ -1012,8 +1018,23 @@ def test_fresh_install_creates_everything_and_says_what_next(monkeypatch):
 def test_install_refuses_without_a_catalog_and_changes_nothing(monkeypatch):
     ws = FakeWS()
     res = run_notebook(monkeypatch, ws, {"__mode__": "install", "02_warehouse": WH_LABEL})
-    assert res.raised and "choose 1. Catalog" in res.status
+    assert res.status.startswith("exit: The widgets are ready at the top of the notebook. Pick 1. Catalog")
     assert snapshot_of(ws) == snapshot_of(FakeWS()) and not ws.apps
+    assert not any(e[0] in ("sql_warehouse", "sql") for e in ws.log)  # it stopped before the checks
+
+
+def test_first_run_of_a_fresh_notebook_only_sets_up_the_widgets(monkeypatch):
+    """A freshly imported notebook has no widgets; the first Run all creates them and stops (before the pip cell)."""
+    ws = FakeWS()
+    res = run_notebook(monkeypatch, ws, {"__mode__": "install"})
+    assert res.status.startswith("exit: The widgets are ready"), res.status
+    assert list(res.labels) == ["01_catalog", "02_warehouse", "03_target", "04_setup"]
+    assert not ws.apps and not ws.jobs and not ws.schemas
+    ws.apps["other-app"] = app_obj("other-app", desc="Something else")  # another app, listed first: paging matters
+    assert run_notebook(monkeypatch, ws, {"__mode__": "install"}).status.startswith("exit: The widgets are ready")
+    seed_install(ws)  # with an install here, a blank run is an update, so it doesn't stop
+    upd = run_notebook(monkeypatch, ws, {"__mode__": "install", "02_warehouse": WH_LABEL})
+    assert not upd.status.startswith("exit: The widgets are ready"), upd.status
 
 
 def test_several_warehouses_need_a_choice_and_one_is_preselected(monkeypatch):

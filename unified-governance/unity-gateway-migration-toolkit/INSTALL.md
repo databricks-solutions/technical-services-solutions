@@ -26,7 +26,7 @@ The install never changes your endpoints or code. Changes happen later, only whe
 ## Install
 
 1. Download `unity-gateway-migration-toolkit.zip` from the [release page](https://github.com/databricks-solutions/technical-services-solutions/releases/tag/unity-gateway-migration-toolkit-latest) and unzip it. In the workspace, open your home folder, choose **Import**, and import `INSTALL_unity_gateway_migration_toolkit_0_11_0.py` from the zip's top folder.
-2. Open the notebook and set the widgets at the top:
+2. Open the notebook and click **Run all** once. A new notebook has no widgets yet: this first run adds them at the top and stops ("The widgets are ready"). Then set them:
 
    | Widget | What to set |
    |---|---|
@@ -35,7 +35,7 @@ The install never changes your endpoints or code. Changes happen later, only whe
    | **3. Schema for new model services** | Leave blank to have `<catalog>.ug_migrated` created for you. Or enter `catalog.schema` of a schema you already have, or want created |
    | **4. Setup** | Leave at `quick` |
 
-3. Click **Run all**.
+3. Click **Run all** again.
 
 Before anything changes, the notebook checks everything and prints one checklist (shortened here):
 

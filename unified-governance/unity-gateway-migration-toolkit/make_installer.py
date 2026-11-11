@@ -64,10 +64,11 @@ INTRO = {
     "install": """\
 Installs the toolkit in this workspace. No CLI, Git or local setup.
 
-1. In the widgets at the top, pick **1. Catalog** and **2. SQL warehouse**.
-2. Leave **3. Schema for new model services** blank: the installer creates `<catalog>.ug_migrated` for you. If you
-   already have a schema for them, or want another name, enter it as `catalog.schema`.
-3. Click **Run all** (about 5 minutes). The app link is printed at the end.
+1. Click **Run all** once. The widgets appear at the top and the run stops ("The widgets are ready").
+2. Pick **1. Catalog** and **2. SQL warehouse**. Leave **3. Schema for new model services** blank: the installer creates
+   `<catalog>.ug_migrated` for you. If you already have a schema for them, or want another name, enter it as
+   `catalog.schema`.
+3. Click **Run all** again (about 5 minutes). The app link is printed at the end.
 
 **Before anything changes**, the notebook runs every check and prints one checklist: what passed, what to fix (with
 the exact SQL or screen), and what it will create. If something needs fixing, nothing is created or changed, and the run

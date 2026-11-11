@@ -111,8 +111,8 @@ The short version, with what the install creates, is in [INSTALL.md](INSTALL.md)
 The installer notebook is the only file you import. It creates everything inside the workspace in about 5 minutes.
 
 1. Download `unity-gateway-migration-toolkit.zip` from the [release page](https://github.com/databricks-solutions/technical-services-solutions/releases/tag/unity-gateway-migration-toolkit-latest) and unzip it. In the workspace, go to your home folder, choose **Import**, and import `INSTALL_unity_gateway_migration_toolkit_0_11_0.py` from the zip's top folder.
-2. Open the notebook. Set **1. Catalog** and **2. SQL warehouse**. Leave **3. Schema for new model services** blank to have `<catalog>.ug_migrated` created, or enter `catalog.schema` of the schema you want. Leave **4. Setup** at `quick`.
-3. Click **Run all**.
+2. Open the notebook and click **Run all** once: a new notebook has no widgets yet, so this first run adds them at the top and stops ("The widgets are ready"). Set **1. Catalog** and **2. SQL warehouse**. Leave **3. Schema for new model services** blank to have `<catalog>.ug_migrated` created, or enter `catalog.schema` of the schema you want. Leave **4. Setup** at `quick`.
+3. Click **Run all** again.
 
 **The two schemas.** The toolkit keeps its results in `<catalog>.ug_migration`, and Apply creates model services in `<catalog>.ug_migrated`. Callers address a service by its full name (`<catalog>.ug_migrated.<service>`), so the second schema's name ends up in your code: pick it before your first Apply. To use a schema you already have, enter it in widget 3. To create it yourself, use custom setup and set **8. Create the schema** to `no`; the SQL is printed. If the installer can't create it, the install still finishes: scans work, and Apply shows the SQL and waits until the schema exists.
 

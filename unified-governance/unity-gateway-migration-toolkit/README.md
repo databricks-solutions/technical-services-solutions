@@ -9,8 +9,8 @@ Moves legacy model serving endpoints (v1, and v2 workspace-bound endpoints) to U
 ## Quick start (about 5 minutes, inside the workspace)
 
 1. Download `unity-gateway-migration-toolkit.zip` from the [release page](https://github.com/databricks-solutions/technical-services-solutions/releases/tag/unity-gateway-migration-toolkit-latest) and unzip it. In the workspace, import `INSTALL_unity_gateway_migration_toolkit_0_11_0.py` from the zip's top folder.
-2. Open the notebook. Set **1. Catalog** and **2. SQL warehouse**. Leave **3. Schema for new model services** blank (the installer creates `<catalog>.ug_migrated`) and **4. Setup** at `quick`.
-3. Click **Run all**. It checks everything first and prints one checklist; if something needs fixing, nothing is created or changed, and the run ends with a "Nothing was changed" error that lists the fixes. The last cell prints the app link.
+2. Open the notebook and click **Run all** once: the widgets appear at the top and the run stops. Set **1. Catalog** and **2. SQL warehouse**. Leave **3. Schema for new model services** blank (the installer creates `<catalog>.ug_migrated`) and **4. Setup** at `quick`.
+3. Click **Run all** again. It checks everything first and prints one checklist; if something needs fixing, nothing is created or changed, and the run ends with a "Nothing was changed" error that lists the fixes. The last cell prints the app link.
 4. In the app, work through the tabs in order: **Overview**, **Scans**, **Apply** (dry run, then execute), **Verify & cut over**.
 
 **[INSTALL.md](INSTALL.md)** has what you need, what the install creates, the checklist, updates, custom setup and uninstall, on one page.

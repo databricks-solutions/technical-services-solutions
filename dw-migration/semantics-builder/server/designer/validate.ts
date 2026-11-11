@@ -37,7 +37,7 @@ export function measureQuery(fullName: string, test: TestCase): string {
   return `SELECT ${cols.join(', ')} FROM ${quoteName(fullName)}${test.dimensions.length ? ' GROUP BY ALL' : ''} ORDER BY ALL LIMIT ${MAX_TEST_ROWS + 1}`;
 }
 
-const literal = (v: string) => `'${v.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+export const literal = (v: string) => `'${v.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
 
 /** The query of a test with an expected value: one measure, the filters as WHERE, one row. */
 export function expectQuery(fullName: string, test: TestCase): string {

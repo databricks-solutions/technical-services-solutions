@@ -74,7 +74,7 @@ Promote. See question 2 about stored values.
 
 Before Promote, compare the new version with the promoted one (removed or renamed fields) and list who uses
 the view: dashboards, Genie Agents, queries, jobs, notebooks from `table_lineage`, and the fields they query
-from Query History. The Promote modal shows "3 dashboards use `Customer region`, which this version removes".
+from `column_lineage` (Query History text is redacted in many workspaces, so it is not used). The Promote modal shows "3 dashboards use `Customer region`, which this version removes".
 Without SELECT on the system tables, the modal says so and shows the field changes only.
 
 ### h5. Approval workflow (#7)
@@ -142,7 +142,7 @@ Each item gets its own commit, unit tests, a deploy, an e2e test where it fits, 
 ## Scopes and permissions
 
 - App scopes stay `sql`, `genie`, catalog reads. The Lakeview scope is checked in h6 before the build.
-- Users need SELECT on `system.access.table_lineage`, `column_lineage` and `system.query.history` for h4.
+- Users need SELECT on `system.access.table_lineage` and `column_lineage` for h4.
 - Certification (optional, with h5): APPLY TAG or ASSIGN on `system.certification_status`.
 
 ## Risks

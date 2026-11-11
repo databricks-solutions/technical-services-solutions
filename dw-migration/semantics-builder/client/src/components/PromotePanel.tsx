@@ -16,6 +16,7 @@ import {
 import type { PromotionView } from '../../../shared/promote';
 import { api, useResource } from '../api';
 import { DataState } from './DataState';
+import { ImpactPanel } from './ImpactPanel';
 import { OpenInCatalog } from './OpenInCatalog';
 import { SqlBlock } from './SqlBlock';
 
@@ -179,6 +180,7 @@ export function PromotePanel({ projectId, onPromoted }: { projectId: string; onP
                     </Checkbox>
                   </>
                 )}
+                {reviewing && <ImpactPanel projectId={projectId} />}
                 <SqlBlock label="SQL" sql={plan.statement} />
               </div>
             </Modal>

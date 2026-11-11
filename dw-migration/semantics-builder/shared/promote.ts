@@ -60,3 +60,44 @@ export interface AdoptableView {
   /** True when another user's sub-project already manages it. */
   managedByOther: boolean;
 }
+
+export type ConsumerKind =
+  | 'genie_space'
+  | 'dashboard'
+  | 'alert'
+  | 'app'
+  | 'job'
+  | 'pipeline'
+  | 'notebook'
+  | 'query'
+  | 'adhoc';
+
+/** One consumer of the view in Unity Catalog, from lineage. Counts only: no user names, no query text. */
+export interface Consumer {
+  kind: ConsumerKind;
+  /** null for ad hoc queries (SQL editor, API, BI tools). */
+  id: string | null;
+  users: number;
+  queries: number;
+  lastUsed: string;
+  /** The removed or changed fields that its queries name. */
+  uses: string[];
+}
+
+export interface FieldChanges {
+  removed: string[];
+  renamed: { from: string; to: string }[];
+  /** Same name, new expression. */
+  changed: string[];
+  added: string[];
+  filterChanged: boolean;
+}
+
+export interface Impact {
+  /** null when the view is not in Unity Catalog yet. */
+  changes: FieldChanges | null;
+  /** null when lineage cannot be read, with the reason in error. */
+  consumers: Consumer[] | null;
+  error: string | null;
+  days: number;
+}

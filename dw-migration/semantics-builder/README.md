@@ -62,7 +62,11 @@ A typical path for one KPI area. Each page shows the next step.
    a monthly budget. In **Ask Genie**, create a Genie space on the sandbox view, pick the expected fields for
    each business question, and click **Ask Genie** or **Ask Genie One**. The app checks the fields in the SQL.
 7. **Publish.** In **Promotion**, set the target view (`catalog.schema.view`, not the sandbox), then
-   **Promote**. In **Governance**, set the owner and read grants. In **Drift**, **Check drift** compares UC with
+   **Promote**. The Promote dialog shows the **Impact**: the fields that this version removes, renames or
+   changes against the view in UC, and who read the view in the last 90 days (Genie spaces, dashboards, jobs,
+   notebooks, queries, ad hoc SQL), with the changed fields each one read. It needs SELECT on
+   `system.access.table_lineage` and `system.access.column_lineage`; without it, the dialog shows the field
+   changes only. In **Governance**, set the owner and read grants. In **Drift**, **Check drift** compares UC with
    the promoted version. In **Pages**, download the Pages, then click **Open Discover** and **Copy the prompt**
    for Genie Code bulk import. **Overview** shows the status of each step in the About box.
 8. **Metric views (left nav).** See every view and its health. **Import a metric view** made outside the app,
@@ -234,6 +238,8 @@ lineage canvas uses React Flow and keeps its attribution link.
 - Genie One is not bound to a space. The app names the sandbox view in each question, and the answer shows if
   Genie One also searched workspace knowledge snippets that other users wrote.
 - Discover reads metric views and SQL views only. Dashboards, Genie instructions, dbt and LookML come later.
+- Impact analysis comes from lineage, which does not record every read, so it can miss a consumer. It shows
+  counts and ids, not user names or query text.
 - Drift checks run on demand and once a day when you open the app. No unattended scheduled job yet.
 - Pages and Genie Code have no API, so the app cannot create Pages itself. The app writes a file and a prompt for
   Genie Code bulk import, which creates draft Pages. A domain curator

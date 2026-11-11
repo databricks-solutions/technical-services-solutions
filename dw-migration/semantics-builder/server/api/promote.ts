@@ -2,7 +2,9 @@ import type { Application, Request } from 'express';
 import { z } from 'zod';
 import type { LakebasePool } from '@databricks/appkit';
 import { promoteSchema, targetSchema } from '../../shared/promote';
-import type { Promotion, PromotionView } from '../../shared/promote';
+import type { Impact, Promotion, PromotionView } from '../../shared/promote';
+import { validateMetricView } from '../../shared/metricView';
+import { fieldChanges, IMPACT_DAYS, impactQuery, toConsumers, watched } from '../designer/impact';
 import { createStatement, sandboxSchema } from '../designer/validate';
 import { checkTarget, sameYaml } from '../designer/promote';
 import { runStatement } from '../sql/runner';
@@ -95,6 +97,42 @@ export function registerPromoteRoutes(
   }
 
   app.get('/api/projects/:id/promotion', handle(build));
+
+  /** What the latest version changes in the view in Unity Catalog, and who reads that view, from lineage. */
+  app.get(
+    '/api/projects/:id/promotion/impact',
+    handle(async (req): Promise<Impact> => {
+      const { actor, project, target } = await context(req);
+      const base = { changes: null, consumers: null, days: IMPACT_DAYS };
+      const draft = (await designs.view(project.id)).draft;
+      if (!target || !draft) return { ...base, error: 'Set the target and design the view first.' };
+      let ucYaml: string;
+      try {
+        ucYaml = (await ucFor(req).table(target)).view_definition ?? '';
+      } catch (err) {
+        if (notFound(err)) return { ...base, consumers: [], error: null };
+        return { ...base, error: `Cannot read ${target}: ${(err as Error).message.slice(0, 300)}` };
+      }
+      const before = validateMetricView(ucYaml).view;
+      const after = validateMetricView(draft.yaml).view;
+      const changes = before && after ? fieldChanges(before, after) : null;
+      const fields = watched(changes);
+      try {
+        const result = await runStatement(
+          impactQuery(target, fields),
+          { actor, projectId: project.id, approved: false },
+          runFor(req)
+        );
+        return { ...base, changes, consumers: toConsumers(result.rows, fields), error: null };
+      } catch (err) {
+        return {
+          ...base,
+          changes,
+          error: `Cannot read lineage. You need SELECT on system.access.table_lineage and system.access.column_lineage. ${(err as Error).message.slice(0, 300)}`,
+        };
+      }
+    })
+  );
 
   app.post(
     '/api/projects/:id/promotion/target',

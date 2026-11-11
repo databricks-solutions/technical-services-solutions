@@ -61,7 +61,7 @@ Import the newer installer and click **Run all**, with no widgets changed. It fi
 
 ## Custom setup
 
-Set **4. Setup** to `custom` and click **Run all**. Widgets 5 to 18 appear, and the run stops so you can set them. Set what you need, then Run all again. Blank keeps the default, or what the install already uses. `none` clears a setting.
+Set **4. Setup** to `custom`. Widgets 5 to 18 appear in the panel within a few seconds. If they don't (the widget panel's **On widget change** setting is **Do nothing**, or the notebook hasn't run yet in this session), click **Run all**: the first run adds them and stops. Set what you need, then Run all again. Blank keeps the default, or what the install already uses. `none` clears a setting.
 
 | Widget | Use it for |
 |---|---|

@@ -904,8 +904,40 @@ def test_widgets_are_the_first_code_cell_and_the_prompt_follows(mode):
     assert "__" not in cells[0].replace("__init__", "")  # every placeholder filled in
     assert ("Installs the toolkit in this workspace" if mode == "install" else "Removes a toolkit install") in cells[0]
     assert f'MODE = "{mode}"' in cells[1] and "dbutils.widgets" in cells[1]
-    assert cells[2].strip().endswith("then Run all" if mode == "install" else "it changes nothing")
-    assert "# MAGIC %pip" in cells[3]
+    assert f'if "{mode}" == "install":' in cells[2]  # the custom-setup cell
+    assert cells[3].strip().endswith("then Run all" if mode == "install" else "it changes nothing")
+    assert "# MAGIC %pip" in cells[4]
+
+
+def test_the_custom_cell_reruns_alone_fast_and_reads_only_widgets(monkeypatch):
+    """With "Run accessed commands" (the panel default), choosing custom reruns only the cell that reads 4. Setup. That
+    cell must make no API calls and must not need anything an earlier cell defined: after the pip cell restarted
+    Python, it runs alone."""
+    cells = _notebook_text("install").split("\n# COMMAND ----------\n")
+    assert 'dbutils.widgets.get("04_setup")' in cells[2] and 'dbutils.widgets.get("04_setup")' not in cells[1]
+    assert "WorkspaceClient" not in cells[2] and "w." not in cells[2].replace("dbutils.widgets.", "")
+    vals = {"01_catalog": "main", "02_warehouse": WH_LABEL, "03_target": "", "04_setup": "custom"}
+    labels = {}
+
+    class Widgets:
+        def text(self, name, default, label=""):
+            labels[name] = label
+            vals.setdefault(name, default)
+        dropdown = lambda self, name, default, choices=None, label="": Widgets.text(self, name, default, label)
+
+        def get(self, name):
+            return vals[name]
+
+        def remove(self, name):
+            vals.pop(name)
+
+    exits = []
+    ns = {"dbutils": _ns(widgets=Widgets(), notebook=_ns(exit=exits.append))}  # a fresh Python: nothing else defined
+    exec(compile(cells[2], "custom-cell", "exec"), ns)
+    assert len(labels) == 14 and exits and exits[0].startswith("Custom setup: widgets 5 to 18")
+    vals["04_setup"] = "quick"
+    exec(compile(cells[2], "custom-cell", "exec"), {"dbutils": ns["dbutils"]})
+    assert set(vals) == {"01_catalog", "02_warehouse", "03_target", "04_setup"}  # back to the four
 
 
 def _labels(monkeypatch, widgets):

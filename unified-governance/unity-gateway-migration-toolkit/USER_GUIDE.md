@@ -120,7 +120,7 @@ The installer notebook is the only file you import. It creates everything inside
 
 **At the end** it prints the app link (**Compute > Apps > ug-migration-toolkit**), the job links and whether the first snapshot started, the schema for new model services, that the weekly snapshot is paused, and that secret mapping is off.
 
-**Custom setup.** Set **4. Setup** to `custom` and Run all: widgets 5 to 18 appear and the run stops so you can set them ([Installer widgets](#installer-widgets)). Blank keeps the default or what the install already uses; `none` clears a setting.
+**Custom setup.** Set **4. Setup** to `custom`: widgets 5 to 18 appear in the panel within a few seconds (the panel reruns the one cell that reads widget 4, which is its default **On widget change: Run accessed commands** setting). If they don't appear, click Run all: the first run adds them and stops so you can set them ([Installer widgets](#installer-widgets)). Blank keeps the default or what the install already uses; `none` clears a setting.
 
 **Who the jobs run as.** You, unless you set **7. Run jobs as service principal** (custom setup) to a service principal's application ID. Then all three jobs run as that service principal. You need its **Service principal: User** role (Settings > Identity and access > Service principals > the service principal > Permissions; creating the service principal only gives you Manager, and workspace admin isn't enough: the installer checks this before it changes anything). It needs the system table, results schema and target schema access in [Before you start](#before-you-start). The installer gives it CAN MANAGE on the install folder, and `USE CATALOG`, `USE SCHEMA` and `CREATE SERVICE` on the schema for new model services (if you can't grant them, it prints the statements). Only people in **6. Operators** can start jobs from the app (default: you).
 
@@ -682,7 +682,7 @@ The widget panel sorts widgets by name, so each name starts with its number (`01
 | 1 | `01_catalog` | Catalog (the toolkit creates its schemas here) | `<choose a catalog>` | An update with nothing picked reuses the install's catalog |
 | 2 | `02_warehouse` | SQL warehouse | the only warehouse, else `<choose a warehouse>` | A stopped warehouse is started. An update reuses the install's |
 | 3 | `03_target` | Schema for new model services | blank = `<catalog>.ug_migrated` (an update keeps the current one) | `catalog.schema`. Created if missing, unless 8 = `no` |
-| 4 | `04_setup` | Setup | `quick` | `custom` adds widgets 5 to 18, and the first run stops so you can set them |
+| 4 | `04_setup` | Setup | `quick` | `custom` adds widgets 5 to 18 (right away, or on the next Run all, which then stops so you can set them). `quick` removes them |
 
 **Custom setup.** Blank keeps the default, or what the install already uses; `none` clears a setting.
 
@@ -877,6 +877,7 @@ The installer prints one checklist before it changes anything. Each `FIX` line h
 | "the operators of this install ... can't be read back" | The first update of an install from 0.10 or earlier | Set **4. Setup** to `custom`, Run all, fill in **6. Operators**, Run all again |
 | A red "Nothing was changed" error after the checklist | A FIX item stopped the install, as designed | Fix each FIX line, then Run all again |
 | "Custom setup: widgets 5 to 18 are now in the widget panel" | The first run with **4. Setup** = `custom` | Set the widgets you need, then Run all again |
+| Widgets 5 to 18 don't appear after choosing `custom` | The widget panel's **On widget change** is **Do nothing**, or no cell has run yet in this session | Click **Run all** (it adds them and stops), or set **On widget change** to **Run accessed commands** in the panel's settings (gear icon) |
 | Old widgets (`results_catalog`, `action`, ...) in the panel | A notebook from 0.10 or earlier, updated in place | Import the new installer as a new notebook, or remove the old widgets once |
 
 ### App

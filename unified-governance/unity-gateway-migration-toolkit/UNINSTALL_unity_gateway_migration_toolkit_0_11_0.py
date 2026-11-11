@@ -14,28 +14,14 @@
 
 # COMMAND ----------
 
-# Widgets only. make_installer builds two notebooks from this template: INSTALL (MODE install) and UNINSTALL.
-# Widget names start with a two-digit number: the widget panel sorts by name, so the number keeps them in order.
+# Widgets 1 to 4 (install) or 1 to 7 (uninstall). make_installer builds two notebooks from this template: INSTALL (MODE
+# install) and UNINSTALL. Widget names start with a two-digit number: the panel sorts by name, so the number keeps them
+# in order.
 MODE = "uninstall"
 from databricks.sdk import WorkspaceClient
 
 w = WorkspaceClient()
 CHOOSE_CATALOG, CHOOSE_WAREHOUSE = "<choose a catalog>", "<choose a warehouse>"
-# Custom setup widgets (install). Quick setup removes them, so the panel only shows the four that matter.
-CUSTOM = ["05_app_name", "06_operators", "07_run_as", "08_create_target", "09_results_schema", "10_install_folder",
-          "11_secret_schemas", "12_allow_secret_read", "13_deadline", "14_central_workspaces", "15_central_secret",
-          "16_adopt_app", "17_allow_downgrade", "18_second_install"]
-
-
-def _widget_exists(name):
-    try:
-        dbutils.widgets.get(name)
-        return True
-    except Exception:  # noqa: BLE001 (a missing widget raises a runtime-specific error)
-        return False
-
-
-CUSTOM_JUST_ADDED = False
 if MODE == "install":
     try:
         catalog_names = sorted({c.name for c in w.catalogs.list() if c.name})
@@ -53,9 +39,40 @@ if MODE == "install":
                              "1. Catalog (the toolkit creates its schemas here)")
     dbutils.widgets.dropdown("02_warehouse", wh_default, wh_choices, "2. SQL warehouse")
     dbutils.widgets.text("03_target", "", "3. Schema for new model services (blank = <catalog>.ug_migrated, created for you)")
-    dbutils.widgets.dropdown("04_setup", "quick", ["quick", "custom"], "4. Setup (custom adds more options)")
+    dbutils.widgets.dropdown("04_setup", "quick", ["quick", "custom"],
+                             "4. Setup (custom shows options 5 to 18; if they don't appear, click Run all)")
+else:
+    dbutils.widgets.dropdown("01_action", "preview", ["preview", "remove"], "1. Action (preview changes nothing)")
+    dbutils.widgets.text("02_app_name", "", "2. App name (blank = the only install in this workspace)")
+    dbutils.widgets.dropdown("03_rollback_services", "no", ["no", "yes"],
+                             "3. Roll back services created by apply (yes = delete them too)")
+    dbutils.widgets.dropdown("04_drop_data", "no", ["no", "yes"],
+                             "4. Remove results tables (and the schema, if the toolkit made it and it's empty)")
+    dbutils.widgets.dropdown("05_remove_logs", "no", ["no", "yes"],
+                             "5. Remove apply logs (no = keep them, so kept services can be rolled back later)")
+    dbutils.widgets.text("06_results_schema", "", "6. Results schema (catalog.schema; only if the run asks for it)")
+    dbutils.widgets.dropdown("07_adopt_app", "no", ["no", "yes"],
+                             "7. Also remove an app the installer didn't make (bundle or same name; only if the run asks for it)")
+
+# COMMAND ----------
+
+# Custom setup widgets (install only). This cell reads 4. Setup, so with the widget panel's default "On widget change:
+# Run accessed commands", choosing custom reruns just this cell and widgets 5 to 18 appear. It makes no API calls (so
+# it reruns in a moment) and defines everything it uses: it may rerun alone, after the pip cell restarted Python.
+if "uninstall" == "install":
+    _CUSTOM = ["05_app_name", "06_operators", "07_run_as", "08_create_target", "09_results_schema", "10_install_folder",
+               "11_secret_schemas", "12_allow_secret_read", "13_deadline", "14_central_workspaces", "15_central_secret",
+               "16_adopt_app", "17_allow_downgrade", "18_second_install"]
+
+    def _widget_exists(name):
+        try:
+            dbutils.widgets.get(name)
+            return True
+        except Exception:  # noqa: BLE001 (a missing widget raises a runtime-specific error)
+            return False
+
     if dbutils.widgets.get("04_setup") == "custom":
-        CUSTOM_JUST_ADDED = not any(_widget_exists(n) for n in CUSTOM)
+        _just_added = not any(_widget_exists(n) for n in _CUSTOM)
         T, D = dbutils.widgets.text, dbutils.widgets.dropdown
         T("05_app_name", "", "5. App name (blank = ug-migration-toolkit, or the install already here)")
         T("06_operators", "", "6. Operators who can start jobs in the app (emails, comma-separated; blank = you, or the current list)")
@@ -73,25 +90,13 @@ if MODE == "install":
         D("16_adopt_app", "no", ["no", "yes"], "16. Adopt an existing app with this name (yes overwrites it)")
         D("17_allow_downgrade", "no", ["no", "yes"], "17. Allow downgrade (an older version over a newer one)")
         D("18_second_install", "no", ["no", "yes"], "18. Allow a second install (needs its own app name, results schema and folder)")
-        if CUSTOM_JUST_ADDED:  # the new widgets have their defaults: let the user set them before anything runs
+        if _just_added:  # the new widgets have their defaults: let the user set them before anything runs
             dbutils.notebook.exit("Custom setup: widgets 5 to 18 are now in the widget panel. Set the ones you need "
                                   "(blank keeps the defaults or the current install's settings), then click Run all again.")
     else:
-        for _name in CUSTOM:
+        for _name in _CUSTOM:
             if _widget_exists(_name):
                 dbutils.widgets.remove(_name)
-else:
-    dbutils.widgets.dropdown("01_action", "preview", ["preview", "remove"], "1. Action (preview changes nothing)")
-    dbutils.widgets.text("02_app_name", "", "2. App name (blank = the only install in this workspace)")
-    dbutils.widgets.dropdown("03_rollback_services", "no", ["no", "yes"],
-                             "3. Roll back services created by apply (yes = delete them too)")
-    dbutils.widgets.dropdown("04_drop_data", "no", ["no", "yes"],
-                             "4. Remove results tables (and the schema, if the toolkit made it and it's empty)")
-    dbutils.widgets.dropdown("05_remove_logs", "no", ["no", "yes"],
-                             "5. Remove apply logs (no = keep them, so kept services can be rolled back later)")
-    dbutils.widgets.text("06_results_schema", "", "6. Results schema (catalog.schema; only if the run asks for it)")
-    dbutils.widgets.dropdown("07_adopt_app", "no", ["no", "yes"],
-                             "7. Also remove an app the installer didn't make (bundle or same name; only if the run asks for it)")
 
 # COMMAND ----------
 

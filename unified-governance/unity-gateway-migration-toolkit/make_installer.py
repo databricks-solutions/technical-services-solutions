@@ -88,8 +88,9 @@ the GRANT to send an account admin).
 **To update**, import the newer installer and click Run all. It finds the install and keeps its settings. (From 0.10
 or earlier it asks once for the operators, who can start jobs in the app: Databricks doesn't return them.)
 
-**Custom setup** (set **4. Setup** to `custom`, then Run all): more widgets appear for the app name, operators, a
-service principal for the jobs, central mode, secret mapping and more. To remove the toolkit, use the UNINSTALL notebook
+**Custom setup:** set **4. Setup** to `custom` and widgets 5 to 18 appear (if they don't, click Run all: it adds them
+and stops). They cover the app name, operators, a service principal for the jobs, central mode, secret mapping and
+more. To remove the toolkit, use the UNINSTALL notebook
 from the same zip.""",
     "uninstall": """\
 Removes a toolkit install from this workspace.

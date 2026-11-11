@@ -15,6 +15,7 @@ import type { ProjectSummary, SubProjectSummary } from '../../../shared/brief';
 import { Journey, NEXT, STAGE } from '../journey';
 import { PROJECTS_CHANGED, useResource } from '../api';
 import { DataState } from '../components/DataState';
+import { AgentPanel } from '../components/AgentPanel';
 import { DictionaryPanel } from '../components/DictionaryPanel';
 import { DeleteProjectModal } from '../components/DeleteProjectModal';
 import { NewProjectModal, subPath } from './ProjectsPage';
@@ -176,6 +177,7 @@ export function ProjectPage() {
               emptyAction={newButton}
             />
           )}
+          <AgentPanel projectId={project.id} />
           <DictionaryPanel projectId={project.id} />
           {deleting && (
             <DeleteProjectModal

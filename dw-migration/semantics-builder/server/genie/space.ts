@@ -111,3 +111,48 @@ export function spaceConfig(
       : {}),
   };
 }
+
+export interface AgentPart {
+  /** The sub-project name, shown to Genie with its instructions. */
+  name: string;
+  view: string;
+  brief: SemanticBrief | null;
+  tests: TestCase[];
+  textDimensions: string[];
+  kept: TuningChange[];
+}
+
+/**
+ * The settings of the production Genie agent of a project: the promoted views of the chosen sub-projects in one
+ * space. Each part is built like a sandbox space, then joined. Ids get the view, so the same test name in two
+ * sub-projects stays two items. Genie takes one text instruction, so each sub-project gets a section in it.
+ */
+export function agentConfig(parts: AgentPart[]) {
+  const built = [...parts]
+    .sort((a, b) => a.view.localeCompare(b.view))
+    .map((p) => ({ p, c: spaceConfig(p.view, p.brief, p.tests, p.textDimensions, p.kept) }));
+  const scoped = <T extends { id: string }>(view: string, items: T[] = []) =>
+    items.map((i) => ({ ...i, id: idOf('agent', `${view}\n${i.id}`) }));
+  const samples = unique(built.flatMap(({ c }) => c.config?.sample_questions.map((q) => q.question[0]) ?? [])).slice(
+    0,
+    MAX_SAMPLES
+  );
+  const text = built
+    .map(({ p, c }) => [`About ${p.name} (${p.view}):`, c.instructions.text_instructions[0].content[0]].join('\n'))
+    .join('\n\n')
+    .slice(0, MAX_TEXT);
+  const examples = built.flatMap(({ p, c }) => scoped(p.view, c.instructions.example_question_sqls));
+  const benchmarks = built.flatMap(({ p, c }) => scoped(p.view, c.benchmarks?.questions));
+  return {
+    version: 2,
+    ...(samples.length
+      ? { config: { sample_questions: byId(samples.map((q) => ({ id: idOf('sample', q), question: [q] }))) } }
+      : {}),
+    data_sources: { tables: built.flatMap(({ c }) => c.data_sources.tables) },
+    instructions: {
+      text_instructions: [{ id: idOf('text', built.map(({ p }) => p.view).join('\n')), content: [text] }],
+      ...(examples.length ? { example_question_sqls: byId(examples) } : {}),
+    },
+    ...(benchmarks.length ? { benchmarks: { questions: byId(benchmarks) } } : {}),
+  };
+}

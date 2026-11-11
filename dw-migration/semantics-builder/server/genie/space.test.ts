@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SemanticBrief } from '../../shared/brief';
-import { spaceConfig } from './space';
+import { agentConfig, spaceConfig } from './space';
 
 const brief = {
   title: 'Revenue',
@@ -100,5 +100,21 @@ describe('spaceConfig', () => {
       { column_name: 'Net Revenue', description: ['After discounts.'] },
       { column_name: 'Region', enable_entity_matching: true, enable_format_assistance: true, synonyms: ['area'] },
     ]);
+  });
+});
+
+describe('agentConfig', () => {
+  it('joins the views of the chosen sub-projects, with view-scoped ids and one text instruction', () => {
+    const part = (name: string, view: string) => ({ name, view, brief, tests, textDimensions: ['Region'], kept: [] });
+    const c = agentConfig([part('Returns', 'c.s.returns'), part('Revenue', 'c.s.revenue')]);
+    expect(c.data_sources.tables.map((t) => t.identifier)).toEqual(['c.s.returns', 'c.s.revenue']);
+    expect(c.instructions.text_instructions).toHaveLength(1);
+    expect(c.instructions.text_instructions[0].content[0]).toMatch(/^About Returns \(c\.s\.returns\):\n/);
+    // The same test in both sub-projects stays two items, with unique ids.
+    const ids = [...(c.instructions.example_question_sqls ?? []), ...(c.benchmarks?.questions ?? [])].map((i) => i.id);
+    expect(ids).toHaveLength(4);
+    expect(new Set(ids).size).toBe(4);
+    // The same key question is one sample.
+    expect(c.config?.sample_questions).toHaveLength(2);
   });
 });

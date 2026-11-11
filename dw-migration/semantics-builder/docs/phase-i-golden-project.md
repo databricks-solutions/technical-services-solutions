@@ -87,6 +87,14 @@ are in `gsb.genie_tuning`, merged into the space settings (instructions, example
 
 ### i4. Production Genie agent
 
+Status: done 2026-11-11, changed by the user's request: the agent belongs to the top-level project, on the
+promoted views of the sub-projects the author chooses, so related sub-projects answer together. Live on Order
+fulfilment: the agent was created on the Net revenue promoted view (version 2) and answered "What is the net
+revenue in Asia?" with MEASURE() on that view. Notes: the permissions API needs the `access-management` scope,
+which apps cannot get, so the app makes the `databricks permissions update genie ...` command and the author runs
+it. "Promote updates it" became an **Update it** tag and an update button: the app does not change the agent
+without the author. The first, per-sub-project agent of the live test was moved to the trash.
+
 A second Genie space on the promoted view, with the settings of the optimized sandbox space. The author gives
 CAN RUN to the audience. Promote updates it.
 
@@ -96,7 +104,11 @@ The Overview shows the path and the status of each gate: certified tables, a val
 a promoted view, and Genie accuracy at or above the target (default 85%). The sub-project gets a "Golden" tag
 when all gates pass.
 
-### i6. Write Pages to Discover (proposed 2026-11-11)
+### i6. Write Pages to Discover (blocked 2026-11-11)
+
+Blocked: the deploy rejected the `knowledge` scope ("The specified scope knowledge is not a valid scope"). The
+Apps docs list the scopes an app can ask for, and `knowledge` is not one. Options: the app makes the CLI or REST
+calls for the author to run (like the CAN RUN command of i4), or wait for Apps to add the scope.
 
 The Knowledge Pages API (Beta, `/api/2.0/knowledge/pages`) can create, read, update and delete Pages. Create makes a
 DRAFT by default; it takes `domain` (`domains/{id}`), `display_name`, `body`, `synonyms`, `description`, and an

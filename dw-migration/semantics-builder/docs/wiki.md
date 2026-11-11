@@ -162,6 +162,26 @@ To delete a project, open the project and click **Delete project**. The app show
 can remove these views before the app deletes the project. The app does not remove the target views in Unity
 Catalog.
 
+### 5.1 The Genie agent of a project
+
+The production Genie agent belongs to the project, not to a sub-project. It is one Genie space on the promoted
+views of the sub-projects that you choose. Choose related sub-projects, so Genie can answer questions across them.
+
+1. Open the project. The **Genie agent** section lists each sub-project with a promoted view.
+2. Select the sub-projects for the agent.
+3. Click **Create the Genie agent**. Examine the space settings, then click **Create the agent**. The app creates
+   the space as you, in your workspace folder.
+
+The settings join the settings of each promoted version: the view, the brief, the tests, entity matching, and the
+changes that Optimize with benchmarks kept. Each sub-project gets a section in the instructions, which starts with
+"About <sub-project> (<view>):". The tag **Update it** shows when a promoted version, a kept change or your choice
+of sub-projects changed. Click **Update the Genie agent** to replace all its settings.
+
+To give the audience access, add groups (by name) or users (by email), then click **Make the CAN RUN command**. Run
+the command in your terminal with the Databricks CLI, as you, or use **Share** in Genie. The app cannot do this
+itself: apps cannot get the `access-management` scope that the permissions API needs. Each person also needs
+SELECT on each promoted view (Governance of each sub-project) and CAN USE on the SQL warehouse.
+
 ## 6. Overview
 
 The Overview tab has two parts:
@@ -822,6 +842,7 @@ keeps the record of the delete.
 | Set the owner and grants | Ownership of the view, or `MANAGE` |
 | Impact analysis | `SELECT` on `system.access.table_lineage` and `system.access.column_lineage` |
 | Ask Genie | `CAN USE` on the SQL warehouse, and access to Genie |
+| Give access to the Genie agent | `CAN MANAGE` on the space (the author has it). You run the command yourself |
 | Run the data checks | `SELECT` on the source tables |
 | Set the certification tag | `APPLY TAG` on each table, or ownership, and a tag policy that lets you set the value |
 
@@ -831,7 +852,9 @@ keeps the record of the delete.
 - Discover and consolidate reads metric views and SQL views only.
 - Impact analysis uses lineage. Lineage does not record each read.
 - The drift check runs when you ask for it, and one time each day when you open the app.
-- The app cannot write Pages to Discover. Genie Code bulk import does this.
+- The app cannot write Pages to Discover. Genie Code bulk import does this. Apps cannot get the `knowledge` scope
+  that the Pages API needs.
+- The app cannot change who can use a Genie space. Apps cannot get the `access-management` scope.
 - A project has one owner. Reviews are the only way to share a version.
 - The app does not send email.
 

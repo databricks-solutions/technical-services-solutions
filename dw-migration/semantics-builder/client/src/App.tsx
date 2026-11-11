@@ -13,6 +13,7 @@ import type { ProjectSummary } from '../../shared/brief';
 import { api, DRIFT_CHECKED, PROJECTS_CHANGED, useResource } from './api';
 import {
   CatalogIcon,
+  CheckCircleFillIcon,
   FolderIcon,
   HomeIcon,
   NavList,
@@ -35,6 +36,8 @@ import { OverviewPage } from './pages/OverviewPage';
 import { PublishPage } from './pages/PublishPage';
 import { SubProjectLayout } from './pages/SubProjectLayout';
 import { LibraryPage } from './pages/LibraryPage';
+import { ReviewPage, ReviewsPage } from './pages/ReviewsPage';
+import type { ReviewList } from '../../shared/review';
 
 function ThemeSelect() {
   const { preference, setPreference } = useThemePreference();
@@ -59,9 +62,15 @@ function Shell() {
   const inProject = useMatch('/projects/:parentId/*')?.params.parentId;
   const sub = useMatch('/projects/:parentId/sub/:projectId/*')?.params;
   const projects = useResource<ProjectSummary[]>('/api/projects');
+  const reviews = useResource<ReviewList>('/api/reviews');
+  const toReview = reviews.data?.toMe.filter((r) => r.status === 'pending').length ?? 0;
   const { refresh } = projects;
+  const refreshReviews = reviews.refresh;
   // Pages create and delete projects, so the tree refreshes on each navigation.
-  useEffect(() => refresh(), [pathname, refresh]);
+  useEffect(() => {
+    refresh();
+    refreshReviews();
+  }, [pathname, refresh, refreshReviews]);
   // Check on open: once per browser session, the server checks the user's promoted views older than one day.
   useEffect(() => {
     if (sessionStorage.getItem(DRIFT_CHECKED)) return;
@@ -108,6 +117,16 @@ function Shell() {
                         iconPosition={side}
                         label="Metric views"
                         onClick={go('/metric-views')}
+                      />
+                    </NavList.Item>
+                    <NavList.Item>
+                      <NavList.Link
+                        href="/reviews"
+                        active={pathname.startsWith('/reviews')}
+                        icon={<CheckCircleFillIcon />}
+                        iconPosition={side}
+                        label={toReview ? `Reviews (${toReview})` : 'Reviews'}
+                        onClick={go('/reviews')}
                       />
                     </NavList.Item>
                   </NavList.List>
@@ -208,6 +227,22 @@ const router = createBrowserRouter([
         element: (
           <Page title="Metric views">
             <LibraryPage />
+          </Page>
+        ),
+      },
+      {
+        path: '/reviews',
+        element: (
+          <Page title="Reviews">
+            <ReviewsPage />
+          </Page>
+        ),
+      },
+      {
+        path: '/reviews/:reviewId',
+        element: (
+          <Page title="Review">
+            <ReviewPage />
           </Page>
         ),
       },

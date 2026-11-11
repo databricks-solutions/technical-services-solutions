@@ -15,6 +15,8 @@ import {
 } from '@databricks/design-system';
 import type { PromotionView } from '../../../shared/promote';
 import { api, useResource } from '../api';
+import type { ApprovalState } from '../../../shared/review';
+import { ApprovalPanel, approved } from './ApprovalPanel';
 import { DataState } from './DataState';
 import { ImpactPanel } from './ImpactPanel';
 import { OpenInCatalog } from './OpenInCatalog';
@@ -23,6 +25,7 @@ import { SqlBlock } from './SqlBlock';
 /** Set the Unity Catalog view of the sub-project, and promote the latest validated version to it, as the user. */
 export function PromotePanel({ projectId, onPromoted }: { projectId: string; onPromoted?: () => void }) {
   const data = useResource<PromotionView>(`/api/projects/${projectId}/promotion`);
+  const approval = useResource<ApprovalState>(`/api/projects/${projectId}/approval`);
   const [target, setTarget] = useState<string>();
   const [reviewing, setReviewing] = useState(false);
   const [overwrite, setOverwrite] = useState(false);
@@ -89,12 +92,20 @@ export function PromotePanel({ projectId, onPromoted }: { projectId: string; onP
             </Typography.Text>
           )}
           {v.problem && <Alert componentId="gsb.promote.problem" type="info" closable={false} message={v.problem} />}
+          {approval.data && (
+            <ApprovalPanel
+              projectId={projectId}
+              state={approval.data}
+              version={plan?.version}
+              onChange={approval.setData}
+            />
+          )}
           {plan && (
             <div>
               <Button
                 componentId="gsb.promote.review"
                 type="primary"
-                disabled={busy}
+                disabled={busy || !approval.data || !approved(approval.data, plan.version)}
                 onClick={() => {
                   setOverwrite(false);
                   setReviewing(true);
@@ -180,7 +191,7 @@ export function PromotePanel({ projectId, onPromoted }: { projectId: string; onP
                     </Checkbox>
                   </>
                 )}
-                {reviewing && <ImpactPanel projectId={projectId} />}
+                {reviewing && <ImpactPanel path={`/api/projects/${projectId}/promotion/impact`} />}
                 <SqlBlock label="SQL" sql={plan.statement} />
               </div>
             </Modal>

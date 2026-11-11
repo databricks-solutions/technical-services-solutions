@@ -23,8 +23,8 @@ const list = (label: string, names: string[]) =>
   );
 
 /** In the Promote modal: the field changes against the view in Unity Catalog, and its consumers from lineage. */
-export function ImpactPanel({ projectId }: { projectId: string }) {
-  const data = useResource<Impact>(`/api/projects/${projectId}/promotion/impact`);
+export function ImpactPanel({ path }: { path: string }) {
+  const data = useResource<Impact>(path);
   const base = useResource<{ workspaceUrl: string | null }>('/api/config').data?.workspaceUrl;
   const v = data.data;
   const c = v?.changes;

@@ -1,5 +1,9 @@
-import type { Consumer, ConsumerKind, FieldChanges } from '../../shared/promote';
+import type { Consumer, ConsumerKind, FieldChanges, Impact } from '../../shared/promote';
+import { validateMetricView } from '../../shared/metricView';
 import type { MetricView } from '../../shared/metricView';
+import { runStatement } from '../sql/runner';
+import type { RunDeps } from '../sql/runner';
+import type { UcDeps } from '../uc/metadata';
 import { literal } from './validate';
 
 export const IMPACT_DAYS = 90;
@@ -98,4 +102,42 @@ export function toConsumers(rows: (string | null)[][], fields: string[]): Consum
       uses: fields.filter((f) => cols.has(f.toLowerCase())),
     };
   });
+}
+
+export const notFound = (err: unknown) =>
+  /does not exist|not found|TABLE_OR_VIEW_NOT_FOUND|404/i.test((err as Error).message);
+
+/** The impact of a YAML on the view in Unity Catalog, read as the user: their UC and lineage rights apply. */
+export async function readImpact(
+  deps: { actor: string; projectId: string; run: RunDeps; uc: UcDeps },
+  target: string | null,
+  yaml: string | null
+): Promise<Impact> {
+  const base = { changes: null, consumers: null, days: IMPACT_DAYS };
+  if (!target || !yaml) return { ...base, error: 'Set the target and design the view first.' };
+  let ucYaml: string;
+  try {
+    ucYaml = (await deps.uc.table(target)).view_definition ?? '';
+  } catch (err) {
+    if (notFound(err)) return { ...base, consumers: [], error: null };
+    return { ...base, error: `Cannot read ${target}: ${(err as Error).message.slice(0, 300)}` };
+  }
+  const before = validateMetricView(ucYaml).view;
+  const after = validateMetricView(yaml).view;
+  const changes = before && after ? fieldChanges(before, after) : null;
+  const fields = watched(changes);
+  try {
+    const result = await runStatement(
+      impactQuery(target, fields),
+      { actor: deps.actor, projectId: deps.projectId, approved: false },
+      deps.run
+    );
+    return { ...base, changes, consumers: toConsumers(result.rows, fields), error: null };
+  } catch (err) {
+    return {
+      ...base,
+      changes,
+      error: `Cannot read lineage. You need SELECT on system.access.table_lineage and system.access.column_lineage. ${(err as Error).message.slice(0, 300)}`,
+    };
+  }
 }

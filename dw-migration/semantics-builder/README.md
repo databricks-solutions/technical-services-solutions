@@ -36,6 +36,7 @@ A Databricks App that helps data teams design, validate, optimize, publish and g
 | Publish                   | A left pane with four tasks: Promotion (promote a validated version, restore an older one), Governance (owner and read grants), Drift, and Pages.                                               | Available |
 | Pages for Discover        | Draft UC Semantics Pages from the certified dictionary, the brief glossary and the metric view. Pick the domain, edit the Pages, download one file, and copy the Genie Code bulk import prompt. | Available |
 | Metric views library      | All your metric views, their promoted and latest versions, and health. Import a metric view made outside the app.                                                                               | Available |
+| Reviews                   | Promote can need approval. The author names a reviewer by email; the reviewer sees that version read-only (impact, tests, YAML, SQL) and approves or rejects it.                                | Available |
 | Discover and consolidate  | Scan schemas for metric views and SQL views, group the same KPI across views, show formula conflicts, propose one definition, import it, or add it to a dictionary as certified.                | Available |
 | Drift and health          | Schema, definition, governance, usage and data (opt-in totals) drift. Runs on demand and once a day when you open the app.                                                                      | Available |
 
@@ -66,7 +67,10 @@ A typical path for one KPI area. Each page shows the next step.
    changes against the view in UC, and who read the view in the last 90 days (Genie spaces, dashboards, jobs,
    notebooks, queries, ad hoc SQL), with the changed fields each one read. It needs SELECT on
    `system.access.table_lineage` and `system.access.column_lineage`; without it, the dialog shows the field
-   changes only. In **Governance**, set the owner and read grants. In **Drift**, **Check drift** compares UC with
+   changes only. To need approval first, check **Promote needs approval by another person**, then **Ask for
+   approval** with the reviewer's email, and send them the review link (the app sends no email). The reviewer
+   opens **Reviews**, checks the version read-only, and approves or rejects it with a comment. Promote runs only
+   for the approved version. In **Governance**, set the owner and read grants. In **Drift**, **Check drift** compares UC with
    the promoted version. In **Pages**, download the Pages, then click **Open Discover** and **Copy the prompt**
    for Genie Code bulk import. **Overview** shows the status of each step in the About box.
 8. **Metric views (left nav).** See every view and its health. **Import a metric view** made outside the app,
@@ -101,6 +105,9 @@ Apply primary keys before the foreign keys that reference them.
   as the user, and is written to an append-only audit log before and after execution.
 - **No content in telemetry.** Logs and MLflow traces hold prompt id and version, latency, tokens and
   outcome. Prompts, responses and catalog details stay inside the app.
+- **Reviews are narrow and audited.** A reviewer sees only the version they were asked about, read-only, and
+  cannot open the sub-project. The author cannot approve their own version. Impact on the review page runs with
+  the reviewer's own Unity Catalog rights. Every request, cancel and decision goes to the audit log.
 - **Validation stays in a sandbox.** Draft metric views are created only in the schema set by the
   `sandbox_schema` bundle variable, never in a name from the request. Tests are reads. Only pass or fail,
   row counts, the difference in percent for expected values, and the SQL are stored, never result values.
@@ -194,6 +201,13 @@ Production fails closed without the user headers from the Apps proxy, so local r
 pnpm run typecheck
 pnpm run lint
 pnpm test                 # unit tests (Vitest)
+```
+
+The `*.pg.test.ts` tests run only with a throwaway Postgres database. They drop and recreate the `gsb` schema, so
+run them one file at a time:
+
+```bash
+TEST_DATABASE_URL='postgres://localhost/<throwaway_db>?sslmode=disable' pnpm exec vitest run --no-file-parallelism
 ```
 
 End-to-end tests (Playwright) run against a deployed app in a signed-in Chrome:

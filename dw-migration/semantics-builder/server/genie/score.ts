@@ -119,5 +119,6 @@ export function scoreAgent(a: AgentInput): AgentScore {
     },
   ];
   const points = checks.reduce((n, c) => n + (c.status === 'pass' ? 1 : c.status === 'warn' ? 0.5 : 0), 0);
-  return { score: Math.round((100 * points) / checks.length), checks };
+  const score = Math.round((100 * points) / checks.length);
+  return { score, ready: score >= 80 && benchmarks > 0, checks };
 }

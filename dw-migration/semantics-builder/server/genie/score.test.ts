@@ -44,8 +44,21 @@ describe('scoreAgent', () => {
       space_current: 'fail',
     });
     expect(s.score).toBe(61);
+    expect(s.ready).toBe(false);
     expect(s.checks.find((c) => c.id === 'benchmarks')?.fix?.path).toBe('designer?tab=tests');
     expect(s.checks.find((c) => c.id === 'space_current')?.detail).toMatch(/Update the view and the space/);
+  });
+
+  it('is not ready with no benchmark, even with a high score', () => {
+    const s = scoreAgent({
+      view: { ...view, dimensions: view.dimensions.map((d) => ({ ...d, comment: 'x', synonyms: ['y'] })) },
+      brief,
+      tests: ['a', 'b', 'c'].map((name) => ({ name, measures: ['Revenue'], dimensions: ['Region'] })),
+      matched: [],
+      space: { current: true },
+    });
+    expect(s.score).toBeGreaterThanOrEqual(80);
+    expect(s.ready).toBe(false);
   });
 
   it('fails a design with no brief and no space', () => {

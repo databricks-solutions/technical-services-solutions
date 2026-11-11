@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { SemanticBrief } from '../../shared/brief';
 import type { TestCase } from '../../shared/designer';
+import type { TuningChange } from '../../shared/genie';
 import { quoteId, quoteName } from '../readiness/profile';
 import { expectQuery } from '../designer/validate';
 
@@ -14,7 +15,7 @@ const byId = <T extends { id: string }>(items: T[]) => items.sort((a, b) => a.id
 const unique = (items: string[]) => [...new Set(items.map((s) => s.trim()).filter(Boolean))];
 
 /** A plain test as the SQL a user would write: the dimensions and the measures, grouped. */
-const exampleQuery = (view: string, t: TestCase) =>
+const exampleQuery = (view: string, t: Pick<TestCase, 'measures' | 'dimensions'>) =>
   `SELECT ${[...t.dimensions.map(quoteId), ...t.measures.map((m) => `MEASURE(${quoteId(m)}) AS ${quoteId(m)}`)].join(', ')} FROM ${quoteName(view)}${t.dimensions.length ? ' GROUP BY ALL' : ''}`;
 
 /**
@@ -27,7 +28,9 @@ export function spaceConfig(
   view: string,
   brief: SemanticBrief | null,
   tests: TestCase[],
-  textDimensions: string[] = []
+  textDimensions: string[] = [],
+  /** Changes a person approved and the benchmarks kept (i3). */
+  kept: TuningChange[] = []
 ) {
   const lines = [
     `Answer with the metric view ${view}. Use MEASURE() for each measure and GROUP BY ALL.`,
@@ -39,11 +42,32 @@ export function spaceConfig(
           ...brief.assumptions.map((a) => `Rule: ${a}`),
         ]
       : []),
+    ...kept.flatMap((k) => (k.kind === 'instruction' ? [k.text] : [])),
   ];
   const samples = unique(brief?.keyQuestions ?? []).slice(0, MAX_SAMPLES);
   // A benchmark is not also an example, so Genie cannot copy its answer.
   const benchmarks = tests.filter((t) => t.expect);
-  const examples = tests.filter((t) => !t.expect);
+  const examples = [
+    ...tests.filter((t) => !t.expect),
+    ...kept.flatMap((k) =>
+      k.kind === 'example' ? [{ name: k.question, measures: k.measures, dimensions: k.dimensions }] : []
+    ),
+  ];
+  // Text dimensions get entity matching. Kept synonyms and descriptions go on the same column entry.
+  const columns = new Map<string, Record<string, unknown>>();
+  const column = (name: string) => columns.get(name) ?? columns.set(name, { column_name: name }).get(name)!;
+  for (const name of unique(textDimensions).slice(0, MAX_MATCHED))
+    Object.assign(column(name), { enable_entity_matching: true, enable_format_assistance: true });
+  for (const k of kept) {
+    if (k.kind === 'synonym') {
+      const c = column(k.field);
+      c.synonyms = unique([...((c.synonyms as string[]) ?? []), ...k.synonyms]);
+    }
+    if (k.kind === 'description') column(k.field).description = [k.text];
+  }
+  const columnConfigs = [...columns.values()].sort((a, b) =>
+    (a.column_name as string) < (b.column_name as string) ? -1 : 1
+  );
   return {
     version: 2,
     ...(samples.length
@@ -53,18 +77,7 @@ export function spaceConfig(
       tables: [
         {
           identifier: view,
-          ...(textDimensions.length
-            ? {
-                column_configs: unique(textDimensions)
-                  .slice(0, MAX_MATCHED)
-                  .sort()
-                  .map((column_name) => ({
-                    column_name,
-                    enable_entity_matching: true,
-                    enable_format_assistance: true,
-                  })),
-              }
-            : {}),
+          ...(columnConfigs.length ? { column_configs: columnConfigs } : {}),
         },
       ],
     },

@@ -71,6 +71,13 @@ dimensions.
 
 ### i3. Optimize the Genie agent
 
+Status: done 2026-11-11. Live on Net revenue: 5 benchmarks (versions 5 to 7 added them), accuracy 100% (5 of 5), so
+there was no wrong answer to optimize. Genie also answered "construction customers" (BUILDING) and "critical orders"
+(1-URGENT). The full path (run, suggest, try, revert, keep, and the blocks) is tested with a fake Genie and a fake AI
+in `server/api/genie.pg.test.ts`. The AI prompt has not run live yet: it needs a wrong answer. Notes: kept changes
+are in `gsb.genie_tuning`, merged into the space settings (instructions, examples, and synonyms and descriptions in
+`column_configs`); the score shows "Ready" only with at least one benchmark.
+
 1. Run the benchmarks (eval run) and show the accuracy and the result of each question.
 2. For a BAD question, the AI suggests one change: an instruction line, an example SQL, a synonym, or a field
    description. It never sees result values.
@@ -88,5 +95,13 @@ CAN RUN to the audience. Promote updates it.
 The Overview shows the path and the status of each gate: certified tables, a validated and approved view,
 a promoted view, and Genie accuracy at or above the target (default 85%). The sub-project gets a "Golden" tag
 when all gates pass.
+
+### i6. Write Pages to Discover (proposed 2026-11-11)
+
+The Knowledge Pages API (Beta, `/api/2.0/knowledge/pages`) can create, read, update and delete Pages. Create makes a
+DRAFT by default; it takes `domain` (`domains/{id}`), `display_name`, `body`, `synonyms`, `description`, and an
+optional `request_id` for safe retries. Update takes an `update_mask`. All calls need the `knowledge` OAuth scope.
+Checked live: the list call works in this workspace. The app could then create the drafted Pages as the user,
+instead of the Genie Code bulk import. Adding the scope makes each user sign in again.
 
 Each item gets its own commit, unit tests, a deploy, a live test, and a README and wiki update.

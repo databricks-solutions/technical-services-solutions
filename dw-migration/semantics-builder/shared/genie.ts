@@ -37,6 +37,8 @@ export interface AgentCheck {
 
 export interface AgentScore {
   score: number;
+  /** 80 or more, and at least one benchmark: with no benchmark, the accuracy is not known. */
+  ready: boolean;
   checks: AgentCheck[];
 }
 
@@ -142,4 +144,65 @@ export function testFromAnswer(question: string, a: ChatAnswer): TestCase | null
   if (measures.length === 1 && parts && !parts.group.length && parts.filters.length <= 5 && Number.isFinite(value))
     return { name, measures, dimensions: [], expect: { value, tolerancePct: 0.5, filters: parts.filters } };
   return { name, measures, dimensions: a.fields.dimensions.slice(0, 3) };
+}
+
+/** One change to the space settings that the AI suggests for a wrong benchmark answer. The AI never writes SQL. */
+export type TuningChange =
+  | { kind: 'instruction'; text: string }
+  | { kind: 'example'; question: string; measures: string[]; dimensions: string[] }
+  | { kind: 'synonym'; field: string; synonyms: string[] }
+  | { kind: 'description'; field: string; text: string };
+
+/** One line for the user: what the change does. */
+export function describeChange(c: TuningChange): string {
+  switch (c.kind) {
+    case 'instruction':
+      return `Add the instruction: ${c.text}`;
+    case 'description':
+      return `Describe ${c.field} as: ${c.text}`;
+    case 'synonym':
+      return `Add synonyms to ${c.field}: ${c.synonyms.join(', ')}`;
+    case 'example':
+      return `Add the example "${c.question}": ${[...c.measures, ...c.dimensions].join(', ')}`;
+  }
+}
+
+export interface Tuning {
+  id: string;
+  /** The benchmark question that Genie answered wrong. */
+  question: string;
+  change: TuningChange;
+  rationale: string;
+  /** trying: the benchmarks run on the changed space. kept: the accuracy went up. reverted: it did not. */
+  status: 'proposed' | 'trying' | 'kept' | 'reverted' | 'dismissed' | 'failed';
+  beforeCorrect: number | null;
+  afterCorrect: number | null;
+  numQuestions: number | null;
+  error: string | null;
+  createdBy: string;
+  createdAt: string;
+}
+
+/** One benchmark run. It keeps the counts and the assessment of each question only, never values. */
+export interface EvalRun {
+  id: string;
+  status: 'running' | 'done' | 'failed';
+  numQuestions: number;
+  numCorrect: number;
+  numNeedsReview: number;
+  results: { question: string; assessment: string }[];
+  tuningId: string | null;
+  /** The run used the space settings of the current design and kept changes. */
+  current: boolean;
+  error: string | null;
+  createdAt: string;
+}
+
+export interface TuningView {
+  runs: EvalRun[];
+  tunings: Tuning[];
+  /** Benchmarks in the space settings. */
+  benchmarks: number;
+  /** The space has the settings of the current design and kept changes. */
+  spaceCurrent: boolean;
 }

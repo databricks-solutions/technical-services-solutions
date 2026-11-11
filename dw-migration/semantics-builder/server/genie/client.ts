@@ -48,7 +48,47 @@ export interface GenieDeps {
   chat(spaceId: string, question: string, conversationId?: string): Promise<GenieChatAnswer>;
   /** Genie One (OneChat): not bound to a space, so it can read other data and workspace knowledge. */
   askOne(question: string): Promise<OneChatAnswer>;
+  /** Runs all benchmarks of the space (Beta API). Returns the eval run id. */
+  startEval(spaceId: string): Promise<string>;
+  evalRun(spaceId: string, runId: string): Promise<EvalRunStatus>;
+  /** The assessment of each question, and the SQL of both answers. Never the result values. */
+  evalResults(spaceId: string, runId: string): Promise<EvalResult[]>;
 }
+
+export interface EvalRunStatus {
+  status: string;
+  numQuestions: number;
+  numCorrect: number;
+  numNeedsReview: number;
+}
+
+export interface EvalResult {
+  resultId: string;
+  question: string;
+  assessment: string;
+  expectedSql: string | null;
+  actualSql: string | null;
+}
+
+/** A REST call signed as the user. The SDK drops the body of a PATCH, and has no eval-run calls yet. */
+async function rest<T>(method: string, path: string, what: string, body?: unknown): Promise<T> {
+  const { config } = client();
+  const headers = new Headers({ 'Content-Type': 'application/json' });
+  await config.authenticate(headers);
+  const res = await fetch(new URL(path, await config.getHost()), {
+    method,
+    headers,
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  if (!res.ok) {
+    const detail = ((await res.json().catch(() => ({}))) as { message?: string }).message ?? res.statusText;
+    throw new Error(`Genie did not ${what}: ${detail.slice(0, 300)}`);
+  }
+  return (await res.json().catch(() => ({}))) as T;
+}
+
+const evalPath = (spaceId: string, runId?: string) =>
+  `/api/2.0/genie/spaces/${encodeURIComponent(spaceId)}/eval-runs${runId ? `/${encodeURIComponent(runId)}` : ''}`;
 
 function client() {
   if (!isInUserContext()) throw new Error('Genie calls must run as the calling user (OBO), never as the app');
@@ -77,21 +117,9 @@ export function genieDeps(runAsUser: RunAsUser): GenieDeps {
       }),
     updateSpace: (spaceId, serializedSpace) =>
       runAsUser(async () => {
-        // The SDK request drops the body of a PATCH (it sends one for POST and PUT only). The SDK config still
-        // signs the request as the user.
-        const { config } = client();
-        const headers = new Headers({ 'Content-Type': 'application/json' });
-        await config.authenticate(headers);
-        const url = new URL(`/api/2.0/genie/spaces/${encodeURIComponent(spaceId)}`, await config.getHost());
-        const res = await fetch(url, {
-          method: 'PATCH',
-          headers,
-          body: JSON.stringify({ serialized_space: serializedSpace }),
+        await rest('PATCH', `/api/2.0/genie/spaces/${encodeURIComponent(spaceId)}`, 'update the space', {
+          serialized_space: serializedSpace,
         });
-        if (!res.ok) {
-          const detail = ((await res.json().catch(() => ({}))) as { message?: string }).message ?? res.statusText;
-          throw new Error(`Genie did not update the space: ${detail.slice(0, 300)}`);
-        }
       }),
     trashSpace: (spaceId) =>
       runAsUser(async () => {
@@ -165,6 +193,54 @@ export function genieDeps(runAsUser: RunAsUser): GenieDeps {
           if (size > MAX_STREAM_BYTES) break;
         }
         return parseOneChat(Buffer.concat(chunks).toString('utf8'));
+      }),
+    startEval: (spaceId) =>
+      runAsUser(async () => {
+        const r = await rest<{ eval_run_id?: string }>('POST', evalPath(spaceId), 'start the benchmarks', {});
+        if (!r.eval_run_id) throw new Error('Genie did not start the benchmarks.');
+        return r.eval_run_id;
+      }),
+    evalRun: (spaceId, runId) =>
+      runAsUser(async () => {
+        const r = await rest<{
+          eval_run_status?: string;
+          num_questions?: number;
+          num_correct?: number;
+          num_needs_review?: number;
+        }>('GET', evalPath(spaceId, runId), 'read the benchmark run');
+        return {
+          status: r.eval_run_status ?? 'UNKNOWN',
+          numQuestions: r.num_questions ?? 0,
+          numCorrect: r.num_correct ?? 0,
+          numNeedsReview: r.num_needs_review ?? 0,
+        };
+      }),
+    evalResults: (spaceId, runId) =>
+      runAsUser(async () => {
+        const list = await rest<{ eval_results?: { result_id: string; question?: string }[] }>(
+          'GET',
+          `${evalPath(spaceId, runId)}/results`,
+          'list the benchmark results'
+        );
+        const sqlOf = (r?: { response?: string; response_type?: string }[]) =>
+          r?.find((x) => x.response_type === 'SQL' || x.response)?.response ?? null;
+        return Promise.all(
+          (list.eval_results ?? []).map(async (e) => {
+            // Only the assessment and the SQL are read. sql_execution_result (the values) is dropped here.
+            const d = await rest<{
+              assessment?: string;
+              expected_response?: { response?: string; response_type?: string }[];
+              actual_response?: { response?: string; response_type?: string }[];
+            }>('GET', `${evalPath(spaceId, runId)}/results/${encodeURIComponent(e.result_id)}`, 'read a result');
+            return {
+              resultId: e.result_id,
+              question: e.question ?? '',
+              assessment: d.assessment ?? 'NEEDS_REVIEW',
+              expectedSql: sqlOf(d.expected_response),
+              actualSql: sqlOf(d.actual_response),
+            };
+          })
+        );
       }),
   };
 }

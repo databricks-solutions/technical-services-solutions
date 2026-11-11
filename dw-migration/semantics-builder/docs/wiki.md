@@ -509,7 +509,8 @@ view and the space** one more time to add it.
 ### 14.0.1 The Genie agent score
 
 The **Test with Genie** tab starts with the Genie agent score, from 0 to 100. The score uses rules only. A pass
-counts one point, a warning half a point. 80 or more is ready.
+counts one point, a warning half a point. 80 or more is ready, but only with at least one benchmark: with no
+benchmark, the accuracy of Genie is not known.
 
 | Check | Pass | Fix |
 | --- | --- | --- |
@@ -524,6 +525,29 @@ counts one point, a warning half a point. 80 or more is ready.
 | The space has the settings of this design | The last update of the space used the settings of the latest validated version. | **Update the view and the space** |
 
 The app knows only the settings that it sent. It does not see changes that someone makes in Genie.
+
+### 14.0.2 Optimize with benchmarks
+
+A benchmark is a test with an expected value (see [12.2](#122-make-an-expected-value-test)). Genie answers each
+benchmark, and Genie grades each answer: correct, wrong, or needs review. The accuracy is the share of correct
+answers. The target is 85%.
+
+1. Click **Run the benchmarks**. The space must have the settings of the design. A run takes about 10 seconds for
+   each benchmark. The page reads the run every 10 seconds.
+2. For a wrong answer, click **Suggest a change**. The AI gets the question, the expected SQL, the SQL of Genie,
+   the fields and the instructions. It never gets result values. It suggests one change:
+   - an instruction line;
+   - synonyms of a field;
+   - a description of a field;
+   - an example question with its fields. The server writes the SQL. The AI never writes SQL.
+3. Click **Examine and try**. Examine the change and the new space settings, then click **Update the space and run
+   the benchmarks**.
+4. When the run ends, the app keeps the change only if more answers are correct than before. Else it puts back
+   the settings from before. **Changes** shows each change, its status and the correct answers before and after.
+
+Kept changes stay in the space settings, also after **Update the view and the space**. They are not part of the
+metric view YAML. While a change is on trial, **Update the view and the space** is not available. The app keeps
+the counts and the grade of each question, never the result values.
 
 ### 14.1 The Genie panel
 
@@ -777,6 +801,7 @@ The app keeps its data in Lakebase, in the schema `gsb`. The main tables are:
 | `genie_space`, `genie_check` | The Genie spaces that the app made, and the verdicts |
 | `promotion` | Each Promote: version, target, YAML, status |
 | `drift_check` | The drift findings |
+| `genie_eval`, `genie_tuning` | Benchmark runs (counts and the grade of each question), and the changes to the space settings with their status |
 | `review` | Each approval request and its decision. A data review keeps a copy of the checks and descriptions |
 | `page_edit` | Your changes to the generated Pages |
 | `audit_log` | Each change: who, what, when, and the result |

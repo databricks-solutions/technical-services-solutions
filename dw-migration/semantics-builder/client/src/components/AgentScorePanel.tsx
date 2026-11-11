@@ -45,13 +45,13 @@ export function AgentScorePanel({ projectId, refreshKey }: { projectId: string; 
         <Typography.Title level={3} withoutMargins>
           {s.score}
         </Typography.Title>
-        <Tag componentId="gsb.agent.score" color={s.score >= 80 ? 'teal' : s.score >= 50 ? 'lemon' : 'coral'}>
-          {s.score >= 80 ? 'Ready' : 'Not ready'}
+        <Tag componentId="gsb.agent.score" color={s.ready ? 'teal' : s.score >= 50 ? 'lemon' : 'coral'}>
+          {s.ready ? 'Ready' : 'Not ready'}
         </Tag>
       </div>
       <Typography.Text color="secondary">
-        Rule-based, from the design, the brief, the tests and the space settings. 80 or more is ready. A pass counts one
-        point, a warning half a point.
+        Rule-based, from the design, the brief, the tests and the space settings. 80 or more, with at least one
+        benchmark, is ready. A pass counts one point, a warning half a point.
       </Typography.Text>
       <Table aria-label="Genie agent checks">
         <TableRow isHeader>

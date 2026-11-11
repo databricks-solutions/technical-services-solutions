@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Alert, Button, Input, Modal, PlusIcon, Tag, TrashIcon, Typography } from '@databricks/design-system';
 import type { GenieCheck, GenieEngine, GenieExpected, GenieVerdict, GenieView } from '../../../shared/genie';
 import { api, useResource } from '../api';
 import { AgentScorePanel } from './AgentScorePanel';
+import { TuningPanel } from './TuningPanel';
 import { DataState } from './DataState';
 import { SqlBlock } from './SqlBlock';
 import { FieldPick } from './TestEditor';
@@ -89,6 +90,8 @@ export function GeniePanel({
   const [questions, setQuestions] = useState<Question[]>();
   const [reviewing, setReviewing] = useState(false);
   const [updates, setUpdates] = useState(0);
+  // A trial run that ends changes the space settings and the score.
+  const settled = useCallback(() => setUpdates((n) => n + 1), []);
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState<string>();
   const v = data.data;
@@ -137,6 +140,7 @@ export function GeniePanel({
       {v && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <AgentScorePanel projectId={projectId} refreshKey={`${v.version}:${updates}`} />
+          {v.space && <TuningPanel key={`${v.version}:${updates}`} projectId={projectId} onSettled={settled} />}
           <Typography.Text color="secondary">
             Genie answers the business questions on the sandbox view of the validated version, as you. For each
             question, pick the measures and dimensions a correct answer uses; the app checks Genie&apos;s SQL against

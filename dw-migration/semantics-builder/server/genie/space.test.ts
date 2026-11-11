@@ -80,4 +80,25 @@ describe('spaceConfig', () => {
       { column_name: 'Region', enable_entity_matching: true, enable_format_assistance: true },
     ]);
   });
+
+  it('adds kept changes: instructions, examples, and synonyms and descriptions on the column entry', () => {
+    const k = spaceConfig(
+      'c.s.v',
+      brief,
+      tests,
+      ['Region'],
+      [
+        { kind: 'instruction', text: 'Asia means the region ASIA.' },
+        { kind: 'example', question: 'Revenue by nation?', measures: ['Net Revenue'], dimensions: ['Nation'] },
+        { kind: 'synonym', field: 'Region', synonyms: ['area'] },
+        { kind: 'description', field: 'Net Revenue', text: 'After discounts.' },
+      ]
+    );
+    expect(k.instructions.text_instructions[0].content[0]).toMatch(/\nAsia means the region ASIA\.$/);
+    expect(k.instructions.example_question_sqls?.map((e) => e.question[0])).toContain('Revenue by nation?');
+    expect(k.data_sources.tables[0].column_configs).toEqual([
+      { column_name: 'Net Revenue', description: ['After discounts.'] },
+      { column_name: 'Region', enable_entity_matching: true, enable_format_assistance: true, synonyms: ['area'] },
+    ]);
+  });
 });

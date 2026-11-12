@@ -116,7 +116,7 @@ export function registerImportRoutes(
       // .bim and .pbit are Tabular (Power BI, SSAS); .twb, .tds, .twbx and .tdsx are Tableau. LookML files end in
       // .lkml; several uploaded files arrive joined. A JSON file with MicroStrategy objects (information.subType) is
       // MicroStrategy. Else the file is dbt YAML or JSON.
-      const tabular = /\.(bim|pbit)$/i.test(body.fileName);
+      const tabular = /\.(bim|pbit|tmdl)$/i.test(body.fileName);
       const tableau = /\.(twbx?|tdsx?)$/i.test(body.fileName);
       const ssas = isSsas(body.fileName, body.content);
       const cognos = !ssas && /\.xml$/i.test(body.fileName) && body.content.includes('<querySubject');

@@ -150,7 +150,13 @@ reads them as one) or an .xmla script, reusing the XML reader, with an MDX trans
 prompt. Cognos also got the join-name check. Live: the four files on the TPC-H copies, through the modal, made
 "SSAS import check": 9 fields by rules (a regular and a fact dimension, Count of rows, DistinctCount, Divide, IIF,
 calculated members in use order), LastNonEmpty, a computed column, a snowflake attribute and a PrevMember tuple left
-for a person (the AI said the tuple has no SQL form); the draft validated and its 3 tests passed. Not yet: TMDL.
+for a person (the AI said the tuple has no SQL form); the draft validated and its 3 tests passed.
+
+TMDL done 2026-11-12: the .tmdl files of a Power BI project (chosen together, read as one) parse to the same TMSL
+shape as a .bim (tmdl.ts: tables, measures with multi-line DAX, columns, partitions with fenced or indented M, and
+relationships), so all Tabular rules apply. Live: three .tmdl files on the TPC-H copies, with no catalog.schema
+(the Databricks connector in M gives the tables), made "Power BI TMDL import check": 5 fields by rules (CALCULATE
+over several lines), TOTALYTD and a calculated column left for a person; the draft validated and its 3 tests passed.
 
 One pipeline for all formats: a parser per format, then one intermediate model (tables, joins, dimensions,
 measures, filters), then a draft metric view in a new sub-project.

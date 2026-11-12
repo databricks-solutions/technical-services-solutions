@@ -4,6 +4,7 @@ import type { MetricView } from '../../shared/metricView';
 import { finish, human, IDENT, namer, noteOf } from './common';
 import type { AiResult } from './common';
 import { translateDax } from './dax';
+import { parseTmdl } from './tmdl';
 import { readZipEntry } from './zip';
 
 /**
@@ -53,8 +54,14 @@ const slug = (s: string) =>
 const MAX_ITEMS = 2000;
 const list = <T>(v: T[] | undefined) => (Array.isArray(v) ? v.slice(0, MAX_ITEMS) : []);
 
-/** The TMSL model of a .bim file (JSON) or of a .pbit template (DataModelSchema, UTF-16, in a zip). */
+/** The TMSL model of a .bim file (JSON), a .pbit template (DataModelSchema, UTF-16, in a zip) or TMDL files. */
 export function readTabular(fileName: string, content: string, base64: boolean) {
+  if (/\.tmdl$/i.test(fileName)) {
+    const m = parseTmdl(content.replace(/\uFEFF/g, ''));
+    const tables = list(m.tables as TmslTable[]);
+    if (!tables.length) throw new Error('The files have no table. Choose the .tmdl files of the tables folder too.');
+    return { tables, relationships: list(m.relationships).filter((r) => r.isActive !== false) };
+  }
   let json: string;
   if (/\.pbit$/i.test(fileName)) {
     if (!base64) throw new Error('A .pbit file must be sent as binary.');

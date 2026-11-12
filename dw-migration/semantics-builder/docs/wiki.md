@@ -206,7 +206,9 @@ default catalog.schema: a table name `schema.table` gets the catalog, and `table
 Hidden dimensions and primary keys are not added as dimensions, but other fields can still use them. A join that is
 not many-to-one gets a warning: measures across it can count rows more than once.
 
-**Power BI and SSAS Tabular.** Choose a Power BI template (`.pbit`, up to 600 KB) or an SSAS Tabular model (`.bim`).
+**Power BI and SSAS Tabular.** Choose a Power BI template (`.pbit`, up to 600 KB), the `.tmdl` files of a Power BI
+project (all the files of the `definition` folder and its `tables` folder, chosen together), or an SSAS Tabular model
+(`.bim`).
 Both hold the same TMSL model.
 
 | Tabular | Metric view |

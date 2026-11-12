@@ -5,6 +5,7 @@ import { IMPORTED_SUMMARY, UC_TABLE_NAME } from '../../shared/brief';
 import { legacyBody } from '../../shared/legacy';
 import { importDesign } from '../designer/import';
 import { convertDbt } from '../legacy/dbt';
+import { convertLookml } from '../legacy/lookml';
 import type { UcDeps } from '../uc/metadata';
 import { actorOf, handle, HttpError } from './http';
 import { designerRepo } from './designer';
@@ -96,9 +97,12 @@ export function registerImportRoutes(app: Application, db: Db, ucFor: (req: Requ
       const body = legacyBody.parse(req.body);
       const parent = await projects.get(actor, z.object({ id: z.uuid() }).parse(req.params).id);
       if (parent.parentId) throw new HttpError(400, 'Import into a project, not a sub-project.');
+      // LookML files end in .lkml; several uploaded files arrive joined. Else the file is dbt YAML or JSON.
+      const lookml = /\.lkml$/i.test(body.fileName) || /^\s*(view|explore|include|connection)\s*:/m.test(body.content);
+      const tool = lookml ? 'LookML' : 'dbt MetricFlow';
       let result: ReturnType<typeof convertDbt>;
       try {
-        result = convertDbt(body.fileName, body.content, body.schema);
+        result = (lookml ? convertLookml : convertDbt)(body.fileName, body.content, body.schema);
       } catch (err) {
         throw new HttpError(400, (err as Error).message);
       }
@@ -112,10 +116,10 @@ export function registerImportRoutes(app: Application, db: Db, ucFor: (req: Requ
       const brief = {
         ...imported.brief,
         title: body.subProject,
-        assumptions: [`Imported from dbt MetricFlow (${body.fileName}).`],
+        assumptions: [`Imported from ${tool} (${body.fileName}).`],
         openQuestions: manual
           .slice(0, 50)
-          .map((f) => `Not converted from dbt: ${f.name}. ${f.note} Source: ${f.source}`.slice(0, 1000)),
+          .map((f) => `Not converted from ${tool}: ${f.name}. ${f.note} Source: ${f.source}`.slice(0, 1000)),
       };
       const sub = await projects.create(actor, { name: body.subProject }, parent.id);
       await db.query(

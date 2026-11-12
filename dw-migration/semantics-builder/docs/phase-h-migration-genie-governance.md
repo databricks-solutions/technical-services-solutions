@@ -112,7 +112,12 @@ publishes it in Databricks. Show the dashboard JSON before it runs.
 Status 2026-11-12: 1 of 7 formats done, dbt MetricFlow (rules only, no AI). Live: a dbt YAML on the TPC-H copies
 made the sub-project "dbt import check" in Order fulfilment, with a join, 4 dimensions and 4 metrics converted (one
 with a Jinja filter, one ratio) and a cumulative metric left for a person; the draft validated and its 3 tests
-passed. The dbt status of each field is in its note (the explanations). Next: LookML.
+passed. The dbt status of each field is in its note (the explanations).
+
+LookML done 2026-11-12 (2 of 7), with its own small parser (no new dependency). Live: a view file and a model file
+on the TPC-H copies made the sub-project "LookML import check": a join, a dimension group, a filtered measure and
+a number measure, 11 fields converted; the draft validated and its 3 tests passed. After that test, primary keys
+are no longer added as dimensions. Next: Power BI and SSAS Tabular (TMSL/TMDL).
 
 One pipeline for all formats: a parser per format, then one intermediate model (tables, joins, dimensions,
 measures, filters), then a draft metric view in a new sub-project.

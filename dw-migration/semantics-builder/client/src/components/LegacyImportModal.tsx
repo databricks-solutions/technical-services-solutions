@@ -40,7 +40,7 @@ export function LegacyImportModal({ projectId, onClose }: { projectId: string; o
     fileName: file?.name,
     content: file?.content,
     ...(schema.trim() ? { schema: schema.trim() } : {}),
-    subProject: subProject.trim() || 'Imported from dbt',
+    subProject: subProject.trim() || 'Imported model',
     create,
   });
 
@@ -79,29 +79,40 @@ export function LegacyImportModal({ projectId, onClose }: { projectId: string; o
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <Typography.Text color="secondary">
-          dbt MetricFlow: a YAML file with semantic_models and metrics, or the semantic_manifest.json of dbt parse. The
-          app converts it by rules into a draft metric view in a new sub-project. Each field keeps its dbt definition
-          and a status. The file is only read; the app does not run it.
+          dbt MetricFlow: a YAML file with semantic_models and metrics, or the semantic_manifest.json of dbt parse.
+          LookML: the .view.lkml files and the model file with the explore. The app converts the model by rules into a
+          draft metric view in a new sub-project. Each field keeps its source definition and a status. The files are
+          only read; the app does not run them.
         </Typography.Text>
         <div>
-          <FormUI.Label htmlFor="legacy-file">File (.yml, .yaml or .json)</FormUI.Label>
+          <FormUI.Label htmlFor="legacy-file">
+            Files (dbt: .yml, .yaml or .json; LookML: one or more .lkml)
+          </FormUI.Label>
           <input
             id="legacy-file"
             type="file"
-            accept=".yml,.yaml,.json"
+            accept=".yml,.yaml,.json,.lkml"
+            multiple
             onChange={(e) => {
-              const f = e.target.files?.[0];
+              const files = [...(e.target.files ?? [])];
               setPreview(undefined);
               setError(undefined);
-              if (!f) return setFile(undefined);
-              if (f.size > MAX_LEGACY_BYTES) return setError('The file is larger than 800 KB.');
-              void f.text().then((content) => setFile({ name: f.name, content }));
+              if (!files.length) return setFile(undefined);
+              if (files.reduce((n, f) => n + f.size, 0) > MAX_LEGACY_BYTES)
+                return setError('The files are larger than 800 KB together.');
+              // LookML views and the model with the explore are often in separate files: they are read as one.
+              void Promise.all(files.map((f) => f.text())).then((texts) =>
+                setFile({
+                  name: files.length === 1 ? files[0].name : `${files.length} files.lkml`,
+                  content: texts.join('\n'),
+                })
+              );
             }}
           />
         </div>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           <div style={{ minWidth: 260 }}>
-            <FormUI.Label htmlFor="legacy-schema">Catalog.schema of the dbt models (for ref())</FormUI.Label>
+            <FormUI.Label htmlFor="legacy-schema">Default catalog.schema of the tables</FormUI.Label>
             <Input
               componentId="gsb.legacy.schema"
               id="legacy-schema"
@@ -118,7 +129,7 @@ export function LegacyImportModal({ projectId, onClose }: { projectId: string; o
             <Input
               componentId="gsb.legacy.sub"
               id="legacy-sub"
-              placeholder="Imported from dbt"
+              placeholder="Imported model"
               maxLength={200}
               value={subProject}
               onChange={(e) => setSubProject(e.target.value)}
@@ -142,7 +153,7 @@ export function LegacyImportModal({ projectId, onClose }: { projectId: string; o
               <TableRow isHeader>
                 <TableHeader componentId="gsb.legacy.h_name">Field</TableHeader>
                 <TableHeader componentId="gsb.legacy.h_status">Status</TableHeader>
-                <TableHeader componentId="gsb.legacy.h_source">dbt definition</TableHeader>
+                <TableHeader componentId="gsb.legacy.h_source">Source definition</TableHeader>
                 <TableHeader componentId="gsb.legacy.h_note">Note</TableHeader>
               </TableRow>
               {preview.fields.map((f) => (

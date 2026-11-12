@@ -190,6 +190,22 @@ validate the draft: its tests compare it with plain SQL.
 
 The file is only read. The app does not run it, and it does not read the tables until you validate.
 
+**LookML.** Choose the `.view.lkml` files and the model file with the explore; the app reads them as one. Type the
+default catalog.schema: a table name `schema.table` gets the catalog, and `table` gets both.
+
+| LookML | Metric view |
+| --- | --- |
+| The view of the first explore (or `from:`) | The source table (`sql_table_name`) |
+| A join of the explore with `sql_on` | A join; `${orders.customer_id}` becomes `source.o_custkey` |
+| A dimension | A dimension; `${TABLE}` and `${field}` references are replaced |
+| A dimension group of type time | One dimension for each of the date, week, month, quarter and year timeframes, with `DATE_TRUNC` |
+| A count, sum, average, min, max, median, percentile or count_distinct measure | The aggregation, with `FILTER (WHERE ...)` for `filters: [field: "value"]` |
+| A number measure | Its SQL with `MEASURE()` for each measure it uses |
+| Liquid (`{% %}`, `{{ }}`), Looker filter expressions (`-x`, `>10`, `%x%`), derived tables, list and other types | Not converted |
+
+Hidden dimensions and primary keys are not added as dimensions, but other fields can still use them. A join that is
+not many-to-one gets a warning: measures across it can count rows more than once.
+
 ### 5.1 The golden project
 
 The **Golden project** tab of a project shows the path from certified data to a trusted Genie agent. The project gets

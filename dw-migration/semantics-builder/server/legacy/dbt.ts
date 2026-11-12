@@ -1,7 +1,8 @@
 import { parse } from 'yaml';
 import type { Explanations } from '../../shared/designer';
-import type { FieldStatus, LegacyField, LegacyPreview } from '../../shared/legacy';
-import { renderMetricView, validateMetricView } from '../../shared/metricView';
+import type { FieldStatus, LegacyField } from '../../shared/legacy';
+import { finish, human, IDENT, namer, noteOf, quote } from './common';
+import type { LegacyResult } from './common';
 import type { MetricView } from '../../shared/metricView';
 
 /**
@@ -63,14 +64,6 @@ const asArray = <T>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]).slice(0, 
 const refName = (r: MeasureRef | undefined) => (typeof r === 'string' ? r : r?.name);
 const filterText = (f: unknown): string | null =>
   typeof f === 'string' ? f : Array.isArray(f) ? f.filter((x) => typeof x === 'string').join(' AND ') || null : null;
-/** order_total -> Order Total. dbt names are snake case; metric view names are for people. */
-const human = (s: string) =>
-  s
-    .replace(/_+/g, ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase())
-    .trim();
-const IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const quote = (s: string) => `\`${s.replace(/`/g, '``')}\``;
 
 /** Reads the file. Throws a message for the user when it is neither format. */
 export function readDbt(fileName: string, content: string): { models: DbtSemanticModel[]; metrics: DbtMetric[] } {
@@ -111,13 +104,7 @@ const AGG: Record<string, (e: string, m: DbtMeasure) => string> = {
 };
 const ADDITIVE = new Set(['sum', 'count', 'sum_boolean']);
 
-export interface DbtResult {
-  preview: LegacyPreview;
-  view: MetricView | null;
-  explanations: Explanations;
-}
-
-export function convertDbt(fileName: string, content: string, schema?: string): DbtResult {
+export function convertDbt(fileName: string, content: string, schema?: string): LegacyResult {
   const { models, metrics } = readDbt(fileName, content);
   const issues: string[] = [];
   const fields: LegacyField[] = [];
@@ -192,15 +179,8 @@ export function convertDbt(fileName: string, content: string, schema?: string): 
     measures: [],
   };
   const explanations: Explanations = { summary: '', measures: {}, dimensions: {} };
-  const names = new Set<string>();
-  const unique = (n: string) => {
-    let name = n.slice(0, 255);
-    for (let i = 2; names.has(name.toLowerCase()); i++) name = `${n.slice(0, 250)} ${i}`;
-    names.add(name.toLowerCase());
-    return name;
-  };
-  const note = (status: FieldStatus, text: string) =>
-    `From dbt (${status === 'converted' ? 'converted' : status === 'review' ? 'converted, check it' : 'not converted'}): ${text}`;
+  const unique = namer();
+  const note = (status: FieldStatus, text: string) => noteOf('dbt', status, text);
 
   // Dimensions: each model in the view; for time dimensions the column as it is.
   const dimByRef = new Map<string, string>();
@@ -334,17 +314,14 @@ export function convertDbt(fileName: string, content: string, schema?: string): 
     fields.push({ name, kind: 'measure', source, status, note: status === 'review' ? 'Check it with a test.' : '' });
   }
 
-  const counts = (s: FieldStatus) => fields.filter((f) => f.status === s).length;
-  explanations.summary = `Imported from dbt MetricFlow (${fileName}): ${counts('converted')} converted, ${counts('review')} to check, ${counts('manual')} not converted.`;
-  if (!view.measures.length) issues.push('No metric could be converted, so there is no draft.');
-  const yaml = view.measures.length ? renderMetricView(view) : null;
-  if (yaml) {
-    const checked = validateMetricView(yaml);
-    for (const i of checked.issues.filter((x) => x.severity === 'error')) issues.push(i.message);
-  }
-  return {
-    preview: { format: 'dbt', yaml, fields, sources: [factTable, ...[...joined.values()].map((j) => j.table)], issues },
-    view: yaml ? view : null,
-    explanations,
-  };
+  return finish(
+    'dbt',
+    'dbt MetricFlow',
+    fileName,
+    view,
+    fields,
+    [factTable, ...[...joined.values()].map((j) => j.table)],
+    issues,
+    explanations
+  );
 }

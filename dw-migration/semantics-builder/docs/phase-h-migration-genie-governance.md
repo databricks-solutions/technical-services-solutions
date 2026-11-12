@@ -130,7 +130,12 @@ Tableau done 2026-11-12 (4 of 7), with a small strict XML reader (no DOCTYPE, no
 calculation translator (tableauCalc.ts). The AI prompt is now shared by DAX and Tableau (legacyCalc.ts). The
 server body limit is 12 MB, so a packaged workbook fits. Live: a .twb on the TPC-H copies made "Tableau import
 check": 9 fields by rules (IF inside SUM, COUNTD, a measure reference, DATETRUNC, IIF), TOTAL() left for a person
-(the AI said it has no SQL form); the draft validated and its 3 tests passed. Next: Cognos Framework Manager.
+(the AI said it has no SQL form); the draft validated and its 3 tests passed.
+
+Cognos Framework Manager done 2026-11-12 (5 of 7), reusing the XML reader, with an expression translator in
+cognos.ts and the shared AI prompt. Live: a model.xml with a database and a business layer on the TPC-H copies made
+"Cognos import check": 7 business fields by rules (if then else inside total, a business measure reference),
+running-total left for a person; the draft validated and its 3 tests passed. Next: MicroStrategy (REST JSON export).
 
 One pipeline for all formats: a parser per format, then one intermediate model (tables, joins, dimensions,
 measures, filters), then a draft metric view in a new sub-project.

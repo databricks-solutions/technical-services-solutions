@@ -12,6 +12,7 @@ import { callTool } from '../llm/llm';
 import type { LlmDeps } from '../llm/llm';
 import { calcPrompt, calcRequest, safeExpression } from '../llm/prompts/legacyCalc';
 import { convertTableau } from '../legacy/tableau';
+import { convertCognos } from '../legacy/cognos';
 import type { UcDeps } from '../uc/metadata';
 import { actorOf, handle, HttpError } from './http';
 import { designerRepo } from './designer';
@@ -114,10 +115,19 @@ export function registerImportRoutes(
       // .lkml; several uploaded files arrive joined. Else the file is dbt YAML or JSON.
       const tabular = /\.(bim|pbit)$/i.test(body.fileName);
       const tableau = /\.(twbx?|tdsx?)$/i.test(body.fileName);
-      const withAi = tabular || tableau;
+      const cognos = /\.xml$/i.test(body.fileName) && body.content.includes('<querySubject');
+      const withAi = tabular || tableau || cognos;
       const lookml =
         !withAi && (/\.lkml$/i.test(body.fileName) || /^\s*(view|explore|include|connection)\s*:/m.test(body.content));
-      const tool = tabular ? 'Power BI / Tabular' : tableau ? 'Tableau' : lookml ? 'LookML' : 'dbt MetricFlow';
+      const tool = tabular
+        ? 'Power BI / Tabular'
+        : tableau
+          ? 'Tableau'
+          : cognos
+            ? 'Cognos'
+            : lookml
+              ? 'LookML'
+              : 'dbt MetricFlow';
       let result: LegacyResult;
       try {
         if (!withAi) result = (lookml ? convertLookml : convertDbt)(body.fileName, body.content, body.schema);
@@ -125,7 +135,8 @@ export function registerImportRoutes(
           const base64 = body.encoding === 'base64';
           // On create, the SQL that the user saw in the preview; on preview, the AI for each measure with no rule.
           let ai = new Map(Object.entries(body.ai ?? {}).flatMap(([k, v]) => (safeExpression(v) ? [[k, v]] : [])));
-          const convert = tabular ? convertTabular : convertTableau;
+          const convert = tabular ? convertTabular : tableau ? convertTableau : convertCognos;
+          const lang = tabular ? 'DAX' : tableau ? 'Tableau' : 'Cognos';
           const first = convert(body.fileName, body.content, body.schema, base64, ai);
           if (!body.create && first.todo.length) {
             const llm = llmFor(req);
@@ -133,8 +144,8 @@ export function registerImportRoutes(
               first.todo.slice(0, MAX_AI_MEASURES).map(async (t) => {
                 try {
                   const out = await callTool(
-                    calcPrompt(tabular ? 'DAX' : 'Tableau'),
-                    calcRequest(tabular ? 'DAX' : 'Tableau', t.dax, first.catalog.columns, first.catalog.measures),
+                    calcPrompt(lang),
+                    calcRequest(lang, t.dax, first.catalog.columns, first.catalog.measures),
                     llm
                   );
                   const sql = out.convertible ? safeExpression(out.sql) : null;

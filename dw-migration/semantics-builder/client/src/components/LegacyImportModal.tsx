@@ -84,19 +84,20 @@ export function LegacyImportModal({ projectId, onClose }: { projectId: string; o
         <Typography.Text color="secondary">
           dbt MetricFlow: a YAML file with semantic_models and metrics, or the semantic_manifest.json of dbt parse.
           LookML: the .view.lkml files and the model file with the explore. Power BI: a .pbit template. SSAS Tabular: a
-          .bim file. Tableau: a workbook or a data source. The app converts the model by rules into a draft metric view
-          in a new sub-project. For DAX that has no rule, the AI suggests SQL, which you check. Each field keeps its
-          source definition and a status. The files are only read; the app does not run them.
+          .bim file. Tableau: a workbook or a data source. Cognos: the model.xml of a Framework Manager project. The app
+          converts the model by rules into a draft metric view in a new sub-project. For DAX that has no rule, the AI
+          suggests SQL, which you check. Each field keeps its source definition and a status. The files are only read;
+          the app does not run them.
         </Typography.Text>
         <div>
           <FormUI.Label htmlFor="legacy-file">
             Files (dbt: .yml, .yaml or .json; LookML: one or more .lkml; Power BI: .pbit; Tabular: .bim; Tableau: .twb,
-            .tds, .twbx or .tdsx)
+            .tds, .twbx or .tdsx; Cognos: model.xml)
           </FormUI.Label>
           <input
             id="legacy-file"
             type="file"
-            accept=".yml,.yaml,.json,.lkml,.bim,.pbit,.twb,.tds,.twbx,.tdsx"
+            accept=".yml,.yaml,.json,.lkml,.bim,.pbit,.twb,.tds,.twbx,.tdsx,.xml"
             multiple
             onChange={(e) => {
               const files = [...(e.target.files ?? [])];

@@ -236,6 +236,18 @@ MB; save without extracts if it is larger). The app reads only the XML; a DOCTYP
 | LOD expressions (`{FIXED ...}`) and table calculations (TOTAL, RUNNING_SUM, WINDOW_*) | The AI tries; most have no SQL form and are not converted |
 | Custom SQL relations | Left out, with a warning |
 
+**Cognos Framework Manager.** Choose the `model.xml` of the project, and type the default catalog.schema of the
+tables (the table names come from the SQL of each database query subject; the app warns you to check them).
+
+| Cognos | Metric view |
+| --- | --- |
+| The database query subject on the many side of the most relationships | The source table |
+| A relationship of that query subject | A join |
+| The query items of the business layer (or, with no business layer, of the database layer) | Fields: attributes are dimensions, facts are measures with their regular aggregate. Identifiers are left out |
+| `total`, `average`, `minimum`, `maximum`, `count`, `count(distinct)`, `median`, `if () then () else ()`, `case`, `coalesce`, string functions and references | SQL by rules |
+| Other functions (such as `running-total`), macros (`#...#`) and prompts (`?p?`) | The AI tries, marked **Check it**; else not converted |
+| Regular and measure dimensions (DMR) | Not converted, with a warning |
+
 ### 5.1 The golden project
 
 The **Golden project** tab of a project shows the path from certified data to a trusted Genie agent. The project gets

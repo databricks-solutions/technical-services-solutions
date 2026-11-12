@@ -13,7 +13,11 @@ const daxOutput = z.object({
 });
 export type DaxOutput = z.infer<typeof daxOutput>;
 
-const LANGUAGES = { DAX: 'Power BI DAX', Tableau: 'Tableau calculation' } as const;
+const LANGUAGES = {
+  DAX: 'Power BI DAX',
+  Tableau: 'Tableau calculation',
+  Cognos: 'Cognos Framework Manager expression',
+} as const;
 
 /** The prompt for one language of legacy measures. */
 export const calcPrompt = (lang: keyof typeof LANGUAGES): ToolPrompt<DaxOutput> => ({

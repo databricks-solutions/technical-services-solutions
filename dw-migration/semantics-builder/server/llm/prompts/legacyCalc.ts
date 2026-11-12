@@ -18,6 +18,7 @@ const LANGUAGES = {
   Tableau: 'Tableau calculation',
   Cognos: 'Cognos Framework Manager expression',
   MicroStrategy: 'MicroStrategy metric',
+  MDX: 'SSAS MDX calculated measure',
 } as const;
 
 /** The prompt for one language of legacy measures. */
@@ -36,7 +37,9 @@ Rules:
 - Tableau LOD expressions ({FIXED ...}) and table calculations (RUNNING_SUM, WINDOW_SUM, LOOKUP, RANK) have no
   expression form: set convertible to false.
 - MicroStrategy conditions (<[Filter]>), transformations, levels other than {~+} and OLAP functions (RunningSum,
-  MovingAvg, Rank, Lag) have no expression form: set convertible to false.`,
+  MovingAvg, Rank, Lag) have no expression form: set convertible to false.
+- MDX tuples with other dimensions, sets, member functions (PrevMember, Parent) and time functions (YTD,
+  ParallelPeriod) have no expression form: set convertible to false.`,
   tool: { name: 'submit_sql_measure', description: 'Submit the SQL of the measure.', schema: daxOutput },
   maxTokens: 800,
 });

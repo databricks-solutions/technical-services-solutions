@@ -14,6 +14,7 @@ import { calcPrompt, calcRequest, safeExpression } from '../llm/prompts/legacyCa
 import { convertTableau } from '../legacy/tableau';
 import { convertCognos } from '../legacy/cognos';
 import { convertMicroStrategy, isMicroStrategy } from '../legacy/microstrategy';
+import { convertSsas, isSsas } from '../legacy/ssas';
 import type { UcDeps } from '../uc/metadata';
 import { actorOf, handle, HttpError } from './http';
 import { designerRepo } from './designer';
@@ -117,9 +118,10 @@ export function registerImportRoutes(
       // MicroStrategy. Else the file is dbt YAML or JSON.
       const tabular = /\.(bim|pbit)$/i.test(body.fileName);
       const tableau = /\.(twbx?|tdsx?)$/i.test(body.fileName);
-      const cognos = /\.xml$/i.test(body.fileName) && body.content.includes('<querySubject');
+      const ssas = isSsas(body.fileName, body.content);
+      const cognos = !ssas && /\.xml$/i.test(body.fileName) && body.content.includes('<querySubject');
       const mstr = /\.json$/i.test(body.fileName) && isMicroStrategy(body.content);
-      const withAi = tabular || tableau || cognos || mstr;
+      const withAi = tabular || tableau || cognos || mstr || ssas;
       const lookml =
         !withAi && (/\.lkml$/i.test(body.fileName) || /^\s*(view|explore|include|connection)\s*:/m.test(body.content));
       const tool = tabular
@@ -130,9 +132,11 @@ export function registerImportRoutes(
             ? 'Cognos'
             : mstr
               ? 'MicroStrategy'
-              : lookml
-                ? 'LookML'
-                : 'dbt MetricFlow';
+              : ssas
+                ? 'SSAS Multidimensional'
+                : lookml
+                  ? 'LookML'
+                  : 'dbt MetricFlow';
       let result: LegacyResult;
       try {
         if (!withAi) result = (lookml ? convertLookml : convertDbt)(body.fileName, body.content, body.schema);
@@ -146,8 +150,10 @@ export function registerImportRoutes(
               ? convertTableau
               : cognos
                 ? convertCognos
-                : convertMicroStrategy;
-          const lang = tabular ? 'DAX' : tableau ? 'Tableau' : cognos ? 'Cognos' : 'MicroStrategy';
+                : ssas
+                  ? convertSsas
+                  : convertMicroStrategy;
+          const lang = tabular ? 'DAX' : tableau ? 'Tableau' : cognos ? 'Cognos' : ssas ? 'MDX' : 'MicroStrategy';
           const first = convert(body.fileName, body.content, body.schema, base64, ai);
           if (!body.create && first.todo.length) {
             const llm = llmFor(req);

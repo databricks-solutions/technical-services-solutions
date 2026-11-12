@@ -143,8 +143,14 @@ two bugs, now fixed: a join named like a dimension (`customer` and Customer) mad
 field, so such a join gets the name `customer_table`; and a measure that uses a later measure failed, so converted
 measures now go in the order the passes found them (also for Power BI and Tableau). Live: an export on the TPC-H
 copies made "MicroStrategy import check 3": 10 fields by rules (a lookup join, Count<Distinct=True>, If inside Sum,
-a metric reference), Rank left for a person; the draft validated and its 3 tests passed. Next: SSAS
-Multidimensional (best effort).
+a metric reference), Rank left for a person; the draft validated and its 3 tests passed.
+
+SSAS Multidimensional done 2026-11-12 (7 of 7, best effort), from the .dsv, .dim and .cube files joined (the modal
+reads them as one) or an .xmla script, reusing the XML reader, with an MDX translator in ssas.ts and the shared AI
+prompt. Cognos also got the join-name check. Live: the four files on the TPC-H copies, through the modal, made
+"SSAS import check": 9 fields by rules (a regular and a fact dimension, Count of rows, DistinctCount, Divide, IIF,
+calculated members in use order), LastNonEmpty, a computed column, a snowflake attribute and a PrevMember tuple left
+for a person (the AI said the tuple has no SQL form); the draft validated and its 3 tests passed. Not yet: TMDL.
 
 One pipeline for all formats: a parser per format, then one intermediate model (tables, joins, dimensions,
 measures, filters), then a draft metric view in a new sub-project.

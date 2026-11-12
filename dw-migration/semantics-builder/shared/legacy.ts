@@ -14,7 +14,7 @@ export interface LegacyField {
 }
 
 export interface LegacyPreview {
-  format: 'dbt' | 'lookml' | 'tabular' | 'tableau' | 'cognos' | 'microstrategy';
+  format: 'dbt' | 'lookml' | 'tabular' | 'tableau' | 'cognos' | 'microstrategy' | 'ssas';
   /** The draft metric view, or null when nothing could be converted. */
   yaml: string | null;
   fields: LegacyField[];

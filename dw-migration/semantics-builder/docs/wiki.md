@@ -262,6 +262,21 @@ Type the default catalog.schema of the tables (the app maps them by name and war
 | `Sum`, `Avg`, `Min`, `Max`, `Count` (also `<Distinct=True>`), `Median`, `StDev`, `Var`, `If`, `NullToZero`, `ZeroToNull`, math and string functions, the report level `{~+}` and metric references | SQL by rules |
 | Conditions (`<[Filter]>`), transformations, other levels, OLAP functions (`Rank`, `RunningSum`) and `ApplySimple` | The AI tries, marked **Check it**; else not converted |
 
+**SSAS Multidimensional (best effort).** Choose the `.dsv`, `.dim` and `.cube` files of the project together (the
+app reads them as one), or one database script (`.xmla`) from SQL Server Management Studio. Type the default
+catalog.schema of the tables (the app maps the data source view tables by name and warns you to check them).
+
+| SSAS Multidimensional | Metric view |
+| --- | --- |
+| The measure group with the most measures, and its table | The source table. Other measure groups are left out, with a warning |
+| A regular dimension of that measure group, at its key attribute | A join on the key columns |
+| A fact (degenerate) dimension | Dimensions on the source table |
+| A dimension attribute | A dimension from its name column (or its one key column). Surrogate keys are left out |
+| A measure with Sum, Count, Min, Max or DistinctCount | A measure |
+| A calculated member of the MDX script with arithmetic, `IIF`, `IsEmpty`, `Divide`, `CoalesceEmpty` and measure references | SQL by rules |
+| Semi-additive measures (`LastNonEmpty`, `ByAccount`), computed columns of the data source view, named queries, snowflake attributes, reference and many-to-many dimensions | Not converted, with a note or a warning |
+| Other MDX (tuples, sets, `PrevMember`, `YTD`, `ParallelPeriod`) | The AI tries, marked **Check it**; else not converted |
+
 ### 5.1 The golden project
 
 The **Golden project** tab of a project shows the path from certified data to a trusted Genie agent. The project gets

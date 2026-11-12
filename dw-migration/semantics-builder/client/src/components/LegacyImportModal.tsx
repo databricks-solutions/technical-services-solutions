@@ -85,20 +85,21 @@ export function LegacyImportModal({ projectId, onClose }: { projectId: string; o
           dbt MetricFlow: a YAML file with semantic_models and metrics, or the semantic_manifest.json of dbt parse.
           LookML: the .view.lkml files and the model file with the explore. Power BI: a .pbit template. SSAS Tabular: a
           .bim file. Tableau: a workbook or a data source. Cognos: the model.xml of a Framework Manager project.
-          MicroStrategy: one JSON file with the tables, attributes, facts and metrics of the REST Modeling API. The app
-          converts the model by rules into a draft metric view in a new sub-project. For an expression that has no rule,
-          the AI suggests SQL, which you check. Each field keeps its source definition and a status. The files are only
-          read; the app does not run them.
+          MicroStrategy: one JSON file with the tables, attributes, facts and metrics of the REST Modeling API. SSAS
+          Multidimensional: the .dsv, .dim and .cube files of the project, or an .xmla script. The app converts the
+          model by rules into a draft metric view in a new sub-project. For an expression that has no rule, the AI
+          suggests SQL, which you check. Each field keeps its source definition and a status. The files are only read;
+          the app does not run them.
         </Typography.Text>
         <div>
           <FormUI.Label htmlFor="legacy-file">
             Files (dbt: .yml, .yaml or .json; LookML: one or more .lkml; Power BI: .pbit; Tabular: .bim; Tableau: .twb,
-            .tds, .twbx or .tdsx; Cognos: model.xml; MicroStrategy: .json)
+            .tds, .twbx or .tdsx; Cognos: model.xml; MicroStrategy: .json; SSAS: .dsv, .dim and .cube, or .xmla)
           </FormUI.Label>
           <input
             id="legacy-file"
             type="file"
-            accept=".yml,.yaml,.json,.lkml,.bim,.pbit,.twb,.tds,.twbx,.tdsx,.xml"
+            accept=".yml,.yaml,.json,.lkml,.bim,.pbit,.twb,.tds,.twbx,.tdsx,.xml,.dsv,.dim,.cube,.xmla"
             multiple
             onChange={(e) => {
               const files = [...(e.target.files ?? [])];
@@ -121,10 +122,12 @@ export function LegacyImportModal({ projectId, onClose }: { projectId: string; o
                 });
                 return;
               }
-              // LookML views and the model with the explore are often in separate files: they are read as one.
+              // LookML views and the model with the explore are often in separate files, and so are the .dsv, .dim
+              // and .cube files of an SSAS project: they are read as one.
+              const ext = files.every((f) => /\.(dsv|dim|cube)$/i.test(f.name)) ? 'ssas' : 'lkml';
               void Promise.all(files.map((f) => f.text())).then((texts) =>
                 setFile({
-                  name: files.length === 1 ? files[0].name : `${files.length} files.lkml`,
+                  name: files.length === 1 ? files[0].name : `${files.length} files.${ext}`,
                   content: texts.join('\n'),
                   base64: false,
                 })

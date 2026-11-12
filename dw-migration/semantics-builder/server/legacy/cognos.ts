@@ -242,13 +242,21 @@ export function convertCognos(
     const r = IDENT.test(ext) ? ext.toLowerCase() : quote(ext);
     return a ? `${a}.${r}` : r;
   };
+  // A join named like a field makes `customer.c_name` read as a field of the dimension Customer.
+  const taken = new Set(
+    subjects.flatMap((s) =>
+      s.node.children
+        .filter((c) => c.tag === 'queryItem' || c.tag === 'calculation')
+        .flatMap((c) => [nameOf(c).toLowerCase(), human(nameOf(c).toLowerCase()).toLowerCase()])
+    )
+  );
   for (const r of rels) {
     const subs = r.sides.map((x) => find(x.ref.split('].[').map((y) => y.replace(/^\[|\]$/g, ''))));
     const other = subs[0] === fact ? subs[1] : subs[1] === fact ? subs[0] : undefined;
     if (!other || alias.has(other)) continue;
     const t = tableOf(other);
     if (!t) continue;
-    const a = slug(nameOf(other.node));
+    const a = taken.has(slug(nameOf(other.node))) ? `${slug(nameOf(other.node))}_table` : slug(nameOf(other.node));
     alias.set(other, a);
     const on = translateCognos(r.expr, (parts) => {
       const s = find(parts.slice(0, -1));

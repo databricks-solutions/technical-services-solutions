@@ -82,4 +82,15 @@ describe('convertCognos', () => {
     expect(r.preview.fields.find((f) => f.name === 'Running Revenue')?.status).toBe('manual');
     expect(r.todo.map((x) => x.name)).toEqual(['Running Revenue']);
   });
+
+  it('renames a join that has the name of a field', () => {
+    const m = convertCognos(
+      'model.xml',
+      MODEL.replace('<name locale="en">Market Segment</name>', '<name locale="en">Customer</name>'),
+      'sandbox_source.tpch',
+      false
+    );
+    expect(m.view!.joins![0].name).toBe('customer_table');
+    expect(m.view!.dimensions.find((d) => d.name === 'Customer')?.expr).toBe('customer_table.c_mktsegment');
+  });
 });

@@ -109,6 +109,11 @@ publishes it in Databricks. Show the dashboard JSON before it runs.
 
 ### h7. Import legacy semantic models (#16)
 
+Status 2026-11-12: 1 of 7 formats done, dbt MetricFlow (rules only, no AI). Live: a dbt YAML on the TPC-H copies
+made the sub-project "dbt import check" in Order fulfilment, with a join, 4 dimensions and 4 metrics converted (one
+with a Jinja filter, one ratio) and a cumulative metric left for a person; the draft validated and its 3 tests
+passed. The dbt status of each field is in its note (the explanations). Next: LookML.
+
 One pipeline for all formats: a parser per format, then one intermediate model (tables, joins, dimensions,
 measures, filters), then a draft metric view in a new sub-project.
 

@@ -165,6 +165,31 @@ To delete a project, open the project and click **Delete project**. The app show
 can remove these views before the app deletes the project. The app does not remove the target views in Unity
 Catalog.
 
+### 5.0 Import a legacy semantic model
+
+**New**, **Import a legacy model (dbt)** makes a new sub-project from a dbt MetricFlow model. Choose a YAML file
+with `semantic_models` and `metrics`, or the `semantic_manifest.json` that `dbt parse` writes. For YAML, type the
+catalog.schema of the dbt models: `ref('orders')` becomes `<catalog.schema>.orders`. The manifest has the tables.
+
+Click **Preview**. The app converts the model by rules, with no AI:
+
+| dbt | Metric view |
+| --- | --- |
+| The semantic model with the most measures that the metrics use | The source table |
+| A foreign entity that is the primary entity of another semantic model | A join, `source.<fk> = <model>.<pk>` |
+| A dimension | A dimension; on a joined model, `<model>.<column>` |
+| A simple metric | `SUM`, `COUNT`, `COUNT(DISTINCT)`, `AVG`, `MIN`, `MAX`, `MEDIAN` or `PERCENTILE_CONT` of the measure, with `FILTER (WHERE ...)` for a filter |
+| A ratio metric | `MEASURE(numerator) / NULLIF(MEASURE(denominator), 0)` |
+| A derived metric | Its expression with `MEASURE()` for each metric (check it) |
+| A cumulative, conversion or offset metric | Not converted: add it as a window measure by hand |
+
+Each field gets a status: **Converted**, **Check it** or **Not converted**, and keeps its dbt definition in its
+note in the Metric Designer. The dbt name becomes a synonym. Fields that are not converted go to the open questions
+of the brief. A semantic model that does not join to the fact is left out. Click **Create the sub-project**, then
+validate the draft: its tests compare it with plain SQL.
+
+The file is only read. The app does not run it, and it does not read the tables until you validate.
+
 ### 5.1 The golden project
 
 The **Golden project** tab of a project shows the path from certified data to a trusted Genie agent. The project gets

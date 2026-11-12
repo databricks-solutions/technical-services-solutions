@@ -20,6 +20,7 @@ import { AgentPanel } from '../components/AgentPanel';
 import { DictionaryPanel } from '../components/DictionaryPanel';
 import { GoldenPanel } from '../components/GoldenPanel';
 import { DeleteProjectModal } from '../components/DeleteProjectModal';
+import { LegacyImportModal } from '../components/LegacyImportModal';
 import { NewProjectModal, subPath } from './ProjectsPage';
 import { useTab } from '../useTab';
 
@@ -122,6 +123,7 @@ export function ProjectPage() {
   const navigate = useNavigate();
   const projects = useResource<ProjectSummary[]>('/api/projects');
   const [creating, setCreating] = useState(false);
+  const [importingLegacy, setImportingLegacy] = useState(false);
   const [deleting, setDeleting] = useState<{ id: string; kind: 'project' | 'sub-project' }>();
   const project = projects.data?.find((p) => p.id === parentId);
   const status = projects.status === 'ready' && !project ? 'error' : projects.status;
@@ -148,6 +150,9 @@ export function ProjectPage() {
         </DropdownMenu.Item>
         <DropdownMenu.Item componentId="gsb.project.new_dictionary" onClick={() => setTab('dictionary')}>
           Metric dictionary
+        </DropdownMenu.Item>
+        <DropdownMenu.Item componentId="gsb.project.import_legacy" onClick={() => setImportingLegacy(true)}>
+          Import a legacy model (dbt)
         </DropdownMenu.Item>
       </DropdownMenu.Content>
     </DropdownMenu.Root>
@@ -248,6 +253,7 @@ export function ProjectPage() {
               }}
             />
           )}
+          {importingLegacy && <LegacyImportModal projectId={project.id} onClose={() => setImportingLegacy(false)} />}
           {creating && (
             <NewProjectModal
               title="New sub-project"

@@ -95,6 +95,14 @@ this needs a share model (question 3).
 
 ### h6. Starter AI/BI dashboard (#13)
 
+Status: done 2026-11-12. Publish, Dashboard. The dataset is the metric view (`asset_name`), with MEASURE() in each
+widget: KPI counters (with a monthly sparkline), a monthly line and a bar by the first text dimension. Window
+measures are left out. The dashboards API refused the app token's scope, so the app shows the JSON and the
+`databricks lakeview create` command, and the user runs it (like the Pages script and the Genie agent access).
+Live: the command made the draft "Net revenue - starter (app check)" (01f1deaa13c61f338fc7fa90fc6c54f8) on the
+promoted view; the SQL of each widget ran on that view first. The render in the browser was not checked: the
+browser was not signed in to the workspace. The app now logs the API text of a missing-scope error.
+
 From the promoted view: KPI counters for the main measures, a trend by the time dimension, and a breakdown by
 the top dimension. Created as a draft dashboard, as the user, in a folder the user picks. The user reviews and
 publishes it in Databricks. Show the dashboard JSON before it runs.

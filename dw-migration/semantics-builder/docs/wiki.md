@@ -743,6 +743,21 @@ Governance sets who owns the view and who can read it.
 > **Caution:** Set the owner before you add a materialization. The app cannot change the owner of a materialized
 > view.
 
+### 18.1 Publish: Dashboard
+
+**Dashboard** makes a starter AI/BI dashboard on the promoted view:
+
+- KPI counters for the first 3 measures, each with a monthly sparkline when the view has a date dimension.
+- The first measure by month, on the first date dimension.
+- The first measure by the first text dimension.
+
+The dataset is the metric view itself, so every number comes from its governed measures. Window measures (such
+as prior year) are left out, because they need their own time field.
+
+Apps cannot get the permission scope of the dashboards API. So the section shows the dashboard JSON and a
+`databricks lakeview create` command. Type a folder that exists (under `/Users` or `/Shared`), copy the command,
+and run it in your terminal as you. It creates a draft. You review it and publish it in Databricks.
+
 ## 19. Publish: Drift
 
 Drift is a change in Unity Catalog that the app did not make. The app compares Unity Catalog with the promoted

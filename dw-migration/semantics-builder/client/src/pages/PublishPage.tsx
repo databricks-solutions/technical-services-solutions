@@ -3,6 +3,7 @@ import { useOutletContext, useParams } from 'react-router';
 import { NavList, Typography } from '@databricks/design-system';
 import type { PagesView } from '../../../shared/pages';
 import type { PromotionView } from '../../../shared/promote';
+import { DashboardPanel } from '../components/DashboardPanel';
 import { DriftPanel } from '../components/DriftPanel';
 import { GovernPanel } from '../components/GovernPanel';
 import { PagesPanel } from '../components/PagesPanel';
@@ -11,7 +12,7 @@ import { PROJECTS_CHANGED, useResource } from '../api';
 import { useTab } from '../useTab';
 import type { ProjectsResource } from './SubProjectLayout';
 
-const SECTIONS = ['promotion', 'governance', 'drift', 'pages'] as const;
+const SECTIONS = ['promotion', 'governance', 'dashboard', 'drift', 'pages'] as const;
 type Section = (typeof SECTIONS)[number];
 
 /** Publish: one task at a time, chosen in the left pane. Promote, owner and grants, drift, and Pages for Discover. */
@@ -30,6 +31,7 @@ export function PublishPage() {
   const items: { id: Section; label: string; hint: string }[] = [
     { id: 'promotion', label: 'Promotion', hint: last ? `Version ${last.version} in Unity Catalog` : 'Not promoted' },
     { id: 'governance', label: 'Governance', hint: last ? 'Owner and read access' : 'After the first promotion' },
+    { id: 'dashboard', label: 'Dashboard', hint: last ? 'A starter AI/BI draft' : 'After the first promotion' },
     { id: 'drift', label: 'Drift', hint: last ? 'Changes made outside the app' : 'After the first promotion' },
     { id: 'pages', label: 'Pages', hint: included === undefined ? 'For Discover' : `${included} for Discover` },
   ];
@@ -83,6 +85,7 @@ export function PublishPage() {
           />
         )}
         {section === 'governance' && (last ? <GovernPanel key={last.id} projectId={projectId} /> : notYet)}
+        {section === 'dashboard' && (last ? <DashboardPanel key={last.id} projectId={projectId} /> : notYet)}
         {section === 'drift' && (last ? <DriftPanel key={last.id} projectId={projectId} /> : notYet)}
         {section === 'pages' && (
           <PagesPanel projectId={projectId} title={sub ? `${sub.project} ${sub.name}` : 'semantics'} />

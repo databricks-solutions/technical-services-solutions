@@ -34,7 +34,11 @@ function toHttp(err: unknown): HttpError {
   }
   if (err instanceof StatementRejected) return new HttpError(400, err.message);
   const status = (err as { statusCode?: number }).statusCode;
-  if (err instanceof Error && SCOPE_MISSING.test(err.message)) return new HttpError(403, SCOPE_MESSAGE);
+  if (err instanceof Error && SCOPE_MISSING.test(err.message)) {
+    // The API text names the scope; it holds no data, and it tells an operator what the app cannot get.
+    console.warn(`Missing OAuth scope: ${err.message.slice(0, 300)}`);
+    return new HttpError(403, SCOPE_MESSAGE);
+  }
   if (status === 401 || status === 403) {
     // The API message names the missing privilege or scope; the client gets a generic text.
     console.warn(`Databricks API ${status}: ${(err as Error).message.slice(0, 300)}`);

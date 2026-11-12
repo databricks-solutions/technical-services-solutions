@@ -27,7 +27,7 @@ locals {
 # -----------------------------------------------------------------------------
 resource "databricks_mws_network_connectivity_config" "ncc" {
   provider = databricks.account
-  name     = "ncc-${local.prefix}-dp"
+  name     = "ncc-${local.prefix}"
   region   = local.dp_rg_location
 }
 

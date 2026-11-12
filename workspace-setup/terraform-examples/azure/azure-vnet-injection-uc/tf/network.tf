@@ -1,18 +1,28 @@
+locals {
+  # Networking lives in the workspace resource group unless vnet_resource_group_name names a different one.
+  separate_vnet_rg = var.vnet_resource_group_name != "" && var.vnet_resource_group_name != var.resource_group_name
+  vnet_resource_group_name = (
+    !local.separate_vnet_rg ? local.resource_group_name :
+    var.create_new_vnet ? azurerm_resource_group.vnet_resource_group[0].name : var.vnet_resource_group_name
+  )
+  vnet = var.create_new_vnet ? azurerm_virtual_network.this[0] : data.azurerm_virtual_network.existing[0]
+}
+
 # new VNet resources
 resource "azurerm_virtual_network" "this" {
   count               = var.create_new_vnet ? 1 : 0
-  name                = "${local.network_prefix}-vnet"
-  location            = azurerm_resource_group.this.location
-  resource_group_name = var.vnet_resource_group_name
-  address_space       = [var.cidr]
+  name                = "vnet-${local.prefix}"
+  location            = local.resource_group_location
+  resource_group_name = local.vnet_resource_group_name
+  address_space       = [var.vnet_cidr]
   tags                = var.tags
-  depends_on          = [azurerm_resource_group.vnet_resource_group[0]]
 }
 
+# Separate resource group for the VNet, only when vnet_resource_group_name names a group other than the workspace one.
 resource "azurerm_resource_group" "vnet_resource_group" {
-  count    = var.create_new_vnet ? 1 : 0
+  count    = var.create_new_vnet && local.separate_vnet_rg ? 1 : 0
   name     = var.vnet_resource_group_name
-  location = azurerm_resource_group.this.location
+  location = local.resource_group_location
   tags     = var.tags
 }
 
@@ -20,32 +30,28 @@ resource "azurerm_resource_group" "vnet_resource_group" {
 data "azurerm_virtual_network" "existing" {
   count               = var.create_new_vnet ? 0 : 1
   name                = var.vnet_name
-  resource_group_name = var.vnet_resource_group_name
-}
+  resource_group_name = local.vnet_resource_group_name
 
-data "azurerm_resource_group" "existing_vnet_resource_group" {
-  count = var.create_new_vnet ? 0 : 1
-  name  = var.vnet_resource_group_name
-}
-
-locals {
-  network_prefix      = var.workspace_name
-  vnet                = var.create_new_vnet ? azurerm_virtual_network.this[0] : data.azurerm_virtual_network.existing[0]
-  vnet_resource_group = var.create_new_vnet ? azurerm_resource_group.vnet_resource_group[0] : data.azurerm_resource_group.existing_vnet_resource_group[0]
+  lifecycle {
+    postcondition {
+      condition     = lower(replace(self.location, " ", "")) == lower(replace(local.resource_group_location, " ", ""))
+      error_message = "The existing VNet is in ${self.location}, but the workspace resource group is in ${local.resource_group_location}. The workspace and the VNet must be in the same region."
+    }
+  }
 }
 
 # other network resources
 
 resource "azurerm_network_security_group" "this" {
-  name                = "${local.network_prefix}-nsg"
+  name                = "nsg-${local.prefix}"
   location            = local.vnet.location
-  resource_group_name = local.vnet_resource_group.name
+  resource_group_name = local.vnet_resource_group_name
   tags                = var.tags
 }
 
 resource "azurerm_subnet" "public" {
-  name                            = "${local.network_prefix}-public-subnet"
-  resource_group_name             = local.vnet_resource_group.name
+  name                            = "snet-${local.prefix}-public"
+  resource_group_name             = local.vnet_resource_group_name
   virtual_network_name            = local.vnet.name
   address_prefixes                = [var.subnet_public_cidr]
   default_outbound_access_enabled = false
@@ -68,8 +74,8 @@ resource "azurerm_subnet_network_security_group_association" "public" {
 }
 
 resource "azurerm_subnet" "private" {
-  name                            = "${local.network_prefix}-private-subnet"
-  resource_group_name             = local.vnet_resource_group.name
+  name                            = "snet-${local.prefix}-private"
+  resource_group_name             = local.vnet_resource_group_name
   virtual_network_name            = local.vnet.name
   address_prefixes                = [var.subnet_private_cidr]
   default_outbound_access_enabled = false
@@ -91,11 +97,12 @@ resource "azurerm_subnet_network_security_group_association" "private" {
   network_security_group_id = azurerm_network_security_group.this.id
 }
 
-# NAT Gateway resources
+# NAT Gateway resources (create_nat_gateway)
 
 resource "azurerm_public_ip" "this" {
-  name                = "${local.network_prefix}-public-ip"
-  resource_group_name = local.vnet_resource_group.name
+  count               = var.create_nat_gateway ? 1 : 0
+  name                = "pip-${local.prefix}-nat"
+  resource_group_name = local.vnet_resource_group_name
   location            = local.vnet.location
   allocation_method   = "Static"
   sku                 = "Standard"
@@ -104,8 +111,9 @@ resource "azurerm_public_ip" "this" {
 }
 
 resource "azurerm_nat_gateway" "this" {
-  name                    = "${local.network_prefix}-nat-gateway"
-  resource_group_name     = local.vnet_resource_group.name
+  count                   = var.create_nat_gateway ? 1 : 0
+  name                    = "ng-${local.prefix}-nat"
+  resource_group_name     = local.vnet_resource_group_name
   location                = local.vnet.location
   sku_name                = "Standard"
   idle_timeout_in_minutes = 10
@@ -114,16 +122,19 @@ resource "azurerm_nat_gateway" "this" {
 }
 
 resource "azurerm_nat_gateway_public_ip_association" "this" {
-  nat_gateway_id       = azurerm_nat_gateway.this.id
-  public_ip_address_id = azurerm_public_ip.this.id
+  count                = var.create_nat_gateway ? 1 : 0
+  nat_gateway_id       = azurerm_nat_gateway.this[0].id
+  public_ip_address_id = azurerm_public_ip.this[0].id
 }
 
 resource "azurerm_subnet_nat_gateway_association" "public_nat_gateway_association" {
+  count          = var.create_nat_gateway ? 1 : 0
   subnet_id      = azurerm_subnet.public.id
-  nat_gateway_id = azurerm_nat_gateway.this.id
+  nat_gateway_id = azurerm_nat_gateway.this[0].id
 }
 
 resource "azurerm_subnet_nat_gateway_association" "private_nat_gateway_association" {
+  count          = var.create_nat_gateway ? 1 : 0
   subnet_id      = azurerm_subnet.private.id
-  nat_gateway_id = azurerm_nat_gateway.this.id
+  nat_gateway_id = azurerm_nat_gateway.this[0].id
 }

@@ -2,7 +2,7 @@
 # variables.tf - Input variables for Azure Private Link (classic) workspace
 # =============================================================================
 # All configurable inputs: naming, subscription, location, resource group,
-# network (CIDR, service endpoints), tags, and workspace (public access).
+# network (VNet and subnet CIDRs, service endpoints), tags, and workspace (public access).
 # =============================================================================
 
 # =============================================================================
@@ -19,64 +19,130 @@ variable "resource_prefix" {
   }
 }
 
+variable "workspace_name" {
+  description = "Name of the Databricks workspace (3-30 characters: letters, numbers, hyphens, underscores). Leave empty to use dbw-<resource_prefix>."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.workspace_name == "" || can(regex("^[A-Za-z0-9_-]{3,30}$", var.workspace_name))
+    error_message = "workspace_name must be 3-30 characters: letters, numbers, hyphens and underscores only."
+  }
+  validation {
+    condition     = var.workspace_name != "" || can(regex("^[A-Za-z0-9_-]{3,30}$", "dbw-${var.resource_prefix}"))
+    error_message = "With workspace_name empty, the derived name dbw-<resource_prefix> must be 3-30 characters of letters, numbers, hyphens and underscores (no dots, so resource_prefix can be at most 26 characters). Shorten resource_prefix or set workspace_name."
+  }
+}
+
+variable "root_storage_name" {
+  description = "Name of the workspace root (DBFS) storage account: lowercase letters and numbers only, 3-24 characters, globally unique. Leave empty to derive it from resource_prefix (\"dbfs\" + up to 20 alphanumeric characters)."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.root_storage_name == "" || can(regex("^[a-z0-9]{3,24}$", var.root_storage_name))
+    error_message = "root_storage_name must be 3-24 characters: lowercase letters and numbers only."
+  }
+}
+
+variable "managed_resource_group_name" {
+  description = "Name of the Databricks managed resource group. Leave empty to use mrg-dbw-<resource_prefix> (this template always names it). Must differ from resource_group_name. Changing it forces workspace replacement."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.managed_resource_group_name == "" || var.managed_resource_group_name != var.resource_group_name
+    error_message = "managed_resource_group_name must not be the same as resource_group_name."
+  }
+}
+
 # =============================================================================
 # Azure Configuration
 # =============================================================================
 
-variable "az_subscription" {
+variable "azure_subscription_id" {
   description = "Azure subscription ID where resources will be deployed"
   type        = string
 }
 
 variable "location" {
-  description = "Azure region when create_data_plane_resource_group is true (new RG and all resources). When using an existing resource group, leave empty—the template uses the existing group's region for every resource."
+  description = "Azure region when create_resource_group is true (new RG and all resources). When reusing a resource group, leave empty: the template uses that group's region for every resource."
   type        = string
   default     = ""
   validation {
-    condition     = !var.create_data_plane_resource_group || length(trimspace(var.location)) > 0
-    error_message = "location must be set (e.g. eastus2) when create_data_plane_resource_group is true."
+    condition     = !var.create_resource_group || length(trimspace(var.location)) > 0
+    error_message = "location must be set (e.g. eastus2) when create_resource_group is true."
   }
 }
 
-variable "create_data_plane_resource_group" {
-  description = "Set to true to create a new resource group for data plane resources; set to false to use existing_data_plane_resource_group_name"
+variable "create_resource_group" {
+  description = "Set to true to create the workspace resource group; set to false to reuse the existing group named resource_group_name (it must already exist, and its region is used)."
   type        = bool
+  default     = true
 }
 
-variable "existing_data_plane_resource_group_name" {
-  description = "Name of the existing resource group when create_data_plane_resource_group is false"
+variable "resource_group_name" {
+  description = "Name of the workspace resource group (workspace, access connectors, storage, private endpoints, private DNS zones). Created when create_resource_group is true, otherwise it must already exist."
   type        = string
-  default     = ""
-  validation {
-    condition     = var.create_data_plane_resource_group || length(var.existing_data_plane_resource_group_name) > 0
-    error_message = "existing_data_plane_resource_group_name must be set when create_data_plane_resource_group is false."
-  }
 }
 
 # =============================================================================
 # Network Configuration
 # =============================================================================
 
-variable "cidr_dp" {
-  description = "CIDR for the data plane VNet address space (e.g. 10.0.0.0/16). Must encompass all subnets. Use a block between /16 and /24."
+variable "create_new_vnet" {
+  description = "Set to true to create the data plane VNet; set to false to reuse an existing one (set vnet_name, and vnet_resource_group_name if it is not in the workspace resource group). The template still creates its own public, private and Private Link subnets, NSG and (optionally) NAT gateway in the VNet, so it needs free address space for all three subnet CIDRs."
+  type        = bool
+  default     = true
+}
+
+variable "vnet_name" {
+  description = "Name of the existing VNet to reuse. Required when create_new_vnet is false; ignored when creating a VNet."
   type        = string
+  default     = ""
   validation {
-    condition     = length(regexall("^[0-9.]+/(\\d+)$", var.cidr_dp)) > 0 && tonumber(regexall("^[0-9.]+/(\\d+)$", var.cidr_dp)[0][0]) >= 16 && tonumber(regexall("^[0-9.]+/(\\d+)$", var.cidr_dp)[0][0]) <= 24
-    error_message = "cidr_dp must be a CIDR block with prefix length between /16 and /24 (e.g. 10.0.0.0/16)."
+    condition     = var.create_new_vnet || length(var.vnet_name) > 0
+    error_message = "vnet_name must be set to the existing VNet name when create_new_vnet is false."
   }
 }
 
-variable "subnet_workspace_cidrs" {
-  description = "CIDRs for the Databricks workspace subnets: [public, private]. Must be within the VNet (cidr_dp). Each subnet must be at least /26 (Databricks does not recommend smaller). Example: [\"10.0.0.0/24\", \"10.0.1.0/24\"]."
-  type        = list(string)
+variable "vnet_resource_group_name" {
+  description = "Resource group for the VNet and networking resources (subnets, NSG, NAT gateway). Leave empty, or set to the same value as resource_group_name, to use the workspace resource group. When create_new_vnet is true and this names a different group, that group is created; when reusing a VNet it must be the group that holds the existing VNet."
+  type        = string
+  default     = ""
   validation {
-    condition     = length(var.subnet_workspace_cidrs) == 2 && length([for c in var.subnet_workspace_cidrs : 1 if length(regexall("/(\\d+)$", c)) > 0 && tonumber(regexall("/(\\d+)$", c)[0][0]) <= 26]) == 2
-    error_message = "subnet_workspace_cidrs must contain exactly two CIDRs [public, private], each with prefix length at least /26 (e.g. /24 or /26)."
+    condition     = var.create_new_vnet || !var.create_resource_group || (var.vnet_resource_group_name != "" && var.vnet_resource_group_name != var.resource_group_name)
+    error_message = "When reusing a VNet (create_new_vnet = false) with create_resource_group = true, set vnet_resource_group_name to the existing resource group that holds the VNet. The new workspace resource group cannot contain it yet."
+  }
+}
+
+variable "vnet_cidr" {
+  description = "CIDR for the data plane VNet address space (e.g. 10.0.0.0/16). Required when create_new_vnet is true; must encompass all subnets. Use a block between /16 and /24. Not used when reusing an existing VNet."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.vnet_cidr == "" ? !var.create_new_vnet : (length(regexall("^[0-9.]+/(\\d+)$", var.vnet_cidr)) > 0 && tonumber(regexall("^[0-9.]+/(\\d+)$", var.vnet_cidr)[0][0]) >= 16 && tonumber(regexall("^[0-9.]+/(\\d+)$", var.vnet_cidr)[0][0]) <= 24)
+    error_message = "vnet_cidr must be set when create_new_vnet is true, as a CIDR block with prefix length between /16 and /24 (e.g. 10.0.0.0/16)."
+  }
+}
+
+variable "subnet_public_cidr" {
+  description = "CIDR of the Databricks public (host) subnet. Must be within the VNet (vnet_cidr) and at least /26 (Databricks does not recommend smaller). Example: 10.0.0.0/24."
+  type        = string
+  validation {
+    condition     = length(regexall("/(\\d+)$", var.subnet_public_cidr)) > 0 && tonumber(regexall("/(\\d+)$", var.subnet_public_cidr)[0][0]) <= 26
+    error_message = "subnet_public_cidr must be a CIDR with prefix length at least /26 (e.g. /24 or /26)."
+  }
+}
+
+variable "subnet_private_cidr" {
+  description = "CIDR of the Databricks private (container) subnet. Must be within the VNet (vnet_cidr) and at least /26 (Databricks does not recommend smaller). Example: 10.0.1.0/24."
+  type        = string
+  validation {
+    condition     = length(regexall("/(\\d+)$", var.subnet_private_cidr)) > 0 && tonumber(regexall("/(\\d+)$", var.subnet_private_cidr)[0][0]) <= 26
+    error_message = "subnet_private_cidr must be a CIDR with prefix length at least /26 (e.g. /24 or /26)."
   }
 }
 
 variable "subnet_private_endpoint_cidr" {
-  description = "CIDR for the Private Link subnet (control plane and DBFS private endpoints). Must be within the VNet (cidr_dp). Example: 10.0.2.0/26."
+  description = "CIDR for the Private Link subnet (control plane and DBFS private endpoints). Must be within the VNet (vnet_cidr). Example: 10.0.2.0/26."
   type        = string
 }
 

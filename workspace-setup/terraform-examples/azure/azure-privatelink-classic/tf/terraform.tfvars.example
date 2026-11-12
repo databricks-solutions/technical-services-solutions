@@ -1,114 +1,91 @@
 # =============================================================================
-# terraform.tfvars.example - Example variable values
+# Azure
 # =============================================================================
-# Copy this file to terraform.tfvars and set your values. Do not commit
-# terraform.tfvars if it contains sensitive data (e.g. subscription ID).
-# =============================================================================
+azure_subscription_id = "00000000-0000-0000-0000-000000000000"
+
+# Workspace resource group (workspace, access connectors, storage, private endpoints,
+# private DNS zones).
+# true  = create it (location required)
+# false = reuse the existing group named resource_group_name (its region is used)
+create_resource_group = true
+resource_group_name   = "rg-databricks-workspace"
+location              = "eastus2"   # leave empty when create_resource_group = false
+
+tags = {}
 
 # =============================================================================
 # Naming
 # =============================================================================
+# Prefix for resource names, following the Azure CAF pattern <abbreviation>-<prefix>,
+# e.g. vnet-my-databricks-pl, nsg-my-databricks-pl, pep-my-databricks-pl-dbfs-dfs.
+# 1-40 characters: a-z, 0-9, -, .
+resource_prefix = "my-databricks-pl"
 
-# Prefix for Azure resources (VNet, NSG, subnets, resource group). Also used to derive DBFS storage account name.
-resource_prefix = "my-databricks-workspace"
-
-# =============================================================================
-# Azure Configuration
-# =============================================================================
-
-# Azure subscription ID where resources will be deployed
-az_subscription = "your-azure-subscription-id"
-
-# Azure region when creating a new data plane resource group (e.g. eastus2). Required in that case.
-# When create_data_plane_resource_group is false, omit or set to "" — region is read from the existing RG.
-# https://learn.microsoft.com/en-us/azure/databricks/resources/supported-regions
-location = "eastus2"
-
-# Set to true to create a new resource group; false to use an existing one
-create_data_plane_resource_group = true
-
-# Name of existing resource group when create_data_plane_resource_group is false (required then)
-existing_data_plane_resource_group_name = ""
+# Optional. Empty uses a name derived from resource_prefix.
+# workspace_name              = "my-databricks-workspace"   # default: dbw-<resource_prefix>
+# root_storage_name           = "mydbfsrootstorage"         # default: dbfs + prefix; globally unique
+# managed_resource_group_name = "rg-databricks-managed"     # default: mrg-dbw-<resource_prefix>
 
 # =============================================================================
-# Network Configuration
+# Network
 # =============================================================================
+# true  = create the VNet (vnet_cidr required)
+# false = reuse an existing VNet (set vnet_name; it needs free address space for all three subnets)
+create_new_vnet = true
+# vnet_name     = "my-existing-vnet"
 
-# CIDR for the data plane VNet address space (must encompass all subnets)
-cidr_dp = "10.0.0.0/16"
+# Resource group for the VNet and networking resources. Leave empty to use the workspace
+# resource group. A different name is created (new VNet) or must hold the VNet (reused VNet).
+# vnet_resource_group_name = "rg-databricks-network"
 
-# Workspace subnets: [public, private]. Must be within cidr_dp (e.g. /24).
-subnet_workspace_cidrs = ["10.0.0.0/24", "10.0.1.0/24"]
+vnet_cidr           = "10.0.0.0/16"   # required when create_new_vnet = true; /16 to /24
+subnet_public_cidr  = "10.0.0.0/24"   # at least /26
+subnet_private_cidr = "10.0.1.0/24"   # at least /26
 
-# Private Link subnet for control plane and DBFS private endpoints (e.g. /26)
+# Private Link subnet for the control plane, DBFS and catalog private endpoints
 subnet_private_endpoint_cidr = "10.0.2.0/26"
 
-# NAT gateway: set to false when service endpoints cover all required Azure traffic and
-# no general internet egress from cluster nodes is needed (fully private / NVA-routed deployments).
+# NAT gateway for outbound internet (PyPI, Maven). May be false here because Private Link
+# provides control plane connectivity, e.g. for fully private deployments.
 create_nat_gateway = true
+# nat_gateway_zones = []   # [] = regional NAT gateway, or one zone e.g. ["1"]
 
-# Additional storage accounts to allow through the service endpoint policy (beyond Databricks-managed storage).
-# Use full resource IDs for Unity Catalog external locations, data lake accounts, etc.
-# Example:
-# service_endpoint_policy_storage_accounts = [
-#   "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Storage/storageAccounts/<name>",
-# ]
-
-# NAT gateway zone: [] (default) = non-zonal; a single zone (e.g. ["1"]) pins it. Only used when create_nat_gateway = true.
-nat_gateway_zones = []
+# Extra storage accounts reachable through the service endpoint policy (full resource IDs)
+# service_endpoint_policy_storage_accounts = []
 
 # =============================================================================
-# Serverless NCC (required)
+# Databricks account
 # =============================================================================
-# NCC and private endpoint rules for DBFS are always created so serverless compute
-# (SQL warehouses, serverless jobs) can reach workspace storage over Private Link.
-# Private endpoint connections are auto-approved by Terraform. Requires account admin.
-
-# Databricks account ID (from account console URL: .../accounts/<account_id>)
-databricks_account_id = "your-databricks-account-id"
-
-# =============================================================================
-# Unity Catalog (Optional)
-# =============================================================================
-
-# Attach an existing metastore (recommended) or create one (leave metastore_id = "" 
-# and set new_metastore_name). Azure allows one metastore per region per account.
-metastore_id = "REPLACE-WITH-EXISTING-METASTORE-UUID"
-new_metastore_name    = ""
+databricks_account_id = "00000000-0000-0000-0000-000000000000"
 
 # Databricks account user (email) made workspace admin and granted ALL PRIVILEGES on the
 # catalog, external location and storage credential. Required with new_metastore_name,
 # and run Terraform as this user in that case.
 admin_user = "you@company.com"
 
-# User-defined catalog on a firewalled storage account (private endpoints for classic
-# compute, NCC private endpoint rules for serverless). Needs a metastore, and Owner or
-# User Access Administrator on the resource group for the role assignment.
+# =============================================================================
+# Unity Catalog metastore: set ONE of these, or neither to attach one manually.
+# =============================================================================
+# Assign an existing metastore (list with: databricks account metastores list)
+# metastore_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+# ...or create a new one in the workspace region (also needs admin_user):
+# new_metastore_name = "my-metastore"
+
+# =============================================================================
+# User-defined catalog on a private storage account (needs a metastore above)
+# =============================================================================
 new_catalog = false
 
 # Optional overrides, only used when new_catalog = true:
-uc_storage_account_name = ""     # 3-24 lowercase letters/numbers, globally unique
-uc_container_name       = "uc-catalog"
-catalog_name            = ""     # default: <resource_prefix>_catalog
-storage_credential_name = ""     # default: <resource_prefix>-storage-credential
-external_location_name  = ""     # default: <resource_prefix>-external-location
+# uc_storage_account_name = ""            # 3-24 lowercase letters/numbers, globally unique
+# uc_container_name       = "uc-catalog"
+# catalog_name            = ""            # default: <resource_prefix>_catalog
+# storage_credential_name = ""            # default: <resource_prefix>-storage-credential
+# external_location_name  = ""            # default: <resource_prefix>-external-location
 
 # =============================================================================
-# Validation Cluster (Optional)
+# Validation cluster (optional, needs a metastore)
 # =============================================================================
-
-# Shared single-node classic cluster to validate the deployment. Needs a metastore.
 create_cluster = false
 # node_type_id                    = "Standard_DS3_v2"
 # cluster_autotermination_minutes = 10   # minimum 10
-
-# =============================================================================
-# Tags
-# =============================================================================
-
-# Optional: tags on Azure resources (omit or {} for no tags)
-# tags = {
-#   Environment = "Testing"
-#   owner         = "you@example.com"
-# }
-

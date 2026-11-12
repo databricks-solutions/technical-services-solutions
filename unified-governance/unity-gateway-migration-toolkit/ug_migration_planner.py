@@ -213,10 +213,40 @@ def remote_workspace_client(target_id: str, allowlist: list[str], url: str, clie
                          "and its OAuth secret (Central mode: service principal OAuth secret)")
     client = (factory or WorkspaceClient)(host=url.rstrip("/"), client_id=client_id, client_secret=client_secret,
                                           auth_type="oauth-m2m")
-    got = workspace_id_of(client)
+    try:
+        got = workspace_id_of(client)
+    except Exception as e:  # the first call signs in: say what a known failure means, keep the original
+        hint = remote_signin_hint(str(e), target_id)
+        if hint:
+            raise PermissionError(hint) from e
+        raise
     if str(got) != target_id:
         raise ValueError(f"{url} answers as workspace {got}, not {target_id}")
     return client
+
+
+# Seen live (Azure, 2026-11): a serverless job in one workspace calling another workspace is refused with this text
+# unless cross-workspace network policies allow it. It is not a credentials problem.
+CROSS_WORKSPACE_DENIED_RE = re.compile(r"cert validation failed|trusted workload checks did not pass", re.I)
+# Signs in, but the secret isn't valid for this service principal (an Entra ID secret, a typo, or an expired one).
+BAD_CLIENT_SECRET_RE = re.compile(r"invalid_client|invalid client secret|client authentication failed", re.I)
+
+
+def remote_signin_hint(error: str, target_id: str) -> str | None:
+    """A plain explanation, with the fix, for a known central-mode sign-in failure; None for anything else."""
+    if CROSS_WORKSPACE_DENIED_RE.search(error or ""):
+        return (f"Databricks refused this job's call to workspace {target_id}: serverless compute in one workspace can "
+                "only reach another workspace when cross-workspace network policies allow it (this isn't a credentials "
+                "problem). An account admin enables the Cross Workspace Network Policy preview, then, in the account "
+                "console (Security > Networking), adds that workspace as an allowed Databricks destination in this "
+                "workspace's serverless egress policy and allows this workspace in that workspace's ingress policy. Or "
+                f"install the toolkit in workspace {target_id} itself instead of using central mode. Details: "
+                + error[:300])
+    if BAD_CLIENT_SECRET_RE.search(error or ""):
+        return ("the service principal's secret was refused. Central mode needs a Databricks OAuth secret (generated "
+                "in Databricks: Settings > Identity and access > Service principals > the service principal > Secrets), "
+                "not an Entra ID client secret, stored in a Databricks secret scope. Details: " + error[:300])
+    return None
 
 
 SECRET_REF_RE = re.compile(r"[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+")

@@ -109,7 +109,7 @@ def test_downgrade_needs_widget_and_compares_numbers():
     assert H["downgrade_problem"]("0.7.0", "0.8.0", allow=False) is None
     assert H["downgrade_problem"]("", "0.8.0", allow=False) is None
     assert H["downgrade_problem"]("0.10.0", "0.9.0", allow=False) is not None
-    assert "allow_downgrade (in the Optional settings cell)" in H["downgrade_problem"]("0.8.0", "0.7.0", allow=False)
+    assert "16. Allow downgrade" in H["downgrade_problem"]("0.8.0", "0.7.0", allow=False)
 
 
 def test_marker_status():
@@ -353,6 +353,9 @@ class FakeWS:
         self.clock = 0
         self.sp_rules = None  # grant rules on the run-as SP's rule set; None = the API isn't reachable
         self.current_catalog = "main"  # the workspace's default catalog (SELECT current_catalog())
+        self.secret_scopes = {"s": {"k"}}  # scope -> keys
+        self.secret_acls = {("s", SP_ID): "READ"}  # (scope, principal) -> permission
+        self.sps = [("ugmig-central", SP_ID)]  # service principals in the workspace: (display name, application ID)
 
     # ---- seeding helpers
     def add_table(self, key, rows=()):
@@ -719,9 +722,27 @@ class FakeWS:
             assert path == "/api/2.0/preview/accounts/access-control/rule-sets" and "acct-1" in query["name"]
             return {"grant_rules": ws.sp_rules}
 
+        class Secrets:
+            def list_secrets(self_inner, scope):
+                if scope not in ws.secret_scopes:
+                    raise sdk_errors.ResourceDoesNotExist(f"Scope {scope} does not exist!")
+                return [_ns(key=k) for k in sorted(ws.secret_scopes[scope])]
+
+            def get_acl(self_inner, scope, principal):
+                perm = ws.secret_acls.get((scope, principal))
+                if perm is None:
+                    raise sdk_errors.ResourceDoesNotExist(f"Failed to get secret acl for principal {principal}")
+                return _ns(principal=principal, permission=_state(perm))
+
+        class ServicePrincipals:
+            def list(self_inner, filter=None, attributes=None):
+                name = re.match(r'displayName eq "(.*)"', filter or "")[1]
+                return [_ns(display_name=n, application_id=a) for n, a in ws.sps if n.lower() == name.lower()]
+
         return _ns(current_user=Current(), catalogs=Catalogs(), schemas=Schemas(), warehouses=Warehouses(),
                    grants=Grants(), statement_execution=Statements(), workspace=Workspace(), lakeview=Lakeview(),
-                   jobs=Jobs(), apps=Apps(), config=_ns(host="https://ws.example.com"),
+                   jobs=Jobs(), apps=Apps(), secrets=Secrets(), service_principals=ServicePrincipals(),
+                   config=_ns(host="https://ws.example.com"),
                    get_workspace_id=lambda: 123, api_client=_ns(do=rule_set))
 
 
@@ -753,7 +774,8 @@ def seed_install(ws, app=APP, folder=FOLDER, results="main.ug_migration", versio
     ids = {}
     for role, title, nb in (("snapshot", "snapshot", "run_account"), ("scan", "workspace scan", "run_scan"),
                             ("apply", "apply", "run_apply")):
-        params = [jobs.JobParameterDefinition("snapshot_table", f"{results}.ug_migration")] if role == "snapshot" else [
+        params = [jobs.JobParameterDefinition("snapshot_table", f"{results}.ug_migration"),
+                  jobs.JobParameterDefinition("deep_warehouse_id", WH_ID)] if role == "snapshot" else [
             jobs.JobParameterDefinition("results_schema", results)]
         s = jobs.JobSettings(name=f"[{app}] Unity Gateway migration {title}",
                              tags={"tool": "ug-migration-toolkit", "Project": "unity-gateway-migration-toolkit",
@@ -834,13 +856,7 @@ def run_notebook(monkeypatch, ws, widgets=None):
     monkeypatch.setattr(sdk_pkg, "WorkspaceClient", lambda *a, **k: ws.make())
     vals = dict(widgets or {})
     interactive = vals.pop("__interactive__", False)  # default: a job run (the context has a jobId), so no preview
-    settings_cell = vals.pop("__settings__", None)  # values typed into the Optional settings cell
-    flag = pathlib.Path(tempfile.mkdtemp()) / "preview.json"
-    text = _notebook_text(vals.pop("__mode__", "install")).replace("/tmp/ugmig_install_preview.json", str(flag))
-    if settings_cell:
-        for k, v in settings_cell.items():
-            text, n = re.subn(rf'^(    "{k}": )""', rf'\g<1>{json.dumps(v)}', text, count=1, flags=re.M)
-            assert n == 1, k
+    text = _notebook_text(vals.pop("__mode__", "install"))
     cells = text.split("\n# COMMAND ----------\n")
     out = []
     labels = {}
@@ -882,22 +898,22 @@ def run_notebook(monkeypatch, ws, widgets=None):
 
 
 # The widget names, by the short names the tests use (the panel numbers them so it shows them in order).
-INSTALL_NAMES = {"results_catalog": "01_catalog", "warehouse": "02_warehouse", "target": "03_target"}
-# Everything else is an optional setting: the tests pass them as job parameters of the same name (setting() reads
-# those first, then the Optional settings cell).
-OPTIONAL_KEYS = ("app_name", "operators", "run_as", "create_target", "results_schema", "install_folder", "secret_schemas",
-                 "allow_secret_read", "deadline", "central_workspaces", "central_secret", "adopt_app", "allow_downgrade",
-                 "second_install")
+INSTALL_NAMES = {"results_catalog": "01_catalog", "warehouse": "02_warehouse", "target": "03_target",
+                 "app_name": "04_app_name", "operators": "05_operators", "run_as": "06_run_as",
+                 "create_target": "07_create_target", "results_schema": "08_results_schema",
+                 "install_folder": "09_install_folder", "secret_schemas": "10_secret_schemas",
+                 "allow_secret_read": "11_allow_secret_read", "deadline": "12_deadline",
+                 "central_workspaces": "13_central_workspaces", "central_secret": "14_central_secret",
+                 "adopt_app": "15_adopt_app", "allow_downgrade": "16_allow_downgrade", "second_install": "17_second_install"}
 UNINSTALL_NAMES = {"action": "01_action", "app_name": "02_app_name", "rollback_services": "03_rollback_services",
                    "drop_data": "04_drop_data", "remove_logs": "05_remove_logs", "results_schema": "06_results_schema",
                    "adopt_app": "07_adopt_app"}
 
 
 def install_widgets(**kw):
-    """Install widgets by short name, plus optional settings (as job parameters of the same name)."""
+    """Install widgets by short name."""
     vals = {"results_catalog": "main", "warehouse": WH_LABEL, **kw}
-    assert all(k in INSTALL_NAMES or k in OPTIONAL_KEYS for k in vals), vals
-    return {"__mode__": "install", **{INSTALL_NAMES.get(k, k): v for k, v in vals.items()}}
+    return {"__mode__": "install", **{INSTALL_NAMES[k]: v for k, v in vals.items()}}
 
 
 def uninstall_widgets(action="uninstall: remove", **kw):
@@ -919,99 +935,58 @@ def test_widgets_are_the_first_code_cell_and_the_prompt_follows(mode):
     assert "__" not in cells[0].replace("__init__", "")  # every placeholder filled in
     assert ("Installs the toolkit in this workspace" if mode == "install" else "Removes a toolkit install") in cells[0]
     assert f'MODE = "{mode}"' in cells[1] and "dbutils.widgets" in cells[1]
-    assert cells[2].strip().endswith("then Run all" if mode == "install" else "it changes nothing")
+    assert cells[2].strip().endswith("4 to 17 are optional" if mode == "install" else "it changes nothing")
     assert "# MAGIC %pip" in cells[3]
-    if mode == "install":  # the Optional settings cell follows the pip cell, titled, every value blank
-        assert cells[4].startswith("\n# DBTITLE 1,Optional settings") and "OPTIONAL_SETTINGS = {" in cells[4]
-        keys = re.findall(r'^    "(\w+)": "",', cells[4], re.M)
-        assert tuple(keys) == OPTIONAL_KEYS
-    else:
-        assert "OPTIONAL_SETTINGS = {" not in "".join(cells) and "INSTALL-ONLY" not in "".join(cells)
 
 
 def _labels(monkeypatch, widgets):
     return run_notebook(monkeypatch, FakeWS(), widgets).labels
 
 
-def test_the_install_notebook_has_three_numbered_widgets(monkeypatch):
+def test_the_install_notebook_shows_every_widget_numbered_with_the_optional_ones_marked(monkeypatch):
     lab = _labels(monkeypatch, install_widgets())
-    assert list(lab) == ["01_catalog", "02_warehouse", "03_target"]
+    assert list(lab) == list(INSTALL_NAMES.values())
     assert sorted(lab) == list(lab)  # the panel sorts by name: the number keeps the order
-    assert [lab[k].split(" ", 1)[0] for k in lab] == ["1.", "2.", "3."]
+    assert [lab[k].split(" ", 1)[0] for k in lab] == [f"{n}." for n in range(1, 18)]
+    assert all("(optional)" in lab[k] for k in list(lab)[3:]) and not any("(optional)" in lab[k] for k in list(lab)[:3])
     assert "blank = <catalog>.ug_migrated, created for you" in lab["03_target"]
+    assert "risk" in lab["11_allow_secret_read"] and "overwrites it" in lab["15_adopt_app"]
 
 
 def test_widgets_from_an_earlier_build_are_removed_from_the_panel(monkeypatch):
     vals = {"__mode__": "install", "__interactive__": True, "01_catalog": "main", "02_warehouse": WH_LABEL,
-            "04_setup": "custom", "05_app_name": "", "13_deadline": ""}
+            "04_setup": "custom", "05_app_name": "", "13_deadline": "", "results_catalog": "main", "action": "install"}
     res = run_notebook(monkeypatch, FakeWS(), vals)
     assert not res.raised, res.status
-    assert set(res.labels) == {"01_catalog", "02_warehouse", "03_target"}
+    assert set(res.labels) == set(INSTALL_NAMES.values())
 
 
-def test_optional_settings_cell_values_are_used(monkeypatch):
+def test_the_first_run_of_a_new_notebook_installs_with_the_defaults(monkeypatch):
+    """A freshly imported notebook has no widgets: Run all creates them with the workspace's default catalog and a
+    running warehouse, and installs in the same run."""
     ws = FakeWS()
-    res = run_notebook(monkeypatch, ws, {**install_widgets(), "__settings__": {"deadline": "2027-06-01",
-                                                                             "operators": "a@x.com,b@x.com"}})
+    res = run_notebook(monkeypatch, ws, {"__mode__": "install", "__interactive__": True})
     assert not res.raised, res.status
-    assert _env(ws)["UGMIG_DEADLINE"] == "2027-06-01" and _env(ws)["OPERATORS"] == "a@x.com,b@x.com"
-    # a job parameter of the same name wins over the cell
-    res2 = run_notebook(monkeypatch, ws, {**install_widgets(deadline="2027-07-01"), "__settings__": {"deadline": "2027-06-01"}})
-    assert not res2.raised and _env(ws)["UGMIG_DEADLINE"] == "2027-07-01"
+    assert APP in ws.apps and "main.ug_migration" in ws.schemas and "main.ug_migrated" in ws.schemas
 
 
-def _preview(ws, monkeypatch, **widgets):
-    return run_notebook(monkeypatch, ws, {"__mode__": "install", "__interactive__": True, **widgets})
-
-
-def test_first_interactive_run_previews_with_defaults_and_changes_nothing(monkeypatch):
-    ws = FakeWS()
-    res = _preview(ws, monkeypatch)  # a freshly imported notebook: no widgets yet
-    assert res.status == ("exit: Preview: nothing was changed. If this looks right, click Run all again to install. To "
-                          "change something first, set the widgets at the top or the Optional settings cell."), res.status
-    assert snapshot_of(ws) == snapshot_of(FakeWS())
-    assert not [e for e in ws.log if e[0] in ("create_job", "reset_job", "create_app", "deploy_app", "upload")]
-    text = res.text
-    assert "[OK  ] Results schema: main.ug_migration doesn't exist: the install creates it" in text
-    assert "[OK  ] Schema for new model services: main.ug_migrated doesn't exist: it will be created" in text
-    assert "This install would create or update:" in text and f"App: {APP}" in text
-    # the defaults it picked: the workspace's default catalog and the only warehouse
-    again = run_notebook(monkeypatch, ws, {"__mode__": "install", "__interactive__": True, "01_catalog": "main",
-                                           "02_warehouse": WH_LABEL})  # the widgets exist now: this run installs
-    assert not again.raised and APP in ws.apps, again.status
-
-
-def test_preview_with_a_fix_says_so_without_an_error(monkeypatch):
-    ws = FakeWS()
-    ws.denied.add("system.serving.endpoint_usage")
-    res = _preview(ws, monkeypatch)
-    assert res.status == "exit: Preview: nothing was changed. Fix the FIX items in the checklist above, then click Run all again."
-    assert "[FIX ] the SQL warehouse can't read system.serving.endpoint_usage" in res.text
-    assert snapshot_of(ws) == snapshot_of(FakeWS())
-
-
-def test_preview_without_a_default_catalog_asks_for_one(monkeypatch):
+def test_without_a_usable_default_catalog_the_first_run_asks_for_one(monkeypatch):
     ws = FakeWS()
     ws.current_catalog = "hive_metastore"  # not usable, and two catalogs to choose from
-    res = _preview(ws, monkeypatch)
-    assert res.status.startswith("exit: Preview: nothing was changed. Set these, then click Run all again: choose 1. Catalog")
+    res = run_notebook(monkeypatch, ws, {"__mode__": "install", "__interactive__": True})
+    assert res.raised and "choose 1. Catalog" in res.status
     assert res.labels and snapshot_of(ws) == snapshot_of(FakeWS())
-
-
-def test_a_job_run_never_previews(monkeypatch):
-    ws = FakeWS()
-    res = run_notebook(monkeypatch, ws, {"__mode__": "install", "01_catalog": "main", "02_warehouse": WH_LABEL})
-    assert not res.raised and APP in ws.apps, res.status
 
 
 def test_an_update_keeps_catalog_and_warehouse_unless_you_pick_others(monkeypatch):
     ws = FakeWS()
     ws.warehouses["ffff0000"] = {"name": "aaa-first", "state": "RUNNING"}  # sorts first: a new install would pick it
-    seed_install(ws)
-    res = _preview(ws, monkeypatch)
-    assert res.labels["01_catalog"].startswith("1. Catalog (keep the current one")
+    ids = seed_install(ws)
+    res = run_notebook(monkeypatch, ws, {"__mode__": "install", "__interactive__": True})
+    assert not res.raised, res.status
+    assert res.labels["01_catalog"].startswith("1. Catalog")
     assert "using the results schema of the existing install: main.ug_migration" in res.text
-    assert res.status.startswith("exit: Preview: nothing was changed")
+    assert ws.apps[APP].resources[0].sql_warehouse.id == WH_ID  # not the one a new install would have picked
 
 
 def test_uninstall_notebook_widgets(monkeypatch):
@@ -1035,7 +1010,7 @@ def test_fresh_install_creates_everything_and_says_what_next(monkeypatch):
     assert "Compute > Apps > ug-migration-toolkit" in text
     assert "First steps" in text and "Start scan" in text
     assert "paused" in text and "unpause" in text
-    assert "set secret_schemas in the Optional settings cell" in text  # how to turn on secret mapping
+    assert "set 10. Allowed secret schemas to the catalog.schema" in text  # how to turn on secret mapping
     # The schema for new model services is created in the catalog picked, and named everywhere it matters.
     assert ws.schemas["main.ug_migrated"]["comment"] == f"Unity Gateway model services created by the migration toolkit (app: {APP})"
     assert "ai_gateway.migrated" not in ws.schemas
@@ -1172,7 +1147,7 @@ def test_bundle_deployed_app_needs_adopt(monkeypatch):
     ws = FakeWS()
     seed_install(ws, app="ug-migration-bundle", folder=f"/Workspace/Users/{ME}/ug-migration-bundle-toolkit")
     res = run_notebook(monkeypatch, ws, install_widgets(app_name="ug-migration-bundle"))
-    assert res.raised and "deployed by the bundle" in res.status and "adopt_app (in the Optional settings cell)" in res.status
+    assert res.raised and "deployed by the bundle" in res.status and "15. Adopt an existing app" in res.status
     res2 = run_notebook(monkeypatch, ws, install_widgets(app_name="ug-migration-bundle", adopt_app="yes"))
     assert not res2.raised, res2.status
 
@@ -1517,7 +1492,7 @@ def test_cutover_job_parameters_and_the_deadline_reach_the_jobs_and_app():
 def test_legacy_deadline_widget_is_labelled_validated_and_passed_on(monkeypatch):
     ws = FakeWS()
     res = run_notebook(monkeypatch, ws, install_widgets(deadline="next spring"))
-    assert res.raised and "deadline (in the Optional settings cell) must be a date as YYYY-MM-DD" in res.status
+    assert res.raised and "12. Legacy deadline must be a date as YYYY-MM-DD" in res.status
     assert not ws.apps  # nothing created for a bad date
     res2 = run_notebook(monkeypatch, ws, install_widgets(deadline="2027-06-01"))
     assert not res2.raised, res2.status
@@ -1530,7 +1505,7 @@ def test_legacy_deadline_widget_is_labelled_validated_and_passed_on(monkeypatch)
 def test_service_principal_install_needs_operators(monkeypatch):
     ws = FakeWS(me="0b1f7c2e-1234-4abc-9def-0123456789ab")
     res = run_notebook(monkeypatch, ws, install_widgets())
-    assert res.raised and "set operators (in the Optional settings cell)" in res.status
+    assert res.raised and "set 5. Operators" in res.status
     res2 = run_notebook(monkeypatch, ws, install_widgets(operators="boss@example.com"))
     assert not res2.raised, res2.status
     env = {e.name: e.value for e in ws.apps[APP].active_deployment.env_vars}
@@ -1720,7 +1695,7 @@ def test_target_schema_that_exists_is_used_as_is(monkeypatch):
 
 
 @pytest.mark.parametrize("setup, expect", [
-    ({"create_target": "no"}, "create_target is no (Optional settings cell)"),
+    ({"create_target": "no"}, "and 7. Create schema 3 is no."),
     ({"target": "nocat.svc"}, "catalog nocat doesn't exist"),
     ({"no_create": True}, "couldn't create main.ug_migrated"),
 ])
@@ -1813,7 +1788,7 @@ def test_an_update_from_0_10_asks_for_the_operators_once_then_keeps_them(monkeyp
     seed_install(ws, operators=None)
     before = snapshot_of(ws)
     res = run_notebook(monkeypatch, ws, {"__mode__": "install", "02_warehouse": WH_LABEL})
-    assert res.raised and "the operators of this install" in res.status and "operators in the Optional settings cell" in res.status
+    assert res.raised and "the operators of this install" in res.status and "Enter them in 5. Operators" in res.status
     assert snapshot_of(ws) == before
     ok = run_notebook(monkeypatch, ws, install_widgets(operators="boss@example.com,ops@example.com"))
     assert not ok.raised, ok.status
@@ -1829,7 +1804,7 @@ def test_a_blank_create_target_keeps_a_saved_no(monkeypatch):
     assert "main.ug_migrated" not in ws.schemas
     res = run_notebook(monkeypatch, ws, install_widgets())  # create_target left blank: the saved "no" is kept
     assert not res.raised, res.status
-    assert "main.ug_migrated" not in ws.schemas and "create_target is no" in res.text
+    assert "main.ug_migrated" not in ws.schemas and "7. Create schema 3 is no" in res.text
 
 
 def test_turning_central_mode_off_also_drops_its_secret(monkeypatch):
@@ -1868,3 +1843,63 @@ def test_uninstall_results_schema_must_be_catalog_dot_schema(monkeypatch):
     seed_install(ws)
     res = run_notebook(monkeypatch, ws, uninstall_widgets("uninstall: preview", results_schema="main"))
     assert res.raised and "6. Results schema must be catalog.schema" in res.status
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Central mode setup, from a customer's first install (Azure): the name vs ID, the secret, and the network policies
+
+def test_resolve_run_as_takes_a_name_or_an_application_id():
+    f = H["resolve_run_as"]
+    look = lambda n: [("ugmig-central", SP_ID), ("UGMIG-central", SP_ID), ("other", "x")]
+    assert f(SP_ID, look) == (SP_ID, None, None)
+    assert f("", look) == ("", None, None)
+    got, note, problem = f("ugmig-central", look)
+    assert got == SP_ID and "is application ID" in note and problem is None
+    assert "no service principal named 'nope'" in f("nope", lambda n: [])[2]
+    two = f("dup", lambda n: [("dup", SP_ID), ("dup", "aaaaaaaa-0000-0000-0000-000000000009")])[2]
+    assert "2 service principals are named 'dup'" in two
+    broken = f("x", lambda n: (_ for _ in ()).throw(RuntimeError("forbidden")))[2]
+    assert "couldn't look up" in broken and "application ID" in broken
+
+
+def test_run_as_by_name_is_resolved_and_the_jobs_get_the_id(monkeypatch):
+    ws = FakeWS()
+    res = run_notebook(monkeypatch, ws, install_widgets(run_as="ugmig-central"))
+    assert not res.raised, res.status
+    assert f"6. Run jobs as service principal: ugmig-central is application ID {SP_ID}" in res.text
+    assert all(j.run_as == jobs.JobRunAs(service_principal_name=SP_ID) for j in ws.jobs.values())
+
+
+def _central(**kw):
+    return install_widgets(run_as=SP_ID, central_workspaces="2222222222222222", central_secret="s/k", **kw)
+
+
+def test_central_mode_checks_the_secret_and_says_what_the_network_needs(monkeypatch):
+    ws = FakeWS()
+    res = run_notebook(monkeypatch, ws, _central())
+    assert not res.raised, res.status
+    assert f"[OK  ] Central mode secret: s/k exists and {SP_ID} can read it" in res.text
+    note = [l for l in res.text.splitlines() if "[NOTE] Central mode network" in l][0]
+    for part in ("serverless compute", "2222222222222222", "Cross Workspace Network Policy", "egress policy",
+                 "ingress policies", "Cert validation failed", "workspace admin"):
+        assert part in note, part
+
+
+@pytest.mark.parametrize("setup, expect", [
+    (lambda ws: ws.secret_scopes.clear(), "the secret scope 's' doesn't exist"),
+    (lambda ws: ws.secret_scopes.__setitem__("s", {"other"}), "the secret scope s has no key 'k'"),
+    (lambda ws: ws.secret_acls.clear(), f"service principal {SP_ID} can't read the secret scope s. Give it READ: "
+                                        f"databricks secrets put-acl s {SP_ID} READ"),
+])
+def test_central_mode_secret_problems_stop_the_install_with_the_command(monkeypatch, setup, expect):
+    ws = FakeWS()
+    setup(ws)
+    res = run_notebook(monkeypatch, ws, _central())
+    assert res.raised and expect in res.status, res.status
+    assert not ws.apps
+
+
+def test_central_secret_labels_say_it_is_a_databricks_secret(monkeypatch):
+    lab = run_notebook(monkeypatch, FakeWS(), install_widgets()).labels
+    assert "Databricks OAuth secret" in lab["14_central_secret"] and "not an Entra ID secret" in lab["14_central_secret"]
+    assert "name or application ID" in lab["06_run_as"]

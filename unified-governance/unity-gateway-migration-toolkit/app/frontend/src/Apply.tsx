@@ -444,7 +444,7 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
               )}
               <label className="choice"><input type="radio" name="secret-mode" checked={secretMode === "create"} disabled={allowedSchemas.length === 0}
                      aria-describedby={allowedSchemas.length ? undefined : "secret-create-reason"} onChange={() => setSecretMode("create")} /> <span>Create Unity Catalog secrets from the workspace secrets</span></label>
-              {allowedSchemas.length === 0 && <p id="secret-create-reason" className="small muted reason">Not available: the installer didn't allow a Unity Catalog secret schema. Run the installer again with secret_schemas set in its Optional settings cell.</p>}
+              {allowedSchemas.length === 0 && <p id="secret-create-reason" className="small muted reason">Not available: the installer didn't allow a Unity Catalog secret schema. Run the installer again with 10. Allowed secret schemas set.</p>}
               {secretMode === "create" && allowedSchemas.length > 0 && (
                 <div className="stack-sm secret-map">
                   <p className="small muted">The apply job reads each workspace secret with its own identity and stores the value in a new Unity Catalog secret, which the provider service then references. Values are never shown or logged. The dry run checks that each workspace secret can be read; rollback deletes the secrets that run created.</p>

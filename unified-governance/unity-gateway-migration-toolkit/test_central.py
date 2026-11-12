@@ -62,6 +62,39 @@ def test_remote_client_refuses_a_url_that_answers_as_another_workspace(monkeypat
         planner.remote_workspace_client(REMOTE, [REMOTE], "https://adb-2.net", SP_ID, "s", factory=FakeRemote)
 
 
+# The error a customer hit live (Azure, serverless hub calling another workspace), with the IDs made up.
+CROSS_WS_ERROR = ("Cert validation failed. Workspace comparison, snp system trusted, and snp trusted workload checks did "
+                  "not pass. [ReqId: 00000000-0000-0000-0000-000000000000]. Config: host=https://adb-2.azuredatabricks.net, "
+                  f"client_id={SP_ID}, client_secret=***, auth_type=oauth-m2m")
+
+
+@pytest.mark.parametrize("error, expect, absent", [
+    (CROSS_WS_ERROR, ["cross-workspace network policies", "isn't a credentials problem", "Cross Workspace Network Policy",
+                      "egress policy", "ingress policy", f"install the toolkit in workspace {REMOTE}"], ["Entra"]),
+    ("invalid_client: Client authentication failed", ["Databricks OAuth secret", "not an Entra ID client secret",
+                                                       "Databricks secret scope"], ["network"]),
+])
+def test_known_sign_in_failures_say_what_they_mean_and_how_to_fix_them(monkeypatch, error, expect, absent):
+    def refuse(c):
+        raise RuntimeError(error)
+    monkeypatch.setattr(planner, "workspace_id_of", refuse)
+    with pytest.raises(PermissionError) as e:
+        planner.remote_workspace_client(REMOTE, [REMOTE], "https://adb-2.net", SP_ID, SECRET_VALUE, factory=FakeRemote)
+    msg = str(e.value)
+    assert all(x in msg for x in expect), msg
+    assert not any(x in msg for x in absent), msg
+    assert SECRET_VALUE not in msg
+    assert isinstance(e.value.__cause__, RuntimeError)  # the original error is kept
+
+
+def test_other_sign_in_failures_are_left_as_they_are(monkeypatch):
+    def refuse(c):
+        raise ConnectionError("timed out")
+    monkeypatch.setattr(planner, "workspace_id_of", refuse)
+    with pytest.raises(ConnectionError, match="timed out"):
+        planner.remote_workspace_client(REMOTE, [REMOTE], "https://adb-2.net", SP_ID, SECRET_VALUE, factory=FakeRemote)
+
+
 def test_remote_scan_notes_unity_catalog_definitions_as_not_scanned(monkeypatch):
     notes = {}
     scanner = SimpleNamespace(note=lambda k, v: notes.__setitem__(k, v),

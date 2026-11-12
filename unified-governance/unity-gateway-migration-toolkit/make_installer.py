@@ -64,15 +64,15 @@ INTRO = {
     "install": """\
 Installs the toolkit in this workspace. No CLI, Git or local setup.
 
-1. Click **Run all**. The first run only previews: it adds the widgets at the top (prefilled with this workspace's
-   default catalog and a SQL warehouse), runs every check, prints a checklist and what it would create, and changes
-   nothing.
-2. Check the widgets: **1. Catalog** (the toolkit creates its schemas there), **2. SQL warehouse**, and **3. Schema for
-   new model services** (blank: `<catalog>.ug_migrated` is created for you; or enter `catalog.schema` of one you have).
-3. Click **Run all** again to install (about 5 minutes). The app link is printed at the end.
+Click **Run all** (about 5 minutes). It adds the widgets at the top, prefilled with this workspace's default catalog and
+a running SQL warehouse, checks everything, and installs. The app link is printed at the end.
 
-The checklist marks each check OK, FIX or NOTE. If anything needs fixing, nothing is created or changed, and the message
-says exactly what to grant or set.
+The first three widgets are the ones that matter: **1. Catalog** (the toolkit creates its schemas there), **2. SQL
+warehouse**, and **3. Schema for new model services** (blank: `<catalog>.ug_migrated` is created for you; or enter
+`catalog.schema` of one you have). To change one, change it and click Run all again.
+
+Before anything changes, a checklist marks each check OK, FIX or NOTE. If anything needs fixing, nothing is created or
+changed, the run ends with a red "Nothing was changed" error, and the message says exactly what to grant or set.
 
 **What it creates**
 - In the catalog you pick: the results schema `ug_migration` (scan results and history), and the schema for new
@@ -86,8 +86,8 @@ says exactly what to grant or set.
 on the catalog, `CAN USE` on the warehouse, and `SELECT` on the system tables (if it's missing, the checklist prints
 the GRANT to send an account admin).
 
-**Optional settings** (app name, operators, a service principal for the jobs, central mode, secret mapping and more)
-are in the cell titled **Optional settings**, below the widgets. Most installs leave it as is.
+**Widgets 4 to 17 are optional** (app name, operators, a service principal for the jobs, central mode, secret mapping
+and more). Most installs leave them blank: blank keeps the default, or what the install already here uses.
 
 **To update**, import the newer installer and click Run all. It finds the install and keeps its settings. (From 0.10
 or earlier it asks once for the operators, who can start jobs in the app: Databricks doesn't return them.) To remove
@@ -102,20 +102,12 @@ Model services created by Apply stay unless you set **3** to `yes`. Schemas that
 Uninstall refuses while a toolkit job is running.""",
 }
 TITLE = {"install": "Install the Unity Gateway Migration Toolkit", "uninstall": "Uninstall the Unity Gateway Migration Toolkit"}
-PROMPT = {"install": "Check 1. Catalog, 2. SQL warehouse and 3. Schema above, then Run all",
+PROMPT = {"install": "Widgets 1 to 3 above are the ones that matter; 4 to 17 are optional",
           "uninstall": "Run all with 1. Action = preview first: it changes nothing"}
 
 
 def render(tpl: str, mode: str, version: str, payload: str) -> str:
     intro = "\n".join("# MAGIC" + (" " + line if line else "") for line in INTRO[mode].splitlines())
-    # The Optional settings cell is for the installer only: the markers go, and in UNINSTALL the whole cell goes.
-    block = re.compile(r"# COMMAND ----------\n\n# INSTALL-ONLY-BEGIN\n.*?# INSTALL-ONLY-END\n\n", re.S)
-    if not block.search(tpl):
-        sys.exit("installer/install_template.py: the INSTALL-ONLY block (Optional settings cell) is missing")
-    if mode == "install":
-        tpl = tpl.replace("# INSTALL-ONLY-BEGIN\n", "").replace("# INSTALL-ONLY-END\n", "")
-    else:
-        tpl = block.sub("", tpl)
     return (tpl.replace("__TITLE__", TITLE[mode]).replace("__INTRO__", intro).replace("__PROMPT__", PROMPT[mode])
             .replace("__MODE__", mode).replace("__VERSION__", version).replace("__PAYLOAD__", payload))
 

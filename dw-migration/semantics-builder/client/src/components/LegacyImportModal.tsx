@@ -30,7 +30,7 @@ const STATUS: Record<FieldStatus, { color: 'teal' | 'lemon' | 'coral'; label: st
  */
 export function LegacyImportModal({ projectId, onClose }: { projectId: string; onClose: () => void }) {
   const navigate = useNavigate();
-  const [file, setFile] = useState<{ name: string; content: string }>();
+  const [file, setFile] = useState<{ name: string; content: string; base64: boolean }>();
   const [schema, setSchema] = useState('');
   const [subProject, setSubProject] = useState('');
   const [preview, setPreview] = useState<LegacyPreview>();
@@ -39,6 +39,9 @@ export function LegacyImportModal({ projectId, onClose }: { projectId: string; o
   const body = (create: boolean) => ({
     fileName: file?.name,
     content: file?.content,
+    encoding: file?.base64 ? 'base64' : 'text',
+    // The AI SQL of the preview goes back unchanged, so the sub-project gets what you saw.
+    ...(create && preview?.ai ? { ai: preview.ai } : {}),
     ...(schema.trim() ? { schema: schema.trim() } : {}),
     subProject: subProject.trim() || 'Imported model',
     create,
@@ -80,18 +83,19 @@ export function LegacyImportModal({ projectId, onClose }: { projectId: string; o
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <Typography.Text color="secondary">
           dbt MetricFlow: a YAML file with semantic_models and metrics, or the semantic_manifest.json of dbt parse.
-          LookML: the .view.lkml files and the model file with the explore. The app converts the model by rules into a
-          draft metric view in a new sub-project. Each field keeps its source definition and a status. The files are
-          only read; the app does not run them.
+          LookML: the .view.lkml files and the model file with the explore. Power BI: a .pbit template. SSAS Tabular: a
+          .bim file. The app converts the model by rules into a draft metric view in a new sub-project. For DAX that has
+          no rule, the AI suggests SQL, which you check. Each field keeps its source definition and a status. The files
+          are only read; the app does not run them.
         </Typography.Text>
         <div>
           <FormUI.Label htmlFor="legacy-file">
-            Files (dbt: .yml, .yaml or .json; LookML: one or more .lkml)
+            Files (dbt: .yml, .yaml or .json; LookML: one or more .lkml; Power BI: .pbit; Tabular: .bim)
           </FormUI.Label>
           <input
             id="legacy-file"
             type="file"
-            accept=".yml,.yaml,.json,.lkml"
+            accept=".yml,.yaml,.json,.lkml,.bim,.pbit"
             multiple
             onChange={(e) => {
               const files = [...(e.target.files ?? [])];
@@ -100,11 +104,23 @@ export function LegacyImportModal({ projectId, onClose }: { projectId: string; o
               if (!files.length) return setFile(undefined);
               if (files.reduce((n, f) => n + f.size, 0) > MAX_LEGACY_BYTES)
                 return setError('The files are larger than 800 KB together.');
+              // A .pbit template is a zip: it goes as base64.
+              if (/\.pbit$/i.test(files[0].name)) {
+                // base64 is 4/3 of the size, and the server takes 800 KB.
+                if ((files[0].size * 4) / 3 > MAX_LEGACY_BYTES) return setError('The template is larger than 600 KB.');
+                void files[0].arrayBuffer().then((buf) => {
+                  let bin = '';
+                  new Uint8Array(buf).forEach((b) => (bin += String.fromCharCode(b)));
+                  setFile({ name: files[0].name, content: btoa(bin), base64: true });
+                });
+                return;
+              }
               // LookML views and the model with the explore are often in separate files: they are read as one.
               void Promise.all(files.map((f) => f.text())).then((texts) =>
                 setFile({
                   name: files.length === 1 ? files[0].name : `${files.length} files.lkml`,
                   content: texts.join('\n'),
+                  base64: false,
                 })
               );
             }}

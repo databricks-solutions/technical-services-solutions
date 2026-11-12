@@ -117,7 +117,14 @@ passed. The dbt status of each field is in its note (the explanations).
 LookML done 2026-11-12 (2 of 7), with its own small parser (no new dependency). Live: a view file and a model file
 on the TPC-H copies made the sub-project "LookML import check": a join, a dimension group, a filtered measure and
 a number measure, 11 fields converted; the draft validated and its 3 tests passed. After that test, primary keys
-are no longer added as dimensions. Next: Power BI and SSAS Tabular (TMSL/TMDL).
+are no longer added as dimensions.
+
+Power BI (.pbit) and SSAS Tabular (.bim) done 2026-11-12 (3 of 7). A small zip reader (in memory, size limits)
+reads DataModelSchema from a .pbit. DAX converts by rules first (dax.ts, a tokenizer and a small translator); the
+AI gets only the DAX that has no rule, with the column and measure names, and its SQL is always "Check it". The
+preview returns the AI SQL and create sends it back, so the AI runs once. Live: a .bim on the TPC-H copies made
+"Power BI import check": 7 fields by rules, SUMX by the AI (`SUM(o_totalprice * 0.9)`), TOTALYTD left for a person;
+the draft validated and its 3 tests passed. Not yet: TMDL (the folder text format). Next: Tableau.
 
 One pipeline for all formats: a parser per format, then one intermediate model (tables, joins, dimensions,
 measures, filters), then a draft metric view in a new sub-project.

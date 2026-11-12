@@ -6,6 +6,11 @@ import { legacyBody } from '../../shared/legacy';
 import { importDesign } from '../designer/import';
 import { convertDbt } from '../legacy/dbt';
 import { convertLookml } from '../legacy/lookml';
+import { convertTabular } from '../legacy/tabular';
+import type { LegacyResult } from '../legacy/common';
+import { callTool } from '../llm/llm';
+import type { LlmDeps } from '../llm/llm';
+import { daxPrompt, daxRequest, safeExpression } from '../llm/prompts/dax';
 import type { UcDeps } from '../uc/metadata';
 import { actorOf, handle, HttpError } from './http';
 import { designerRepo } from './designer';
@@ -30,7 +35,14 @@ const importBody = z
  * Imports a metric view made outside the app, read as the user: a sub-project with its sources, a brief
  * draft to confirm, design version 1 with the YAML as it is in UC, and the view as the promotion target.
  */
-export function registerImportRoutes(app: Application, db: Db, ucFor: (req: Request) => UcDeps) {
+const MAX_AI_MEASURES = 20;
+
+export function registerImportRoutes(
+  app: Application,
+  db: Db,
+  ucFor: (req: Request) => UcDeps,
+  llmFor: (req: Request) => LlmDeps
+) {
   const projects = projectRepo(db);
   const designs = designerRepo(db);
 
@@ -97,12 +109,42 @@ export function registerImportRoutes(app: Application, db: Db, ucFor: (req: Requ
       const body = legacyBody.parse(req.body);
       const parent = await projects.get(actor, z.object({ id: z.uuid() }).parse(req.params).id);
       if (parent.parentId) throw new HttpError(400, 'Import into a project, not a sub-project.');
-      // LookML files end in .lkml; several uploaded files arrive joined. Else the file is dbt YAML or JSON.
-      const lookml = /\.lkml$/i.test(body.fileName) || /^\s*(view|explore|include|connection)\s*:/m.test(body.content);
-      const tool = lookml ? 'LookML' : 'dbt MetricFlow';
-      let result: ReturnType<typeof convertDbt>;
+      // .bim and .pbit are Tabular (Power BI, SSAS). LookML files end in .lkml; several uploaded files arrive
+      // joined. Else the file is dbt YAML or JSON.
+      const tabular = /\.(bim|pbit)$/i.test(body.fileName);
+      const lookml =
+        !tabular && (/\.lkml$/i.test(body.fileName) || /^\s*(view|explore|include|connection)\s*:/m.test(body.content));
+      const tool = tabular ? 'Power BI / Tabular' : lookml ? 'LookML' : 'dbt MetricFlow';
+      let result: LegacyResult;
       try {
-        result = (lookml ? convertLookml : convertDbt)(body.fileName, body.content, body.schema);
+        if (!tabular) result = (lookml ? convertLookml : convertDbt)(body.fileName, body.content, body.schema);
+        else {
+          const base64 = body.encoding === 'base64';
+          // On create, the SQL that the user saw in the preview; on preview, the AI for each measure with no rule.
+          let ai = new Map(Object.entries(body.ai ?? {}).flatMap(([k, v]) => (safeExpression(v) ? [[k, v]] : [])));
+          const first = convertTabular(body.fileName, body.content, body.schema, base64, ai);
+          if (!body.create && first.todo.length) {
+            const llm = llmFor(req);
+            const found = await Promise.all(
+              first.todo.slice(0, MAX_AI_MEASURES).map(async (t) => {
+                try {
+                  const out = await callTool(
+                    daxPrompt,
+                    daxRequest(t.dax, first.catalog.columns, first.catalog.measures),
+                    llm
+                  );
+                  const sql = out.convertible ? safeExpression(out.sql) : null;
+                  return sql ? ([[t.name, sql]] as [string, string][]) : [];
+                } catch {
+                  return [];
+                }
+              })
+            );
+            ai = new Map(found.flat());
+          }
+          result = ai.size ? convertTabular(body.fileName, body.content, body.schema, base64, ai) : first;
+          result.preview.ai = Object.fromEntries(ai);
+        }
       } catch (err) {
         throw new HttpError(400, (err as Error).message);
       }

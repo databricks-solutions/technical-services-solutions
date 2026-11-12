@@ -206,6 +206,23 @@ default catalog.schema: a table name `schema.table` gets the catalog, and `table
 Hidden dimensions and primary keys are not added as dimensions, but other fields can still use them. A join that is
 not many-to-one gets a warning: measures across it can count rows more than once.
 
+**Power BI and SSAS Tabular.** Choose a Power BI template (`.pbit`, up to 600 KB) or an SSAS Tabular model (`.bim`).
+Both hold the same TMSL model.
+
+| Tabular | Metric view |
+| --- | --- |
+| The table on the many side of the most relationships | The source table |
+| A relationship from that table | A join; second-level relationships get a warning |
+| The table source in Power Query | A Databricks connector (`Databricks.Catalogs`) gives catalog, schema and table. Else the default catalog.schema and the source item name, with a warning to check it |
+| A visible text, date, boolean or key column | A dimension, on its source column |
+| SUM, AVERAGE, MIN, MAX, MEDIAN, DISTINCTCOUNT, COUNT, COUNTA, COUNTROWS, DIVIDE, CALCULATE with column filters, IF, BLANK, arithmetic and [measure] references | SQL by rules |
+| Other DAX (iterators such as SUMX, VAR) | The AI suggests SQL, marked **Check it**. It gets the DAX and the column and measure names, never data |
+| Time intelligence (TOTALYTD, DATEADD), ALL, calculated columns | Not converted |
+
+The preview shows the AI SQL. **Create the sub-project** uses that same SQL; the AI does not run again. The server
+rejects AI SQL with a statement, a subquery or a comment. Validate runs it in the sandbox. Add a test for each
+measure marked **Check it**: the tests that the app makes check only the first measure.
+
 ### 5.1 The golden project
 
 The **Golden project** tab of a project shows the path from certified data to a trusted Genie agent. The project gets

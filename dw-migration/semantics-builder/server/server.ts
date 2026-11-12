@@ -61,7 +61,7 @@ createApp({
       registerAgentRoutes(app, pool, (req) => genieDeps(asUser(req)), ucFor, runFor);
       registerDashboardRoutes(app, pool, ucFor);
       registerLibraryRoutes(app, pool, runFor);
-      registerImportRoutes(app, pool, ucFor);
+      registerImportRoutes(app, pool, ucFor, llmFor);
       registerGovernRoutes(app, pool, runFor, ucFor);
       registerPagesRoutes(app, pool, domainsDeps());
       registerDriftRoutes(app, pool, runFor, ucFor);

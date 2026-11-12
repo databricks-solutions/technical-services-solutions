@@ -158,7 +158,7 @@ Import the newer installer and run it with the same settings. Results history is
 
 - **No widgets.** The installer's settings are one `install(...)` call in its settings cell, and uninstall is `uninstall(preview=True)`, then `uninstall(preview=False)`. Import the 0.11.0 installer as a new notebook: old widgets don't carry over, and blank settings keep the existing install's catalog, schema, folder and warehouse.
 - **Defaults instead of placeholders.** `catalog=None` is the workspace's default catalog and `warehouse=None` the running warehouse on a first install. The installer stops and asks when it can't tell.
-- **Operators moved to the app.** The update moves the operators set on the app into the new `ug_migration_operators` table, once. Then workspace admins add and remove them in **Settings**. The installer no longer has an operators setting.
+- **Operators moved to the app.** They're in the new `ug_migration_operators` table, and workspace admins add and remove them in **Settings**. The update makes you an operator, but can't carry over the operators set on the earlier app (the Apps API doesn't return env values): add them again in **Settings**. The installer no longer has an operators setting.
 - **Import by URL.** Workspace **Import > URL** with the installer's link on GitHub replaces download and unzip (the zip stays for workspaces without internet access).
 
 #### Upgrade notes: 0.10.2 to 0.10.3

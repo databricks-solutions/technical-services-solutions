@@ -590,13 +590,10 @@ def operator_grants(catalog: str, schema: str, app_sp: str) -> list[str]:
             f"GRANT SELECT, MODIFY ON TABLE `{catalog}`.`{schema}`.{OPERATORS_TABLE} TO `{app_sp}`"]
 
 
-def operators_to_seed(existing: list[str], previous_env: str, me: str, is_sp: bool) -> list[str]:
-    """Who to add to an operators table: on a new table, the operators of an earlier install (OPERATORS on its app),
-    else you (a person). Nobody when the table already has rows: the app owns the list after the first install."""
-    if existing:
-        return []
-    seed = [e.lower() for e in split_list(previous_env)] or ([] if is_sp else [me.lower()])
-    return list(dict.fromkeys(seed))
+def operators_to_seed(existing: list[str], me: str, is_sp: bool) -> list[str]:
+    """Who to add to an empty operators table: you (a person; a service principal isn't an operator). Nobody when the
+    table has rows: the app owns the list after the first install."""
+    return [] if existing or is_sp else [me.lower()]
 
 
 # HELPERS-END
@@ -753,6 +750,8 @@ def toolkit_installs() -> list[dict]:
         tags = (s.tags or {}) if s else {}
         if tags.get("tool") != TOOL_TAG:
             continue
+        # jobs.list leaves out the job parameters (seen live 2026-11-12), and the results schema is one of them.
+        s = w.jobs.get(j.job_id).settings or s
         params = {p.name: p.default for p in (s.parameters or [])}
         results = params.get("results_schema") or params.get("snapshot_table", "").rsplit(".", 1)[0]
         path = s.tasks[0].notebook_task.notebook_path if s.tasks and s.tasks[0].notebook_task else ""
@@ -991,7 +990,8 @@ def preflight() -> tuple[list[str], list[str], str]:
             cat = w.catalogs.get(CATALOG)
         except (NotFound, ResourceDoesNotExist):
             cat = None
-            found.append(f"results catalog {CATALOG!r} doesn't exist or you can't see it: set catalog= to another one")
+            found.append(f"results catalog {CATALOG!r} " + ("" if CATALOG_GIVEN else "(the workspace's default catalog) ")
+                         + "doesn't exist or you can't see it: set catalog= to a catalog where you can create a schema")
         schema = None
         if cat is not None:
             try:
@@ -1432,14 +1432,15 @@ if app.compute_status and app.compute_status.state and app.compute_status.state.
     w.apps.start_and_wait(APP_NAME)
 
 # Operators live in the results schema, where workspace admins edit them in the app (Settings). The first install adds
-# you (or the operators an earlier version kept on the app). The app's service principal reads and edits that table only.
+# you. The app's service principal reads and edits that table only.
 OPS_TABLE = f"`{CATALOG}`.`{SCHEMA}`.{OPERATORS_TABLE}"
 spark.sql(operators_table_sql(CATALOG, SCHEMA))
 _have = [r["email"] for r in spark.sql(f"SELECT email FROM {OPS_TABLE}").collect()]
-_prev_env = ""
-if existing_app is not None and existing_app.active_deployment:
-    _prev_env = next((e.value or "" for e in (existing_app.active_deployment.env_vars or []) if e.name == "OPERATORS"), "")
-_seed = operators_to_seed(_have, _prev_env, me, IS_SP)
+# An earlier version kept the operators on the app (OPERATORS). The API doesn't return env values (seen live
+# 2026-11-12), so they can't be moved here: the run says to add them again.
+_had_env_operators = bool(existing_app is not None and existing_app.active_deployment and any(
+    e.name == "OPERATORS" for e in (existing_app.active_deployment.env_vars or [])))
+_seed = operators_to_seed(_have, me, IS_SP)
 for email in _seed:
     spark.sql(f"INSERT INTO {OPS_TABLE} (email, added_by, added_at) VALUES (:email, :by, current_timestamp())",
               args={"email": email, "by": me})
@@ -1452,6 +1453,9 @@ for stmt in operator_grants(CATALOG, SCHEMA, app.service_principal_client_id or 
         spark.sql(stmt)
     except Exception as e:  # noqa: BLE001 (any refusal: the operators stay on the app's settings instead)
         grant_failed.append((stmt, str(e)[:200]))
+if _had_env_operators and not _have:
+    print("Operators moved to the app: Settings. The operators this app had before the update can't be read back, so "
+          f"only {', '.join(_seed) or 'nobody'} is an operator now: a workspace admin adds the others in Settings.")
 if grant_failed:
     print("Couldn't give the app access to its operators table, so the operators are set on the app for now, and "
           "Settings in the app can't change them. Ask an owner of the catalog or schema to run:\n  "

@@ -7,6 +7,7 @@ dbutils, spark, displayHTML and the Databricks SDK replaced by fakes. Nothing he
 """
 
 import base64
+import dataclasses
 import inspect
 import io
 import json
@@ -558,8 +559,8 @@ class FakeWS:
                 ws.trashed.append(dash)
 
         class Jobs:
-            def list(self_inner, expand_tasks=False):
-                return [_ns(job_id=jid, settings=s) for jid, s in ws.jobs.items()]
+            def list(self_inner, expand_tasks=False):  # like the API: no job parameters in the list (seen live)
+                return [_ns(job_id=jid, settings=dataclasses.replace(s, parameters=None)) for jid, s in ws.jobs.items()]
 
             def get(self_inner, job_id):
                 return _ns(job_id=job_id, settings=ws.jobs[job_id])
@@ -937,10 +938,9 @@ def test_pick_catalog_uses_the_default_unless_it_cant_hold_results():
 
 def test_operators_to_seed():
     seed = H["operators_to_seed"]
-    assert seed([], "", "Me@x.com", False) == ["me@x.com"]
-    assert seed([], "", "0b1f7c2e-1234-4abc-9def-0123456789ab", True) == []  # a service principal isn't an operator
-    assert seed([], "a@x.com, b@x.com,a@x.com", "me@x.com", False) == ["a@x.com", "b@x.com"]  # moved from the app
-    assert seed(["a@x.com"], "b@x.com", "me@x.com", False) == []  # the app owns the list after the first install
+    assert seed([], "Me@x.com", False) == ["me@x.com"]
+    assert seed([], "0b1f7c2e-1234-4abc-9def-0123456789ab", True) == []  # a service principal isn't an operator
+    assert seed(["a@x.com"], "me@x.com", False) == []  # the app owns the list after the first install
     grants = H["operator_grants"]("main", "ug_migration", APP_SP)
     assert grants[-1] == f"GRANT SELECT, MODIFY ON TABLE `main`.`ug_migration`.ug_migration_operators TO `{APP_SP}`"
     assert not any("ALL PRIVILEGES" in g or "CREATE" in g for g in grants)
@@ -1002,6 +1002,18 @@ def test_several_running_warehouses_need_a_choice_and_an_update_keeps_its_own(mo
     assert ws.apps[APP].resources[0].sql_warehouse.id == "ffff0000"
 
 
+def test_update_with_no_catalog_keeps_the_install_catalog_not_the_default(monkeypatch):
+    ws = FakeWS()
+    ws.schemas.clear()
+    assert not run_notebook(monkeypatch, ws, install_call(catalog="other")).raised
+    res = run_notebook(monkeypatch, ws, {"action": "install"})  # the default catalog is main
+    assert not res.raised, res.status
+    assert "using the results schema of the existing install: other.ug_migration" in res.text
+    assert "main.ug_migration" not in ws.schemas
+    pre = run_notebook(monkeypatch, ws, uninstall_call("uninstall: preview"))  # no catalog: found from the jobs
+    assert pre.status == "exit: uninstall preview: nothing changed", pre.status
+
+
 def test_a_setting_of_the_wrong_type_stops_before_anything_changes(monkeypatch):
     ws = FakeWS()
     res = run_notebook(monkeypatch, ws, install_call(drop_data=True, adopt_app="yes"))
@@ -1010,17 +1022,27 @@ def test_a_setting_of_the_wrong_type_stops_before_anything_changes(monkeypatch):
     assert res.raised and "adopt_app must be True or False" in res.status and not ws.apps
 
 
-def test_update_moves_operators_from_the_app_into_the_table_once(monkeypatch):
+def test_update_from_operators_on_the_app_says_to_add_them_again(monkeypatch):
     ws = FakeWS()
     seed_install(ws)
     ws.tables.pop("main.ug_migration.ug_migration_operators", None)  # installed by a version without the table
-    ws.apps[APP].active_deployment.env_vars.append(apps.EnvVar(name="OPERATORS", value="a@x.com,b@x.com"))
-    assert not run_notebook(monkeypatch, ws, install_call()).raised
-    assert [r["email"] for r in ws.tables["main.ug_migration.ug_migration_operators"]] == ["a@x.com", "b@x.com"]
-    ws.tables["main.ug_migration.ug_migration_operators"].pop()  # an admin removed b in the app
+    # Like the live API: the env var is listed, its value isn't returned.
+    ws.apps[APP].active_deployment.env_vars.append(apps.EnvVar(name="OPERATORS"))
     res = run_notebook(monkeypatch, ws, install_call())
     assert not res.raised, res.status
-    assert [r["email"] for r in ws.tables["main.ug_migration.ug_migration_operators"]] == ["a@x.com"]  # not re-added
+    assert [r["email"] for r in ws.tables["main.ug_migration.ug_migration_operators"]] == [ME]
+    assert "can't be read back" in res.text and "adds the others in Settings" in res.text
+    ws.tables["main.ug_migration.ug_migration_operators"].append({"email": "b@x.com", "added_by": ME})
+    res = run_notebook(monkeypatch, ws, install_call())  # the next update: the table owns the list
+    assert [r["email"] for r in ws.tables["main.ug_migration.ug_migration_operators"]] == [ME, "b@x.com"]
+    assert "can't be read back" not in res.text
+
+
+def test_a_default_catalog_that_does_not_exist_is_named_as_the_default(monkeypatch):
+    ws = FakeWS()
+    ws.default_catalog = "gone"
+    res = run_notebook(monkeypatch, ws, {"action": "install"})
+    assert res.raised and "'gone' (the workspace's default catalog) doesn't exist" in res.status and not ws.apps
 
 
 def test_without_the_grants_the_operators_stay_on_the_app(monkeypatch):

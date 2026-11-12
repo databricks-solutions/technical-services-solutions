@@ -145,11 +145,14 @@ To turn it on, run the installer with:
 
 **Network policies (required).** The toolkit's jobs run on serverless compute. Databricks lets serverless compute in one workspace call another workspace only when cross-workspace network policies allow it on both sides. An account admin:
 
-1. Enables the **Cross Workspace Network Policy** preview for the account.
-2. In the account console (Security > Networking), adds each managed workspace as an allowed Databricks destination in the hub's serverless egress policy.
-3. Allows the hub workspace in each managed workspace's context-based ingress policy.
+1. Enables the **Cross Workspace Network Policy** preview for the account (account console, **Previews**).
+2. **Ingress, on each managed workspace:** in Security > Networking > Context-based ingress & egress, on the policy attached to that workspace, clears **Compatibility mode** on the **Ingress** tab, selects **Restrict access to specific source workspaces** and allows the hub's workspace ID. "Allow access from all public IPs" and "all private endpoints" don't cover cross-workspace traffic. A policy named default-policy applies to every workspace without its own policy, so a dedicated policy for the managed workspace is safer than editing it.
+3. **Egress, on the hub:** nothing to do when its policy allows access to all destinations. When egress is restricted, adds each managed workspace under **Allowed Databricks workspace destinations**.
 
-Changes take about 10 to 15 minutes to apply. Without them, scans and changes in the other workspaces fail with "Cert validation failed. Workspace comparison, snp system trusted, and snp trusted workload checks did not pass" (the job explains this). It isn't a credentials problem. See [cross-workspace access](https://learn.microsoft.com/en-us/azure/databricks/security/network/front-end/cross-workspace-access) (Beta). If you can't change the policies, install the toolkit in each workspace instead.
+Changes take about 10 to 15 minutes to apply, and dry run mode logs without blocking. Without them, scans and changes in the other workspaces fail with "Cert validation failed. Workspace comparison, snp system trusted, and snp trusted workload checks did not pass" (the job explains this). It isn't a credentials problem. See [cross-workspace access](https://learn.microsoft.com/en-us/azure/databricks/security/network/front-end/cross-workspace-access) (Beta). If you can't change the policies:
+
+- **Install the toolkit in each workspace** instead of using central mode, or
+- **Run the scan and apply jobs on classic compute**, which these policies don't govern. In Jobs, open **[app] Unity Gateway migration workspace scan** and **[app] Unity Gateway migration apply**, and change each task's compute from serverless to a job cluster (Standard access mode, Databricks Runtime 15.4 LTS or later, one small node). The cluster needs network access to the other workspaces. Running the installer again puts the jobs back on serverless, so redo it after each update.
 
 Then add the service principal to each listed workspace as a workspace admin (an account admin can do it from the account console, or each workspace's admin by application ID). In each workspace it needs what the jobs need there: workspace admin (scan, pause, resume, tracking), `USE CATALOG`, `USE SCHEMA` and `CREATE SERVICE` on the target schema, `EXECUTE` on the services it tests, and READ on the secret scopes when it creates Unity Catalog secrets from workspace secrets (it reads that workspace's scopes).
 

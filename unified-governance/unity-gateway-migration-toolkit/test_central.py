@@ -70,7 +70,8 @@ CROSS_WS_ERROR = ("Cert validation failed. Workspace comparison, snp system trus
 
 @pytest.mark.parametrize("error, expect, absent", [
     (CROSS_WS_ERROR, ["cross-workspace network policies", "isn't a credentials problem", "Cross Workspace Network Policy",
-                      "egress policy", "ingress policy", f"install the toolkit in workspace {REMOTE}"], ["Entra"]),
+                      "egress policy", "ingress policy", "Compatibility mode", "classic compute",
+                      f"install the toolkit in workspace {REMOTE}"], ["Entra"]),
     ("invalid_client: Client authentication failed", ["Databricks OAuth secret", "not an Entra ID client secret",
                                                        "Databricks secret scope"], ["network"]),
 ])

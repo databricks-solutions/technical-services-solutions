@@ -238,10 +238,11 @@ def remote_signin_hint(error: str, target_id: str) -> str | None:
         return (f"Databricks refused this job's call to workspace {target_id}: serverless compute in one workspace can "
                 "only reach another workspace when cross-workspace network policies allow it (this isn't a credentials "
                 "problem). An account admin enables the Cross Workspace Network Policy preview, then, in the account "
-                "console (Security > Networking), adds that workspace as an allowed Databricks destination in this "
-                "workspace's serverless egress policy and allows this workspace in that workspace's ingress policy. Or "
-                f"install the toolkit in workspace {target_id} itself instead of using central mode. Details: "
-                + error[:300])
+                f"console (Security > Networking), on the ingress policy of workspace {target_id}, clears Compatibility "
+                "mode and allows this workspace (\"allow access from all public IPs\" doesn't cover it); this "
+                "workspace's egress policy must allow that workspace (it does if it allows all destinations). Or "
+                f"install the toolkit in workspace {target_id} itself, or run the scan and apply jobs on classic "
+                "compute, which these policies don't govern. Details: " + error[:300])
     if BAD_CLIENT_SECRET_RE.search(error or ""):
         return ("the service principal's secret was refused. Central mode needs a Databricks OAuth secret (generated "
                 "in Databricks: Settings > Identity and access > Service principals > the service principal > Secrets), "

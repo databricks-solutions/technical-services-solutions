@@ -1173,10 +1173,12 @@ def central_checks(found: list[str]) -> None:
     CHECKS.append(("note", "Central mode network", (
         f"the scan and apply jobs run on serverless compute here and call workspace(s) {others}. Databricks allows "
         "that only when cross-workspace network policies do: an account admin enables the Cross Workspace Network "
-        "Policy preview, adds those workspaces as allowed Databricks destinations in this workspace's serverless "
-        "egress policy, and allows this workspace in their ingress policies (account console: Security > "
-        "Networking). Without it, scans of those workspaces fail with \"Cert validation failed ... trusted workload "
-        "checks did not pass\". Each of them also needs the service principal as a workspace admin")))
+        "Policy preview, then on those workspaces' ingress policies clears Compatibility mode and allows this "
+        f"workspace ({HUB_WORKSPACE_ID or 'its ID is in its URL'}); this workspace's egress needs nothing more if it "
+        "allows all destinations (account console: Security > Networking). Without it, scans of those workspaces "
+        "fail with \"Cert validation failed ... trusted workload checks did not pass\". Alternatives: install the "
+        "toolkit in each workspace, or run the scan and apply jobs on classic compute. Each of them also needs the "
+        "service principal as a workspace admin")))
 
 
 def preflight() -> tuple[list[str], list[str], str]:

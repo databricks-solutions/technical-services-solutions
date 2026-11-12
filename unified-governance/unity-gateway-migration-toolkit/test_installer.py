@@ -1880,8 +1880,9 @@ def test_central_mode_checks_the_secret_and_says_what_the_network_needs(monkeypa
     assert not res.raised, res.status
     assert f"[OK  ] Central mode secret: s/k exists and {SP_ID} can read it" in res.text
     note = [l for l in res.text.splitlines() if "[NOTE] Central mode network" in l][0]
-    for part in ("serverless compute", "2222222222222222", "Cross Workspace Network Policy", "egress policy",
-                 "ingress policies", "Cert validation failed", "workspace admin"):
+    for part in ("serverless compute", "2222222222222222", "Cross Workspace Network Policy", "Compatibility mode",
+                 "ingress policies", "allows all destinations", "Cert validation failed", "classic compute",
+                 "workspace admin"):
         assert part in note, part
 
 

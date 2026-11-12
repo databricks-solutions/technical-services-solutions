@@ -14,7 +14,7 @@ export interface LegacyField {
 }
 
 export interface LegacyPreview {
-  format: 'dbt' | 'lookml' | 'tabular';
+  format: 'dbt' | 'lookml' | 'tabular' | 'tableau';
   /** The draft metric view, or null when nothing could be converted. */
   yaml: string | null;
   fields: LegacyField[];
@@ -25,8 +25,8 @@ export interface LegacyPreview {
   ai?: Record<string, string>;
 }
 
-// The JSON body limit of the server is 1 MB, and quotes in the file grow when they are sent as JSON.
-export const MAX_LEGACY_BYTES = 800_000;
+// The JSON body limit of the server is 12 MB; quotes in a text file grow when they are sent as JSON.
+export const MAX_LEGACY_BYTES = 10_000_000;
 
 export const legacyBody = z.object({
   fileName: z.string().trim().min(1).max(255),

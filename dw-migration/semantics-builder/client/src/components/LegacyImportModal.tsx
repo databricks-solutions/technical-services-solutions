@@ -84,18 +84,19 @@ export function LegacyImportModal({ projectId, onClose }: { projectId: string; o
         <Typography.Text color="secondary">
           dbt MetricFlow: a YAML file with semantic_models and metrics, or the semantic_manifest.json of dbt parse.
           LookML: the .view.lkml files and the model file with the explore. Power BI: a .pbit template. SSAS Tabular: a
-          .bim file. The app converts the model by rules into a draft metric view in a new sub-project. For DAX that has
-          no rule, the AI suggests SQL, which you check. Each field keeps its source definition and a status. The files
-          are only read; the app does not run them.
+          .bim file. Tableau: a workbook or a data source. The app converts the model by rules into a draft metric view
+          in a new sub-project. For DAX that has no rule, the AI suggests SQL, which you check. Each field keeps its
+          source definition and a status. The files are only read; the app does not run them.
         </Typography.Text>
         <div>
           <FormUI.Label htmlFor="legacy-file">
-            Files (dbt: .yml, .yaml or .json; LookML: one or more .lkml; Power BI: .pbit; Tabular: .bim)
+            Files (dbt: .yml, .yaml or .json; LookML: one or more .lkml; Power BI: .pbit; Tabular: .bim; Tableau: .twb,
+            .tds, .twbx or .tdsx)
           </FormUI.Label>
           <input
             id="legacy-file"
             type="file"
-            accept=".yml,.yaml,.json,.lkml,.bim,.pbit"
+            accept=".yml,.yaml,.json,.lkml,.bim,.pbit,.twb,.tds,.twbx,.tdsx"
             multiple
             onChange={(e) => {
               const files = [...(e.target.files ?? [])];
@@ -103,11 +104,14 @@ export function LegacyImportModal({ projectId, onClose }: { projectId: string; o
               setError(undefined);
               if (!files.length) return setFile(undefined);
               if (files.reduce((n, f) => n + f.size, 0) > MAX_LEGACY_BYTES)
-                return setError('The files are larger than 800 KB together.');
-              // A .pbit template is a zip: it goes as base64.
-              if (/\.pbit$/i.test(files[0].name)) {
-                // base64 is 4/3 of the size, and the server takes 800 KB.
-                if ((files[0].size * 4) / 3 > MAX_LEGACY_BYTES) return setError('The template is larger than 600 KB.');
+                return setError('The files are larger than 10 MB together.');
+              // A .pbit template and a packaged Tableau file are zips: they go as base64.
+              if (/\.(pbit|twbx|tdsx)$/i.test(files[0].name)) {
+                // base64 is 4/3 of the size, and the server takes 10 MB.
+                if ((files[0].size * 4) / 3 > MAX_LEGACY_BYTES)
+                  return setError(
+                    'The file is larger than 7.5 MB. For Tableau, save the workbook as .twb without extracts.'
+                  );
                 void files[0].arrayBuffer().then((buf) => {
                   let bin = '';
                   new Uint8Array(buf).forEach((b) => (bin += String.fromCharCode(b)));

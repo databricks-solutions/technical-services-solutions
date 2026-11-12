@@ -10,6 +10,12 @@ export interface LegacyResult {
   explanations: Explanations;
 }
 
+/** A converter whose hard expressions can go to the AI: the ones with no rule, and what the AI may use. */
+export interface AiResult extends LegacyResult {
+  todo: { name: string; dax: string }[];
+  catalog: { columns: { table: string; column: string; sql: string }[]; measures: string[] };
+}
+
 /** order_total -> Order Total. Legacy names are often snake case; metric view names are for people. */
 export const human = (s: string) =>
   s

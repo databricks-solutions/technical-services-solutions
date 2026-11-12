@@ -13,10 +13,13 @@ const daxOutput = z.object({
 });
 export type DaxOutput = z.infer<typeof daxOutput>;
 
-export const daxPrompt: ToolPrompt<DaxOutput> = {
-  id: 'legacy.dax',
+const LANGUAGES = { DAX: 'Power BI DAX', Tableau: 'Tableau calculation' } as const;
+
+/** The prompt for one language of legacy measures. */
+export const calcPrompt = (lang: keyof typeof LANGUAGES): ToolPrompt<DaxOutput> => ({
+  id: `legacy.${lang.toLowerCase()}`,
   version: 1,
-  system: `You translate one Power BI DAX measure into one Databricks SQL expression for a Unity Catalog metric view
+  system: `You translate one ${LANGUAGES[lang]} measure into one Databricks SQL expression for a Unity Catalog metric view
 measure. A person checks each translation, and a test runs it in a sandbox.
 Rules:
 - Use only the column expressions and the MEASURE(\`name\`) references given in the input. Never invent a column.
@@ -24,20 +27,28 @@ Rules:
 - No SELECT, no subquery, no FROM, no JOIN, no semicolon and no comments.
 - Iterators (SUMX over one table) can become an aggregate of a row expression, such as SUM(price * quantity).
 - Time intelligence (TOTALYTD, SAMEPERIODLASTYEAR, DATEADD), ALL, ALLEXCEPT and context changes have no expression
-  form: set convertible to false.`,
+  form: set convertible to false.
+- Tableau LOD expressions ({FIXED ...}) and table calculations (RUNNING_SUM, WINDOW_SUM, LOOKUP, RANK) have no
+  expression form: set convertible to false.`,
   tool: { name: 'submit_sql_measure', description: 'Submit the SQL of the measure.', schema: daxOutput },
   maxTokens: 800,
-};
+});
 
-export const daxRequest = (dax: string, columns: { table: string; column: string; sql: string }[], measures: string[]) =>
+export const calcRequest = (
+  lang: keyof typeof LANGUAGES,
+  formula: string,
+  columns: { table: string; column: string; sql: string }[],
+  measures: string[]
+) =>
   [
-    'Translate this DAX measure.',
-    untrusted('dax', dax),
+    `Translate this ${LANGUAGES[lang]} measure.`,
+    untrusted('formula', formula),
     untrusted('columns', JSON.stringify(columns)),
     untrusted('measures', JSON.stringify(measures)),
   ].join('\n\n');
 
-const UNSAFE = /;|--|\/\*|\b(SELECT|FROM|JOIN|WITH|INSERT|UPDATE|DELETE|MERGE|DROP|CREATE|ALTER|GRANT|REVOKE|CALL|EXECUTE)\b/i;
+const UNSAFE =
+  /;|--|\/\*|\b(SELECT|FROM|JOIN|WITH|INSERT|UPDATE|DELETE|MERGE|DROP|CREATE|ALTER|GRANT|REVOKE|CALL|EXECUTE)\b/i;
 
 /** The AI SQL, or null when it is not one plain expression. A sandbox test still runs it before any use. */
 export const safeExpression = (sql: string) => (sql && sql.length <= 2000 && !UNSAFE.test(sql) ? sql : null);

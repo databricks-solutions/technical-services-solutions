@@ -223,6 +223,19 @@ The preview shows the AI SQL. **Create the sub-project** uses that same SQL; the
 rejects AI SQL with a statement, a subquery or a comment. Validate runs it in the sandbox. Add a test for each
 measure marked **Check it**: the tests that the app makes check only the first measure.
 
+**Tableau.** Choose a workbook (`.twb`) or a data source (`.tds`), or a packaged file (`.twbx`, `.tdsx`, up to 7.5
+MB; save without extracts if it is larger). The app reads only the XML; a DOCTYPE or an entity declaration is refused.
+
+| Tableau | Metric view |
+| --- | --- |
+| The first data source with tables, and its first table | The source table; the Databricks connection gives the catalog |
+| A join clause, or a relationship of the object model, from the first table | A join |
+| A text, date or boolean column | A dimension (keys and hidden columns are left out) |
+| A numeric column | A measure with its default aggregation (Sum, Avg, Count, CountD, Min, Max, Median) |
+| A calculation with SUM, AVG, MIN, MAX, MEDIAN, COUNT, COUNTD, ZN, IIF, IF/ELSEIF/ELSE/END, CASE, ISNULL, IFNULL, ABS, ROUND, UPPER, LOWER, TRIM, LEN, CONTAINS, DATETRUNC and references | SQL by rules. A row-level measure is summed, and marked **Check it** |
+| LOD expressions (`{FIXED ...}`) and table calculations (TOTAL, RUNNING_SUM, WINDOW_*) | The AI tries; most have no SQL form and are not converted |
+| Custom SQL relations | Left out, with a warning |
+
 ### 5.1 The golden project
 
 The **Golden project** tab of a project shows the path from certified data to a trusted Genie agent. The project gets

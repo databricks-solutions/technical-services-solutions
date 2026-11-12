@@ -10,7 +10,8 @@ import { convertTabular } from '../legacy/tabular';
 import type { LegacyResult } from '../legacy/common';
 import { callTool } from '../llm/llm';
 import type { LlmDeps } from '../llm/llm';
-import { daxPrompt, daxRequest, safeExpression } from '../llm/prompts/dax';
+import { calcPrompt, calcRequest, safeExpression } from '../llm/prompts/legacyCalc';
+import { convertTableau } from '../legacy/tableau';
 import type { UcDeps } from '../uc/metadata';
 import { actorOf, handle, HttpError } from './http';
 import { designerRepo } from './designer';
@@ -109,28 +110,31 @@ export function registerImportRoutes(
       const body = legacyBody.parse(req.body);
       const parent = await projects.get(actor, z.object({ id: z.uuid() }).parse(req.params).id);
       if (parent.parentId) throw new HttpError(400, 'Import into a project, not a sub-project.');
-      // .bim and .pbit are Tabular (Power BI, SSAS). LookML files end in .lkml; several uploaded files arrive
-      // joined. Else the file is dbt YAML or JSON.
+      // .bim and .pbit are Tabular (Power BI, SSAS); .twb, .tds, .twbx and .tdsx are Tableau. LookML files end in
+      // .lkml; several uploaded files arrive joined. Else the file is dbt YAML or JSON.
       const tabular = /\.(bim|pbit)$/i.test(body.fileName);
+      const tableau = /\.(twbx?|tdsx?)$/i.test(body.fileName);
+      const withAi = tabular || tableau;
       const lookml =
-        !tabular && (/\.lkml$/i.test(body.fileName) || /^\s*(view|explore|include|connection)\s*:/m.test(body.content));
-      const tool = tabular ? 'Power BI / Tabular' : lookml ? 'LookML' : 'dbt MetricFlow';
+        !withAi && (/\.lkml$/i.test(body.fileName) || /^\s*(view|explore|include|connection)\s*:/m.test(body.content));
+      const tool = tabular ? 'Power BI / Tabular' : tableau ? 'Tableau' : lookml ? 'LookML' : 'dbt MetricFlow';
       let result: LegacyResult;
       try {
-        if (!tabular) result = (lookml ? convertLookml : convertDbt)(body.fileName, body.content, body.schema);
+        if (!withAi) result = (lookml ? convertLookml : convertDbt)(body.fileName, body.content, body.schema);
         else {
           const base64 = body.encoding === 'base64';
           // On create, the SQL that the user saw in the preview; on preview, the AI for each measure with no rule.
           let ai = new Map(Object.entries(body.ai ?? {}).flatMap(([k, v]) => (safeExpression(v) ? [[k, v]] : [])));
-          const first = convertTabular(body.fileName, body.content, body.schema, base64, ai);
+          const convert = tabular ? convertTabular : convertTableau;
+          const first = convert(body.fileName, body.content, body.schema, base64, ai);
           if (!body.create && first.todo.length) {
             const llm = llmFor(req);
             const found = await Promise.all(
               first.todo.slice(0, MAX_AI_MEASURES).map(async (t) => {
                 try {
                   const out = await callTool(
-                    daxPrompt,
-                    daxRequest(t.dax, first.catalog.columns, first.catalog.measures),
+                    calcPrompt(tabular ? 'DAX' : 'Tableau'),
+                    calcRequest(tabular ? 'DAX' : 'Tableau', t.dax, first.catalog.columns, first.catalog.measures),
                     llm
                   );
                   const sql = out.convertible ? safeExpression(out.sql) : null;
@@ -142,7 +146,7 @@ export function registerImportRoutes(
             );
             ai = new Map(found.flat());
           }
-          result = ai.size ? convertTabular(body.fileName, body.content, body.schema, base64, ai) : first;
+          result = ai.size ? convert(body.fileName, body.content, body.schema, base64, ai) : first;
           result.preview.ai = Object.fromEntries(ai);
         }
       } catch (err) {

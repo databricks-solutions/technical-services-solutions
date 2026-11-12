@@ -124,7 +124,13 @@ reads DataModelSchema from a .pbit. DAX converts by rules first (dax.ts, a token
 AI gets only the DAX that has no rule, with the column and measure names, and its SQL is always "Check it". The
 preview returns the AI SQL and create sends it back, so the AI runs once. Live: a .bim on the TPC-H copies made
 "Power BI import check": 7 fields by rules, SUMX by the AI (`SUM(o_totalprice * 0.9)`), TOTALYTD left for a person;
-the draft validated and its 3 tests passed. Not yet: TMDL (the folder text format). Next: Tableau.
+the draft validated and its 3 tests passed. Not yet: TMDL (the folder text format).
+
+Tableau done 2026-11-12 (4 of 7), with a small strict XML reader (no DOCTYPE, no entities, no new dependency) and a
+calculation translator (tableauCalc.ts). The AI prompt is now shared by DAX and Tableau (legacyCalc.ts). The
+server body limit is 12 MB, so a packaged workbook fits. Live: a .twb on the TPC-H copies made "Tableau import
+check": 9 fields by rules (IF inside SUM, COUNTD, a measure reference, DATETRUNC, IIF), TOTAL() left for a person
+(the AI said it has no SQL form); the draft validated and its 3 tests passed. Next: Cognos Framework Manager.
 
 One pipeline for all formats: a parser per format, then one intermediate model (tables, joins, dimensions,
 measures, filters), then a draft metric view in a new sub-project.

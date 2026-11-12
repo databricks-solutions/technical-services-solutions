@@ -29,7 +29,8 @@ import { servingDeps } from './llm/llm';
 import { warehouseDeps } from './sql/runner';
 
 createApp({
-  plugins: [analytics(), lakebase(), server()],
+  // Legacy model files (such as a packaged Tableau workbook) come as JSON, so the body limit is above the 1 MB default.
+  plugins: [analytics(), lakebase(), server({ bodyLimit: '12mb' })],
   // Runs as the app service principal, so it creates and owns the gsb schema.
   async onPluginsReady(appkit) {
     const applied = await migrate(appkit.lakebase.pool, await loadMigrations(path.resolve('server/db/migrations')));

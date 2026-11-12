@@ -2,7 +2,7 @@ import type { Explanations } from '../../shared/designer';
 import type { FieldStatus, LegacyField } from '../../shared/legacy';
 import type { MetricView } from '../../shared/metricView';
 import { finish, human, IDENT, namer, noteOf } from './common';
-import type { LegacyResult } from './common';
+import type { AiResult } from './common';
 import { translateDax } from './dax';
 import { readZipEntry } from './zip';
 
@@ -90,13 +90,6 @@ function tableOf(t: TmslTable, schema: string | undefined): { table: string; sur
   return schema ? { table: `${schema}.${slug(item ?? t.name)}`, sure: false } : null;
 }
 
-export interface TabularResult extends LegacyResult {
-  /** Measures that the rules could not translate, for the AI. */
-  todo: { name: string; dax: string }[];
-  /** What the AI can use: the columns in the view and the converted measures. */
-  catalog: { columns: { table: string; column: string; sql: string }[]; measures: string[] };
-}
-
 export function convertTabular(
   fileName: string,
   content: string,
@@ -104,12 +97,12 @@ export function convertTabular(
   base64: boolean,
   /** SQL from the AI for measures in todo, by measure name. Always marked to check. */
   ai: Map<string, string> = new Map()
-): TabularResult {
+): AiResult {
   const { tables, relationships } = readTabular(fileName, content, base64);
   const issues: string[] = [];
   const fields: LegacyField[] = [];
   const explanations: Explanations = { summary: '', measures: {}, dimensions: {} };
-  const todo: TabularResult['todo'] = [];
+  const todo: AiResult['todo'] = [];
 
   // The fact: on the many side of the most relationships; else the table with the most columns.
   const many = new Map<string, number>();
@@ -118,7 +111,7 @@ export function convertTabular(
   const fact = [...withColumns].sort(
     (a, b) => (many.get(b.name) ?? 0) - (many.get(a.name) ?? 0) || list(b.columns).length - list(a.columns).length
   )[0];
-  const empty = (why: string): TabularResult => ({
+  const empty = (why: string): AiResult => ({
     preview: { format: 'tabular', yaml: null, fields: [], sources: [], issues: [why] },
     view: null,
     explanations,

@@ -152,7 +152,7 @@ export function ProjectPage() {
           Metric dictionary
         </DropdownMenu.Item>
         <DropdownMenu.Item componentId="gsb.project.import_legacy" onClick={() => setImportingLegacy(true)}>
-          Import a legacy model (dbt, LookML, Power BI, Tableau, Cognos)
+          Import a legacy model (dbt, LookML, Power BI, Tableau, Cognos, MicroStrategy)
         </DropdownMenu.Item>
       </DropdownMenu.Content>
     </DropdownMenu.Root>

@@ -135,7 +135,16 @@ check": 9 fields by rules (IF inside SUM, COUNTD, a measure reference, DATETRUNC
 Cognos Framework Manager done 2026-11-12 (5 of 7), reusing the XML reader, with an expression translator in
 cognos.ts and the shared AI prompt. Live: a model.xml with a database and a business layer on the TPC-H copies made
 "Cognos import check": 7 business fields by rules (if then else inside total, a business measure reference),
-running-total left for a person; the draft validated and its 3 tests passed. Next: MicroStrategy (REST JSON export).
+running-total left for a person; the draft validated and its 3 tests passed.
+
+MicroStrategy done 2026-11-12 (6 of 7), from one JSON file with the tables, attributes, facts and metrics of the
+REST Modeling API, with an expression translator in microstrategy.ts and the shared AI prompt. The live test found
+two bugs, now fixed: a join named like a dimension (`customer` and Customer) made UC read `customer.c_name` as a
+field, so such a join gets the name `customer_table`; and a measure that uses a later measure failed, so converted
+measures now go in the order the passes found them (also for Power BI and Tableau). Live: an export on the TPC-H
+copies made "MicroStrategy import check 3": 10 fields by rules (a lookup join, Count<Distinct=True>, If inside Sum,
+a metric reference), Rank left for a person; the draft validated and its 3 tests passed. Next: SSAS
+Multidimensional (best effort).
 
 One pipeline for all formats: a parser per format, then one intermediate model (tables, joins, dimensions,
 measures, filters), then a draft metric view in a new sub-project.

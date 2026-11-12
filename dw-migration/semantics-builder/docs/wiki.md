@@ -248,6 +248,20 @@ tables (the table names come from the SQL of each database query subject; the ap
 | Other functions (such as `running-total`), macros (`#...#`) and prompts (`?p?`) | The AI tries, marked **Check it**; else not converted |
 | Regular and measure dimensions (DMR) | Not converted, with a warning |
 
+**MicroStrategy.** Choose one JSON file with the objects of the REST Modeling API: the logical tables
+(`/api/model/tables`), attributes, facts and metrics, in any arrays (each object keeps its `information.subType`).
+Type the default catalog.schema of the tables (the app maps them by name and warns you to check them). The
+`.mmp` packages of Object Manager cannot be read.
+
+| MicroStrategy | Metric view |
+| --- | --- |
+| The table of the most facts | The source table |
+| An attribute whose lookup table is another table, on its ID form | A join (one level; others are left out with a warning) |
+| An attribute | A dimension from its report display form (or DESC, else ID); other forms are dimensions named `Attribute Form` |
+| A fact | The row expression that metrics aggregate |
+| `Sum`, `Avg`, `Min`, `Max`, `Count` (also `<Distinct=True>`), `Median`, `StDev`, `Var`, `If`, `NullToZero`, `ZeroToNull`, math and string functions, the report level `{~+}` and metric references | SQL by rules |
+| Conditions (`<[Filter]>`), transformations, other levels, OLAP functions (`Rank`, `RunningSum`) and `ApplySimple` | The AI tries, marked **Check it**; else not converted |
+
 ### 5.1 The golden project
 
 The **Golden project** tab of a project shows the path from certified data to a trusted Genie agent. The project gets

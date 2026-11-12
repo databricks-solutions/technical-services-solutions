@@ -239,7 +239,10 @@ export function convertTableau(
     if (!sqlOf.has(local) && c.attrs.role === 'measure' && ai.has(names.get(local)!))
       sqlOf.set(local, { sql: ai.get(names.get(local)!)!, status: 'review' });
 
-  for (const [local, c] of calcs) {
+  // A measure must come after the measures it uses: the converted ones go in the order the passes found them.
+  const order = [...sqlOf.keys()];
+  const rank = (l: string) => (order.includes(l) ? order.indexOf(l) : order.length);
+  for (const [local, c] of [...calcs].sort((a, b) => rank(a[0]) - rank(b[0]))) {
     const formula = child(c, 'calculation')!.attrs.formula;
     const name = names.get(local)!;
     const role = c.attrs.role === 'measure' ? 'measure' : 'dimension';

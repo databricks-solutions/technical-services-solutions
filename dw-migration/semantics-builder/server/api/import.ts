@@ -13,6 +13,7 @@ import type { LlmDeps } from '../llm/llm';
 import { calcPrompt, calcRequest, safeExpression } from '../llm/prompts/legacyCalc';
 import { convertTableau } from '../legacy/tableau';
 import { convertCognos } from '../legacy/cognos';
+import { convertMicroStrategy, isMicroStrategy } from '../legacy/microstrategy';
 import type { UcDeps } from '../uc/metadata';
 import { actorOf, handle, HttpError } from './http';
 import { designerRepo } from './designer';
@@ -112,11 +113,13 @@ export function registerImportRoutes(
       const parent = await projects.get(actor, z.object({ id: z.uuid() }).parse(req.params).id);
       if (parent.parentId) throw new HttpError(400, 'Import into a project, not a sub-project.');
       // .bim and .pbit are Tabular (Power BI, SSAS); .twb, .tds, .twbx and .tdsx are Tableau. LookML files end in
-      // .lkml; several uploaded files arrive joined. Else the file is dbt YAML or JSON.
+      // .lkml; several uploaded files arrive joined. A JSON file with MicroStrategy objects (information.subType) is
+      // MicroStrategy. Else the file is dbt YAML or JSON.
       const tabular = /\.(bim|pbit)$/i.test(body.fileName);
       const tableau = /\.(twbx?|tdsx?)$/i.test(body.fileName);
       const cognos = /\.xml$/i.test(body.fileName) && body.content.includes('<querySubject');
-      const withAi = tabular || tableau || cognos;
+      const mstr = /\.json$/i.test(body.fileName) && isMicroStrategy(body.content);
+      const withAi = tabular || tableau || cognos || mstr;
       const lookml =
         !withAi && (/\.lkml$/i.test(body.fileName) || /^\s*(view|explore|include|connection)\s*:/m.test(body.content));
       const tool = tabular
@@ -125,9 +128,11 @@ export function registerImportRoutes(
           ? 'Tableau'
           : cognos
             ? 'Cognos'
-            : lookml
-              ? 'LookML'
-              : 'dbt MetricFlow';
+            : mstr
+              ? 'MicroStrategy'
+              : lookml
+                ? 'LookML'
+                : 'dbt MetricFlow';
       let result: LegacyResult;
       try {
         if (!withAi) result = (lookml ? convertLookml : convertDbt)(body.fileName, body.content, body.schema);
@@ -135,8 +140,14 @@ export function registerImportRoutes(
           const base64 = body.encoding === 'base64';
           // On create, the SQL that the user saw in the preview; on preview, the AI for each measure with no rule.
           let ai = new Map(Object.entries(body.ai ?? {}).flatMap(([k, v]) => (safeExpression(v) ? [[k, v]] : [])));
-          const convert = tabular ? convertTabular : tableau ? convertTableau : convertCognos;
-          const lang = tabular ? 'DAX' : tableau ? 'Tableau' : 'Cognos';
+          const convert = tabular
+            ? convertTabular
+            : tableau
+              ? convertTableau
+              : cognos
+                ? convertCognos
+                : convertMicroStrategy;
+          const lang = tabular ? 'DAX' : tableau ? 'Tableau' : cognos ? 'Cognos' : 'MicroStrategy';
           const first = convert(body.fileName, body.content, body.schema, base64, ai);
           if (!body.create && first.todo.length) {
             const llm = llmFor(req);

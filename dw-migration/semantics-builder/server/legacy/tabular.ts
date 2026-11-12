@@ -214,7 +214,10 @@ export function convertTabular(
       done.add(m.name);
       sqlOf.set(m.name, { sql: ai.get(m.name)!, status: 'review' });
     }
-  for (const { table, m } of measures) {
+  // A measure must come after the measures it uses: the converted ones go in the order the passes found them.
+  const order = [...sqlOf.keys()];
+  const rank = (n: string) => (order.includes(n) ? order.indexOf(n) : order.length);
+  for (const { table, m } of [...measures].sort((a, b) => rank(a.m.name) - rank(b.m.name))) {
     const dax = text(m.expression);
     const source = `${table}[${m.name}] = ${dax}`;
     const r = sqlOf.get(m.name);

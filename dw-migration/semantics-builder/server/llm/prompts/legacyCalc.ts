@@ -17,6 +17,7 @@ const LANGUAGES = {
   DAX: 'Power BI DAX',
   Tableau: 'Tableau calculation',
   Cognos: 'Cognos Framework Manager expression',
+  MicroStrategy: 'MicroStrategy metric',
 } as const;
 
 /** The prompt for one language of legacy measures. */
@@ -33,7 +34,9 @@ Rules:
 - Time intelligence (TOTALYTD, SAMEPERIODLASTYEAR, DATEADD), ALL, ALLEXCEPT and context changes have no expression
   form: set convertible to false.
 - Tableau LOD expressions ({FIXED ...}) and table calculations (RUNNING_SUM, WINDOW_SUM, LOOKUP, RANK) have no
-  expression form: set convertible to false.`,
+  expression form: set convertible to false.
+- MicroStrategy conditions (<[Filter]>), transformations, levels other than {~+} and OLAP functions (RunningSum,
+  MovingAvg, Rank, Lag) have no expression form: set convertible to false.`,
   tool: { name: 'submit_sql_measure', description: 'Submit the SQL of the measure.', schema: daxOutput },
   maxTokens: 800,
 });

@@ -3,12 +3,8 @@ import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import {
   Alert,
-  Checkbox,
   Input,
   Modal,
-  SimpleSelect,
-  SimpleSelectOption,
-  Spinner,
   Table,
   TableCell,
   TableHeader,
@@ -18,9 +14,10 @@ import {
 } from '@databricks/design-system';
 import { fitsTool, LEGACY_TOOLS, legacyTool, MAX_LEGACY_BYTES } from '../../../shared/legacy';
 import type { FieldStatus, LegacyPreview, LegacyTool } from '../../../shared/legacy';
-import { api, PROJECTS_CHANGED, useResource } from '../api';
+import { api, PROJECTS_CHANGED } from '../api';
 import { subPath } from '../pages/ProjectsPage';
 import { SqlBlock } from './SqlBlock';
+import { SchemaPicker } from './UcPicker';
 
 const STATUS: Record<FieldStatus, { color: 'teal' | 'lemon' | 'coral'; label: string }> = {
   converted: { color: 'teal', label: 'Converted' },
@@ -49,7 +46,6 @@ const SCHEMA_HELP: Record<LegacyTool, string> = {
   microstrategy: 'Pick the schema of the tables. The project names them by their warehouse names only.',
   ssas: 'Pick the schema of the tables. The data source view names them by their warehouse names only.',
 };
-const q = encodeURIComponent;
 
 function Step({ n, title, children }: { n: number; title: string; children: ReactNode }) {
   return (
@@ -86,10 +82,7 @@ export function LegacyImportModal({ projectId, onClose }: { projectId: string; o
   const navigate = useNavigate();
   const [tool, setTool] = useState<LegacyTool>();
   const [file, setFile] = useState<{ name: string; content: string; base64: boolean; count: number }>();
-  const [catalog, setCatalog] = useState('');
   const [schema, setSchema] = useState('');
-  const catalogs = useResource<string[]>('/api/uc/catalogs?purpose=browse');
-  const schemas = useResource<string[]>(catalog ? `/api/uc/schemas?catalog=${q(catalog)}` : null);
   const [subProject, setSubProject] = useState('');
   const [preview, setPreview] = useState<LegacyPreview>();
   const [busy, setBusy] = useState(false);
@@ -249,51 +242,13 @@ export function LegacyImportModal({ projectId, onClose }: { projectId: string; o
         {tool && (
           <Step n={3} title="Default catalog and schema">
             <Typography.Text color="secondary">{SCHEMA_HELP[tool]}</Typography.Text>
-            <div style={{ maxWidth: 320 }}>
-              <SimpleSelect
-                componentId="gsb.legacy.catalog"
-                id="legacy-catalog"
-                aria-label="Catalog"
-                value={catalog}
-                placeholder={catalogs.status === 'loading' ? 'Loading' : 'Pick a catalog'}
-                onChange={(e) => {
-                  setCatalog(e.target.value);
-                  setSchema('');
-                  setPreview(undefined);
-                }}
-              >
-                {(catalogs.data ?? []).map((c) => (
-                  <SimpleSelectOption key={c} value={c}>
-                    {c}
-                  </SimpleSelectOption>
-                ))}
-              </SimpleSelect>
-            </div>
-            {catalog && (
-              <div
-                role="group"
-                aria-label={`Schemas in ${catalog}`}
-                style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}
-              >
-                {schemas.status === 'loading' && <Spinner size="small" label="Loading schemas" />}
-                {(schemas.data ?? []).map((sc) => {
-                  const full = `${catalog}.${sc}`;
-                  return (
-                    <Checkbox
-                      key={full}
-                      componentId="gsb.legacy.schema"
-                      isChecked={schema === full}
-                      onChange={(on) => {
-                        setSchema(on ? full : '');
-                        setPreview(undefined);
-                      }}
-                    >
-                      {sc}
-                    </Checkbox>
-                  );
-                })}
-              </div>
-            )}
+            <SchemaPicker
+              value={schema}
+              onChange={(v) => {
+                setSchema(v);
+                setPreview(undefined);
+              }}
+            />
           </Step>
         )}
 

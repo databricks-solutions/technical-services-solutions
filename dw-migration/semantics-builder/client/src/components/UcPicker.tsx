@@ -166,15 +166,19 @@ function SchemaList({
   );
 }
 
-/** Catalog Explorer style: open catalogs and schemas, tick tables. Selections can span schemas. */
-export function TablePicker({ value, onChange }: { value: string[]; onChange: (tables: string[]) => void }) {
+/** The filter and the catalog tree that both pickers share. */
+function CatalogTree({
+  countOf,
+  children,
+}: {
+  countOf: (catalog: string) => number;
+  children: (catalog: string) => ReactNode;
+}) {
   const catalogs = useResource<string[]>('/api/uc/catalogs?purpose=browse');
   const [filter, setFilter] = useState('');
-  const toggle = (full: string, on: boolean) =>
-    onChange(on ? [...value.filter((t) => t !== full), full] : value.filter((t) => t !== full));
   const shown = (catalogs.data ?? []).filter((c) => c.toLowerCase().includes(filter.trim().toLowerCase()));
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <>
       <Input
         componentId="gsb.uc.filter"
         aria-label="Filter catalogs"
@@ -200,18 +204,25 @@ export function TablePicker({ value, onChange }: { value: string[]; onChange: (t
         <ul aria-label="Unity Catalog" style={{ margin: 0, padding: 0 }}>
           {catalogs.status === 'loading' && <Loading label="Loading catalogs" />}
           {shown.map((c) => (
-            <Node
-              key={c}
-              icon={<CatalogIcon />}
-              label={c}
-              depth={0}
-              count={value.filter((t) => t.startsWith(`${c}.`)).length}
-            >
-              {() => <SchemaList catalog={c} selected={value} onToggle={toggle} />}
+            <Node key={c} icon={<CatalogIcon />} label={c} depth={0} count={countOf(c)}>
+              {() => children(c)}
             </Node>
           ))}
         </ul>
       </div>
+    </>
+  );
+}
+
+/** Catalog Explorer style: open catalogs and schemas, tick tables. Selections can span schemas. */
+export function TablePicker({ value, onChange }: { value: string[]; onChange: (tables: string[]) => void }) {
+  const toggle = (full: string, on: boolean) =>
+    onChange(on ? [...value.filter((t) => t !== full), full] : value.filter((t) => t !== full));
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <CatalogTree countOf={(c) => value.filter((t) => t.startsWith(`${c}.`)).length}>
+        {(c) => <SchemaList catalog={c} selected={value} onToggle={toggle} />}
+      </CatalogTree>
       {value.length > 0 && (
         <div aria-label="Selected tables" style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
           {value.map((t) => (
@@ -225,6 +236,71 @@ export function TablePicker({ value, onChange }: { value: string[]; onChange: (t
               {t}
             </Tag>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SchemaChecklist({
+  catalog,
+  value,
+  onChange,
+}: {
+  catalog: string;
+  value: string;
+  onChange: (schema: string) => void;
+}) {
+  const schemas = useResource<string[]>(`/api/uc/schemas?purpose=browse&catalog=${q(catalog)}`);
+  if (schemas.status === 'loading') return <Loading label="Loading schemas" />;
+  if (schemas.status !== 'ready')
+    return (
+      <li style={{ listStyle: 'none' }}>
+        <FormUI.Message type="error" message={schemas.error ?? 'Could not load the schemas.'} />
+      </li>
+    );
+  return (
+    <li style={{ listStyle: 'none', paddingLeft: INDENT + 28 }}>
+      <div
+        role="group"
+        aria-label={`Schemas in ${catalog}`}
+        style={{ display: 'flex', flexDirection: 'column', gap: 2 }}
+      >
+        {(schemas.data ?? []).map((s) => {
+          const full = `${catalog}.${s}`;
+          return (
+            <Checkbox
+              key={s}
+              componentId="gsb.uc.schema"
+              isChecked={value === full}
+              onChange={(on) => onChange(on ? full : '')}
+            >
+              {s}
+            </Checkbox>
+          );
+        })}
+      </div>
+    </li>
+  );
+}
+
+/** The same tree as the table picker, down to schemas: tick one schema. */
+export function SchemaPicker({ value, onChange }: { value: string; onChange: (schema: string) => void }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <CatalogTree countOf={(c) => (value.startsWith(`${c}.`) ? 1 : 0)}>
+        {(c) => <SchemaChecklist catalog={c} value={value} onChange={onChange} />}
+      </CatalogTree>
+      {value && (
+        <div aria-label="Selected schema" style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+          <Tag
+            componentId="gsb.uc.selected_schema"
+            closable
+            closeButtonProps={{ 'aria-label': `Remove ${value}` }}
+            onClose={() => onChange('')}
+          >
+            {value}
+          </Tag>
         </div>
       )}
     </div>

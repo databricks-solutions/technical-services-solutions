@@ -174,7 +174,8 @@ four steps:
    extensions (for example `.dsv`, `.dim`, `.cube` and `.xmla` for SSAS Multidimensional).
 2. **Files.** Choose the file, or the files of the tool that go together (LookML views, the `.tmdl` files of a
    Power BI project, the SSAS project files). A file with another extension is refused.
-3. **Default catalog and schema.** Pick a catalog, then check one schema. The app uses it for tables that the
+3. **Default catalog and schema.** The same tree as **Add tables**: filter the catalogs, open one, and check one
+   schema. The app uses it for tables that the
    model names without a catalog and schema. Cognos, MicroStrategy and SSAS Multidimensional need it; for the
    others, leave it empty when the model names its tables.
 4. **Sub-project name.**

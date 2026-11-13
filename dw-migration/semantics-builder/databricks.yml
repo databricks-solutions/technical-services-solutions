@@ -1,0 +1,102 @@
+bundle:
+  name: semantics-builder
+
+variables:
+  sql_warehouse_id:
+    description: SQL Warehouse ID
+  postgres_branch:
+    description: Full Lakebase Postgres branch resource name. Obtain by running `databricks postgres list-branches {project-name}`, select the desired item from the output array and use its .name value. Requires the project resource name.
+  postgres_database:
+    description: Full Lakebase Postgres database resource name. Obtain by running `databricks postgres list-databases {branch-name}`, select the desired item from the output array and use its .name value. Requires the branch resource name.
+  serving_endpoint_name:
+    description: Serving endpoint name
+  sandbox_schema:
+    description: catalog.schema where validation creates temporary metric views. The app users need CREATE TABLE there.
+
+# The repo root .gitignore matches *conf*.json; bundle sync skips those unless included here.
+sync:
+  include:
+    - /tsconfig*.json
+
+resources:
+  apps:
+    app:
+      name: "semantics-builder"
+      description: "Design, validate, optimize and govern UC metric views with an LLM advisor"
+      source_code_path: ./
+      # The app config lives here, not in app.yaml: a bundle config replaces app.yaml entirely.
+      config:
+        command: ['pnpm', 'run', 'start']
+        env:
+          - name: DATABRICKS_WAREHOUSE_ID
+            value_from: sql-warehouse
+          - name: LAKEBASE_ENDPOINT
+            value_from: postgres
+          - name: DATABRICKS_SERVING_ENDPOINT_NAME
+            value_from: serving-endpoint
+          - name: MLFLOW_EXPERIMENT_ID
+            value_from: experiment
+          - name: GSB_SANDBOX_SCHEMA
+            value: ${var.sandbox_schema}
+
+      # Start the app automatically on deploy.
+      lifecycle:
+        started: true
+      # Metadata comes from the Unity Catalog API (read-only scopes); the warehouse runs queries and approved DDL.
+      user_api_scopes:
+        - sql
+        - model-serving
+        - catalog.catalogs:read
+        - catalog.schemas:read
+        - catalog.tables:read
+        # Ask Genie (Genie space) and Ask Genie One (OneChat). Keep it here: each deploy resets the scopes to this list.
+        - genie
+
+      # The resources which this app has access to.
+      resources:
+        - name: sql-warehouse
+          sql_warehouse:
+            id: ${var.sql_warehouse_id}
+            permission: CAN_USE
+        - name: postgres
+          postgres:
+            branch: ${var.postgres_branch}
+            database: ${var.postgres_database}
+            permission: CAN_CONNECT_AND_CREATE
+        - name: serving-endpoint
+          serving_endpoint:
+            name: ${var.serving_endpoint_name}
+            permission: CAN_QUERY
+        # Metadata-only traces of model calls, written by the app service principal.
+        - name: experiment
+          experiment:
+            experiment_id: ${resources.experiments.traces.id}
+            permission: CAN_EDIT
+
+  experiments:
+    traces:
+      name: ${workspace.root_path}/semantics-builder-traces
+
+# Workspace host comes from the CLI profile: databricks bundle deploy -t dev --profile <PROFILE>
+# Set per-target values with --var or BUNDLE_VAR_<name> environment variables.
+targets:
+  dev:
+    mode: development
+    default: true
+    variables:
+      sql_warehouse_id: <your-serverless-sql-warehouse-id>
+      postgres_branch: projects/semantics-builder/branches/production
+      postgres_database: projects/semantics-builder/branches/production/databases/databricks-postgres
+      serving_endpoint_name: databricks-claude-sonnet-5-5
+      sandbox_schema: sandbox.semantics_builder
+
+  prod:
+    mode: production
+    workspace:
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      sql_warehouse_id: <your-serverless-sql-warehouse-id>
+      postgres_branch: projects/<your-lakebase-project>/branches/production
+      postgres_database: projects/<your-lakebase-project>/branches/production/databases/databricks-postgres
+      serving_endpoint_name: databricks-claude-sonnet-5-5
+      sandbox_schema: <catalog>.<schema-for-validation-views>

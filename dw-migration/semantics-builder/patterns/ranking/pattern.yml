@@ -1,0 +1,18 @@
+title: Ranking
+category: Ranking
+scenario: >-
+  Rank members by a measure at query time, overall or within a group. RANK leaves gaps after ties and
+  DENSE_RANK does not. PARTITION BY a field restarts the rank for each value of that field.
+question: Which nations rank highest by revenue within each region?
+roles:
+  - name: entity
+    description: What to rank, such as a nation, a product or a customer.
+  - name: group
+    description: The group to rank within, such as a region.
+  - name: amount
+    description: The numeric value to rank by.
+test:
+  query: >-
+    SELECT `Region Name`, `Nation Name`, MEASURE(`Revenue`) AS revenue, MEASURE(`Rank in Region`) AS rank_in_region,
+    MEASURE(`Overall Rank`) AS overall_rank FROM {{view}} WHERE `Order Year` = 1995
+    GROUP BY ALL ORDER BY `Region Name`, rank_in_region

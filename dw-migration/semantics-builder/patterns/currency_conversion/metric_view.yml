@@ -1,0 +1,37 @@
+version: 1.1
+comment: Revenue in USD and in EUR at historical and latest rates. The rates are synthetic.
+source: samples.tpch.orders
+joins:
+  - name: fx
+    source: >-
+      SELECT rate_month, 'EUR' AS currency, CAST(0.8 + 0.002 * MONTHS_BETWEEN(rate_month, DATE'1992-01-01') AS DECIMAL(10, 4)) AS rate
+      FROM (SELECT EXPLODE(SEQUENCE(DATE'1992-01-01', DATE'1998-12-01', INTERVAL 1 MONTH)) AS rate_month)
+    'on': DATE_TRUNC('MONTH', source.o_orderdate) = fx.rate_month AND fx.currency = 'EUR'
+    rely:
+      at_most_one_match: true
+  - name: fx_latest
+    source: >-
+      SELECT 'EUR' AS currency, CAST(0.8 + 0.002 * MONTHS_BETWEEN(DATE'1998-12-01', DATE'1992-01-01') AS DECIMAL(10, 4)) AS rate
+    'on': fx_latest.currency = 'EUR'
+    rely:
+      at_most_one_match: true
+fields:
+  - name: Order Month
+    expr: DATE_TRUNC('MONTH', source.o_orderdate)
+measures:
+  - name: Revenue USD
+    expr: SUM(source.o_totalprice)
+    format:
+      type: currency
+      currency_code: USD
+  - name: Revenue EUR
+    comment: Converted at the rate of the order month.
+    expr: SUM(source.o_totalprice * fx.rate)
+    format:
+      type: currency
+      currency_code: EUR
+  - name: Revenue EUR at Latest Rate
+    expr: SUM(source.o_totalprice * fx_latest.rate)
+    format:
+      type: currency
+      currency_code: EUR

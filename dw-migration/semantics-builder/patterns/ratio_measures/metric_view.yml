@@ -1,0 +1,29 @@
+version: 1.1
+comment: Revenue, discount rate and revenue per order.
+source: samples.tpch.lineitem
+fields:
+  - name: Return Flag
+    expr: source.l_returnflag
+  - name: Ship Year
+    expr: YEAR(source.l_shipdate)
+measures:
+  - name: Gross Revenue
+    expr: SUM(source.l_extendedprice)
+  - name: Discount Amount
+    expr: SUM(source.l_extendedprice * source.l_discount)
+  - name: Net Revenue
+    expr: MEASURE(`Gross Revenue`) - MEASURE(`Discount Amount`)
+  - name: Orders
+    expr: COUNT(DISTINCT source.l_orderkey)
+  - name: Discount Rate
+    comment: Ratio of sums. Correct at every level.
+    expr: MEASURE(`Discount Amount`) / NULLIF(MEASURE(`Gross Revenue`), 0)
+    format:
+      type: percentage
+  - name: Average Line Discount
+    comment: Average of line rates. Every line weighs the same, whatever its price.
+    expr: AVG(source.l_discount)
+    format:
+      type: percentage
+  - name: Net Revenue per Order
+    expr: MEASURE(`Net Revenue`) / NULLIF(MEASURE(Orders), 0)

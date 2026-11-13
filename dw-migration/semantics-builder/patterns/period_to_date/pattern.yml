@@ -1,0 +1,17 @@
+title: Period to date
+category: Time intelligence
+scenario: >-
+  Running totals that restart at the start of each period: year to date and quarter to date.
+  A cumulative window on the month adds up all months so far, and a current window on the year or quarter
+  restarts the total.
+question: What is revenue year to date and quarter to date for each month?
+roles:
+  - name: event_date
+    description: The date of the business event, such as the order date.
+  - name: amount
+    description: The numeric value to add up.
+test:
+  query: >-
+    SELECT `Order Year`, `Order Quarter`, `Order Month`, MEASURE(`Revenue`) AS revenue,
+    MEASURE(`Revenue QTD`) AS revenue_qtd, MEASURE(`Revenue YTD`) AS revenue_ytd
+    FROM {{view}} WHERE `Order Year` = 1996 GROUP BY ALL ORDER BY ALL

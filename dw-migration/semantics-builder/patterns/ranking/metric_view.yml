@@ -1,0 +1,35 @@
+version: 1.1
+comment: Nation revenue ranks, overall and within each region.
+source: samples.tpch.orders
+joins:
+  - name: customer
+    source: samples.tpch.customer
+    'on': source.o_custkey = customer.c_custkey
+    rely:
+      at_most_one_match: true
+    joins:
+      - name: nation
+        source: samples.tpch.nation
+        'on': customer.c_nationkey = nation.n_nationkey
+        rely:
+          at_most_one_match: true
+        joins:
+          - name: region
+            source: samples.tpch.region
+            'on': nation.n_regionkey = region.r_regionkey
+            rely:
+              at_most_one_match: true
+fields:
+  - name: Region Name
+    expr: customer.nation.region.r_name
+  - name: Nation Name
+    expr: customer.nation.n_name
+  - name: Order Year
+    expr: YEAR(source.o_orderdate)
+measures:
+  - name: Revenue
+    expr: SUM(source.o_totalprice)
+  - name: Rank in Region
+    expr: RANK() OVER (PARTITION BY `Region Name` ORDER BY SUM(source.o_totalprice) DESC)
+  - name: Overall Rank
+    expr: DENSE_RANK() OVER (ORDER BY SUM(source.o_totalprice) DESC)

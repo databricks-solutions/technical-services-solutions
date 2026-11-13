@@ -11,7 +11,7 @@ import {
   ReactFlowProvider,
   useReactFlow,
 } from '@xyflow/react';
-import type { Edge, Node, NodeProps } from '@xyflow/react';
+import type { Edge, Node, NodeProps, ReactFlowInstance } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
   Button,
@@ -61,7 +61,15 @@ export interface CanvasEdge {
 type Data = CanvasNode & { onSelect?: (id: string) => void; selected?: boolean };
 const PAGE = 8;
 const NODE_W = 240;
-const COL_GAP = 190;
+const COL_GAP = 110;
+/** Fit to the screen, but never so small that the node text cannot be read; a wide model pans. */
+const FIT = { padding: 0.1, maxZoom: 1, minZoom: 0.7 };
+/** Fit the model; when it is wider than the canvas at the smallest zoom, start at its left edge (the source). */
+const fit = (flow: Pick<ReactFlowInstance<Node<Data>>, 'fitView' | 'getViewport' | 'setViewport'>) =>
+  void flow.fitView(FIT).then(() => {
+    const v = flow.getViewport();
+    if (v.x < 0) void flow.setViewport({ ...v, x: 16 });
+  });
 const ROW_GAP = 110;
 
 /** A compact node like Catalog Explorer lineage: name and count; open it to search and page its columns. */
@@ -224,7 +232,7 @@ function Zoom() {
           size="small"
           icon={<ZoomToFitIcon />}
           aria-label="Fit to the screen"
-          onClick={() => void flow.fitView({ padding: 0.15, maxZoom: 1 })}
+          onClick={() => fit(flow)}
         />
       </div>
     </Panel>
@@ -297,11 +305,15 @@ export function LineageCanvas({
       })),
     [edges]
   );
+  // A small model gets a short canvas; the minimap helps only when there is more than one screen of nodes.
+  const rows = nodes.reduce((m, n) => Math.max(m, n.row + 1), 1);
+  const shown = Math.min(height, Math.max(240, rows * ROW_GAP + 160));
+  const big = rows > 3 || nodes.length > 8;
   return (
     <div
       role="group"
       aria-label={label}
-      style={{ height, border: '1px solid var(--db-border-base)', borderRadius: 8, overflow: 'hidden' }}
+      style={{ height: shown, border: '1px solid var(--db-border-base)', borderRadius: 8, overflow: 'hidden' }}
     >
       <ReactFlowProvider>
         <ReactFlow
@@ -310,22 +322,23 @@ export function LineageCanvas({
           onNodesChange={(changes) => setState((s) => applyNodeChanges(changes, s))}
           nodeTypes={nodeTypes}
           colorMode={preference}
-          fitView
-          fitViewOptions={{ padding: 0.15, maxZoom: 1 }}
+          onInit={fit}
           minZoom={0.2}
           maxZoom={2}
           nodesConnectable={false}
           proOptions={{ hideAttribution: false }}
         >
           <Background variant={BackgroundVariant.Dots} gap={14} size={1} />
-          <MiniMap
-            pannable
-            zoomable
-            ariaLabel={`Minimap of ${label}`}
-            nodeColor={(n) => ((n.data as Data).kind === 'view' ? '#2272b4' : '#8a96a3')}
-            maskColor="rgba(128, 128, 128, 0.15)"
-            style={{ width: 140, height: 90 }}
-          />
+          {big && (
+            <MiniMap
+              pannable
+              zoomable
+              ariaLabel={`Minimap of ${label}`}
+              nodeColor={(n) => ((n.data as Data).kind === 'view' ? '#2272b4' : '#8a96a3')}
+              maskColor="rgba(128, 128, 128, 0.15)"
+              style={{ width: 140, height: 90 }}
+            />
+          )}
           <Zoom />
         </ReactFlow>
       </ReactFlowProvider>

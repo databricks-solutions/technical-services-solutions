@@ -59,7 +59,7 @@ function SubProjectCard({
                 {sub.name}
               </Typography.Link>
             </Typography.Title>
-            <Typography.Text color="secondary">{sub.description ?? 'No goal yet.'}</Typography.Text>
+            {sub.description && <Typography.Text color="secondary">{sub.description}</Typography.Text>}
           </div>
           <Tag componentId="gsb.project.sub_stage" color={STAGE[sub.stage].color}>
             {STAGE[sub.stage].label}

@@ -61,7 +61,7 @@ export function PromotePanel({ projectId, onPromoted }: { projectId: string; onP
             validate it, then promote it.
           </Typography.Text>
           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-            <div style={{ minWidth: 420 }}>
+            <div style={{ flex: '1 1 520px', maxWidth: 720 }}>
               <FormUI.Label htmlFor="pp-target">Unity Catalog view</FormUI.Label>
               <FormUI.Hint>catalog.schema.view. Not the sandbox schema.</FormUI.Hint>
               <Input

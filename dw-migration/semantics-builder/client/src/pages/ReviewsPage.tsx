@@ -41,7 +41,11 @@ function ReviewTable({ label, rows, who }: { label: string; rows: Review[]; who:
         {label}
       </Typography.Title>
       {rows.length === 0 ? (
-        <Typography.Text color="secondary">None.</Typography.Text>
+        <Typography.Text color="secondary">
+          {who === 'requestedBy'
+            ? 'Nothing to review now. When an author names you as the reviewer, the request shows here.'
+            : 'You have not asked for a review. Ask for one in Publish, Promotion.'}
+        </Typography.Text>
       ) : (
         <Table aria-label={label}>
           <TableRow isHeader>

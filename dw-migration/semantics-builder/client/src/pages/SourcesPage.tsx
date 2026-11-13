@@ -97,7 +97,12 @@ function Areas({ areas }: { areas: AreaScore[] }) {
       {areas.map((a) => (
         <div
           key={a.id}
-          style={{ display: 'grid', gridTemplateColumns: '180px 1fr 48px', gap: 12, alignItems: 'center' }}
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'minmax(110px, 180px) minmax(0, 1fr) 40px',
+            gap: 12,
+            alignItems: 'center',
+          }}
         >
           <div>
             <Typography.Text bold>{a.label}</Typography.Text>
@@ -141,15 +146,16 @@ function ScoreSummary({ view }: { view: ReadinessView }) {
     <section
       aria-labelledby="gsb-score"
       style={{
-        display: 'grid',
-        gridTemplateColumns: 'minmax(160px, 200px) 1fr',
+        // On a narrow page the areas go under the score, with the full width.
+        display: 'flex',
+        flexWrap: 'wrap',
         gap: 24,
         padding: 16,
         border: '1px solid var(--db-border-base)',
         borderRadius: 8,
       }}
     >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '0 0 200px' }}>
         <Typography.Text id="gsb-score" color="secondary">
           Semantic readiness
         </Typography.Text>
@@ -163,7 +169,9 @@ function ScoreSummary({ view }: { view: ReadinessView }) {
           Rule-based, from table metadata. 80 or more is ready.
         </Typography.Text>
       </div>
-      <Areas areas={view.score.areas} />
+      <div style={{ flex: '1 1 460px', minWidth: 0 }}>
+        <Areas areas={view.score.areas} />
+      </div>
     </section>
   );
 }

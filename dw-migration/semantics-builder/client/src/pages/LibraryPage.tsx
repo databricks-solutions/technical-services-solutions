@@ -111,66 +111,69 @@ export function LibraryPage() {
               />
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                <Table aria-label="Metric views" scrollable>
-                  <TableRow isHeader>
-                    <TableHeader componentId="gsb.library.h_view">Metric view</TableHeader>
-                    <TableHeader componentId="gsb.library.h_project">Project</TableHeader>
-                    <TableHeader componentId="gsb.library.h_promoted">In Unity Catalog</TableHeader>
-                    <TableHeader componentId="gsb.library.h_latest">Latest version</TableHeader>
-                    <TableHeader componentId="gsb.library.h_state">State</TableHeader>
-                    <TableHeader componentId="gsb.library.h_health">Health</TableHeader>
-                    <TableHeader componentId="gsb.library.h_actions">Actions</TableHeader>
-                  </TableRow>
-                  {rows.map((r) => (
-                    <TableRow key={r.projectId}>
-                      <TableCell>
-                        {r.target ? (
-                          <code>{r.target}</code>
-                        ) : (
-                          <Typography.Text color="secondary">{r.name} (no target)</Typography.Text>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {r.project} / {r.subProject}
-                      </TableCell>
-                      <TableCell>
-                        {r.promoted
-                          ? `Version ${r.promoted.version}, ${r.promoted.by}, ${new Date(r.promoted.at).toLocaleDateString()}`
-                          : 'Not promoted'}
-                      </TableCell>
-                      <TableCell>
-                        {r.latest.version} ({r.latest.status === 'validated' ? 'validated' : 'not validated'})
-                      </TableCell>
-                      <TableCell>
-                        <Behind r={r} />
-                      </TableCell>
-                      <TableCell>
-                        <Health r={r} />
-                      </TableCell>
-                      <TableCell>
-                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                          {r.target && r.promoted && <OpenInCatalog fullName={r.target} />}
-                          {r.promoted && (
-                            <Button
-                              componentId="gsb.library.health_open"
-                              size="small"
-                              onClick={() => void navigate(subPath(r.parentId, r.projectId, 'publish'))}
-                            >
-                              Health and drift
-                            </Button>
-                          )}
-                          <Button
-                            componentId="gsb.library.open"
-                            size="small"
-                            onClick={() => void navigate(subPath(r.parentId, r.projectId, 'designer'))}
-                          >
-                            Open in designer
-                          </Button>
-                        </div>
-                      </TableCell>
+                {/* A narrow page scrolls the table sideways instead of cutting the names. */}
+                <div style={{ overflowX: 'auto' }}>
+                  <Table aria-label="Metric views" scrollable style={{ minWidth: 1100 }}>
+                    <TableRow isHeader>
+                      <TableHeader componentId="gsb.library.h_view">Metric view</TableHeader>
+                      <TableHeader componentId="gsb.library.h_project">Project</TableHeader>
+                      <TableHeader componentId="gsb.library.h_promoted">In Unity Catalog</TableHeader>
+                      <TableHeader componentId="gsb.library.h_latest">Latest version</TableHeader>
+                      <TableHeader componentId="gsb.library.h_state">State</TableHeader>
+                      <TableHeader componentId="gsb.library.h_health">Health</TableHeader>
+                      <TableHeader componentId="gsb.library.h_actions">Actions</TableHeader>
                     </TableRow>
-                  ))}
-                </Table>
+                    {rows.map((r) => (
+                      <TableRow key={r.projectId}>
+                        <TableCell multiline>
+                          {r.target ? (
+                            <code>{r.target}</code>
+                          ) : (
+                            <Typography.Text color="secondary">{r.name} (no target)</Typography.Text>
+                          )}
+                        </TableCell>
+                        <TableCell multiline>
+                          {r.project} / {r.subProject}
+                        </TableCell>
+                        <TableCell multiline>
+                          {r.promoted
+                            ? `Version ${r.promoted.version}, ${r.promoted.by}, ${new Date(r.promoted.at).toLocaleDateString()}`
+                            : 'Not promoted'}
+                        </TableCell>
+                        <TableCell>
+                          {r.latest.version} ({r.latest.status === 'validated' ? 'validated' : 'not validated'})
+                        </TableCell>
+                        <TableCell>
+                          <Behind r={r} />
+                        </TableCell>
+                        <TableCell>
+                          <Health r={r} />
+                        </TableCell>
+                        <TableCell>
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                            {r.target && r.promoted && <OpenInCatalog fullName={r.target} />}
+                            {r.promoted && (
+                              <Button
+                                componentId="gsb.library.health_open"
+                                size="small"
+                                onClick={() => void navigate(subPath(r.parentId, r.projectId, 'publish'))}
+                              >
+                                Health and drift
+                              </Button>
+                            )}
+                            <Button
+                              componentId="gsb.library.open"
+                              size="small"
+                              onClick={() => void navigate(subPath(r.parentId, r.projectId, 'designer'))}
+                            >
+                              Open in designer
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </Table>
+                </div>
                 {sandbox.length > 0 && (
                   <>
                     <Typography.Title level={4} withoutMargins>

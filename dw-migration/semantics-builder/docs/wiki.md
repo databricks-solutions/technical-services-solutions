@@ -584,6 +584,37 @@ Example of a result: "1.24% below the expected value. The tolerance is 0.5%."
 Click **Remove sandbox view**. Read the SQL, then click **Run SQL**. The app uses the same name for each
 validation of a sub-project, so it replaces the old sandbox view each time.
 
+### 12.6 Reconcile with the legacy report
+
+The **Reconcile** tab of the Metric Designer compares the numbers of a legacy report with a validated version.
+
+1. Validate the version first. Reconcile runs on its sandbox view.
+2. Paste a CSV export of the report, or load the file (`.csv`, `.tsv` or `.txt`, up to 2 MB and 500 rows). The
+   first row is the header: dimension columns (such as region or month) and measure columns. For the totals only,
+   use one row with measure columns only.
+3. Check the column map. The app maps each column to the dimension or measure with the same name (case, spaces and
+   underscores do not count). Pick the field for the other columns, or leave them on **Ignore**.
+4. Set the tolerance in percent, then click **Reconcile**.
+
+The app runs the same grouping on the sandbox view, as you, with a filter to the keys of the report. It shows each
+row with the report value, the view value and the difference in percent of the report value:
+
+| Status | Meaning |
+| --- | --- |
+| Passed | The difference is within the tolerance |
+| Failed | The difference is larger, or the view has no number |
+| Not in the view | The view has no row with these keys |
+| No value | The report cell is empty |
+
+Numbers can use `1,234.5` or `1.234,5` (the last mark is the decimal mark), `(12)` for -12 and currency signs.
+`12%` reads as 0.12. A date key such as `2024-01-01` also matches a month that starts at midnight.
+
+The values show on the page only. The app does not store the report or the result.
+
+**Add N passing values as tests** makes a new version with an expected value test for each passing value: one
+measure, the report value, the tolerance, and the row keys as filters. A version has at most 20 tests. Validate the
+new version, and the reconcile becomes part of each later validation.
+
 ## 13. Optimize
 
 This tab makes the design faster, cheaper and easier to use.

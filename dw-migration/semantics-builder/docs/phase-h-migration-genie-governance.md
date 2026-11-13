@@ -187,6 +187,15 @@ The user gives the legacy totals: typed in, or a CSV export of a legacy report (
 columns). The app runs the same grouping on the metric view and shows each row with the difference and a
 pass or fail per tolerance. A passing reconcile can become a set of h3 tests.
 
+Status: done 2026-11-13. Metric Designer, Reconcile tab. The CSV is read in the browser (quotes, comma, semicolon or
+tab, report number formats); each column maps to a field by name or by hand. The server checks the fields against
+the version and runs one read query on the sandbox view of the validated version, as the user, filtered to the
+report keys (numbers as numbers, text and dates as text). Nothing is stored. Passing values become expected value
+tests in a new version (up to 20 tests). Live on "MicroStrategy import check 3" with the totals by order priority
+from plain SQL on the source: 9 values passed, a revenue changed by 3% failed with 2.91%, an unknown priority showed
+as not in the view; 5 passing values became tests, and version 2 validated with all 8 tests passed. Saving a new
+version needs a confirmed brief, as for any edit.
+
 ### h9. UI polish
 
 A UX review pass with screenshots of every page, light and dark, wide and narrow. Then fixes. Candidates:

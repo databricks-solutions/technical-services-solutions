@@ -4,6 +4,9 @@ import { z } from 'zod';
 import type { LakebasePool } from '@databricks/appkit';
 import { refineSchema } from '../../shared/brief';
 import { saveDraftSchema, validateSchema } from '../../shared/designer';
+import { reconcileBody } from '../../shared/reconcile';
+import type { ReconcileResult } from '../../shared/reconcile';
+import { compareReconcile, reconcileQuery } from '../designer/reconcile';
 import type {
   DesignDraft,
   DesignerView,
@@ -463,6 +466,42 @@ export function registerDesignerRoutes(
         throw new HttpError(409, 'The SQL changed since you reviewed it. Review it again.');
       for (const s of cleanup) await runStatement(s, { actor, projectId: project.id, approved: true }, runFor(req));
       return { removed: true };
+    })
+  );
+
+  /**
+   * Reconcile a legacy report with the sandbox view of a validated version, as the user. The report values and the
+   * view values go back to the user only; nothing is stored.
+   */
+  app.post(
+    '/api/projects/:id/designs/:version/reconcile',
+    handle(async (req): Promise<ReconcileResult> => {
+      const actor = actorOf(req);
+      const { id, version } = versionParam.parse(req.params);
+      const body = reconcileBody.parse(req.body);
+      const project = await projects.get(actor, id);
+      const { draft, validation } = await repo.view(project.id, version);
+      if (!draft || validation?.status !== 'passed')
+        throw new HttpError(409, 'Validate this version first. Reconcile runs on its sandbox view.');
+      const parsed = validateMetricView(draft.yaml).view;
+      const dims = new Set(parsed?.dimensions.map((d) => d.name));
+      const measures = new Set(parsed?.measures.map((m) => m.name));
+      const unknown = [
+        ...body.dimensions.filter((d) => !dims.has(d)),
+        ...body.measures.filter((m) => !measures.has(m)),
+      ];
+      if (unknown.length) throw new HttpError(400, `Not in version ${version}: ${unknown.join(', ')}.`);
+      const sql = reconcileQuery(validation.sandboxView, body);
+      let rows: (string | null)[][];
+      try {
+        rows = (await runStatement(sql, { actor, projectId: project.id, approved: false }, runFor(req))).rows;
+      } catch (err) {
+        throw new HttpError(
+          409,
+          `The query on the sandbox view failed: ${(err as Error).message.slice(0, 500)} If the sandbox view was removed, validate again.`
+        );
+      }
+      return { sandboxView: validation.sandboxView, sql, ...compareReconcile(body, rows) };
     })
   );
 

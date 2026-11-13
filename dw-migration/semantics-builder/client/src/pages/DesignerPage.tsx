@@ -30,6 +30,7 @@ import { api, useResource } from '../api';
 import { OpenInCatalog } from '../components/OpenInCatalog';
 import { DataState } from '../components/DataState';
 import { FieldTables } from '../components/FieldTables';
+import { ReconcilePanel } from '../components/ReconcilePanel';
 import { TestEditor } from '../components/TestEditor';
 import { JoinDiagram } from '../components/JoinDiagram';
 import { MONO, SqlBlock } from '../components/SqlBlock';
@@ -418,6 +419,7 @@ function Designer({
           <Tabs.Trigger value="model">Model</Tabs.Trigger>
           <Tabs.Trigger value="yaml">YAML{errors ? ` (${errors} errors)` : dirty ? ' (unsaved)' : ''}</Tabs.Trigger>
           <Tabs.Trigger value="tests">Tests ({draft.tests.length})</Tabs.Trigger>
+          <Tabs.Trigger value="reconcile">Reconcile</Tabs.Trigger>
           <Tabs.Trigger value="history">History ({data.history.length})</Tabs.Trigger>
         </Tabs.List>
 
@@ -605,6 +607,29 @@ function Designer({
           </section>
         </Tabs.Content>
 
+        <Tabs.Content value="reconcile">
+          {saved ? (
+            <ReconcilePanel
+              projectId={projectId}
+              version={draft.version}
+              view={saved}
+              validated={data.validation?.status === 'passed' && data.validation.version === draft.version}
+              tests={draft.tests}
+              saving={busy === 'save'}
+              onAddTests={(tests) =>
+                run(
+                  'save',
+                  `/api/projects/${projectId}/designs`,
+                  { baseVersion: draft.version, yaml: draft.yaml, tests },
+                  () => setTab('tests')
+                )
+              }
+            />
+          ) : (
+            <Typography.Text>Fix the errors in the YAML first.</Typography.Text>
+          )}
+        </Tabs.Content>
+
         <Tabs.Content value="history">
           <History
             projectId={projectId}
@@ -649,8 +674,8 @@ function Designer({
   );
 }
 
-type DesignerTab = 'model' | 'yaml' | 'tests' | 'history';
-const DESIGNER_TABS: DesignerTab[] = ['model', 'yaml', 'tests', 'history'];
+type DesignerTab = 'model' | 'yaml' | 'tests' | 'reconcile' | 'history';
+const DESIGNER_TABS: DesignerTab[] = ['model', 'yaml', 'tests', 'reconcile', 'history'];
 
 function VersionYaml({
   projectId,

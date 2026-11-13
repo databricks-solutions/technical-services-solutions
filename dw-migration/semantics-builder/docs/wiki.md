@@ -168,17 +168,16 @@ Catalog.
 ### 5.0 Import a legacy semantic model
 
 **New**, **Import a legacy model** makes a new sub-project from the semantic model of another tool. The dialog has
-four steps:
+four steps on one screen:
 
-1. **Technology.** Pick the tool. The dialog shows what to choose for it, and the file input takes only its
+1. **Sub-project name.**
+2. **Technology.** Pick the tool. The dialog shows what to choose for it, and the file input takes only its
    extensions (for example `.dsv`, `.dim`, `.cube` and `.xmla` for SSAS Multidimensional).
-2. **Files.** Choose the file, or the files of the tool that go together (LookML views, the `.tmdl` files of a
+3. **Files.** Choose the file, or the files of the tool that go together (LookML views, the `.tmdl` files of a
    Power BI project, the SSAS project files). A file with another extension is refused.
-3. **Default catalog and schema.** The same tree as **Add tables**: filter the catalogs, open one, and check one
-   schema. The app uses it for tables that the
-   model names without a catalog and schema. Cognos, MicroStrategy and SSAS Multidimensional need it; for the
-   others, leave it empty when the model names its tables.
-4. **Sub-project name.**
+4. **Default catalog and schema.** The same tree as **Add tables**: filter the catalogs, open one, and check one
+   schema. The app uses it for tables that the model names without a catalog and schema. Cognos, MicroStrategy and
+   SSAS Multidimensional need it; for the others, leave it empty when the model names its tables.
 
 Click **Preview**, check the fields, then click **Create the sub-project**. The sections below show what each tool
 converts to.

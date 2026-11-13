@@ -170,9 +170,11 @@ function SchemaList({
 function CatalogTree({
   countOf,
   children,
+  maxHeight = 360,
 }: {
   countOf: (catalog: string) => number;
   children: (catalog: string) => ReactNode;
+  maxHeight?: number;
 }) {
   const catalogs = useResource<string[]>('/api/uc/catalogs?purpose=browse');
   const [filter, setFilter] = useState('');
@@ -191,7 +193,7 @@ function CatalogTree({
       />
       <div
         style={{
-          maxHeight: 360,
+          maxHeight,
           overflow: 'auto',
           padding: 4,
           border: '1px solid var(--db-border-base)',
@@ -288,7 +290,7 @@ function SchemaChecklist({
 export function SchemaPicker({ value, onChange }: { value: string; onChange: (schema: string) => void }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <CatalogTree countOf={(c) => (value.startsWith(`${c}.`) ? 1 : 0)}>
+      <CatalogTree countOf={(c) => (value.startsWith(`${c}.`) ? 1 : 0)} maxHeight={140}>
         {(c) => <SchemaChecklist catalog={c} value={value} onChange={onChange} />}
       </CatalogTree>
       {value && (

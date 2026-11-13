@@ -177,14 +177,28 @@ export function LegacyImportModal({ projectId, onClose }: { projectId: string; o
       onCancel={onClose}
       onOk={() => run(!!preview)}
     >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <Typography.Text color="secondary">
           The app converts a semantic model of another tool into a draft metric view in a new sub-project. Rules convert
           it first; for an expression with no rule, the AI suggests SQL that you check. Each field keeps its source
           definition and a status. The files are only read, never run.
         </Typography.Text>
 
-        <Step n={1} title="Technology">
+        <Step n={1} title="Sub-project name">
+          <div style={{ maxWidth: 420 }}>
+            <Input
+              componentId="gsb.legacy.sub"
+              id="legacy-sub"
+              aria-label="Sub-project name"
+              placeholder="Imported model"
+              maxLength={200}
+              value={subProject}
+              onChange={(e) => setSubProject(e.target.value)}
+            />
+          </div>
+        </Step>
+
+        <Step n={2} title="Technology">
           <div
             role="radiogroup"
             aria-label="Technology"
@@ -203,7 +217,7 @@ export function LegacyImportModal({ projectId, onClose }: { projectId: string; o
                     display: 'flex',
                     flexDirection: 'column',
                     gap: 2,
-                    padding: '8px 12px',
+                    padding: '6px 12px',
                     borderRadius: 8,
                     border: `${on ? 2 : 1}px solid ${on ? 'var(--db-accent-text)' : 'var(--db-border-base)'}`,
                     background: on ? 'var(--db-accent-surface-subtle)' : 'var(--db-surface-base)',
@@ -223,7 +237,7 @@ export function LegacyImportModal({ projectId, onClose }: { projectId: string; o
         </Step>
 
         {tool && (
-          <Step n={2} title={legacyTool(tool).multiple ? 'Files' : 'File'}>
+          <Step n={3} title={legacyTool(tool).multiple ? 'Files' : 'File'}>
             <input
               key={tool}
               id="legacy-file"
@@ -240,7 +254,7 @@ export function LegacyImportModal({ projectId, onClose }: { projectId: string; o
         )}
 
         {tool && (
-          <Step n={3} title="Default catalog and schema">
+          <Step n={4} title="Default catalog and schema">
             <Typography.Text color="secondary">{SCHEMA_HELP[tool]}</Typography.Text>
             <SchemaPicker
               value={schema}
@@ -249,22 +263,6 @@ export function LegacyImportModal({ projectId, onClose }: { projectId: string; o
                 setPreview(undefined);
               }}
             />
-          </Step>
-        )}
-
-        {tool && (
-          <Step n={4} title="Sub-project name">
-            <div style={{ maxWidth: 420 }}>
-              <Input
-                componentId="gsb.legacy.sub"
-                id="legacy-sub"
-                aria-label="Sub-project name"
-                placeholder="Imported model"
-                maxLength={200}
-                value={subProject}
-                onChange={(e) => setSubProject(e.target.value)}
-              />
-            </div>
           </Step>
         )}
 

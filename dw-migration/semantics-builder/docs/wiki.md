@@ -167,11 +167,24 @@ Catalog.
 
 ### 5.0 Import a legacy semantic model
 
-**New**, **Import a legacy model (dbt)** makes a new sub-project from a dbt MetricFlow model. Choose a YAML file
-with `semantic_models` and `metrics`, or the `semantic_manifest.json` that `dbt parse` writes. For YAML, type the
-catalog.schema of the dbt models: `ref('orders')` becomes `<catalog.schema>.orders`. The manifest has the tables.
+**New**, **Import a legacy model** makes a new sub-project from the semantic model of another tool. The dialog has
+four steps:
 
-Click **Preview**. The app converts the model by rules, with no AI:
+1. **Technology.** Pick the tool. The dialog shows what to choose for it, and the file input takes only its
+   extensions (for example `.dsv`, `.dim`, `.cube` and `.xmla` for SSAS Multidimensional).
+2. **Files.** Choose the file, or the files of the tool that go together (LookML views, the `.tmdl` files of a
+   Power BI project, the SSAS project files). A file with another extension is refused.
+3. **Default catalog and schema.** Pick a catalog, then check one schema. The app uses it for tables that the
+   model names without a catalog and schema. Cognos, MicroStrategy and SSAS Multidimensional need it; for the
+   others, leave it empty when the model names its tables.
+4. **Sub-project name.**
+
+Click **Preview**, check the fields, then click **Create the sub-project**. The sections below show what each tool
+converts to.
+
+**dbt MetricFlow.** Choose a YAML file with `semantic_models` and `metrics`, or the `semantic_manifest.json` that
+`dbt parse` writes. For YAML, `ref('orders')` becomes `<catalog>.<schema>.orders`. The manifest has the tables.
+The app converts the model by rules, with no AI:
 
 | dbt | Metric view |
 | --- | --- |

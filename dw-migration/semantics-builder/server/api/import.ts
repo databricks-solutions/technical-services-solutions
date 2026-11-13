@@ -2,7 +2,8 @@ import type { Application, Request } from 'express';
 import { z } from 'zod';
 import type { LakebasePool } from '@databricks/appkit';
 import { IMPORTED_SUMMARY, UC_TABLE_NAME } from '../../shared/brief';
-import { legacyBody } from '../../shared/legacy';
+import { fitsTool, legacyBody, legacyTool } from '../../shared/legacy';
+import type { LegacyTool } from '../../shared/legacy';
 import { importDesign } from '../designer/import';
 import { convertDbt } from '../legacy/dbt';
 import { convertLookml } from '../legacy/lookml';
@@ -40,6 +41,21 @@ const importBody = z
  * draft to confirm, design version 1 with the YAML as it is in UC, and the view as the promotion target.
  */
 const MAX_AI_MEASURES = 20;
+
+/**
+ * The tool of a file when the request does not name it: .bim, .pbit and .tmdl are Tabular; .twb(x) and .tds(x) are
+ * Tableau; .lkml (or LookML keys) is LookML; a JSON file with MicroStrategy objects is MicroStrategy; SSAS and
+ * Cognos XML by their elements. Else dbt.
+ */
+function detectTool(fileName: string, content: string): LegacyTool {
+  if (/\.(bim|pbit|tmdl)$/i.test(fileName)) return 'powerbi';
+  if (/\.(twbx?|tdsx?)$/i.test(fileName)) return 'tableau';
+  if (isSsas(fileName, content)) return 'ssas';
+  if (/\.xml$/i.test(fileName) && content.includes('<querySubject')) return 'cognos';
+  if (/\.json$/i.test(fileName) && isMicroStrategy(content)) return 'microstrategy';
+  if (/\.lkml$/i.test(fileName) || /^\s*(view|explore|include|connection)\s*:/m.test(content)) return 'lookml';
+  return 'dbt';
+}
 
 export function registerImportRoutes(
   app: Application,
@@ -113,30 +129,18 @@ export function registerImportRoutes(
       const body = legacyBody.parse(req.body);
       const parent = await projects.get(actor, z.object({ id: z.uuid() }).parse(req.params).id);
       if (parent.parentId) throw new HttpError(400, 'Import into a project, not a sub-project.');
-      // .bim and .pbit are Tabular (Power BI, SSAS); .twb, .tds, .twbx and .tdsx are Tableau. LookML files end in
-      // .lkml; several uploaded files arrive joined. A JSON file with MicroStrategy objects (information.subType) is
-      // MicroStrategy. Else the file is dbt YAML or JSON.
-      const tabular = /\.(bim|pbit|tmdl)$/i.test(body.fileName);
-      const tableau = /\.(twbx?|tdsx?)$/i.test(body.fileName);
-      const ssas = isSsas(body.fileName, body.content);
-      const cognos = !ssas && /\.xml$/i.test(body.fileName) && body.content.includes('<querySubject');
-      const mstr = /\.json$/i.test(body.fileName) && isMicroStrategy(body.content);
-      const withAi = tabular || tableau || cognos || mstr || ssas;
-      const lookml =
-        !withAi && (/\.lkml$/i.test(body.fileName) || /^\s*(view|explore|include|connection)\s*:/m.test(body.content));
-      const tool = tabular
-        ? 'Power BI / Tabular'
-        : tableau
-          ? 'Tableau'
-          : cognos
-            ? 'Cognos'
-            : mstr
-              ? 'MicroStrategy'
-              : ssas
-                ? 'SSAS Multidimensional'
-                : lookml
-                  ? 'LookML'
-                  : 'dbt MetricFlow';
+      if (body.tool && !fitsTool(body.tool, body.fileName)) {
+        const t = legacyTool(body.tool);
+        throw new HttpError(400, `${t.label} reads ${t.exts.join(', ')} files.`);
+      }
+      const picked = body.tool ?? detectTool(body.fileName, body.content);
+      const tabular = picked === 'powerbi' || picked === 'tabular';
+      const tableau = picked === 'tableau';
+      const cognos = picked === 'cognos';
+      const ssas = picked === 'ssas';
+      const lookml = picked === 'lookml';
+      const withAi = tabular || tableau || cognos || ssas || picked === 'microstrategy';
+      const tool = tabular ? 'Power BI / Tabular' : legacyTool(picked).label;
       let result: LegacyResult;
       try {
         if (!withAi) result = (lookml ? convertLookml : convertDbt)(body.fileName, body.content, body.schema);

@@ -13,6 +13,7 @@ import {
   Tag,
   Typography,
 } from '@databricks/design-system';
+import type { ProjectDetail } from '../../../shared/brief';
 import type { TestCase } from '../../../shared/designer';
 import type { MetricView } from '../../../shared/metricView';
 import {
@@ -25,7 +26,7 @@ import {
   reconcileTests,
 } from '../../../shared/reconcile';
 import type { ReconcileBody, ReconcileResult, ReconcileStatus } from '../../../shared/reconcile';
-import { api } from '../api';
+import { api, useResource } from '../api';
 import { SqlBlock } from './SqlBlock';
 
 const STATUS: Record<ReconcileStatus, { color: 'teal' | 'coral' | 'lemon' | 'charcoal'; label: string }> = {
@@ -69,6 +70,9 @@ export function ReconcilePanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const csv = useMemo(() => parseCsv(text), [text]);
+  // A new version needs a confirmed brief; an import leaves the brief as a draft.
+  const detail = useResource<ProjectDetail>(`/api/projects/${projectId}`);
+  const confirmed = !detail.data || detail.data.brief?.status === 'confirmed';
 
   const load = (t: string) => {
     setText(t);
@@ -294,13 +298,14 @@ export function ReconcilePanel({
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <Button
               componentId="gsb.reconcile.add_tests"
-              disabled={!newTests.length || saving}
+              disabled={!newTests.length || saving || !confirmed}
               loading={saving}
               onClick={() => onAddTests([...tests, ...newTests])}
             >
               Add {newTests.length} passing {newTests.length === 1 ? 'value' : 'values'} as tests
             </Button>
             <Typography.Text color="secondary">
+              {!confirmed && 'Confirm the Semantic Brief in Intent & Context first: tests make a new version. '}
               {passing > newTests.length
                 ? `A version has at most ${MAX_TESTS} tests, so ${passing - newTests.length} passing values are left out. `
                 : ''}

@@ -1,10 +1,14 @@
 import { useState } from 'react';
+import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import {
   Alert,
-  FormUI,
+  Checkbox,
   Input,
   Modal,
+  SimpleSelect,
+  SimpleSelectOption,
+  Spinner,
   Table,
   TableCell,
   TableHeader,
@@ -12,9 +16,9 @@ import {
   Tag,
   Typography,
 } from '@databricks/design-system';
-import { MAX_LEGACY_BYTES } from '../../../shared/legacy';
-import type { FieldStatus, LegacyPreview } from '../../../shared/legacy';
-import { api, PROJECTS_CHANGED } from '../api';
+import { fitsTool, LEGACY_TOOLS, legacyTool, MAX_LEGACY_BYTES } from '../../../shared/legacy';
+import type { FieldStatus, LegacyPreview, LegacyTool } from '../../../shared/legacy';
+import { api, PROJECTS_CHANGED, useResource } from '../api';
 import { subPath } from '../pages/ProjectsPage';
 import { SqlBlock } from './SqlBlock';
 
@@ -24,14 +28,68 @@ const STATUS: Record<FieldStatus, { color: 'teal' | 'lemon' | 'coral'; label: st
   manual: { color: 'coral', label: 'Not converted' },
 };
 
+const HELP: Record<LegacyTool, string> = {
+  dbt: 'A YAML file with semantic_models and metrics, or the semantic_manifest.json of dbt parse.',
+  lookml: 'The .view.lkml files and the model file with the explore. Choose them together.',
+  powerbi: 'A .pbit template, or all the .tmdl files of the definition folder of a Power BI project, chosen together.',
+  tabular: 'The .bim file of the model.',
+  tableau: 'A workbook or a data source. A packaged file (.twbx, .tdsx) can be up to 7.5 MB; save it without extracts.',
+  cognos: 'The model.xml of a Framework Manager project.',
+  microstrategy: 'One JSON file with the tables, attributes, facts and metrics of the REST Modeling API.',
+  ssas: 'The .dsv, .dim and .cube files of the project, chosen together, or one .xmla script.',
+};
+const SCHEMA_HELP: Record<LegacyTool, string> = {
+  dbt: 'For ref() in YAML files. Leave it empty for a manifest, which names its tables.',
+  lookml: 'For sql_table_name values with no catalog. Leave it empty when every view names its catalog.',
+  powerbi:
+    'For tables with no Databricks connector in their Power Query source. Leave it empty when all tables use it.',
+  tabular: 'For tables with no Databricks connector in their source. Leave it empty when all tables use it.',
+  tableau: 'For tables with no catalog in the connection. Leave it empty when the connection names it.',
+  cognos: 'Pick the schema of the tables. The model names them in its SQL only.',
+  microstrategy: 'Pick the schema of the tables. The project names them by their warehouse names only.',
+  ssas: 'Pick the schema of the tables. The data source view names them by their warehouse names only.',
+};
+const q = encodeURIComponent;
+
+function Step({ n, title, children }: { n: number; title: string; children: ReactNode }) {
+  return (
+    <section aria-label={title} style={{ display: 'flex', gap: 12 }}>
+      <span
+        aria-hidden
+        style={{
+          flex: '0 0 24px',
+          height: 24,
+          borderRadius: 12,
+          display: 'grid',
+          placeItems: 'center',
+          fontSize: 12,
+          fontWeight: 600,
+          background: 'var(--db-accent-surface-subtle)',
+          color: 'var(--db-accent-text)',
+        }}
+      >
+        {n}
+      </span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flex: 1, minWidth: 0 }}>
+        <Typography.Text bold>{title}</Typography.Text>
+        {children}
+      </div>
+    </section>
+  );
+}
+
 /**
- * Import a legacy semantic model as a new sub-project with a draft metric view. dbt MetricFlow first: a
- * semantic_models YAML file or semantic_manifest.json. The preview shows each field, its source and its status.
+ * Import a legacy semantic model as a new sub-project with a draft metric view. Pick the tool, its files, the default
+ * catalog and schema, and a name. The preview shows each field, its source and its status.
  */
 export function LegacyImportModal({ projectId, onClose }: { projectId: string; onClose: () => void }) {
   const navigate = useNavigate();
-  const [file, setFile] = useState<{ name: string; content: string; base64: boolean }>();
+  const [tool, setTool] = useState<LegacyTool>();
+  const [file, setFile] = useState<{ name: string; content: string; base64: boolean; count: number }>();
+  const [catalog, setCatalog] = useState('');
   const [schema, setSchema] = useState('');
+  const catalogs = useResource<string[]>('/api/uc/catalogs?purpose=browse');
+  const schemas = useResource<string[]>(catalog ? `/api/uc/schemas?catalog=${q(catalog)}` : null);
   const [subProject, setSubProject] = useState('');
   const [preview, setPreview] = useState<LegacyPreview>();
   const [busy, setBusy] = useState(false);
@@ -40,12 +98,58 @@ export function LegacyImportModal({ projectId, onClose }: { projectId: string; o
     fileName: file?.name,
     content: file?.content,
     encoding: file?.base64 ? 'base64' : 'text',
+    tool,
     // The AI SQL of the preview goes back unchanged, so the sub-project gets what you saw.
     ...(create && preview?.ai ? { ai: preview.ai } : {}),
     ...(schema.trim() ? { schema: schema.trim() } : {}),
     subProject: subProject.trim() || 'Imported model',
     create,
   });
+
+  const pickTool = (t: LegacyTool) => {
+    if (t === tool) return;
+    setTool(t);
+    setFile(undefined);
+    setPreview(undefined);
+    setError(undefined);
+  };
+
+  /** The chosen files as one model, after a check of their extensions and sizes. */
+  const readFiles = (files: File[]) => {
+    setPreview(undefined);
+    setError(undefined);
+    setFile(undefined);
+    if (!tool || !files.length) return;
+    const t = legacyTool(tool);
+    const wrong = files.filter((f) => !fitsTool(tool, f.name));
+    if (wrong.length)
+      return setError(`${t.label} reads ${t.exts.join(', ')} files. Not: ${wrong.map((f) => f.name).join(', ')}.`);
+    if (files.length > 1 && files.some((f) => /\.(pbit|xmla)$/i.test(f.name)))
+      return setError('Choose one .pbit or .xmla file alone, or the text files of the project together.');
+    if (files.reduce((n, f) => n + f.size, 0) > MAX_LEGACY_BYTES)
+      return setError('The files are larger than 10 MB together.');
+    // A .pbit template and a packaged Tableau file are zips: they go as base64, which is 4/3 of the size.
+    if (/\.(pbit|twbx|tdsx)$/i.test(files[0].name)) {
+      if ((files[0].size * 4) / 3 > MAX_LEGACY_BYTES)
+        return setError('The file is larger than 7.5 MB. For Tableau, save the workbook as .twb without extracts.');
+      void files[0].arrayBuffer().then((buf) => {
+        let bin = '';
+        new Uint8Array(buf).forEach((b) => (bin += String.fromCharCode(b)));
+        setFile({ name: files[0].name, content: btoa(bin), base64: true, count: 1 });
+      });
+      return;
+    }
+    // Several files of one tool (LookML views, TMDL tables, SSAS .dsv, .dim and .cube) are read as one model.
+    const joined = { lookml: 'lkml', powerbi: 'tmdl', ssas: 'ssas' } as Partial<Record<LegacyTool, string>>;
+    void Promise.all(files.map((f) => f.text())).then((texts) =>
+      setFile({
+        name: files.length === 1 ? files[0].name : `${files.length} files.${joined[tool] ?? 'txt'}`,
+        content: texts.join('\n'),
+        base64: false,
+        count: files.length,
+      })
+    );
+  };
 
   const run = (create: boolean) => {
     setBusy(true);
@@ -80,92 +184,135 @@ export function LegacyImportModal({ projectId, onClose }: { projectId: string; o
       onCancel={onClose}
       onOk={() => run(!!preview)}
     >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         <Typography.Text color="secondary">
-          dbt MetricFlow: a YAML file with semantic_models and metrics, or the semantic_manifest.json of dbt parse.
-          LookML: the .view.lkml files and the model file with the explore. Power BI: a .pbit template, or the .tmdl
-          files of a Power BI project (the definition folder). SSAS Tabular: a .bim file. Tableau: a workbook or a data
-          source. Cognos: the model.xml of a Framework Manager project. MicroStrategy: one JSON file with the tables,
-          attributes, facts and metrics of the REST Modeling API. SSAS Multidimensional: the .dsv, .dim and .cube files
-          of the project, or an .xmla script. The app converts the model by rules into a draft metric view in a new
-          sub-project. For an expression that has no rule, the AI suggests SQL, which you check. Each field keeps its
-          source definition and a status. The files are only read; the app does not run them.
+          The app converts a semantic model of another tool into a draft metric view in a new sub-project. Rules convert
+          it first; for an expression with no rule, the AI suggests SQL that you check. Each field keeps its source
+          definition and a status. The files are only read, never run.
         </Typography.Text>
-        <div>
-          <FormUI.Label htmlFor="legacy-file">
-            Files (dbt: .yml, .yaml or .json; LookML: one or more .lkml; Power BI: .pbit or .tmdl; Tabular: .bim;
-            Tableau: .twb, .tds, .twbx or .tdsx; Cognos: model.xml; MicroStrategy: .json; SSAS: .dsv, .dim and .cube, or
-            .xmla)
-          </FormUI.Label>
-          <input
-            id="legacy-file"
-            type="file"
-            accept=".yml,.yaml,.json,.lkml,.bim,.pbit,.twb,.tds,.twbx,.tdsx,.xml,.tmdl,.dsv,.dim,.cube,.xmla"
-            multiple
-            onChange={(e) => {
-              const files = [...(e.target.files ?? [])];
-              setPreview(undefined);
-              setError(undefined);
-              if (!files.length) return setFile(undefined);
-              if (files.reduce((n, f) => n + f.size, 0) > MAX_LEGACY_BYTES)
-                return setError('The files are larger than 10 MB together.');
-              // A .pbit template and a packaged Tableau file are zips: they go as base64.
-              if (/\.(pbit|twbx|tdsx)$/i.test(files[0].name)) {
-                // base64 is 4/3 of the size, and the server takes 10 MB.
-                if ((files[0].size * 4) / 3 > MAX_LEGACY_BYTES)
-                  return setError(
-                    'The file is larger than 7.5 MB. For Tableau, save the workbook as .twb without extracts.'
-                  );
-                void files[0].arrayBuffer().then((buf) => {
-                  let bin = '';
-                  new Uint8Array(buf).forEach((b) => (bin += String.fromCharCode(b)));
-                  setFile({ name: files[0].name, content: btoa(bin), base64: true });
-                });
-                return;
-              }
-              // LookML views and the model with the explore are often in separate files, and so are the .dsv, .dim
-              // and .cube files of an SSAS project and the .tmdl files of a Power BI project: they are read as one.
-              const ext = files.every((f) => /\.(dsv|dim|cube)$/i.test(f.name))
-                ? 'ssas'
-                : files.every((f) => /\.tmdl$/i.test(f.name))
-                  ? 'tmdl'
-                  : 'lkml';
-              void Promise.all(files.map((f) => f.text())).then((texts) =>
-                setFile({
-                  name: files.length === 1 ? files[0].name : `${files.length} files.${ext}`,
-                  content: texts.join('\n'),
-                  base64: false,
-                })
+
+        <Step n={1} title="Technology">
+          <div
+            role="radiogroup"
+            aria-label="Technology"
+            style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 8 }}
+          >
+            {LEGACY_TOOLS.map((t) => {
+              const on = t.id === tool;
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  onClick={() => pickTool(t.id)}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 2,
+                    padding: '8px 12px',
+                    borderRadius: 8,
+                    border: `${on ? 2 : 1}px solid ${on ? 'var(--db-accent-text)' : 'var(--db-border-base)'}`,
+                    background: on ? 'var(--db-accent-surface-subtle)' : 'var(--db-surface-base)',
+                    color: 'var(--db-text-base)',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    font: 'inherit',
+                  }}
+                >
+                  <span style={{ fontWeight: 600 }}>{t.label}</span>
+                  <span style={{ fontSize: 12, color: 'var(--db-text-subtle)' }}>{t.exts.join(' ')}</span>
+                </button>
               );
-            }}
-          />
-        </div>
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-          <div style={{ minWidth: 260 }}>
-            <FormUI.Label htmlFor="legacy-schema">Default catalog.schema of the tables</FormUI.Label>
-            <Input
-              componentId="gsb.legacy.schema"
-              id="legacy-schema"
-              placeholder="main.analytics"
-              value={schema}
-              onChange={(e) => {
-                setSchema(e.target.value);
-                setPreview(undefined);
-              }}
-            />
+            })}
           </div>
-          <div style={{ minWidth: 260 }}>
-            <FormUI.Label htmlFor="legacy-sub">Sub-project name</FormUI.Label>
-            <Input
-              componentId="gsb.legacy.sub"
-              id="legacy-sub"
-              placeholder="Imported model"
-              maxLength={200}
-              value={subProject}
-              onChange={(e) => setSubProject(e.target.value)}
+          {tool && <Typography.Text color="secondary">{HELP[tool]}</Typography.Text>}
+        </Step>
+
+        {tool && (
+          <Step n={2} title={legacyTool(tool).multiple ? 'Files' : 'File'}>
+            <input
+              key={tool}
+              id="legacy-file"
+              aria-label={`${legacyTool(tool).label} files`}
+              type="file"
+              accept={legacyTool(tool).exts.join(',')}
+              multiple={legacyTool(tool).multiple}
+              onChange={(e) => readFiles([...(e.target.files ?? [])])}
             />
-          </div>
-        </div>
+            {file && file.count > 1 && (
+              <Typography.Text color="secondary">{file.count} files, read as one model.</Typography.Text>
+            )}
+          </Step>
+        )}
+
+        {tool && (
+          <Step n={3} title="Default catalog and schema">
+            <Typography.Text color="secondary">{SCHEMA_HELP[tool]}</Typography.Text>
+            <div style={{ maxWidth: 320 }}>
+              <SimpleSelect
+                componentId="gsb.legacy.catalog"
+                id="legacy-catalog"
+                aria-label="Catalog"
+                value={catalog}
+                placeholder={catalogs.status === 'loading' ? 'Loading' : 'Pick a catalog'}
+                onChange={(e) => {
+                  setCatalog(e.target.value);
+                  setSchema('');
+                  setPreview(undefined);
+                }}
+              >
+                {(catalogs.data ?? []).map((c) => (
+                  <SimpleSelectOption key={c} value={c}>
+                    {c}
+                  </SimpleSelectOption>
+                ))}
+              </SimpleSelect>
+            </div>
+            {catalog && (
+              <div
+                role="group"
+                aria-label={`Schemas in ${catalog}`}
+                style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}
+              >
+                {schemas.status === 'loading' && <Spinner size="small" label="Loading schemas" />}
+                {(schemas.data ?? []).map((sc) => {
+                  const full = `${catalog}.${sc}`;
+                  return (
+                    <Checkbox
+                      key={full}
+                      componentId="gsb.legacy.schema"
+                      isChecked={schema === full}
+                      onChange={(on) => {
+                        setSchema(on ? full : '');
+                        setPreview(undefined);
+                      }}
+                    >
+                      {sc}
+                    </Checkbox>
+                  );
+                })}
+              </div>
+            )}
+          </Step>
+        )}
+
+        {tool && (
+          <Step n={4} title="Sub-project name">
+            <div style={{ maxWidth: 420 }}>
+              <Input
+                componentId="gsb.legacy.sub"
+                id="legacy-sub"
+                aria-label="Sub-project name"
+                placeholder="Imported model"
+                maxLength={200}
+                value={subProject}
+                onChange={(e) => setSubProject(e.target.value)}
+              />
+            </div>
+          </Step>
+        )}
+
         {error && <Alert componentId="gsb.legacy.error" type="error" closable={false} message={error} />}
         {preview && (
           <>

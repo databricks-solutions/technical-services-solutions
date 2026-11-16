@@ -42,6 +42,33 @@ describe('bestPractices', () => {
     expect(byId('formats').fields).toEqual(['Revenue per Customer', 'Order Month']);
   });
 
+  it('flags a summed balance and an average of ratios', () => {
+    const v = validateMetricView(`version: 1.1
+source: c.s.inventory
+fields:
+  - name: Day
+    expr: inv_date
+measures:
+  - name: Stock
+    expr: SUM(inv_quantity_on_hand)
+  - name: Closing Stock
+    expr: SUM(inv_quantity_on_hand)
+    window:
+      - order: Day
+        range: current
+        semiadditive: last
+  - name: Avg Margin
+    expr: AVG(profit / NULLIF(sales, 0))
+  - name: Avg Discount Rate
+    expr: AVG(discount_rate)
+  - name: Avg Price
+    expr: AVG(price)
+`).view!;
+    const ids = (id: string) => bestPractices(v).find((c) => c.id === id)!.fields;
+    expect(ids('semi_additive')).toEqual(['Stock']);
+    expect(ids('avg_of_ratio')).toEqual(['Avg Margin', 'Avg Discount Rate']);
+  });
+
   it('flags key columns used as dimensions and notes non-additive measures', () => {
     expect(byId('high_cardinality').fields).toEqual(['Customer Key']);
     expect(byId('non_additive')).toMatchObject({ severity: 'info', fields: ['Customers'], instruction: null });

@@ -6,6 +6,11 @@ const DATE = /\bDATE_TRUNC\s*\(|date|month|quarter|year|week|day\b/i;
 const KEY_COLUMN = /(?:^|[._])(?:\w*key|\w*_id|id|uuid|comment|description)\s*$/i;
 const NON_ADDITIVE = /COUNT\s*\(\s*DISTINCT|PERCENTILE|MEDIAN|APPROX_COUNT_DISTINCT|COUNT_IF\s*\(\s*DISTINCT/i;
 const isRatio = (expr: string) => /\//.test(expr.replace(/'[^']*'/g, ''));
+const SNAPSHOT = /balance|inventory|stock|on_?hand|headcount|snapshot|outstanding|backlog|\bqty_?on|level\b/i;
+const RATE = /rate|ratio|pct|percent|margin/i;
+// AVG of a division, or AVG of a column that already is a rate: the result weighs every row the same.
+const AVG_OF_RATIO = (expr: string) =>
+  [...expr.matchAll(/\bAVG\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)/gi)].some(([, arg]) => isRatio(arg) || RATE.test(arg));
 
 const check = (
   id: string,
@@ -87,6 +92,28 @@ export function bestPractices(view: MetricView): PracticeCheck[] {
       view.dimensions.filter((d) => KEY_COLUMN.test(d.expr.trim())).map((d) => d.name),
       (names) =>
         `Replace the dimensions ${list(names)} with descriptive attributes from the joined tables (names, categories), or remove them if a measure already counts them.`
+    ),
+    check(
+      'semi_additive',
+      'Balances are not summed over time',
+      'A balance or a stock level is a snapshot. A plain SUM adds every day of the period, so a month shows about 30 times the real value.',
+      'fix',
+      view.measures
+        .filter(
+          (m) => /^\s*SUM\s*\(/i.test(m.expr) && SNAPSHOT.test(m.expr) && !m.window?.some((w) => w.semiadditive)
+        )
+        .map((m) => m.name),
+      (names) =>
+        `Make ${list(names)} semi-additive: add a window with order set to the date dimension, range current and semiadditive last, so the value is the one of the last day. Keep the name unchanged.`
+    ),
+    check(
+      'avg_of_ratio',
+      'Ratios are a ratio of sums, not an average of ratios',
+      'AVG of a rate weighs a small order the same as a big one. A ratio of two sums gives the right total at every level.',
+      'fix',
+      view.measures.filter((m) => AVG_OF_RATIO(m.expr)).map((m) => m.name),
+      (names) =>
+        `Rewrite ${list(names)} as SUM(<numerator>) / NULLIF(SUM(<denominator>), 0), or as MEASURE() of two measures. Keep the name unchanged.`
     ),
     check(
       'non_additive',

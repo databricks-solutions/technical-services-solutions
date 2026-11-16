@@ -647,6 +647,8 @@ The app checks the design against these rules:
 - Measures have synonyms and a display name.
 - Money, ratios and dates have a format.
 - Ratios cannot divide by zero (they use `NULLIF`).
+- Balances and stock levels are not summed over time. A `SUM` of a balance column needs a window with `semiadditive: last`.
+- Ratios are a ratio of sums, not an `AVG` of a rate.
 - Dimensions are business attributes, not keys or free text.
 - Non-additive measures are known.
 

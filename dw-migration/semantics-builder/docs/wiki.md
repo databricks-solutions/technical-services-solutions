@@ -927,7 +927,29 @@ Apps cannot get the permission scope of the dashboards API. So the section shows
 `databricks lakeview create` command. Type a folder that exists (under `/Users` or `/Shared`), copy the command,
 and run it in your terminal as you. It creates a draft. You review it and publish it in Databricks.
 
-### 18.2 Publish: CI/CD bundle
+### 18.2 Publish: BI tools
+
+**BI tools** helps you connect Power BI or Tableau to the promoted view. A metric view needs `MEASURE()` for each
+measure, so a plain table connection does not work. The section shows the query shape that the tools send:
+
+```sql
+SELECT `Customer Region`, MEASURE(`Net Revenue`) AS `Net Revenue`
+FROM `catalog`.`schema`.`view`
+GROUP BY `Customer Region`
+```
+
+**Run the check** runs it as you (with a limit of 100 rows) and shows pass or fail and the number of rows, not the
+values. Then:
+
+- **Power BI:** the Databricks connector, DirectQuery, **Native query** with the query. BI compatibility mode is not
+  available in the Power BI connector. Publishing a metric view to Power BI as a semantic model is a Private
+  Preview.
+- **Tableau:** **Custom SQL** with the query. Or, on a SQL warehouse, put
+  `SET metric_view_bi_compatibility_mode = true;` in **Initial SQL** and use the view like a table: keep the
+  aggregation of each measure on SUM. Grand totals of ratios and distinct counts can be wrong, a measure cannot
+  be in a group, and the view cannot be joined with other tables.
+
+### 18.3 Publish: CI/CD bundle
 
 **CI/CD bundle** exports the promoted view as a Declarative Automation Bundle, so you keep it in Git and deploy it
 from your own pipeline (dev, test, prod). **Download** saves a zip with these files:

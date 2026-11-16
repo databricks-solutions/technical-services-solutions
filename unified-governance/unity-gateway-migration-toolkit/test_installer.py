@@ -1723,6 +1723,23 @@ def test_run_as_service_principal_gets_the_target_grants(monkeypatch):
     assert f"granted: GRANT USE SCHEMA, CREATE SERVICE ON SCHEMA `main`.`ug_migrated` TO `{SP_ID}`;" in res.text
 
 
+def test_run_as_service_principal_lets_you_and_the_operators_read_the_results(monkeypatch):
+    """The service principal owns the results tables it creates; owning the catalog doesn't let you read them, and the
+    app reads as the signed-in user (seen live: "does not have SELECT on Table ...")."""
+    ws = FakeWS()
+    res = run_notebook(monkeypatch, ws, install_widgets(run_as=SP_ID, operators=f"{ME}, ops@example.com"))
+    assert not res.raised, res.status
+    for who in (ME, "ops@example.com"):
+        assert f"granted: GRANT USE SCHEMA, SELECT ON SCHEMA `main`.`ug_migration` TO `{who}`;" in res.text
+    assert res.text.count(f"SELECT ON SCHEMA `main`.`ug_migration` TO `{ME}`") == 1  # no duplicate for you
+
+
+def test_results_read_grants_only_when_a_service_principal_runs_the_jobs():
+    g = H["results_read_grants"]
+    assert g("c.s", "", ["a@x.com"]) == []
+    assert g("c.s", "sp", ["a@x.com", "A@x.com", "", "sp"]) == ["GRANT USE SCHEMA, SELECT ON SCHEMA `c`.`s` TO `a@x.com`;"]
+
+
 def test_none_clears_a_kept_setting(monkeypatch):
     ws = FakeWS()
     assert not run_notebook(monkeypatch, ws, install_widgets(run_as=SP_ID)).raised

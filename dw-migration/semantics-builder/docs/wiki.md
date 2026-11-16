@@ -553,6 +553,14 @@ To go back to an older version:
 The app copies that version as a new version. It does not delete the newer versions. A restored version keeps the
 status (validated or not) of the version that it copies.
 
+To compare two versions:
+
+1. Open **History**.
+2. In **Compare versions**, select a **From** version and a **To** version. They can be any two versions.
+
+The app shows the fields that are removed, renamed, changed or added, the tests that are added or removed, and a
+line diff of the YAML. Removed lines are red, and added lines are green.
+
 ## 12. Tests and validation
 
 ### 12.1 Tests

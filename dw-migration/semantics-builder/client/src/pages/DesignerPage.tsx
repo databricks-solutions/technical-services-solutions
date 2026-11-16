@@ -30,6 +30,7 @@ import { api, useResource } from '../api';
 import { OpenInCatalog } from '../components/OpenInCatalog';
 import { DataState } from '../components/DataState';
 import { FieldTables } from '../components/FieldTables';
+import { VersionCompare } from '../components/VersionCompare';
 import { ReconcilePanel } from '../components/ReconcilePanel';
 import { TestEditor } from '../components/TestEditor';
 import { JoinDiagram } from '../components/JoinDiagram';
@@ -771,6 +772,7 @@ function History({
           onRestore={onRestore}
         />
       )}
+      <VersionCompare projectId={projectId} versions={history.map((h) => h.version)} />
     </div>
   );
 }

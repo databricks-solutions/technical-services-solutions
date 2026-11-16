@@ -4,8 +4,11 @@ import { z } from 'zod';
 import type { LakebasePool } from '@databricks/appkit';
 import { refineSchema } from '../../shared/brief';
 import { saveDraftSchema, validateSchema } from '../../shared/designer';
+import { lineDiff } from '../../shared/diff';
+import type { VersionDiff } from '../../shared/diff';
 import { reconcileBody } from '../../shared/reconcile';
 import type { ReconcileResult } from '../../shared/reconcile';
+import { fieldChanges } from '../designer/impact';
 import { compareReconcile, reconcileQuery } from '../designer/reconcile';
 import type {
   DesignDraft,
@@ -223,6 +226,7 @@ export function designerRepo(db: Db) {
 const idParam = z.object({ id: z.uuid() });
 const versionParam = idParam.extend({ version: z.coerce.number().int().positive() });
 const versionQuery = z.object({ version: z.coerce.number().int().positive().optional() });
+const compareQuery = z.object({ from: z.coerce.number().int().positive(), to: z.coerce.number().int().positive() });
 
 export function registerDesignerRoutes(
   app: Application,
@@ -280,6 +284,25 @@ export function registerDesignerRoutes(
     handle(async (req) => {
       const project = await projects.get(actorOf(req), idParam.parse(req.params).id);
       return repo.view(project.id, versionQuery.parse(req.query).version);
+    })
+  );
+
+  app.get(
+    '/api/projects/:id/designs/compare',
+    handle(async (req): Promise<VersionDiff> => {
+      const project = await projects.get(actorOf(req), idParam.parse(req.params).id);
+      const { from, to } = compareQuery.parse(req.query);
+      const [a, b] = [(await repo.view(project.id, from)).draft!, (await repo.view(project.id, to)).draft!];
+      const [va, vb] = [validateMetricView(a.yaml).view, validateMetricView(b.yaml).view];
+      const names = (d: typeof a) => new Set(d.tests.map((t) => t.name));
+      const [ta, tb] = [names(a), names(b)];
+      return {
+        from,
+        to,
+        changes: va && vb ? fieldChanges(va, vb) : null,
+        tests: { added: [...tb].filter((n) => !ta.has(n)), removed: [...ta].filter((n) => !tb.has(n)) },
+        lines: lineDiff(a.yaml, b.yaml),
+      };
     })
   );
 

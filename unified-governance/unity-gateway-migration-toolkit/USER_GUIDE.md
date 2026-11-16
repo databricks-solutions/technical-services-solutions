@@ -1,6 +1,6 @@
 # Unity Gateway Migration Toolkit: User Guide
 
-Version 0.10.3 (prototype)
+Version 0.10.4 (prototype)
 
 > Prototype from Databricks Shared Technical Services, provided as is. Planning and scans only read. Writes happen only when you start them. Review every result before you act on it.
 
@@ -11,6 +11,7 @@ Version 0.10.3 (prototype)
   - [Before you start](#before-you-start)
   - [Install the toolkit](#install-the-toolkit)
   - [Update and upgrade](#update-and-upgrade)
+  - [Upgrade notes: 0.10.3 to 0.10.4](#upgrade-notes-0103-to-0104)
   - [Upgrade notes: 0.10.2 to 0.10.3](#upgrade-notes-0102-to-0103)
   - [Upgrade notes: 0.10.1 to 0.10.2](#upgrade-notes-0101-to-0102)
   - [Upgrade notes: 0.10.0 to 0.10.1](#upgrade-notes-0100-to-0101)
@@ -106,7 +107,7 @@ A **legacy endpoint** is a v1 serving endpoint (`/serving-endpoints/<name>/invoc
 
 The installer notebook is the only file you import. It creates everything inside the workspace in about 5 minutes.
 
-1. Download `unity-gateway-migration-toolkit.zip` from the [release page](https://github.com/databricks-solutions/technical-services-solutions/releases/tag/unity-gateway-migration-toolkit-latest) and unzip it. In the workspace, go to your home folder, choose **Import**, and import `INSTALL_unity_gateway_migration_toolkit_0_10_3.py` from the zip's top folder.
+1. Download `unity-gateway-migration-toolkit.zip` from the [release page](https://github.com/databricks-solutions/technical-services-solutions/releases/tag/unity-gateway-migration-toolkit-latest) and unzip it. In the workspace, go to your home folder, choose **Import**, and import `INSTALL_unity_gateway_migration_toolkit_0_10_4.py` from the zip's top folder.
 2. Open the notebook. Set **Install: Results catalog** (a catalog where you can create a schema) and **Install: SQL warehouse**. Leave the other widgets at their defaults ([Installer widgets](#installer-widgets)). If the widget panel shows widgets from an older installer, remove them once, then run again.
 3. Click **Run all**.
 
@@ -148,6 +149,12 @@ Import the newer installer and run it with the same widgets. Results history is 
 - **From 0.7.0** (app `ug-migration`): the same two choices apply.
 - **Bundle:** the app is now `ug-migration-bundle`. Run `databricks bundle plan` first. It creates a new app, so delete the old one by hand.
 - **Since 0.7.0:** grants are off by default, Execute needs a matching dry run, and scans older than 14 days and endpoints with legacy guardrails need confirmation or an acknowledgement. Account wave 0 is now `0: no legacy traffic`.
+
+#### Upgrade notes: 0.10.3 to 0.10.4
+
+Run the new installer with the same widgets. Tables, jobs and scans don't change.
+
+- **Read access to the results when the jobs run as a service principal.** The service principal owns the results tables it creates, and owning the catalog or schema doesn't give read access to tables someone else owns, so the app (which reads as you) could fail with "does not have SELECT on Table ...". The installer now grants you and the operators `USE SCHEMA, SELECT` on the results schema when **Run jobs as service principal** is set. If a grant fails (you don't own the schema), it prints the statement for an admin.
 
 #### Upgrade notes: 0.10.2 to 0.10.3
 
@@ -824,6 +831,7 @@ Grouped by where the problem shows up.
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| App: "Couldn't load ..." with "does not have SELECT on Table '<results catalog>.<results schema>.ug_migration_...'" | The jobs run as a service principal, which owns the results tables; owning the catalog or schema doesn't give read access to tables someone else owns | Run the installer again (0.10.4 or later grants you and the operators `USE SCHEMA, SELECT` on the results schema), or run that GRANT for the user |
 | "Install: Results catalog ... doesn't exist" | Catalog missing or not visible to you | Pick a catalog where you can create a schema |
 | "another toolkit install exists under app name ..." | A toolkit install (0.7.0, 0.8.0 or a bundle deploy) is present | Set **Install: App name** to that name to update it, uninstall it, or set **Allow a second install** |
 | "an app named ... isn't a toolkit app" or "deployed by the bundle" | The name belongs to another app or the bundle | Choose another name, or set **Adopt existing app** to `yes` if it can be replaced |

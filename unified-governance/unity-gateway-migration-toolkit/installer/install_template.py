@@ -467,6 +467,22 @@ def create_schema_fix(catalog: str, owner: str, me: str) -> str:
             f"GRANT USE CATALOG, CREATE SCHEMA ON CATALOG `{catalog}` TO `{me}`")
 
 
+def results_read_grants(results: str, run_as: str, readers: list[str]) -> list[str]:
+    """When the jobs run as a service principal, it owns the results tables it creates, and owning the catalog or
+    schema doesn't let anyone else read them (seen live, 2026-11: "does not have SELECT on Table ..."). The app reads
+    them as the signed-in user, so the installing user and the operators need read access on the results schema."""
+    if not run_as:
+        return []
+    c, sch = results.split(".", 1)
+    seen, out = set(), []
+    for r in readers:
+        r = (r or "").strip()
+        if r and r != run_as and r.lower() not in seen:
+            seen.add(r.lower())
+            out.append(f"GRANT USE SCHEMA, SELECT ON SCHEMA `{c}`.`{sch}` TO `{r}`;")
+    return out
+
+
 def target_schema_lines(me: str) -> list[str]:
     t = f"`{TARGET_CATALOG}`.`{TARGET_SCHEMA}`"
     return [f"CREATE SCHEMA IF NOT EXISTS {t};",
@@ -1241,6 +1257,15 @@ try:
     print("results tables ready")
 except Exception as e:  # the jobs add the columns on their first run anyway
     print(f"note: couldn't update the results tables now ({str(e)[:200]}); the jobs do it on their first run")
+# Jobs that run as a service principal own the results tables they create, so you and the operators get read access
+# (the app reads as the signed-in user). A failed grant isn't fatal: printed for an admin.
+for stmt in results_read_grants(RESULTS, RUN_AS, ([] if IS_SP else [me]) + OPERATOR_LIST):
+    try:
+        spark.sql(stmt.rstrip(";"))
+        print("granted:", stmt)
+    except Exception as e:  # not the owner of the schema: printed for an admin
+        print(f"note: couldn't run {stmt} ({str(e)[:160]}); ask the owner of {RESULTS} to run it, or the app can't "
+              "show results to that user")
 
 # COMMAND ----------
 

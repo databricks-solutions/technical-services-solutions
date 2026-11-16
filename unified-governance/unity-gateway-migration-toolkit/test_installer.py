@@ -1478,3 +1478,27 @@ def test_app_update_errors_surface_and_only_a_missing_api_falls_back(monkeypatch
 def test_update_changes_only_the_fields_the_installer_owns():
     ns = H
     assert ns["APP_UPDATE_MASK"] == "description,resources,user_api_scopes"
+
+
+def test_run_as_service_principal_lets_you_and_the_operators_read_the_results(monkeypatch):
+    """The service principal owns the results tables it creates; owning the catalog doesn't let you read them, and the
+    app reads as the signed-in user (seen live: "does not have SELECT on Table ...")."""
+    ws = FakeWS()
+    res = run_notebook(monkeypatch, ws, install_widgets(run_as=SP_ID, operators=f"{ME}, ops@example.com"))
+    assert not res.raised, res.status
+    for who in (ME, "ops@example.com"):
+        assert f"granted: GRANT USE SCHEMA, SELECT ON SCHEMA `main`.`ug_migration` TO `{who}`;" in res.text
+    assert res.text.count(f"SELECT ON SCHEMA `main`.`ug_migration` TO `{ME}`") == 1  # no duplicate for you
+
+
+def test_no_results_grants_when_the_jobs_run_as_you(monkeypatch):
+    ws = FakeWS()
+    res = run_notebook(monkeypatch, ws, install_widgets())
+    assert not res.raised, res.status
+    assert "granted: GRANT USE SCHEMA, SELECT ON SCHEMA" not in res.text
+
+
+def test_results_read_grants_only_when_a_service_principal_runs_the_jobs():
+    g = H["results_read_grants"]
+    assert g("c.s", "", ["a@x.com"]) == []
+    assert g("c.s", "sp", ["a@x.com", "A@x.com", "", "sp"]) == ["GRANT USE SCHEMA, SELECT ON SCHEMA `c`.`s` TO `a@x.com`;"]

@@ -453,6 +453,23 @@ def guardrail_items(row: planner.PlanRow) -> list[str]:
 CARRIED_GATEWAY_KEYS = ("rate_limits", "guardrails", "inference_table_config", "usage_tracking_config", "fallback_config")
 
 
+def _job_identity(w) -> str | None:
+    """Who this run acts as (user name or service principal application ID); None when it can't be read."""
+    try:
+        return w.current_user.me().user_name
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def requester_grants(requester: str, job_identity: str | None) -> list[dict]:
+    """EXECUTE for the person who asked for the run, when the job runs as someone else. Empty otherwise, and empty
+    when the job's identity can't be read (no grant on a guess)."""
+    who = (requester or "").strip()
+    if not who or job_identity is None or who.lower() == job_identity.strip().lower():
+        return []
+    return [{"principal": who, "privileges": ["EXECUTE"]}]
+
+
 def not_carried_over(ep: planner.LegacyEndpoint, row: planner.PlanRow, grants: bool) -> list[str]:
     """Governance on the legacy endpoint that the new model service doesn't get. Every apply item for the service
     lists these (not_carried_over), so the result says plainly what a person still has to redo or decide."""
@@ -853,7 +870,10 @@ def running_in_logs(log_path: str, target: str, own_apply_id: str | None = None,
 
 def apply(w: WorkspaceClient, endpoint_names: list[str] | None, target_catalog: str, target_schema: str,
           execute: bool, secrets: Secrets, log_path: str, grants: bool = True, ack_guardrails: bool = False,
-          smoke: bool = False, apply_id: str | None = None, is_active=None) -> list[dict]:
+          smoke: bool = False, apply_id: str | None = None, is_active=None, requester: str = "") -> list[dict]:
+    """requester: who asked for this run (the app passes the signed-in user). When the job runs as someone else (a
+    service principal), that identity owns the services it creates, so the requester couldn't see or call them: they
+    get EXECUTE on each service this run creates or finds in place. Only EXECUTE, only these services."""
     apply_id = apply_id or str(uuid.uuid4())
     try:
         w.schemas.get(f"{target_catalog}.{target_schema}")
@@ -877,6 +897,7 @@ def apply(w: WorkspaceClient, endpoint_names: list[str] | None, target_catalog: 
     missing = set(endpoint_names or []) - {r.legacy_endpoint for r in selected}
     a = Applier(w, execute, log_path, apply_id)
     target = f"{target_catalog}.{target_schema}"
+    requester_grant = requester_grants(requester, _job_identity(w)) if (requester or "").strip() else []
     if execute:
         conflicts = running_in_logs(log_path, target, apply_id, is_active=is_active)
         if conflicts:
@@ -936,6 +957,8 @@ def apply(w: WorkspaceClient, endpoint_names: list[str] | None, target_catalog: 
                 if not execute:
                     if grants and r.grants:
                         a.grant(r.target_service, r.grants)
+                    if state in ("would_create", "exists"):
+                        a.grant(r.target_service, requester_grant)
                     continue
                 if state not in ("created", "exists"):
                     continue
@@ -951,6 +974,13 @@ def apply(w: WorkspaceClient, endpoint_names: list[str] | None, target_catalog: 
                                      "EXECUTE/MANAGE by hand or re-run the same selection")
                         continue
                     a.verify_grants(r.target_service, r.grants)
+                if requester_grant:
+                    try:
+                        a.grant(r.target_service, requester_grant)
+                    except Exception as ge:  # the service works; only the requester's access is missing
+                        a.log(type="model_service", name=r.target_service, action="needs_attention",
+                              reason=f"the service is in place but granting EXECUTE to {requester} failed "
+                                     f"({str(ge)[:300]}): grant it by hand")
                 if smoke and state == "created":
                     a.smoke(r.target_service, body)
             except Manual as m:

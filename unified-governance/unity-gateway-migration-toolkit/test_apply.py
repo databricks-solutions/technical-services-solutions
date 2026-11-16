@@ -465,6 +465,50 @@ def test_grant_failure_after_create_needs_attention(tmp_path, monkeypatch):
     assert item["type"] == "model_service" and "grants failed" in item["reason"]
 
 
+# -- The requester gets EXECUTE when the job runs as someone else (same root cause as the results read grants) --
+
+SP_APP_ID = "5e1f7c2e-1234-4abc-9def-0123456789ab"
+
+
+def _as(w, identity):
+    w.current_user = SimpleNamespace(me=lambda: SimpleNamespace(user_name=identity))
+    return w
+
+
+def test_requester_gets_execute_when_the_job_runs_as_a_service_principal(tmp_path, monkeypatch):
+    """The service principal owns what it creates, so without this the person who ran Apply can't see or call the
+    new service (seen live: the service didn't even list for them)."""
+    w = _as(FakeW(), SP_APP_ID)
+    eps = [_ep(EXTERNAL)]
+    res, _ = _run(monkeypatch, tmp_path, w, eps, uc_map=UC_MAP, requester="ana@example.com")
+    svc = _target(eps)
+    assert w.grants.privs[svc] == {"ana@example.com": {"EXECUTE"}}
+    grant = next(r for r in res if r["type"] == "grant" and r["action"] == "granted")
+    assert grant["added"] == [{"principal": "ana@example.com", "privileges": ["EXECUTE"]}]  # recorded for rollback
+
+
+def test_no_requester_grant_when_the_job_runs_as_the_requester_or_identity_is_unknown(tmp_path, monkeypatch):
+    for w, who in ((_as(FakeW(), "Ana@example.com"), "ana@example.com"), (FakeW(), "ana@example.com"),
+                   (_as(FakeW(), SP_APP_ID), "")):
+        res, _ = _run(monkeypatch, tmp_path, w, [_ep(EXTERNAL)], uc_map=UC_MAP, requester=who)
+        assert w.grants.updates == [] and not any(r["type"] == "grant" for r in res)
+
+
+def test_dry_run_shows_the_requester_grant_without_making_it(tmp_path, monkeypatch):
+    w = _as(FakeW(), SP_APP_ID)
+    res, _ = _run(monkeypatch, tmp_path, w, [_ep(EXTERNAL)], uc_map=UC_MAP, execute=False, requester="ana@example.com")
+    assert any(r["type"] == "grant" and r["action"] == "would_grant" for r in res) and w.grants.updates == []
+
+
+def test_requester_grant_failure_needs_attention_and_keeps_the_service(tmp_path, monkeypatch):
+    w = _as(FakeW(), SP_APP_ID)
+    w.grants.fail = True
+    eps = [_ep(EXTERNAL)]
+    res, _ = _run(monkeypatch, tmp_path, w, eps, uc_map=UC_MAP, requester="ana@example.com")
+    item = next(r for r in res if r.get("action") == "needs_attention")
+    assert "granting EXECUTE to ana@example.com failed" in item["reason"] and _target(eps) in w.ai_gateway.services
+
+
 def test_smoke_check_is_recorded_and_sends_no_inference(tmp_path, monkeypatch):
     w = FakeW()
     eps = [_ep(EXTERNAL)]

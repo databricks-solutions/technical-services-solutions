@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<DTS:Executable xmlns:DTS="www.microsoft.com/SqlServer/Dts" DTS:refId="Package" DTS:CreationName="Microsoft.Package" DTS:DTSID="{a58ff6b3-07bb-4301-8c5e-227661bc5356}" DTS:ExecutableType="Microsoft.Package" DTS:ObjectName="load_dim_customer" DTS:VersionBuild="1">
+  <DTS:ConnectionManagers>
+    <DTS:ConnectionManager DTS:refId="Package.ConnectionManagers[Conn]" DTS:CreationName="OLEDB" DTS:DTSID="{22222222-2222-2222-2222-222222222222}" DTS:ObjectName="Conn">
+      <DTS:ObjectData><DTS:ConnectionManager DTS:ConnectionString="Data Source=srv;Initial Catalog=dwh;Provider=SQLNCLI11.1;Integrated Security=SSPI;"/></DTS:ObjectData>
+    </DTS:ConnectionManager>
+  </DTS:ConnectionManagers>
+  <DTS:Executables>
+    <DTS:Executable DTS:refId="Package\Load Dim" DTS:CreationName="Microsoft.ExecuteSQLTask" DTS:DTSID="{cf8838af-705b-4797-8a85-ccfd58d8daa4}" DTS:ExecutableType="Microsoft.ExecuteSQLTask" DTS:ObjectName="Load Dim">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask" SQLTask:Connection="{22222222-2222-2222-2222-222222222222}" SQLTask:SqlStatementSource="INSERT INTO dw.dim_customer SELECT s.customer_id, s.name FROM stg.customer_clean s INNER JOIN raw.customer_status t ON t.customer_id = s.customer_id WHERE t.active = 1"/>
+      </DTS:ObjectData>
+    </DTS:Executable>
+  </DTS:Executables>
+</DTS:Executable>

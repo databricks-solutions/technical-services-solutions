@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<talendfile:ProcessType xmi:version="2.0" xmlns:xmi="http://www.omg.org/XMI" xmlns:talendfile="http://www.talend.org/file" defaultContext="Default" jobType="Standard">
+  <node componentName="tMysqlInput" componentVersion="0.102" offsetLabelX="0" offsetLabelY="0" posX="100" posY="100">
+    <elementParameter field="TEXT" name="UNIQUE_NAME" value="tMysqlInput_1"/>
+    <elementParameter field="TEXT" name="TABLE" value="&quot;orders&quot;"/>
+    <elementParameter field="TEXT" name="SCHEMA_DB" value="&quot;raw&quot;"/>
+    <elementParameter field="MEMO_SQL" name="QUERY" value="&quot;SELECT order_id, amount FROM raw.orders&quot;"/>
+    <elementParameter field="CLOSED_LIST" name="DB_VERSION" value="MYSQL_5"/>
+    <metadata connector="FLOW" name="row1"><column name="order_id" type="id_Integer" key="true"/></metadata>
+  </node>
+  <node componentName="tMysqlOutput" componentVersion="0.102" posX="300" posY="100">
+    <elementParameter field="TEXT" name="UNIQUE_NAME" value="tMysqlOutput_1"/>
+    <elementParameter field="DBTABLE" name="TABLE" value="&quot;orders_clean&quot;"/>
+    <elementParameter field="TEXT" name="SCHEMA_DB" value="&quot;stg&quot;"/>
+    <elementParameter field="CLOSED_LIST" name="DATA_ACTION" value="INSERT"/>
+    <metadata connector="FLOW" name="row1"><column name="order_id" type="id_Integer" key="true"/></metadata>
+  </node>
+  <connection connectorName="FLOW" label="row1" lineStyle="0" metaname="row1" source="tMysqlInput_1" target="tMysqlOutput_1"/>
+</talendfile:ProcessType>

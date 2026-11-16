@@ -1,0 +1,82 @@
+{
+  "runInfo": {
+    "inputFolder": "synthetic/datastage",
+    "reportName": "synthetic.xlsx",
+    "startTime": "2026-01-01T00:00:00Z",
+    "runDurationSeconds": 1,
+    "sourceTechnology": "DATASTAGE"
+  },
+  "inventory": [
+    {
+      "name": "JOB_EXTRACT_ACCOUNTS",
+      "type": "PARALLEL",
+      "complexityLevel": "MEDIUM",
+      "folder": "synthetic_folder",
+      "fullyQualifiedName": "synthetic_folder.JOB_EXTRACT_ACCOUNTS",
+      "sourceFile": "synthetic_folder/JOB_EXTRACT_ACCOUNTS.xml",
+      "nodes": {
+        "Transformer": 1,
+        "Lookup": 1
+      },
+      "functionCall": {},
+      "objectRel": [
+        {
+          "action": "source",
+          "object": "ACCOUNTS",
+          "count": 1
+        },
+        {
+          "action": "target",
+          "object": "STG_ACCOUNTS",
+          "count": 1
+        }
+      ],
+      "jobParameters": [
+        {
+          "parameterName": "RUN_DATE",
+          "parameterLength": 10
+        }
+      ]
+    },
+    {
+      "name": "SEQ_CHILD",
+      "type": "SequenceJob",
+      "complexityLevel": "LOW",
+      "folder": "synthetic_folder",
+      "fullyQualifiedName": "synthetic_folder.SEQ_CHILD",
+      "sourceFile": "synthetic_folder/SEQ_CHILD.xml",
+      "nodes": {
+        "JobActivity": 1
+      },
+      "functionCall": {}
+    },
+    {
+      "name": "SEQ_MASTER",
+      "type": "SequenceJob",
+      "complexityLevel": "LOW",
+      "folder": "synthetic_folder",
+      "fullyQualifiedName": "synthetic_folder.SEQ_MASTER",
+      "sourceFile": "synthetic_folder/SEQ_MASTER.xml",
+      "nodes": {
+        "JobActivity": 1
+      },
+      "functionCall": {}
+    }
+  ],
+  "subJobInfo": [
+    {
+      "parent": "SEQ_MASTER",
+      "parentType": "SequenceJob",
+      "child": "SEQ_CHILD",
+      "childType": "SequenceJob",
+      "count": 1
+    },
+    {
+      "parent": "SEQ_CHILD",
+      "parentType": "SequenceJob",
+      "child": "JOB_EXTRACT_ACCOUNTS",
+      "childType": "Job",
+      "count": 1
+    }
+  ]
+}

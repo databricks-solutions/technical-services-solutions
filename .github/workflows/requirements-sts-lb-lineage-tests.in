@@ -1,0 +1,11 @@
+# Input for requirements-sts-lb-lineage-tests.txt (the hash-locked file CI installs).
+# Optional extras of dw-migration/sts-lb-lineage (databricks, profiler, columns) plus pytest.
+# Regenerate from the repo root after changing either file:
+#   uv pip compile .github/workflows/requirements-sts-lb-lineage-tests.in \
+#     --generate-hashes --exclude-newer 2026-11-01T00:00:00Z \
+#     --python-version 3.12 --python-platform x86_64-manylinux_2_28 \
+#     -o .github/workflows/requirements-sts-lb-lineage-tests.txt
+databricks-sdk>=0.120,<1
+duckdb>=1.1,<3
+sqlglot>=30,<31
+pytest>=8,<9

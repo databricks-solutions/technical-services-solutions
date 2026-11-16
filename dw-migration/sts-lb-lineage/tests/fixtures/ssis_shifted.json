@@ -1,0 +1,38 @@
+{
+  "runInfo": {
+    "inputFolder": "synthetic/ssis",
+    "reportName": "synthetic.xlsx",
+    "startTime": "2026-01-01T00:00:00Z",
+    "runDurationSeconds": 1,
+    "sourceTechnology": "SSIS"
+  },
+  "inventory": [
+    {
+      "name": "pkg_load_orders",
+      "type": "Package",
+      "complexityLevel": "HIGH",
+      "folder": "packages",
+      "sourceFile": "packages/pkg_load_orders.dtsx",
+      "nodes": {
+        "Data Flow Task": 1,
+        "Execute SQL Task": 2
+      },
+      "objectRel": [
+        {
+          "action": "src.orders",
+          "count": {
+            "Source": 1
+          },
+          "object": "Read orders"
+        },
+        {
+          "action": "dst.orders",
+          "count": {
+            "Target": 1
+          },
+          "object": "Write orders"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<talendfile:ProcessType xmi:version="2.0" xmlns:xmi="http://www.omg.org/XMI" xmlns:talendfile="http://www.talend.org/file" defaultContext="Default" jobType="Standard">
+  <node componentName="tRunJob" componentVersion="0.102" posX="100" posY="100">
+    <elementParameter field="TEXT" name="UNIQUE_NAME" value="tRunJob_1"/>
+    <elementParameter field="PROCESS_TYPE_PROCESS" name="PROCESS" value="job_load_orders"/>
+    <elementParameter field="TEXT" name="PROCESS:PROCESS_TYPE_PROCESS" value="job_load_orders"/>
+    <elementParameter field="TEXT" name="PROCESS_TYPE_VERSION" value="Latest"/>
+  </node>
+</talendfile:ProcessType>

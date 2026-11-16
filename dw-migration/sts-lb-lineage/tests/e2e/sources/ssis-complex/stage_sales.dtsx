@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<DTS:Executable xmlns:DTS="www.microsoft.com/SqlServer/Dts" DTS:refId="Package" DTS:CreationName="Microsoft.Package" DTS:DTSID="{37b6e1aa-5565-4d58-b4f0-c390819ebf24}" DTS:ExecutableType="Microsoft.Package" DTS:ObjectName="stage_sales" DTS:VersionBuild="1">
+  <DTS:ConnectionManagers>
+    <DTS:ConnectionManager DTS:refId="Package.ConnectionManagers[Conn]" DTS:CreationName="OLEDB" DTS:DTSID="{22222222-2222-2222-2222-222222222222}" DTS:ObjectName="Conn">
+      <DTS:ObjectData><DTS:ConnectionManager DTS:ConnectionString="Data Source=srv;Initial Catalog=dwh;Provider=SQLNCLI11.1;Integrated Security=SSPI;"/></DTS:ObjectData>
+    </DTS:ConnectionManager>
+  </DTS:ConnectionManagers>
+  <DTS:Executables>
+    <DTS:Executable DTS:refId="Package\DFT" DTS:CreationName="Microsoft.Pipeline" DTS:DTSID="{78db62fa-2557-4ed6-92f5-95f5b6a87829}" DTS:ExecutableType="Microsoft.Pipeline" DTS:ObjectName="DFT">
+      <DTS:ObjectData>
+        <pipeline version="1">
+          <components>
+            <component refId="Package\DFT\Src" componentClassID="Microsoft.OLEDBSource" name="Src">
+              <properties><property name="OpenRowset" dataType="System.String">[raw].[sales]</property><property name="AccessMode" dataType="System.Int32">0</property></properties>
+              <connections><connection refId="Package\DFT\Src.Connections[OleDbConnection]" connectionManagerID="Package.ConnectionManagers[Conn]" name="OleDbConnection"/></connections>
+            </component>
+            <component refId="Package\DFT\Lookup" componentClassID="Microsoft.Lookup" name="Lookup">
+              <properties><property name="OpenRowset" dataType="System.String">[raw].[region]</property><property name="AccessMode" dataType="System.Int32">0</property><property name="SqlCommand" dataType="System.String">select region_id, region_name from raw.region</property></properties>
+              <connections><connection refId="Package\DFT\Lookup.Connections[OleDbConnection]" connectionManagerID="Package.ConnectionManagers[Conn]" name="OleDbConnection"/></connections>
+            </component>
+            <component refId="Package\DFT\Dst" componentClassID="Microsoft.OLEDBDestination" name="Dst">
+              <properties><property name="OpenRowset" dataType="System.String">[stg].[sales_clean]</property><property name="AccessMode" dataType="System.Int32">0</property></properties>
+              <connections><connection refId="Package\DFT\Dst.Connections[OleDbConnection]" connectionManagerID="Package.ConnectionManagers[Conn]" name="OleDbConnection"/></connections>
+            </component>
+          </components>
+        </pipeline>
+      </DTS:ObjectData>
+    </DTS:Executable>
+    <DTS:Executable DTS:refId="Package\Stage Customer" DTS:CreationName="Microsoft.ExecuteSQLTask" DTS:DTSID="{76be4b5e-2f98-478e-8f92-0dd7fefdedb2}" DTS:ExecutableType="Microsoft.ExecuteSQLTask" DTS:ObjectName="Stage Customer">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask" SQLTask:Connection="{22222222-2222-2222-2222-222222222222}" SQLTask:SqlStatementSource="INSERT INTO stg.customer_clean (customer_id, name, region_id) SELECT c.customer_id, c.name, r.region_id FROM raw.customer c INNER JOIN raw.region r ON c.region_id = r.region_id"/>
+      </DTS:ObjectData>
+    </DTS:Executable>
+  </DTS:Executables>
+</DTS:Executable>

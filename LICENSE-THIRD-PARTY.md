@@ -140,3 +140,37 @@ bundle in `app/frontend/static` includes React):
 | [Vite](https://github.com/vitejs/vite) and @vitejs/plugin-react | Build tool (development only) | MIT |
 | [TypeScript](https://github.com/microsoft/TypeScript) | Type checking (development only) | Apache-2.0 |
 
+---
+
+## dw-migration/sts-lb-lineage (STS Lakebridge Lineage)
+
+Optional Python dependencies (extras in
+[`pyproject.toml`](./dw-migration/sts-lb-lineage/pyproject.toml); the core uses only the standard library):
+
+| Dependency | Purpose | License |
+|------------|---------|---------|
+| [databricks-bb-analyzer](https://github.com/databrickslabs/bladerunner) | Lakebridge Analyzer (used only with `--run`) | Databricks License |
+| [databricks-sdk](https://github.com/databricks/databricks-sdk-py) | Unity Catalog external lineage, Delta export, AI endpoint calls | Apache-2.0 |
+| [sqlglot](https://github.com/tobymao/sqlglot) | Column lineage from embedded SQL (used only with `--columns`) | MIT |
+| [DuckDB](https://github.com/duckdb/duckdb) | Read Lakebridge Profiler extracts (used only with `--profiler`) | MIT |
+
+Python build-time only: [Hatchling](https://github.com/pypa/hatch) (MIT). Tests: [pytest](https://github.com/pytest-dev/pytest) (MIT).
+
+The prebuilt viewer (`sts_lb_lineage/lineage_viewer.html`) bundles these packages and their
+transitive dependencies; [`viewer/package-lock.json`](./dw-migration/sts-lb-lineage/viewer/package-lock.json)
+is the version-pinned list:
+
+| Dependency | Purpose | License |
+|------------|---------|---------|
+| [@databricks/design-system](https://www.npmjs.com/package/@databricks/design-system) | Databricks UI components (dbui) | ISC |
+| [React / React DOM](https://github.com/facebook/react) | UI runtime | MIT |
+| [@emotion/react](https://github.com/emotion-js/emotion) | Styling runtime required by dbui | MIT |
+| [Moment.js](https://github.com/moment/moment) | Date handling required by dbui | MIT |
+| [@xyflow/react (React Flow)](https://github.com/xyflow/xyflow) | Graph rendering | MIT |
+| [@dagrejs/dagre](https://github.com/dagrejs/dagre) | Graph layout | MIT |
+
+Build-time only (not shipped): [Vite](https://github.com/vitejs/vite) (MIT),
+[@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react) (MIT),
+[vite-plugin-singlefile](https://github.com/richardtallent/vite-plugin-singlefile) (MIT),
+[TypeScript](https://github.com/microsoft/TypeScript) (Apache-2.0).
+UI smoke test only: [Puppeteer](https://github.com/puppeteer/puppeteer) (`puppeteer-core`, Apache-2.0).

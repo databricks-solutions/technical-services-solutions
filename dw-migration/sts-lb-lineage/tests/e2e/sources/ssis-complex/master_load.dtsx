@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<DTS:Executable xmlns:DTS="www.microsoft.com/SqlServer/Dts" DTS:refId="Package" DTS:CreationName="Microsoft.Package" DTS:DTSID="{166f7c8a-576b-4097-aaf4-d879fc188411}" DTS:ExecutableType="Microsoft.Package" DTS:ObjectName="master_load" DTS:VersionBuild="1">
+  <DTS:ConnectionManagers>
+    <DTS:ConnectionManager DTS:refId="Package.ConnectionManagers[Conn]" DTS:CreationName="OLEDB" DTS:DTSID="{22222222-2222-2222-2222-222222222222}" DTS:ObjectName="Conn">
+      <DTS:ObjectData><DTS:ConnectionManager DTS:ConnectionString="Data Source=srv;Initial Catalog=dwh;Provider=SQLNCLI11.1;Integrated Security=SSPI;"/></DTS:ObjectData>
+    </DTS:ConnectionManager>
+  </DTS:ConnectionManagers>
+  <DTS:Executables>
+    <DTS:Executable DTS:refId="Package\Run Stage" DTS:CreationName="Microsoft.ExecutePackageTask" DTS:DTSID="{8aa89e6e-e9b2-4bb2-b1f4-07465282ca3c}" DTS:ExecutableType="Microsoft.ExecutePackageTask" DTS:ObjectName="Run Stage">
+      <DTS:ObjectData>
+        <ExecutePackageTask><UseProjectReference>True</UseProjectReference><PackageName>stage_sales.dtsx</PackageName></ExecutePackageTask>
+      </DTS:ObjectData>
+    </DTS:Executable>
+    <DTS:Executable DTS:refId="Package\Run Dim" DTS:CreationName="Microsoft.ExecutePackageTask" DTS:DTSID="{5a4ffed0-c26d-45fa-b0d6-7dd6b3c90e9e}" DTS:ExecutableType="Microsoft.ExecutePackageTask" DTS:ObjectName="Run Dim">
+      <DTS:ObjectData>
+        <ExecutePackageTask><UseProjectReference>True</UseProjectReference><PackageName>load_dim_customer.dtsx</PackageName></ExecutePackageTask>
+      </DTS:ObjectData>
+    </DTS:Executable>
+    <DTS:Executable DTS:refId="Package\Run Fact" DTS:CreationName="Microsoft.ExecutePackageTask" DTS:DTSID="{72a52424-914c-4fe1-b96b-966f44bdadac}" DTS:ExecutableType="Microsoft.ExecutePackageTask" DTS:ObjectName="Run Fact">
+      <DTS:ObjectData>
+        <ExecutePackageTask><UseProjectReference>True</UseProjectReference><PackageName>load_fact_sales.dtsx</PackageName></ExecutePackageTask>
+      </DTS:ObjectData>
+    </DTS:Executable>
+  </DTS:Executables>
+</DTS:Executable>

@@ -1,0 +1,19 @@
+<workflow-app name="job_load_orders" xmlns="uri:oozie:workflow:0.5">
+  <start to="load_stg"/>
+  <action name="load_stg">
+    <hive xmlns="uri:oozie:hive-action:0.2">
+      <job-tracker>${jobTracker}</job-tracker><name-node>${nameNode}</name-node>
+      <script>load_stg.hql</script>
+    </hive>
+    <ok to="load_fact"/><error to="fail"/>
+  </action>
+  <action name="load_fact">
+    <hive xmlns="uri:oozie:hive-action:0.2">
+      <job-tracker>${jobTracker}</job-tracker><name-node>${nameNode}</name-node>
+      <script>load_fact.hql</script>
+    </hive>
+    <ok to="end"/><error to="fail"/>
+  </action>
+  <kill name="fail"><message>failed</message></kill>
+  <end name="end"/>
+</workflow-app>

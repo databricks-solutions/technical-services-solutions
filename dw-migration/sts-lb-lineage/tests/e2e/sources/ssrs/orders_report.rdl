@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Report xmlns="http://schemas.microsoft.com/sqlserver/reporting/2008/01/reportdefinition" xmlns:rd="http://schemas.microsoft.com/SQLServer/reporting/reportdesigner">
+  <DataSources>
+    <DataSource Name="DS1"><ConnectionProperties><DataProvider>SQL</DataProvider><ConnectString>Data Source=srcserver;Initial Catalog=dw</ConnectString></ConnectionProperties></DataSource>
+  </DataSources>
+  <DataSets>
+    <DataSet Name="Orders">
+      <Query><DataSourceName>DS1</DataSourceName>
+        <CommandText>SELECT f.order_id, f.amount, c.customer_name FROM dw.fact_orders f JOIN dw.dim_customer c ON c.customer_id = f.customer_id</CommandText>
+      </Query>
+      <Fields><Field Name="order_id"><DataField>order_id</DataField></Field></Fields>
+    </DataSet>
+  </DataSets>
+  <ReportSections><ReportSection><Body><ReportItems/><Height>1in</Height></Body><Width>6in</Width><Page/></ReportSection></ReportSections>
+</Report>

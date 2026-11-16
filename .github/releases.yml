@@ -157,3 +157,8 @@
   name: "Snowflake Source Extract"
   kind: "Python script"
   path: "dw-migration/source-extracts/snowflake"
+
+- slug: sts-lb-lineage
+  name: "STS Lakebridge Lineage"
+  kind: "Python package"
+  path: "dw-migration/sts-lb-lineage"

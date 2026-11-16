@@ -1,0 +1,163 @@
+{
+  "runInfo": {
+    "inputFolder": "synthetic/sql",
+    "reportName": "synthetic.xlsx",
+    "startTime": "2026-01-01T00:00:00Z",
+    "runDurationSeconds": 1,
+    "sourceTechnology": "SQL"
+  },
+  "inventory": [
+    {
+      "name": "load_orders.sql",
+      "sourceFile": "etl/load_orders.sql",
+      "complexityLevel": "MEDIUM",
+      "lineCount": 220,
+      "statementCount": 12,
+      "procAndFunctionCount": 1,
+      "scriptType": "SQL",
+      "scriptCategories": [
+        "INSERT_INTO",
+        "TABLE_DDL"
+      ],
+      "functionCall": {
+        "COALESCE": 2,
+        "SUM": 1
+      },
+      "dynamicStatements": [
+        {
+          "content": "EXEC(@sql)",
+          "lineNumber": 10
+        }
+      ]
+    },
+    {
+      "name": "build_sales_mart.sql",
+      "sourceFile": "etl/build_sales_mart.sql",
+      "complexityLevel": "HIGH",
+      "lineCount": 640,
+      "statementCount": 31,
+      "procAndFunctionCount": 1,
+      "scriptType": "SQL",
+      "scriptCategories": [
+        "INSERT_INTO",
+        "CREATE_PROCEDURE"
+      ],
+      "functionCall": {
+        "COALESCE": 2,
+        "SUM": 1
+      },
+      "loopsAndCursors": [
+        {
+          "content": "WHILE @i < 10",
+          "lineNumber": 20
+        },
+        {
+          "content": "WHILE @i < 10",
+          "lineNumber": 21
+        }
+      ]
+    },
+    {
+      "name": "refresh_flags.sql",
+      "sourceFile": "etl/refresh_flags.sql",
+      "complexityLevel": "LOW",
+      "lineCount": 40,
+      "statementCount": 3,
+      "procAndFunctionCount": 1,
+      "scriptType": "SQL",
+      "scriptCategories": [
+        "READ_DML_INTO_VAR"
+      ],
+      "functionCall": {
+        "COALESCE": 2,
+        "SUM": 1
+      }
+    },
+    {
+      "name": "create_tables.sql",
+      "sourceFile": "ddl/create_tables.sql",
+      "complexityLevel": "LOW",
+      "lineCount": 90,
+      "statementCount": 6,
+      "procAndFunctionCount": 1,
+      "scriptType": "SQL",
+      "scriptCategories": [
+        "TABLE_DDL"
+      ],
+      "functionCall": {
+        "COALESCE": 2,
+        "SUM": 1
+      }
+    }
+  ],
+  "object_lineage": [
+    {
+      "target": "stg.orders_clean",
+      "writes": [
+        {
+          "file": "etl/load_orders.sql",
+          "sources": [
+            "raw.orders",
+            "raw.customers"
+          ]
+        }
+      ],
+      "reads": [
+        "etl/load_orders.sql"
+      ]
+    },
+    {
+      "target": "@order_tmp",
+      "writes": [
+        {
+          "file": "etl/load_orders.sql",
+          "sources": [
+            "raw.orders"
+          ]
+        }
+      ],
+      "reads": [
+        "etl/load_orders.sql"
+      ]
+    },
+    {
+      "target": "dw.fact_orders",
+      "writes": [
+        {
+          "file": "etl/load_orders.sql",
+          "sources": [
+            "@order_tmp",
+            "stg.orders_clean"
+          ]
+        }
+      ],
+      "reads": [
+        "etl/build_sales_mart.sql",
+        "etl/refresh_flags.sql"
+      ]
+    },
+    {
+      "target": "mart.sales_daily",
+      "writes": [
+        {
+          "file": "etl/build_sales_mart.sql",
+          "sources": [
+            "dw.fact_orders",
+            "dw.dim_date"
+          ]
+        }
+      ]
+    },
+    {
+      "target": "v_flag",
+      "writes": [
+        {
+          "file": "etl/refresh_flags.sql",
+          "sources": [
+            "dw.fact_orders"
+          ]
+        }
+      ]
+    }
+  ]
+}

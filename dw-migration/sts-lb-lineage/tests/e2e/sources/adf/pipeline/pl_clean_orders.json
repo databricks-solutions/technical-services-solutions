@@ -1,0 +1,1 @@
+{"name":"pl_clean_orders","properties":{"activities":[{"name":"Copy raw to stg","type":"Copy","typeProperties":{"source":{"type":"AzureSqlSource","sqlReaderQuery":"SELECT * FROM raw.orders"},"sink":{"type":"AzureSqlSink"}},"inputs":[{"referenceName":"ds_raw_orders","type":"DatasetReference"}],"outputs":[{"referenceName":"ds_stg_orders_clean","type":"DatasetReference"}]}]}}

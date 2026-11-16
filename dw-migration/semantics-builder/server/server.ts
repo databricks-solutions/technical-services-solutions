@@ -17,6 +17,7 @@ import { registerReviewRoutes } from './api/review';
 import { registerCertifyRoutes } from './api/certify';
 import { registerAgentRoutes } from './api/agent';
 import { registerDashboardRoutes } from './api/dashboard';
+import { registerBundleRoutes } from './api/bundle';
 import { registerLibraryRoutes } from './api/library';
 import { registerImportRoutes } from './api/import';
 import { registerGovernRoutes } from './api/govern';
@@ -61,6 +62,7 @@ createApp({
       registerCertifyRoutes(app, pool, runFor, ucFor);
       registerAgentRoutes(app, pool, (req) => genieDeps(asUser(req)), ucFor, runFor);
       registerDashboardRoutes(app, pool, ucFor);
+      registerBundleRoutes(app, pool);
       registerLibraryRoutes(app, pool, runFor);
       registerImportRoutes(app, pool, ucFor, llmFor);
       registerGovernRoutes(app, pool, runFor, ucFor);

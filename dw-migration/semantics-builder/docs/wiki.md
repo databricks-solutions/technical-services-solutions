@@ -916,6 +916,26 @@ Apps cannot get the permission scope of the dashboards API. So the section shows
 `databricks lakeview create` command. Type a folder that exists (under `/Users` or `/Shared`), copy the command,
 and run it in your terminal as you. It creates a draft. You review it and publish it in Databricks.
 
+### 18.2 Publish: CI/CD bundle
+
+**CI/CD bundle** exports the promoted view as a Declarative Automation Bundle, so you keep it in Git and deploy it
+from your own pipeline (dev, test, prod). **Download** saves a zip with these files:
+
+| File | What it does |
+| --- | --- |
+| `databricks.yml` | The bundle, with `dev` (development mode) and `prod` targets, and the variables `warehouse_id` and `owner_email` |
+| `resources/<view>_deploy.job.yml` | A job that runs `src/create_view.sql`, then `src/tests.sql` |
+| `resources/<view>_nightly_check.job.yml` | A job at 02:00 UTC that runs `src/drift.sql` and `src/tests.sql`, and emails `owner_email` when one fails |
+| `src/create_view.sql` | `CREATE OR REPLACE VIEW ... WITH METRICS` with the YAML of the promoted version |
+| `src/tests.sql` | The tests of that version. An expected value test uses `assert_true`, so a value outside its tolerance fails the task |
+| `src/drift.sql` | Fails when the view is not a metric view, or when its fields are not the ones of the promoted version |
+| `README.md` | The commands to validate, deploy and run |
+
+Every task is a SQL file on a SQL warehouse. The app only builds the files: you deploy them with the CLI or a
+pipeline, as yourself or a service principal (apps cannot create jobs). The drift check compares the field names
+from `information_schema.columns`; a changed expression shows in the tests. In the `dev` target the nightly
+schedule is paused (development mode).
+
 ## 19. Publish: Drift
 
 Drift is a change in Unity Catalog that the app did not make. The app compares Unity Catalog with the promoted

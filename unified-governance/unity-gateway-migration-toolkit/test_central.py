@@ -268,6 +268,25 @@ def test_central_target_is_the_hub_without_a_target_and_checks_everything_in_ord
         factory=lambda **k: made.append(k) or SimpleNamespace(config=SimpleNamespace(host=k["host"])))
     assert (ws, remote) == (REMOTE, True) and made[0]["host"] == "https://adb-2.cloud.databricks.com"
     assert made[0]["client_id"] == SP_ID and made[0]["auth_type"] == "oauth-m2m"
+    assert made[0]["client_secret"] == SECRET_VALUE
+
+
+def test_central_target_strips_a_trailing_newline_from_the_secret(monkeypatch):
+    """Seen live: `... | databricks secrets put-secret` stores the newline, and sign-in fails with invalid_client."""
+    hub = SimpleNamespace(config=SimpleNamespace(host="https://hub"))
+    monkeypatch.setattr(planner, "workspace_id_of", lambda c: HUB if c is hub else REMOTE)
+    made = []
+    planner.central_target(TargetSpark("adb-2.cloud.databricks.com"), hub, REMOTE, REMOTE, SP_ID, "s/k",
+                           lambda scope, key: f" {SECRET_VALUE}\n",
+                           factory=lambda **k: made.append(k) or SimpleNamespace(config=SimpleNamespace(host=k["host"])))
+    assert made[0]["client_secret"] == SECRET_VALUE
+
+
+def test_a_workspace_missing_from_the_system_table_says_it_may_be_new(monkeypatch):
+    hub = SimpleNamespace(config=SimpleNamespace(host="https://hub"))
+    monkeypatch.setattr(planner, "workspace_id_of", lambda c: HUB if c is hub else REMOTE)
+    with pytest.raises(ValueError, match="last few hours"):
+        planner.central_target(TargetSpark(""), hub, REMOTE, REMOTE, SP_ID, "s/k", lambda s, k: SECRET_VALUE)
 
 
 # ---------- the apply notebook ----------

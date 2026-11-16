@@ -85,7 +85,7 @@ One install (the hub) can also scan and change other workspaces in the account. 
    databricks secrets put-acl ugmig <application ID> READ
    ```
    Enter `ugmig/sp_secret` in **14. Central mode: OAuth secret**.
-4. **The workspace IDs** to manage in **13. Central mode: workspace IDs**.
+4. **The workspace IDs** to manage in **13. Central mode: workspace IDs**. A workspace created in the last few hours may not be listed in `system.access.workspaces_latest` yet; scans of it fail until it is.
 5. **Network policies.** The toolkit's jobs run on serverless compute, and Databricks only lets serverless compute in one workspace call another when cross-workspace network policies allow it. Without this, scans of the other workspaces fail with "Cert validation failed ... trusted workload checks did not pass". It isn't a credentials problem. An account admin, in the account console:
    - **Ingress (each managed workspace):** enables the **Cross Workspace Network Policy** preview (**Previews**), then in Security > Networking > Context-based ingress & egress, on the policy attached to that workspace, clears **Compatibility mode** on the **Ingress** tab and allows the hub's workspace ID under **Restrict access to specific source workspaces**. "Allow access from all public IPs" doesn't cover this. A policy named default-policy applies to every workspace without its own policy, so a dedicated policy for the managed workspace is safer.
    - **Egress (the hub):** nothing to do if its policy allows access to all destinations. If egress is restricted, add the managed workspaces under **Allowed Databricks workspace destinations**.

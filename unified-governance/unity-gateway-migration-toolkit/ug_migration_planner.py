@@ -207,7 +207,8 @@ def remote_workspace_client(target_id: str, allowlist: list[str], url: str, clie
     if target_id not in allowlist:
         raise PermissionError(f"workspace {target_id} isn't in the central-mode allowlist")
     if not WORKSPACE_URL_RE.fullmatch(url or ""):
-        raise ValueError(f"workspace {target_id} has no usable URL in system.access.workspaces_latest")
+        raise ValueError(f"workspace {target_id} has no usable URL in system.access.workspaces_latest. A workspace "
+                         "created in the last few hours may not be in that table yet: try again later")
     if not client_id or not client_secret:
         raise ValueError("central mode needs the service principal's client ID (Run jobs as service principal) "
                          "and its OAuth secret (Central mode: service principal OAuth secret)")
@@ -275,8 +276,10 @@ def central_target(spark, hub_client: WorkspaceClient, target_id: str, allowlist
     url = (rows[0]["workspace_url"] if rows else "") or ""
     url = url if url.startswith("http") else (f"https://{url}" if url else "")
     scope, key = ref.split("/", 1)
-    client = remote_workspace_client(target_id, allowlist, url, str(client_id or "").strip(), secret_get(scope, key),
-                                     factory=factory)
+    # Strip: a secret piped into `databricks secrets put-secret` keeps the trailing newline, and sign-in then fails
+    # with invalid_client (seen live, Azure, 2026-11). OAuth secrets never contain whitespace.
+    client = remote_workspace_client(target_id, allowlist, url, str(client_id or "").strip(),
+                                     (secret_get(scope, key) or "").strip(), factory=factory)
     return client, target_id, True
 
 

@@ -212,7 +212,11 @@ them) on Projects, Metric views, Reviews, Review, the project page and the sub-p
 project are a table (name and goal, status, compact step marks with the step as a tooltip, sources, last activity,
 the next step as a button) instead of cards; brief descriptions wrap; the stress test query column and the Promote
 history view and author columns are wider; good lasting results (dictionary coverage, a clean stress test) are a
-status line with a check, not a large alert; Metric views actions wrap. Still open: a scroll cue on narrow tab bars.
+status line with a check, not a large alert; Metric views actions wrap.
+
+Done 2026-11-16. Narrow tab bars keep the Du Bois behavior (a shadow at the cut edge and a 3 px scrollbar; Du Bois
+advises against a taller scrollbar), by decision. Not checked in a browser after the last deploy: the compact step
+marks on one line in the sub-project table, and the new header on Projects, Reviews, Review and sub-project pages.
 
 ## Order
 

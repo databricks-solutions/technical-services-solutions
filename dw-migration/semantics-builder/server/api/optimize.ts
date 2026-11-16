@@ -28,6 +28,8 @@ import type { RunDeps } from '../sql/runner';
 import type { UcDeps } from '../uc/metadata';
 import { actorOf, handle, HttpError } from './http';
 import { designerRepo } from './designer';
+import type { UsageView } from '../../shared/usage';
+import { fieldUsageQuery, toFieldUsage, USAGE_DAYS, viewUsageQuery } from '../optimize/usage';
 import { projectRepo } from './projects';
 
 type Db = Pick<LakebasePool, 'query' | 'connect'>;
@@ -645,6 +647,51 @@ export function registerOptimizeRoutes(
       for (const s of expected) await runStatement(s, { actor, projectId: project.id, approved: true }, runFor(req));
       await repo.patchMaterialization(run.id, { removed: true });
       return { removed: true, pipelineUrl: run.materialization?.pipelineUrl ?? null };
+    })
+  );
+
+  /**
+   * How people used the fields of the promoted view in the last days, from Unity Catalog lineage, read as the user:
+   * counts per field, never user names or query text. Without SELECT on the lineage tables it says so.
+   */
+  app.get(
+    '/api/projects/:id/optimize/usage',
+    handle(async (req): Promise<UsageView> => {
+      const actor = actorOf(req);
+      const project = await projects.get(actor, idParam.parse(req.params).id);
+      const empty = { target: null, version: null, days: USAGE_DAYS, totals: null, fields: [], error: null };
+      const { rows } = await db.query<{ version: number; target: string }>(
+        `SELECT pr.version, pr.target FROM gsb.promotion pr JOIN gsb.project p ON p.id = pr.project_id
+         WHERE pr.project_id = $1 AND pr.status = 'succeeded' AND pr.target = p.promotion_target
+         ORDER BY pr.created_at DESC LIMIT 1`,
+        [project.id]
+      );
+      const p = rows[0];
+      if (!p) return empty;
+      const view = validateMetricView((await designs.view(project.id, p.version)).draft!.yaml).view;
+      if (!view) throw new HttpError(409, `Version ${p.version} does not parse.`);
+      const ctx = { actor, projectId: project.id, approved: false };
+      try {
+        const [fields, total] = await Promise.all([
+          runStatement(fieldUsageQuery(p.target), ctx, runFor(req)),
+          runStatement(viewUsageQuery(p.target), ctx, runFor(req)),
+        ]);
+        return {
+          ...empty,
+          target: p.target,
+          version: p.version,
+          totals: { queries: Number(total.rows[0]?.[0] ?? 0), users: Number(total.rows[0]?.[1] ?? 0) },
+          fields: toFieldUsage(view, fields.rows),
+        };
+      } catch (err) {
+        return {
+          ...empty,
+          target: p.target,
+          version: p.version,
+          fields: toFieldUsage(view, []),
+          error: `Cannot read lineage. You need SELECT on system.access.table_lineage and system.access.column_lineage. ${(err as Error).message.slice(0, 300)}`,
+        };
+      }
     })
   );
 

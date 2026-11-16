@@ -24,6 +24,7 @@ import { PracticesPanel } from '../components/PracticesPanel';
 import { CostPanel } from '../components/CostPanel';
 import { GeniePanel } from '../components/GeniePanel';
 import { StatusLine } from '../components/StatusLine';
+import { UsagePanel } from '../components/UsagePanel';
 import { SqlBlock } from '../components/SqlBlock';
 
 const FLAG: Record<StressFlag, { color: 'coral' | 'lemon'; label: string }> = {
@@ -245,7 +246,7 @@ export function OptimizePage() {
   const [busy, setBusy] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<string>();
-  const [tab, setTab] = useTab(['practices', 'stress', 'materialize', 'cost', 'genie'] as const, 'stress');
+  const [tab, setTab] = useTab(['practices', 'stress', 'materialize', 'cost', 'genie', 'usage'] as const, 'stress');
   const data = view.data;
   const blocking = data?.practices.filter((c) => c.severity === 'fix' && c.fields.length).length ?? 0;
   const latest = data?.latest;
@@ -335,7 +336,13 @@ export function OptimizePage() {
                 </Tabs.Trigger>
                 <Tabs.Trigger value="cost">Cost</Tabs.Trigger>
                 <Tabs.Trigger value="genie">Test with Genie</Tabs.Trigger>
+                <Tabs.Trigger value="usage">Usage</Tabs.Trigger>
               </Tabs.List>
+              <Tabs.Content value="usage">
+                <div style={{ paddingTop: 16 }}>
+                  <UsagePanel projectId={projectId} />
+                </div>
+              </Tabs.Content>
               <Tabs.Content value="genie">
                 <div style={{ paddingTop: 16 }}>
                   {data.view && <GeniePanel projectId={projectId} fields={data.view} />}

@@ -663,6 +663,17 @@ reads the query plan to make sure that the query uses it.
 The app calculates the warehouse time of the stress test and compares it with the last run. You can set a monthly
 budget. The app tells you when the expected use is more than the budget.
 
+### 13.5 Usage
+
+The **Usage** tab shows how people used the fields of the promoted view in the last 90 days: queries, users and
+the last use of each field, and the queries and users of the whole view. It reads `system.access.column_lineage`
+and `system.access.table_lineage` as you, so you need SELECT on them. It shows counts only, never user names or
+query text. Genie, dashboards, jobs and SQL all count.
+
+- A field that nobody read shows **Not used**: consider removing it in a new version, after a check with the
+  owners. A measure that another measure uses is not marked, because removing it breaks the other one.
+- The most used measures are the first ones to try in **Materialization** when their queries are slow.
+
 ## 14. Ask Genie
 
 This part of Optimize tests the design with Genie before you promote it.

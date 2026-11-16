@@ -107,19 +107,28 @@ export const SR_ONLY = {
   whiteSpace: 'nowrap',
 } as const;
 
-/** The modules as a progress list with a mark each. */
-export function Journey({ stage }: { stage: SubProjectStage }) {
+/** The steps of a sub-project. Compact shows only the marks, with the step name as a tooltip, for a table cell. */
+export function Journey({ stage, compact = false }: { stage: SubProjectStage; compact?: boolean }) {
   const steps = MODULES.filter((m) => m.slug !== 'overview');
   return (
     <ol
       aria-label="Progress"
-      style={{ display: 'flex', gap: 16, flexWrap: 'wrap', margin: 0, padding: 0, listStyle: 'none' }}
+      style={{
+        display: 'flex',
+        gap: compact ? 6 : 16,
+        flexWrap: compact ? 'nowrap' : 'wrap',
+        width: compact ? 'max-content' : undefined,
+        margin: 0,
+        padding: 0,
+        listStyle: 'none',
+      }}
     >
       {steps.map((m) => {
         const mark = markOf(m.slug, stage);
         return (
           <li
             key={m.slug}
+            title={compact ? `${m.label}${MARK_TEXT[mark] || ', not started'}` : undefined}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -134,7 +143,7 @@ export function Journey({ stage }: { stage: SubProjectStage }) {
             }}
           >
             {mark === 'open' ? <CircleOutlineIcon /> : <Mark mark={mark} />}
-            <span>{m.label}</span>
+            <span style={compact ? SR_ONLY : undefined}>{m.label}</span>
             <span style={SR_ONLY}>{MARK_TEXT[mark] || ', not started'}</span>
           </li>
         );

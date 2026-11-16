@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { MouseEvent, ReactNode } from 'react';
+import type { MouseEvent } from 'react';
 import {
   createBrowserRouter,
   Navigate,
@@ -40,6 +40,7 @@ import { PublishPage } from './pages/PublishPage';
 import { SubProjectLayout } from './pages/SubProjectLayout';
 import { LibraryPage } from './pages/LibraryPage';
 import { ReviewPage, ReviewsPage } from './pages/ReviewsPage';
+import { PageHeader } from './components/PageHeader';
 import type { ReviewList } from '../../shared/review';
 
 function ThemeSelect() {
@@ -237,52 +238,25 @@ function Shell() {
   );
 }
 
-function Page({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section aria-labelledby="gsb-page-title" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <Typography.Title level={2} id="gsb-page-title">
-        {title}
-      </Typography.Title>
-      {children}
-    </section>
-  );
-}
-
 const router = createBrowserRouter([
   {
     element: <Shell />,
     children: [
       {
         path: '/',
-        element: (
-          <Page title="Projects">
-            <ProjectsPage />
-          </Page>
-        ),
+        element: <ProjectsPage />,
       },
       {
         path: '/metric-views',
-        element: (
-          <Page title="Metric views">
-            <LibraryPage />
-          </Page>
-        ),
+        element: <LibraryPage />,
       },
       {
         path: '/reviews',
-        element: (
-          <Page title="Reviews">
-            <ReviewsPage />
-          </Page>
-        ),
+        element: <ReviewsPage />,
       },
       {
         path: '/reviews/:reviewId',
-        element: (
-          <Page title="Review">
-            <ReviewPage />
-          </Page>
-        ),
+        element: <ReviewPage />,
       },
       {
         path: '/projects/:parentId',
@@ -302,7 +276,7 @@ const router = createBrowserRouter([
           { path: 'publish', element: <PublishPage /> },
         ],
       },
-      { path: '*', element: <Page title="Not found">{null}</Page> },
+      { path: '*', element: <PageHeader title="Not found" /> },
     ],
   },
 ]);

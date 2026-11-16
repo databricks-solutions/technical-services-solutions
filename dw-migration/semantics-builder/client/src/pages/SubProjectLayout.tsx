@@ -5,6 +5,7 @@ import type { ProjectSummary } from '../../../shared/brief';
 import type { useResource } from '../api';
 import { MARK_TEXT, MODULES, Mark, SR_ONLY, STAGE, markOf } from '../journey';
 import type { ModuleSlug } from '../journey';
+import { PageHeader } from '../components/PageHeader';
 import { subPath } from './ProjectsPage';
 
 export type ProjectsResource = ReturnType<typeof useResource<ProjectSummary[]>>;
@@ -45,17 +46,17 @@ export function SubProjectLayout() {
           <span aria-current="page">{sub?.name ?? 'Sub-project'}</span>
         </Typography.Text>
       </nav>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <Typography.Title level={2} withoutMargins>
-          {sub?.name ?? 'Sub-project'}
-        </Typography.Title>
-        {sub && (
-          <Tag componentId="gsb.sub.stage" color={STAGE[sub.stage].color}>
-            {STAGE[sub.stage].label}
-          </Tag>
-        )}
-      </div>
-      {sub?.description && <Typography.Text color="secondary">{sub.description}</Typography.Text>}
+      <PageHeader
+        title={sub?.name ?? 'Sub-project'}
+        tags={
+          sub && (
+            <Tag componentId="gsb.sub.stage" color={STAGE[sub.stage].color}>
+              {STAGE[sub.stage].label}
+            </Tag>
+          )
+        }
+        description={sub?.description}
+      />
       <Tabs.Root
         componentId="gsb.sub.tabs"
         value={active}

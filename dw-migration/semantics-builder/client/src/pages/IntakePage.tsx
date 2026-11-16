@@ -87,7 +87,7 @@ function BriefView({ brief }: { brief: Partial<SemanticBrief> }) {
               <TableRow key={m.name}>
                 <TableCell>{m.name}</TableCell>
                 <TableCell>{m.aggregation.replace('_', ' ')}</TableCell>
-                <TableCell>{m.description}</TableCell>
+                <TableCell multiline>{m.description}</TableCell>
               </TableRow>
             ))}
           </Table>
@@ -105,7 +105,7 @@ function BriefView({ brief }: { brief: Partial<SemanticBrief> }) {
             {b.dimensions.map((d) => (
               <TableRow key={d.name}>
                 <TableCell>{d.name}</TableCell>
-                <TableCell>{d.description}</TableCell>
+                <TableCell multiline>{d.description}</TableCell>
               </TableRow>
             ))}
           </Table>

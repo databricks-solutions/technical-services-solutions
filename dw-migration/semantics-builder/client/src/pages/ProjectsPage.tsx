@@ -15,6 +15,7 @@ import {
 import type { NewProject, Project, ProjectSummary } from '../../../shared/brief';
 import { STAGE } from '../journey';
 import { api, useResource } from '../api';
+import { PageHeader } from '../components/PageHeader';
 import { DataState } from '../components/DataState';
 
 export const subPath = (parentId: string, id: string, module: string) => `/projects/${parentId}/sub/${id}/${module}`;
@@ -136,13 +137,11 @@ export function ProjectsPage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 }}>
-        <Typography.Paragraph withoutMargins color="secondary" style={{ maxWidth: 720 }}>
-          Design governed Unity Catalog metric views with an AI guide. A project is a business domain. Each sub-project
-          builds one metric view, from intent to a validated design.
-        </Typography.Paragraph>
-        {newButton}
-      </div>
+      <PageHeader
+        title="Projects"
+        description="Design governed Unity Catalog metric views with an AI guide. A project is a business domain. Each sub-project builds one metric view, from intent to a validated design."
+        actions={newButton}
+      />
       <DataState
         status={projects.status === 'ready' && !list.length ? 'empty' : projects.status}
         message={projects.error ?? 'Create a project for a business domain, such as Sales or Finance.'}

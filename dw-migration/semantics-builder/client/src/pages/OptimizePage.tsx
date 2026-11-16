@@ -23,6 +23,7 @@ import { MaterializePanel } from '../components/MaterializePanel';
 import { PracticesPanel } from '../components/PracticesPanel';
 import { CostPanel } from '../components/CostPanel';
 import { GeniePanel } from '../components/GeniePanel';
+import { StatusLine } from '../components/StatusLine';
 import { SqlBlock } from '../components/SqlBlock';
 
 const FLAG: Record<StressFlag, { color: 'coral' | 'lemon'; label: string }> = {
@@ -159,24 +160,34 @@ function Results({ run, onStop, stopping }: { run: StressRun; onStop: () => void
         )}
       </div>
       {run.error && <Alert componentId="gsb.optimize.run_error" type="error" closable={false} message={run.error} />}
-      {!active && run.status !== 'failed' && (
+      {!active && run.status !== 'failed' && measured.length > 0 && !flagged && (
+        <StatusLine
+          message={`All ${measured.length} measured queries ran under the ${ms(run.settings.targetMs)} target.`}
+        >
+          <Typography.Text color="secondary" size="sm">
+            Times are execution times from the Query History, with the result cache bypassed. Cold is the first run;
+            warm is the median of the others.
+          </Typography.Text>
+        </StatusLine>
+      )}
+      {!active && run.status !== 'failed' && (!measured.length || flagged > 0) && (
         <Alert
           componentId="gsb.optimize.summary"
-          type={flagged ? 'warning' : measured.length ? 'success' : 'info'}
+          type={flagged ? 'warning' : 'info'}
           closable={false}
           message={
             !measured.length
               ? 'No query finished before the stop.'
-              : flagged
-                ? `${flagged} of ${measured.length} measured queries need attention.`
-                : `All ${measured.length} measured queries ran under the ${ms(run.settings.targetMs)} target.`
+              : `${flagged} of ${measured.length} measured queries need attention.`
           }
           description="Times are execution times from the Query History, with the result cache bypassed. Cold is the first run; warm is the median of the others."
         />
       )}
       <Table aria-label="Stress test results" scrollable>
         <TableRow isHeader>
-          <TableHeader componentId="gsb.optimize.r_query">Query</TableHeader>
+          <TableHeader componentId="gsb.optimize.r_query" style={{ flex: 3 }}>
+            Query
+          </TableHeader>
           <TableHeader componentId="gsb.optimize.r_cold">Cold</TableHeader>
           <TableHeader componentId="gsb.optimize.r_warm">Warm</TableHeader>
           <TableHeader componentId="gsb.optimize.r_max">Max</TableHeader>
@@ -186,7 +197,7 @@ function Results({ run, onStop, stopping }: { run: StressRun; onStop: () => void
         </TableRow>
         {run.queries.map((q) => (
           <TableRow key={`${q.origin}:${q.label}`}>
-            <TableCell>
+            <TableCell style={{ flex: 3 }}>
               <div style={WRAP}>{q.label}</div>
             </TableCell>
             <TableCell>{ms(q.coldMs)}</TableCell>

@@ -3,10 +3,13 @@ import { useNavigate, useParams } from 'react-router';
 import {
   ArrowRightIcon,
   Button,
-  Card,
   DropdownMenu,
   OverflowIcon,
   PlusIcon,
+  Table,
+  TableCell,
+  TableHeader,
+  TableRow,
   Tabs,
   TrashIcon,
   Tag,
@@ -22,99 +25,107 @@ import { GoldenPanel } from '../components/GoldenPanel';
 import { DeleteProjectModal } from '../components/DeleteProjectModal';
 import { LegacyImportModal } from '../components/LegacyImportModal';
 import { NewProjectModal, subPath } from './ProjectsPage';
+import { PageHeader } from '../components/PageHeader';
 import { useTab } from '../useTab';
 
 const TABS = ['subprojects', 'golden', 'agent', 'dictionary'] as const;
 
-function SubProjectCard({
+/** The sub-projects of a project as one table: a row each, with its step marks, and the next step as a button. */
+function SubProjectTable({
   parentId,
-  sub,
+  subs,
   onDelete,
 }: {
   parentId: string;
-  sub: SubProjectSummary;
-  onDelete: () => void;
+  subs: SubProjectSummary[];
+  onDelete: (id: string) => void;
 }) {
   const navigate = useNavigate();
-  // Opening a sub-project starts on its overview; the Next button goes to the step that is due.
-  const overview = subPath(parentId, sub.id, 'overview');
-  const open = () => void navigate(overview);
-  const next = NEXT[sub.stage];
-  const goNext = () => void navigate(subPath(parentId, sub.id, next.module));
   return (
-    <Card componentId="gsb.project.sub_card" width="100%" onClick={open}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
-          <div>
-            <Typography.Title level={4} withoutMargins>
-              <Typography.Link
-                componentId="gsb.project.sub_open"
-                href={overview}
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  open();
-                }}
-              >
-                {sub.name}
-              </Typography.Link>
-            </Typography.Title>
-            {sub.description && <Typography.Text color="secondary">{sub.description}</Typography.Text>}
-          </div>
-          <Tag componentId="gsb.project.sub_stage" color={STAGE[sub.stage].color}>
-            {STAGE[sub.stage].label}
-          </Tag>
-        </div>
-        <Journey stage={sub.stage} />
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 12,
-            padding: 12,
-            borderRadius: 8,
-            background: 'var(--db-surface-subtle)',
-          }}
-        >
-          <div>
-            <Typography.Text bold>Next: </Typography.Text>
-            <Typography.Text>{next.text}</Typography.Text>
-          </div>
-          <Button
-            componentId="gsb.project.sub_next"
-            type="primary"
-            size="small"
-            endIcon={<ArrowRightIcon />}
-            onClick={(e) => {
-              e.stopPropagation();
-              goNext();
-            }}
-          >
-            {next.action}
-          </Button>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-          <Typography.Text color="secondary" size="sm">
-            {sub.sources} source{sub.sources === 1 ? '' : 's'} - last activity{' '}
-            {new Date(sub.lastActivity).toLocaleString()}
-          </Typography.Text>
-          <Button
-            componentId="gsb.project.sub_delete"
-            type="tertiary"
-            size="small"
-            icon={<TrashIcon />}
-            aria-label={`Delete sub-project ${sub.name}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete();
-            }}
-          >
-            Delete
-          </Button>
-        </div>
-      </div>
-    </Card>
+    <div style={{ overflowX: 'auto' }}>
+      <Table aria-label="Sub-projects" style={{ minWidth: 960 }}>
+        <TableRow isHeader>
+          <TableHeader componentId="gsb.project.h_name" style={{ flex: 2.2 }}>
+            Sub-project
+          </TableHeader>
+          <TableHeader componentId="gsb.project.h_stage" style={{ flex: 1 }}>
+            Status
+          </TableHeader>
+          <TableHeader componentId="gsb.project.h_progress" style={{ flex: 1 }}>
+            Progress
+          </TableHeader>
+          <TableHeader componentId="gsb.project.h_sources" style={{ flex: 0.6 }}>
+            Sources
+          </TableHeader>
+          <TableHeader componentId="gsb.project.h_activity" style={{ flex: 1.2 }}>
+            Last activity
+          </TableHeader>
+          <TableHeader componentId="gsb.project.h_actions" style={{ flex: 1.8 }}>
+            Next step
+          </TableHeader>
+        </TableRow>
+        {subs.map((sub) => {
+          // Opening a sub-project starts on its overview; the Next button goes to the step that is due.
+          const overview = subPath(parentId, sub.id, 'overview');
+          const next = NEXT[sub.stage];
+          return (
+            <TableRow key={sub.id}>
+              <TableCell multiline style={{ flex: 2.2 }}>
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <Typography.Link
+                    componentId="gsb.project.sub_open"
+                    href={overview}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      void navigate(overview);
+                    }}
+                  >
+                    {sub.name}
+                  </Typography.Link>
+                  {sub.description && (
+                    <Typography.Text color="secondary" size="sm">
+                      {sub.description}
+                    </Typography.Text>
+                  )}
+                </div>
+              </TableCell>
+              <TableCell style={{ flex: 1 }}>
+                <Tag componentId="gsb.project.sub_stage" color={STAGE[sub.stage].color}>
+                  {STAGE[sub.stage].label}
+                </Tag>
+              </TableCell>
+              <TableCell style={{ flex: 1 }} wrapContent={false}>
+                <Journey stage={sub.stage} compact />
+              </TableCell>
+              <TableCell style={{ flex: 0.6 }}>{sub.sources}</TableCell>
+              <TableCell style={{ flex: 1.2 }}>{new Date(sub.lastActivity).toLocaleString()}</TableCell>
+              <TableCell style={{ flex: 1.8 }}>
+                <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                  {/* The step text is the same on many rows, so it is a tooltip; the button names the next step. */}
+                  <Button
+                    componentId="gsb.project.sub_next"
+                    size="small"
+                    endIcon={<ArrowRightIcon />}
+                    title={next.text}
+                    onClick={() => void navigate(subPath(parentId, sub.id, next.module))}
+                  >
+                    {next.action}
+                  </Button>
+                  <Button
+                    componentId="gsb.project.sub_delete"
+                    type="tertiary"
+                    size="small"
+                    icon={<TrashIcon />}
+                    aria-label={`Delete sub-project ${sub.name}`}
+                    onClick={() => onDelete(sub.id)}
+                  />
+                </div>
+              </TableCell>
+            </TableRow>
+          );
+        })}
+      </Table>
+    </div>
   );
 }
 
@@ -162,34 +173,32 @@ export function ProjectPage() {
     <DataState status={status} message={projects.error ?? 'Project not found.'} onRetry={projects.reload}>
       {project && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 }}>
-            <div>
-              <Typography.Title level={2} withoutMargins>
-                {project.name}
-              </Typography.Title>
-              <Typography.Text color="secondary">{project.description ?? 'No business goal yet.'}</Typography.Text>
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              {newMenu}
-              <DropdownMenu.Root modal={false}>
-                <DropdownMenu.Trigger asChild>
-                  <Button componentId="gsb.project.more" icon={<OverflowIcon />} aria-label="More actions" />
-                </DropdownMenu.Trigger>
-                <DropdownMenu.Content align="end">
-                  <DropdownMenu.Item
-                    componentId="gsb.project.delete"
-                    danger
-                    onClick={() => setDeleting({ id: project.id, kind: 'project' })}
-                  >
-                    <DropdownMenu.IconWrapper>
-                      <TrashIcon />
-                    </DropdownMenu.IconWrapper>
-                    Delete project
-                  </DropdownMenu.Item>
-                </DropdownMenu.Content>
-              </DropdownMenu.Root>
-            </div>
-          </div>
+          <PageHeader
+            title={project.name}
+            description={project.description ?? 'No business goal yet.'}
+            actions={
+              <>
+                {newMenu}
+                <DropdownMenu.Root modal={false}>
+                  <DropdownMenu.Trigger asChild>
+                    <Button componentId="gsb.project.more" icon={<OverflowIcon />} aria-label="More actions" />
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Content align="end">
+                    <DropdownMenu.Item
+                      componentId="gsb.project.delete"
+                      danger
+                      onClick={() => setDeleting({ id: project.id, kind: 'project' })}
+                    >
+                      <DropdownMenu.IconWrapper>
+                        <TrashIcon />
+                      </DropdownMenu.IconWrapper>
+                      Delete project
+                    </DropdownMenu.Item>
+                  </DropdownMenu.Content>
+                </DropdownMenu.Root>
+              </>
+            }
+          />
           <Tabs.Root componentId="gsb.project.tabs" value={tab} onValueChange={setTab}>
             <Tabs.List>
               <Tabs.Trigger value="subprojects">Sub-projects ({project.subProjects.length})</Tabs.Trigger>
@@ -200,18 +209,11 @@ export function ProjectPage() {
             <Tabs.Content value="subprojects">
               <div style={{ paddingTop: 16 }}>
                 {project.subProjects.length ? (
-                  <div
-                    style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))', gap: 16 }}
-                  >
-                    {project.subProjects.map((s) => (
-                      <SubProjectCard
-                        key={s.id}
-                        parentId={project.id}
-                        sub={s}
-                        onDelete={() => setDeleting({ id: s.id, kind: 'sub-project' })}
-                      />
-                    ))}
-                  </div>
+                  <SubProjectTable
+                    parentId={project.id}
+                    subs={project.subProjects}
+                    onDelete={(id) => setDeleting({ id, kind: 'sub-project' })}
+                  />
                 ) : (
                   <DataState
                     status="empty"

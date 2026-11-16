@@ -207,8 +207,12 @@ review. First fixes: the join canvas fits only down to 70% zoom and starts at th
 read (a long chain pans), with a height from its rows and a minimap only for large models; the readiness card puts
 the areas under the score on a narrow page; the Metric views table wraps long names and scrolls sideways on a narrow
 page; Reviews has clear empty texts; project cards drop "No goal yet."; the Promote view name field is wider.
-Still open: one page-header pattern, a scroll cue on narrow tab bars, Intake and Optimize column widths, the Publish
-history columns, compact status lines instead of large success alerts, the repeated "Next" text on project cards.
+Second pass (2026-11-13): one page header (PageHeader: title and tags, actions on the right, description under
+them) on Projects, Metric views, Reviews, Review, the project page and the sub-project pages; the sub-projects of a
+project are a table (name and goal, status, compact step marks with the step as a tooltip, sources, last activity,
+the next step as a button) instead of cards; brief descriptions wrap; the stress test query column and the Promote
+history view and author columns are wider; good lasting results (dictionary coverage, a clean stress test) are a
+status line with a check, not a large alert; Metric views actions wrap. Still open: a scroll cue on narrow tab bars.
 
 ## Order
 

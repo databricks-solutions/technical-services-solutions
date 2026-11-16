@@ -120,16 +120,24 @@ export function PromotePanel({ projectId, onPromoted }: { projectId: string; onP
           {v.promotions.length > 0 && (
             <Table aria-label="Promotions">
               <TableRow isHeader>
-                <TableHeader componentId="gsb.promote.h_version">Version</TableHeader>
-                <TableHeader componentId="gsb.promote.h_target">View</TableHeader>
+                <TableHeader componentId="gsb.promote.h_version" style={{ flex: 0.5 }}>
+                  Version
+                </TableHeader>
+                <TableHeader componentId="gsb.promote.h_target" style={{ flex: 3 }}>
+                  View
+                </TableHeader>
                 <TableHeader componentId="gsb.promote.h_status">Status</TableHeader>
-                <TableHeader componentId="gsb.promote.h_by">By</TableHeader>
+                <TableHeader componentId="gsb.promote.h_by" style={{ flex: 1.5 }}>
+                  By
+                </TableHeader>
                 <TableHeader componentId="gsb.promote.h_when">When</TableHeader>
               </TableRow>
               {v.promotions.map((p) => (
                 <TableRow key={p.id}>
-                  <TableCell>{p.version}</TableCell>
-                  <TableCell>{p.target}</TableCell>
+                  <TableCell style={{ flex: 0.5 }}>{p.version}</TableCell>
+                  <TableCell multiline style={{ flex: 3 }}>
+                    {p.target}
+                  </TableCell>
                   <TableCell>
                     <Tag
                       componentId="gsb.promote.status"
@@ -139,7 +147,9 @@ export function PromotePanel({ projectId, onPromoted }: { projectId: string; onP
                       {p.status === 'succeeded' ? 'Promoted' : p.status === 'failed' ? 'Failed' : 'Running'}
                     </Tag>
                   </TableCell>
-                  <TableCell>{p.createdBy}</TableCell>
+                  <TableCell multiline style={{ flex: 1.5 }}>
+                    {p.createdBy}
+                  </TableCell>
                   <TableCell>{new Date(p.createdAt).toLocaleString()}</TableCell>
                 </TableRow>
               ))}

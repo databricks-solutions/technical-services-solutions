@@ -1,0 +1,29 @@
+version: 1.1
+comment: Revenue against a yearly regional budget. The budget values are synthetic.
+source: >-
+  SELECT YEAR(o.o_orderdate) AS year, r.r_name AS region, o.o_totalprice AS amount, 'actual' AS kind
+  FROM samples.tpch.orders o
+  JOIN samples.tpch.customer c ON o.o_custkey = c.c_custkey
+  JOIN samples.tpch.nation n ON c.c_nationkey = n.n_nationkey
+  JOIN samples.tpch.region r ON n.n_regionkey = r.r_regionkey
+  UNION ALL
+  SELECT year, region, budget, 'budget' FROM VALUES
+    (1996, 'AFRICA', 34000000000.00), (1996, 'AMERICA', 35000000000.00), (1996, 'ASIA', 34500000000.00),
+    (1996, 'EUROPE', 33500000000.00), (1996, 'MIDDLE EAST', 34800000000.00)
+    AS t(year, region, budget)
+fields:
+  - name: Year
+    expr: source.year
+  - name: Region
+    expr: source.region
+measures:
+  - name: Actual
+    expr: SUM(source.amount) FILTER (WHERE source.kind = 'actual')
+  - name: Budget
+    expr: SUM(source.amount) FILTER (WHERE source.kind = 'budget')
+  - name: Variance
+    expr: MEASURE(Actual) - MEASURE(Budget)
+  - name: Attainment %
+    expr: MEASURE(Actual) / NULLIF(MEASURE(Budget), 0)
+    format:
+      type: percentage

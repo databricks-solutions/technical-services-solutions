@@ -1,0 +1,18 @@
+title: Ratio and derived measures
+category: Measures
+scenario: >-
+  Build ratios from other measures with MEASURE(), so the ratio is computed after aggregation. A ratio of sums
+  (discount amount over gross revenue) is correct at every level; an average of row ratios (AVG of the discount
+  rate) weights every line the same and gives a different answer.
+question: What is the discount rate by return flag, as a ratio of sums and as an average of line rates?
+roles:
+  - name: numerator
+    description: The amount on top of the ratio, such as the discount amount.
+  - name: denominator
+    description: The amount below, such as gross revenue.
+test:
+  query: >-
+    SELECT `Return Flag`, MEASURE(`Gross Revenue`) AS gross, MEASURE(`Net Revenue`) AS net,
+    ROUND(MEASURE(`Discount Rate`), 8) AS discount_rate, ROUND(MEASURE(`Average Line Discount`), 8) AS avg_line_discount,
+    ROUND(MEASURE(`Net Revenue per Order`), 4) AS net_per_order
+    FROM {{view}} WHERE `Ship Year` = 1995 GROUP BY ALL ORDER BY ALL

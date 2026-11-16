@@ -1,0 +1,17 @@
+title: Funnel
+category: Customer analytics
+scenario: >-
+  Count how many items reach each stage of a process and the conversion from one stage to the next. Each stage is
+  a filtered count, and each stage includes the conditions of the stages before it, so the funnel only narrows.
+  Here an order line is ordered, shipped, delivered on time, and kept (not returned).
+question: For lines shipped in 1995, how many reached each stage, by ship mode?
+roles:
+  - name: item_key
+    description: What moves through the funnel, such as an order line or a lead.
+  - name: stage_conditions
+    description: The column values that show each stage was reached.
+test:
+  query: >-
+    SELECT `Ship Mode`, MEASURE(`Lines Ordered`) AS ordered, MEASURE(`Lines Shipped`) AS shipped,
+    MEASURE(`Lines On Time`) AS on_time, MEASURE(`Lines Kept`) AS kept,
+    ROUND(MEASURE(`On Time %`), 6) AS on_time_pct FROM {{view}} WHERE `Ship Year` = 1995 GROUP BY ALL ORDER BY ALL

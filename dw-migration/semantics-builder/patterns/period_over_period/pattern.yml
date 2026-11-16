@@ -1,0 +1,17 @@
+title: Period over period
+category: Time intelligence
+scenario: >-
+  Compare a measure with the same measure one period earlier: last month and the same month last year.
+  The window measures shift the order dimension, so the comparison follows any filter or grouping in the query.
+question: How did monthly revenue change from the previous month and from the same month last year?
+roles:
+  - name: event_date
+    description: The date of the business event, such as the order date.
+  - name: amount
+    description: The numeric value to add up, such as the order total.
+test:
+  query: >-
+    SELECT * FROM (SELECT `Order Month`, MEASURE(`Revenue`) AS revenue, MEASURE(`Revenue PM`) AS revenue_pm,
+    MEASURE(`Revenue PY`) AS revenue_py, ROUND(MEASURE(`Revenue MoM %`), 6) AS mom_pct,
+    ROUND(MEASURE(`Revenue YoY %`), 6) AS yoy_pct FROM {{view}} GROUP BY ALL)
+    WHERE `Order Month` BETWEEN DATE'1995-01-01' AND DATE'1995-06-01' ORDER BY ALL

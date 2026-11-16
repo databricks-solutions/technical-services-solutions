@@ -1,0 +1,17 @@
+title: Cohort retention
+category: Customer analytics
+scenario: >-
+  Group customers by the month of their first order (the cohort) and count how many order again in each later
+  month. A query source computes the cohort and its size once per customer. Retention is active customers over
+  cohort size.
+question: Of the customers who first ordered in January 1992, how many ordered again in each of the next six months?
+roles:
+  - name: entity_key
+    description: The customer or user key.
+  - name: event_date
+    description: The date of each order or activity.
+test:
+  query: >-
+    SELECT `Months Since First Order`, MEASURE(`Active Customers`) AS active, MEASURE(`Cohort Size`) AS cohort_size,
+    ROUND(MEASURE(`Retention %`), 6) AS retention FROM {{view}}
+    WHERE `Cohort Month` = DATE'1992-01-01' AND `Months Since First Order` <= 6 GROUP BY ALL ORDER BY ALL

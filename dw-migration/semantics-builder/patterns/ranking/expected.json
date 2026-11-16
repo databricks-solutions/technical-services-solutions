@@ -1,0 +1,30 @@
+{
+  "columns": ["Region Name", "Nation Name", "revenue", "rank_in_region", "overall_rank"],
+  "rows": [
+    ["AFRICA", "ETHIOPIA", "6870438595.05", "1", "13"],
+    ["AFRICA", "KENYA", "6829830997.18", "2", "16"],
+    ["AFRICA", "MOZAMBIQUE", "6825859913.59", "3", "17"],
+    ["AFRICA", "ALGERIA", "6809318434.93", "4", "20"],
+    ["AFRICA", "MOROCCO", "6786434999.96", "5", "23"],
+    ["AMERICA", "ARGENTINA", "6924104098.33", "1", "5"],
+    ["AMERICA", "CANADA", "6819698616.46", "2", "18"],
+    ["AMERICA", "UNITED STATES", "6813047408.62", "3", "19"],
+    ["AMERICA", "PERU", "6797137266.66", "4", "21"],
+    ["AMERICA", "BRAZIL", "6785131335.36", "5", "24"],
+    ["ASIA", "INDIA", "6916650512.50", "1", "7"],
+    ["ASIA", "INDONESIA", "6913135399.36", "2", "8"],
+    ["ASIA", "CHINA", "6876145532.41", "3", "11"],
+    ["ASIA", "JAPAN", "6851754376.36", "4", "15"],
+    ["ASIA", "VIETNAM", "6780786470.01", "5", "25"],
+    ["EUROPE", "FRANCE", "6963662248.61", "1", "1"],
+    ["EUROPE", "UNITED KINGDOM", "6959303330.34", "2", "2"],
+    ["EUROPE", "GERMANY", "6928140675.92", "3", "4"],
+    ["EUROPE", "ROMANIA", "6873517196.06", "4", "12"],
+    ["EUROPE", "RUSSIA", "6858783850.08", "5", "14"],
+    ["MIDDLE EAST", "IRAN", "6944920378.27", "1", "3"],
+    ["MIDDLE EAST", "IRAQ", "6918605349.68", "2", "6"],
+    ["MIDDLE EAST", "EGYPT", "6905516871.06", "3", "9"],
+    ["MIDDLE EAST", "JORDAN", "6890272822.31", "4", "10"],
+    ["MIDDLE EAST", "SAUDI ARABIA", "6790477041.09", "5", "22"]
+  ]
+}

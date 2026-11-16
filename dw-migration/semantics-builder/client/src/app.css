@@ -1,0 +1,14 @@
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+/* Du Bois text is 13px; plain lists and paragraphs would otherwise use the browser's 16px. */
+body {
+  font-family: 'DM Sans', system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--db-text-base);
+}

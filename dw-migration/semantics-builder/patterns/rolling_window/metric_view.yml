@@ -1,0 +1,23 @@
+version: 1.1
+comment: Rolling three-month revenue.
+source: samples.tpch.orders
+fields:
+  - name: Order Month
+    expr: DATE_TRUNC('MONTH', source.o_orderdate)
+measures:
+  - name: Revenue
+    expr: SUM(source.o_totalprice)
+  - name: Revenue 3M
+    display_name: Revenue, rolling three months
+    expr: MEASURE(Revenue)
+    window:
+      - order: Order Month
+        range: trailing 3 month inclusive
+  - name: Months in Window
+    expr: COUNT(DISTINCT DATE_TRUNC('MONTH', source.o_orderdate))
+    window:
+      - order: Order Month
+        range: trailing 3 month inclusive
+  - name: Revenue 3M Avg
+    display_name: Average monthly revenue, rolling three months
+    expr: MEASURE(`Revenue 3M`) / MEASURE(`Months in Window`)

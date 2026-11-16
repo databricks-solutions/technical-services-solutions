@@ -1,0 +1,15 @@
+title: Fiscal calendar
+category: Calendars
+scenario: >-
+  Report by a fiscal year that starts in July. The fiscal year is named by the calendar year in which it ends.
+  Fiscal year to date restarts in July. Change the month offset for another fiscal start.
+question: What is revenue by fiscal quarter and fiscal year to date?
+roles:
+  - name: event_date
+    description: The date of the business event.
+  - name: amount
+    description: The numeric value to add up.
+test:
+  query: >-
+    SELECT `Fiscal Year`, `Fiscal Quarter`, `Order Month`, MEASURE(`Revenue`) AS revenue,
+    MEASURE(`Revenue FYTD`) AS revenue_fytd FROM {{view}} WHERE `Fiscal Year` = 1996 GROUP BY ALL ORDER BY ALL

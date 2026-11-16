@@ -1,0 +1,9 @@
+{
+  "columns": ["Customer Nation", "Supplier Nation", "Trade Type", "revenue"],
+  "rows": [
+    ["FRANCE", "FRANCE", "Domestic", "266045359.2213"],
+    ["FRANCE", "GERMANY", "Cross-border", "265279316.6033"],
+    ["GERMANY", "FRANCE", "Cross-border", "265219579.4733"],
+    ["GERMANY", "GERMANY", "Domestic", "264194130.8726"]
+  ]
+}

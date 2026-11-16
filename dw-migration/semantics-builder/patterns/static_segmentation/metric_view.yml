@@ -1,0 +1,21 @@
+version: 1.1
+comment: Orders and revenue by order size band.
+source: samples.tpch.orders
+joins:
+  - name: band
+    source: >-
+      SELECT * FROM VALUES ('1 Small', 0, 50000), ('2 Medium', 50000, 200000), ('3 Large', 200000, 1000000000)
+      AS t(band_name, lower_bound, upper_bound)
+    'on': source.o_totalprice >= band.lower_bound AND source.o_totalprice < band.upper_bound
+    rely:
+      at_most_one_match: true
+fields:
+  - name: Order Size
+    expr: band.band_name
+  - name: Order Year
+    expr: YEAR(source.o_orderdate)
+measures:
+  - name: Orders
+    expr: COUNT(1)
+  - name: Revenue
+    expr: SUM(source.o_totalprice)

@@ -1,0 +1,24 @@
+version: 1.1
+comment: Order line funnel from ordered to kept.
+source: samples.tpch.lineitem
+fields:
+  - name: Ship Mode
+    expr: source.l_shipmode
+  - name: Ship Year
+    expr: YEAR(source.l_shipdate)
+measures:
+  - name: Lines Ordered
+    expr: COUNT(1)
+  - name: Lines Shipped
+    expr: COUNT(1) FILTER (WHERE source.l_linestatus = 'F')
+  - name: Lines On Time
+    expr: COUNT(1) FILTER (WHERE source.l_linestatus = 'F' AND source.l_receiptdate <= source.l_commitdate)
+  - name: Lines Kept
+    expr: >-
+      COUNT(1) FILTER (WHERE source.l_linestatus = 'F' AND source.l_receiptdate <= source.l_commitdate
+      AND source.l_returnflag <> 'R')
+  - name: On Time %
+    comment: Share of shipped lines delivered on time.
+    expr: MEASURE(`Lines On Time`) / NULLIF(MEASURE(`Lines Shipped`), 0)
+    format:
+      type: percentage

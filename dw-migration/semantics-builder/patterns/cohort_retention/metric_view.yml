@@ -1,0 +1,25 @@
+version: 1.1
+comment: Monthly customer retention by first-order cohort.
+source: samples.tpch.orders
+joins:
+  - name: cohort
+    source: >-
+      SELECT o_custkey, cohort_month, COUNT(1) OVER (PARTITION BY cohort_month) AS cohort_size
+      FROM (SELECT o_custkey, MIN(DATE_TRUNC('MONTH', o_orderdate)) AS cohort_month FROM samples.tpch.orders GROUP BY o_custkey)
+    'on': source.o_custkey = cohort.o_custkey
+    rely:
+      at_most_one_match: true
+fields:
+  - name: Cohort Month
+    expr: cohort.cohort_month
+  - name: Months Since First Order
+    expr: CAST(MONTHS_BETWEEN(DATE_TRUNC('MONTH', source.o_orderdate), cohort.cohort_month) AS INT)
+measures:
+  - name: Active Customers
+    expr: COUNT(DISTINCT source.o_custkey)
+  - name: Cohort Size
+    expr: MAX(cohort.cohort_size)
+  - name: Retention %
+    expr: MEASURE(`Active Customers`) / MEASURE(`Cohort Size`)
+    format:
+      type: percentage

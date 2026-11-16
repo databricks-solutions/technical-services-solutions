@@ -1,0 +1,13 @@
+version: 1.1
+comment: Exact and approximate distinct customers.
+source: samples.tpch.orders
+fields:
+  - name: Order Year
+    expr: YEAR(source.o_orderdate)
+measures:
+  - name: Customers
+    comment: Exact distinct count. Not additive across years.
+    expr: COUNT(DISTINCT source.o_custkey)
+  - name: Customers Approx
+    comment: HyperLogLog estimate with a standard error of about 5 percent.
+    expr: APPROX_COUNT_DISTINCT(source.o_custkey)

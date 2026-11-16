@@ -1,0 +1,44 @@
+version: 1.1
+comment: Weekly inventory snapshots with closing, opening and average balances.
+source: samples.tpcds_sf1.inventory
+joins:
+  - name: snapshot
+    source: samples.tpcds_sf1.date_dim
+    'on': source.inv_date_sk = snapshot.d_date_sk
+    rely:
+      at_most_one_match: true
+  - name: warehouse
+    source: samples.tpcds_sf1.warehouse
+    'on': source.inv_warehouse_sk = warehouse.w_warehouse_sk
+    rely:
+      at_most_one_match: true
+fields:
+  - name: Warehouse
+    expr: warehouse.w_warehouse_name
+  - name: Snapshot Date
+    expr: snapshot.d_date
+  - name: Quarter
+    expr: DATE_TRUNC('QUARTER', snapshot.d_date)
+measures:
+  - name: Quantity
+    comment: Sum of all snapshots. Correct for one date only.
+    expr: SUM(source.inv_quantity_on_hand)
+  - name: Closing Balance
+    comment: Quantity at the last snapshot in the period.
+    expr: MEASURE(Quantity)
+    window:
+      - order: Snapshot Date
+        range: current
+        semiadditive: last
+  - name: Opening Balance
+    comment: Quantity at the first snapshot in the period.
+    expr: MEASURE(Quantity)
+    window:
+      - order: Snapshot Date
+        range: current
+        semiadditive: first
+  - name: Snapshots
+    expr: COUNT(DISTINCT snapshot.d_date)
+  - name: Average Balance
+    comment: Average quantity over the snapshots in the period.
+    expr: MEASURE(Quantity) / MEASURE(Snapshots)

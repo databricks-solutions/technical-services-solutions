@@ -1,0 +1,19 @@
+title: Semi-additive balances
+category: Semi-additive
+scenario: >-
+  Inventory and account balances are snapshots. They add up across warehouses or accounts, but not across time:
+  the balance for a month is the last snapshot in the month, not the sum of all snapshots.
+  A window with semiadditive last or first picks one snapshot per period.
+question: What was the closing, opening and average stock on hand per warehouse in each quarter?
+roles:
+  - name: snapshot_date
+    description: The date of each balance snapshot.
+  - name: balance
+    description: The balance at the snapshot date, such as quantity on hand.
+  - name: entity
+    description: What the balance belongs to, such as a warehouse or an account.
+test:
+  query: >-
+    SELECT `Warehouse`, `Quarter`, MEASURE(`Opening Balance`) AS opening, MEASURE(`Closing Balance`) AS closing,
+    ROUND(MEASURE(`Average Balance`), 2) AS average, MEASURE(`Snapshots`) AS snapshots
+    FROM {{view}} WHERE YEAR(`Quarter`) = 2001 AND `Warehouse` IN ('Operations', 'Significantly') GROUP BY ALL ORDER BY ALL

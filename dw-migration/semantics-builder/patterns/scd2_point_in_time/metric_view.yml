@@ -1,0 +1,32 @@
+version: 1.1
+comment: Orders by customer segment at order time and by current segment. The history is synthetic.
+source: samples.tpch.orders
+joins:
+  - name: segment_then
+    source: >-
+      SELECT c_custkey, c_mktsegment AS segment, DATE'1900-01-01' AS valid_from, DATE'1995-01-01' AS valid_to
+      FROM samples.tpch.customer
+      UNION ALL
+      SELECT c_custkey, IF(c_custkey % 5 = 0, 'HOUSEHOLD', c_mktsegment), DATE'1995-01-01', DATE'9999-12-31'
+      FROM samples.tpch.customer
+    'on': >-
+      source.o_custkey = segment_then.c_custkey AND source.o_orderdate >= segment_then.valid_from
+      AND source.o_orderdate < segment_then.valid_to
+    rely:
+      at_most_one_match: true
+  - name: segment_now
+    source: >-
+      SELECT c_custkey, IF(c_custkey % 5 = 0, 'HOUSEHOLD', c_mktsegment) AS segment FROM samples.tpch.customer
+    'on': source.o_custkey = segment_now.c_custkey
+    rely:
+      at_most_one_match: true
+fields:
+  - name: Order Year
+    expr: YEAR(source.o_orderdate)
+  - name: Segment at Order Time
+    expr: segment_then.segment
+  - name: Current Segment
+    expr: segment_now.segment
+measures:
+  - name: Orders
+    expr: COUNT(1)

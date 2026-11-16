@@ -1,0 +1,20 @@
+title: Distinct counts
+category: Measures
+scenario: >-
+  A distinct count is not additive: a customer who orders in three years counts once in each year but once in
+  total. Always compute it from the rows, never as a sum of smaller counts. APPROX_COUNT_DISTINCT is faster on
+  large data. Its standard error is about 5 percent, so a single result can be off by more.
+question: How many distinct customers ordered each year, and how many in all three years together?
+roles:
+  - name: entity_key
+    description: The key to count, such as the customer key.
+  - name: event_date
+    description: The date of the business event.
+test:
+  query: >-
+    SELECT CAST(`Order Year` AS STRING) AS order_year, MEASURE(`Customers`) AS customers,
+    MEASURE(`Customers Approx`) AS customers_approx FROM {{view}} WHERE `Order Year` BETWEEN 1993 AND 1995 GROUP BY ALL
+    UNION ALL
+    SELECT 'Total', MEASURE(`Customers`), MEASURE(`Customers Approx`) FROM {{view}}
+    WHERE `Order Year` BETWEEN 1993 AND 1995
+    ORDER BY 1

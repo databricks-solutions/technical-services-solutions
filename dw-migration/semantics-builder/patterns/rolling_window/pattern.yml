@@ -1,0 +1,17 @@
+title: Rolling window
+category: Time intelligence
+scenario: >-
+  Moving totals and averages over the last N periods, for trends without month-to-month noise.
+  A trailing range includes the current month with the inclusive modifier.
+question: What is the rolling three-month revenue and its monthly average?
+roles:
+  - name: event_date
+    description: The date of the business event.
+  - name: amount
+    description: The numeric value to add up.
+minDbr: '18.1'
+test:
+  query: >-
+    SELECT * FROM (SELECT `Order Month`, MEASURE(`Revenue`) AS revenue, MEASURE(`Revenue 3M`) AS revenue_3m,
+    ROUND(MEASURE(`Revenue 3M Avg`), 4) AS revenue_3m_avg FROM {{view}} GROUP BY ALL)
+    WHERE `Order Month` BETWEEN DATE'1995-01-01' AND DATE'1995-06-01' ORDER BY ALL

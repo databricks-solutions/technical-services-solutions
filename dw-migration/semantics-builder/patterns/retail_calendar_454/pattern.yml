@@ -1,0 +1,18 @@
+title: Retail 4-5-4 calendar
+category: Calendars
+scenario: >-
+  The NRF 4-5-4 calendar has 52 or 53 whole weeks. The year ends on the Saturday nearest January 31, and each
+  quarter has periods of 4, 5 and 4 weeks. A 53rd week goes to the last period. Weeks compare like for like
+  across years. The calendar here is generated in a query source; use your own retail calendar table instead.
+question: What is revenue by retail period, and how many weeks does each period have?
+roles:
+  - name: event_date
+    description: The date of the business event.
+  - name: amount
+    description: The numeric value to add up.
+  - name: calendar_table
+    description: A table with one row per date and its retail year, period and week.
+test:
+  query: >-
+    SELECT `Retail Year`, `Retail Period`, MEASURE(`Weeks`) AS weeks, MIN(`Order Date`) AS first_day,
+    MEASURE(`Revenue`) AS revenue FROM {{view}} WHERE `Retail Year` = 1995 GROUP BY ALL ORDER BY ALL

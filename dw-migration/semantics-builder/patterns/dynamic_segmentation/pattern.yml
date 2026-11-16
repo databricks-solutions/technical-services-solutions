@@ -1,0 +1,17 @@
+title: Dynamic segmentation
+category: Segmentation
+scenario: >-
+  Grade customers into tiers by what they spent in each year, so a customer can move up or down from one year
+  to the next. The tier is a field computed with a window over the rows of the same customer and year.
+question: How many customers were in each spend tier per year, and how much did each tier spend?
+roles:
+  - name: entity
+    description: What to grade, such as a customer or a member.
+  - name: event_date
+    description: The date of the business event.
+  - name: amount
+    description: The value that decides the tier.
+test:
+  query: >-
+    SELECT `Order Year`, `Spend Tier`, MEASURE(`Customers`) AS customers, MEASURE(`Revenue`) AS revenue
+    FROM {{view}} WHERE `Order Year` IN (1995, 1996) GROUP BY ALL ORDER BY ALL

@@ -1,0 +1,18 @@
+title: SCD2 point-in-time attributes
+category: Modeling
+scenario: >-
+  A slowly changing dimension (type 2) keeps one row per version with valid_from and valid_to. Join on the key and
+  on the event date inside the validity range to get the attribute as it was at event time. A second join to the
+  current version gives today's attribute. The history here is synthetic: some customers move to HOUSEHOLD in 1995.
+question: Which segment were today's HOUSEHOLD customers in when they ordered in 1994 and in 1996?
+roles:
+  - name: entity_key
+    description: The business key of the dimension, such as the customer key.
+  - name: event_date
+    description: The date of the business event, compared with the validity range.
+  - name: history_table
+    description: A type 2 table with the key, the attributes, valid_from and valid_to.
+test:
+  query: >-
+    SELECT `Order Year`, `Segment at Order Time`, MEASURE(`Orders`) AS orders FROM {{view}}
+    WHERE `Current Segment` = 'HOUSEHOLD' AND `Order Year` IN (1994, 1996) GROUP BY ALL ORDER BY ALL

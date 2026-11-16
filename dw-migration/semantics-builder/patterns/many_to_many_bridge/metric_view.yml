@@ -1,0 +1,42 @@
+version: 1.1
+comment: Parts and suppliers through the partsupp bridge.
+source: samples.tpch.partsupp
+joins:
+  - name: part
+    source: samples.tpch.part
+    'on': source.ps_partkey = part.p_partkey
+    rely:
+      at_most_one_match: true
+  - name: supplier
+    source: samples.tpch.supplier
+    'on': source.ps_suppkey = supplier.s_suppkey
+    rely:
+      at_most_one_match: true
+    joins:
+      - name: nation
+        source: samples.tpch.nation
+        'on': supplier.s_nationkey = nation.n_nationkey
+        rely:
+          at_most_one_match: true
+        joins:
+          - name: region
+            source: samples.tpch.region
+            'on': nation.n_regionkey = region.r_regionkey
+            rely:
+              at_most_one_match: true
+fields:
+  - name: Supplier Nation
+    expr: supplier.nation.n_name
+  - name: Supplier Region
+    expr: supplier.nation.region.r_name
+  - name: Part Brand
+    expr: part.p_brand
+measures:
+  - name: Parts Supplied
+    comment: Distinct parts. Does not add up across nations.
+    expr: COUNT(DISTINCT source.ps_partkey)
+  - name: Suppliers
+    expr: COUNT(DISTINCT source.ps_suppkey)
+  - name: Stock Value
+    comment: Available quantity times supply cost, one row per part and supplier.
+    expr: SUM(source.ps_availqty * source.ps_supplycost)

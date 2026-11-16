@@ -1,0 +1,19 @@
+title: Role-playing dimensions
+category: Modeling
+scenario: >-
+  One dimension table can play several roles. Join the nation table twice with different names, once for the
+  customer and once for the supplier, and expose each role as its own field. Dates play roles the same way:
+  ship date and receipt date are two fields on one fact.
+question: How much revenue flows between French and German customers and suppliers?
+roles:
+  - name: dimension_table
+    description: The table that plays more than one role, such as nation or date.
+  - name: role_keys
+    description: One foreign key per role on the fact or a joined table.
+  - name: amount
+    description: The numeric value to add up.
+test:
+  query: >-
+    SELECT `Customer Nation`, `Supplier Nation`, `Trade Type`, MEASURE(`Revenue`) AS revenue FROM {{view}}
+    WHERE `Customer Nation` IN ('FRANCE', 'GERMANY') AND `Supplier Nation` IN ('FRANCE', 'GERMANY')
+    AND YEAR(`Ship Month`) = 1995 GROUP BY ALL ORDER BY ALL

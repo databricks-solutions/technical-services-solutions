@@ -9,6 +9,7 @@ import { DashboardPanel } from '../components/DashboardPanel';
 import { DriftPanel } from '../components/DriftPanel';
 import { GovernPanel } from '../components/GovernPanel';
 import { TagsPanel } from '../components/TagsPanel';
+import { AccessPanel } from '../components/AccessPanel';
 import { PagesPanel } from '../components/PagesPanel';
 import { PromotePanel } from '../components/PromotePanel';
 import { PROJECTS_CHANGED, useResource } from '../api';
@@ -98,6 +99,7 @@ export function PublishPage() {
             <div key={last.id} style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
               <GovernPanel projectId={projectId} />
               <TagsPanel projectId={projectId} />
+              <AccessPanel path={`/api/projects/${projectId}/access`} asOwner />
             </div>
           ) : (
             notYet

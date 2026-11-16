@@ -267,10 +267,21 @@ export function registerReviewRoutes(
     handle(async (req): Promise<ReviewDetail> => {
       const actor = actorOf(req);
       const review = await reviews.get(actor, idParam.parse(req.params).id);
-      const canDecide = review.status === 'pending' && same(review.reviewer, actor) && !same(review.requestedBy, actor);
+      const isReviewer = same(review.reviewer, actor) && !same(review.requestedBy, actor);
+      const canDecide = review.status === 'pending' && isReviewer;
       if (review.kind === 'data') {
         const data = await reviews.snapshot(review.id);
-        return { review, canDecide, yaml: '', ucYaml: null, statement: null, tests: [], validation: null, data };
+        return {
+          review,
+          canDecide,
+          isReviewer,
+          yaml: '',
+          ucYaml: null,
+          statement: null,
+          tests: [],
+          validation: null,
+          data,
+        };
       }
       const view = await designs.view(review.projectId, review.version!);
       const draft = view.draft!;
@@ -284,6 +295,7 @@ export function registerReviewRoutes(
       return {
         review,
         canDecide,
+        isReviewer,
         yaml: draft.yaml,
         ucYaml,
         statement: review.target ? createStatement(review.target, draft.yaml) : null,

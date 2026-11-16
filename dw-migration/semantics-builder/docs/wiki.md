@@ -952,6 +952,20 @@ statement before it runs as you:
 A governed tag can have a policy that limits who can set it and its values. Then Unity Catalog returns an error, and
 the app shows it.
 
+**Access check** tests the view as a person with less access, for example a person who sees only one region because
+of a row filter. The app cannot act as another person, so each person runs the tests as themselves:
+
+1. In **Access check**, click **Run the tests as me**. This is the owner run.
+2. Request a review of the promoted version from the person with less access (see Approvals).
+3. That person opens the review and clicks **Run the tests as me**.
+4. Open **Access check** again. Each person has a column. A tag shows where their result differs from yours:
+   - **Fewer rows than the owner:** a row filter is at work.
+   - **Other value than the owner:** a test with an expected value gets another number, for example because of a row
+     filter or a column mask.
+   - **Fails:** the person cannot read the view or a column (a missing grant or a mask that blocks the query).
+
+The app keeps the status, the row count and the difference in percent of each test. It does not keep the values.
+
 ### 18.1 Publish: Dashboard
 
 **Dashboard** makes a starter AI/BI dashboard on the promoted view:

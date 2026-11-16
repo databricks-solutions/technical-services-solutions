@@ -19,6 +19,7 @@ import { api, useResource } from '../api';
 import { REVIEW_TAG } from '../components/ApprovalPanel';
 import { ChecksTable } from '../components/CertifyPanel';
 import { DataState } from '../components/DataState';
+import { AccessPanel } from '../components/AccessPanel';
 import { ImpactPanel } from '../components/ImpactPanel';
 import { SqlBlock } from '../components/SqlBlock';
 import { PageHeader } from '../components/PageHeader';
@@ -246,6 +247,8 @@ export function ReviewPage() {
                     </>
                   )}
                 </section>
+
+                {d.isReviewer && <AccessPanel path={`/api/reviews/${reviewId}/access`} asOwner={false} />}
 
                 <SqlBlock label="New YAML" sql={d.yaml} />
                 {d.ucYaml && <SqlBlock label="YAML in Unity Catalog now" sql={d.ucYaml} />}

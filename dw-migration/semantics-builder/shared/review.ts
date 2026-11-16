@@ -28,6 +28,8 @@ export interface ReviewDetail {
   review: Review;
   /** You are the reviewer and the review is pending. */
   canDecide: boolean;
+  /** You are the reviewer, so you can run the access check of the promoted view as yourself. */
+  isReviewer: boolean;
   yaml: string;
   /** The view in Unity Catalog now. null when it does not exist or cannot be read. */
   ucYaml: string | null;

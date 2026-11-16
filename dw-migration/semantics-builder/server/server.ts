@@ -18,6 +18,7 @@ import { registerCertifyRoutes } from './api/certify';
 import { registerAgentRoutes } from './api/agent';
 import { registerDashboardRoutes } from './api/dashboard';
 import { registerBundleRoutes } from './api/bundle';
+import { registerAccessRoutes } from './api/access';
 import { registerBiRoutes } from './api/bi';
 import { registerLibraryRoutes } from './api/library';
 import { registerImportRoutes } from './api/import';
@@ -65,6 +66,7 @@ createApp({
       registerDashboardRoutes(app, pool, ucFor);
       registerBundleRoutes(app, pool);
       registerBiRoutes(app, pool, runFor);
+      registerAccessRoutes(app, pool, runFor);
       registerLibraryRoutes(app, pool, runFor);
       registerImportRoutes(app, pool, ucFor, llmFor);
       registerGovernRoutes(app, pool, runFor, ucFor);

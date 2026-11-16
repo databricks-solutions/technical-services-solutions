@@ -941,6 +941,17 @@ Governance sets who owns the view and who can read it.
 > **Caution:** Set the owner before you add a materialization. The app cannot change the owner of a materialized
 > view.
 
+**Tags** sets Unity Catalog tags on the promoted view and on its fields, for example `domain = sales` on the view or
+`pii = true` on a customer name field. Only the owner of the view can change its tags. The app shows the one
+statement before it runs as you:
+
+- On the view: `ALTER VIEW ... SET TAGS` or `UNSET TAGS`.
+- On a field: `ALTER TABLE ... ALTER COLUMN ... SET TAGS`. A metric view field takes `ALTER TABLE`, not
+  `ALTER VIEW`.
+
+A governed tag can have a policy that limits who can set it and its values. Then Unity Catalog returns an error, and
+the app shows it.
+
 ### 18.1 Publish: Dashboard
 
 **Dashboard** makes a starter AI/BI dashboard on the promoted view:

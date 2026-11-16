@@ -27,3 +27,35 @@ export const governSchema = z.object({
     .regex(/^[^`\r\n]+$/, 'A user email, a group name or a service principal id, without backticks.'),
 });
 export const governRunSchema = governSchema.extend({ statement: z.string().min(1).max(2000) });
+
+/** A tag on the promoted view (column null) or on one of its fields. */
+export interface ViewTag {
+  column: string | null;
+  name: string;
+  value: string;
+}
+
+export interface TagsView {
+  target: string | null;
+  youOwn: boolean;
+  /** The fields of the view in Unity Catalog, which can have their own tags. */
+  columns: string[];
+  tags: ViewTag[];
+  problem: string | null;
+}
+
+/** Tags that most teams use on a published metric view. */
+export const SUGGESTED_TAGS = ['domain', 'owner_team', 'pii', 'sensitivity'] as const;
+
+export const tagSchema = z.object({
+  column: z.string().trim().min(1).max(255).nullable(),
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(255)
+    .regex(/^[A-Za-z0-9_ ]+$/, 'Use letters, digits, spaces and underscores.'),
+  /** Null removes the tag. */
+  value: z.string().trim().max(255).nullable(),
+});
+export const tagRunSchema = tagSchema.extend({ statement: z.string().min(1).max(2000) });

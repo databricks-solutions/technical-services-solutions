@@ -1,11 +1,11 @@
 import type { Application, Request } from 'express';
 import { z } from 'zod';
 import type { LakebasePool } from '@databricks/appkit';
-import { governRunSchema, governSchema } from '../../shared/govern';
-import type { GovernView } from '../../shared/govern';
+import { governRunSchema, governSchema, tagRunSchema, tagSchema } from '../../shared/govern';
+import type { GovernView, TagsView, ViewTag } from '../../shared/govern';
 import { validateMetricView } from '../../shared/metricView';
-import { governStatement } from '../designer/govern';
-import { quoteName } from '../readiness/profile';
+import { governStatement, tagStatement } from '../designer/govern';
+import { quoteId, quoteName, sqlString } from '../readiness/profile';
 import { runStatement } from '../sql/runner';
 import type { RunDeps } from '../sql/runner';
 import type { UcDeps } from '../uc/metadata';
@@ -74,6 +74,63 @@ export function registerGovernRoutes(
     if (action === 'owner' && principal === view.owner) throw new HttpError(400, `${principal} already owns the view.`);
     return governStatement(action, view.target, principal);
   };
+
+  /** Tags of the view and of its fields, read as the user from the catalog's information schema. */
+  async function readTags(req: Request): Promise<{ actor: string; projectId: string; view: TagsView }> {
+    const { actor, project, view: g } = await read(req);
+    const base: TagsView = { target: g.target, youOwn: g.youOwn, columns: [], tags: [], problem: g.problem };
+    if (g.problem || !g.target) return { actor, projectId: project.id, view: base };
+    const [catalog, schema, table] = g.target.split('.');
+    const where = `WHERE table_schema = ${sqlString(schema)} AND table_name = ${sqlString(table)}`;
+    const tagsWhere = `WHERE schema_name = ${sqlString(schema)} AND table_name = ${sqlString(table)}`;
+    const info = `${quoteId(catalog)}.information_schema`;
+    const ctx = { actor, projectId: project.id, approved: false };
+    const [cols, viewTags, colTags] = await Promise.all([
+      runStatement(`SELECT column_name FROM ${info}.columns ${where} ORDER BY ordinal_position`, ctx, runFor(req)),
+      runStatement(`SELECT tag_name, tag_value FROM ${info}.table_tags ${tagsWhere}`, ctx, runFor(req)),
+      runStatement(`SELECT column_name, tag_name, tag_value FROM ${info}.column_tags ${tagsWhere}`, ctx, runFor(req)),
+    ]);
+    const tags: ViewTag[] = [
+      ...viewTags.rows.map(([name, value]) => ({ column: null, name: name ?? '', value: value ?? '' })),
+      ...colTags.rows.map(([column, name, value]) => ({ column, name: name ?? '', value: value ?? '' })),
+    ];
+    return {
+      actor,
+      projectId: project.id,
+      view: { ...base, columns: cols.rows.map((r) => r[0] ?? '').filter(Boolean), tags },
+    };
+  }
+
+  const planTag = (view: TagsView, tag: { column: string | null; name: string; value: string | null }) => {
+    if (view.problem || !view.target) throw new HttpError(409, view.problem ?? 'Nothing to tag.');
+    if (!view.youOwn) throw new HttpError(403, 'Only the owner of the view can change its tags.');
+    if (tag.column && !view.columns.includes(tag.column))
+      throw new HttpError(400, `The view has no field named ${tag.column}.`);
+    if (tag.value !== null && !tag.value) throw new HttpError(400, 'Give the tag a value.');
+    return tagStatement(view.target, tag);
+  };
+
+  app.get(
+    '/api/projects/:id/governance/tags',
+    handle(async (req) => (await readTags(req)).view)
+  );
+
+  app.post(
+    '/api/projects/:id/governance/tags/preview',
+    handle(async (req) => ({ statement: planTag((await readTags(req)).view, tagSchema.parse(req.body)) }))
+  );
+
+  app.post(
+    '/api/projects/:id/governance/tags',
+    handle(async (req) => {
+      const { statement, ...tag } = tagRunSchema.parse(req.body);
+      const { actor, projectId, view } = await readTags(req);
+      if (planTag(view, tag) !== statement)
+        throw new HttpError(409, 'The statement changed since you reviewed it. Review it again.');
+      await runStatement(statement, { actor, projectId, approved: true }, runFor(req));
+      return (await readTags(req)).view;
+    })
+  );
 
   app.get(
     '/api/projects/:id/governance',

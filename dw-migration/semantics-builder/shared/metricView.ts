@@ -393,7 +393,7 @@ export function renderMetricView(view: MetricView): string {
     ...(measures.length ? { measures } : {}),
     ...(materialization === undefined ? {} : { materialization }),
   };
-  return stringify(out, { version: '1.1', lineWidth: 0 });
+  return stringify(out, { version: '1.1', lineWidth: 0, aliasDuplicateObjects: false });
 }
 
 /** Rewrites full join paths (a.b.column) to the joined table's own name (b.column), for plain SQL. */

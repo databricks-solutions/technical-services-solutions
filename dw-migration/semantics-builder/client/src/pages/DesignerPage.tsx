@@ -30,6 +30,7 @@ import { api, useResource } from '../api';
 import { OpenInCatalog } from '../components/OpenInCatalog';
 import { DataState } from '../components/DataState';
 import { FieldTables } from '../components/FieldTables';
+import { TimeMeasures } from '../components/TimeMeasures';
 import { VersionCompare } from '../components/VersionCompare';
 import { ReconcilePanel } from '../components/ReconcilePanel';
 import { TestEditor } from '../components/TestEditor';
@@ -437,6 +438,13 @@ function Designer({
                   </Typography.Title>
                   <JoinDiagram view={view} issues={issues} />
                 </section>
+                <TimeMeasures
+                  view={view}
+                  disabled={dirty || !!busy}
+                  onSave={(y) =>
+                    run('save', `/api/projects/${projectId}/designs`, { baseVersion: draft.version, yaml: y })
+                  }
+                />
                 <FieldTables
                   projectId={projectId}
                   view={view}

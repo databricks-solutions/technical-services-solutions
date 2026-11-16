@@ -524,6 +524,19 @@ Click **Edit fields** to change the measures and the dimensions in a table. Clic
 in a form. In the form, you select the table, the column and the aggregation (SUM, COUNT, COUNT_DISTINCT, AVG, MIN
 or MAX) or the date grain (DAY, WEEK, MONTH, QUARTER or YEAR).
 
+Click **Add time measures** to add time intelligence to a measure in one step:
+
+1. Select the measure and the date dimension. The app finds the grain of the dimension (one row is a day, week,
+   month, quarter or year). Change it if it is wrong.
+2. Select the measures to add: year to date, previous period, same period last year, growth % against the previous
+   period and last year, and a rolling window of 3 periods.
+3. Click **Add as a new version**.
+
+The app adds window measures, for example `Revenue YTD`, `Revenue PP`, `Revenue PY`, `Revenue YoY %` and
+`Revenue 3M`. A year to date measure needs a year dimension, so the app adds one when the view has none. Unity
+Catalog accepts only day and month periods in a window, so a week is written as 7 days and a quarter as 3 months.
+Validate the new version in the sandbox before you promote it.
+
 ### 11.3 The YAML tab
 
 The YAML tab shows the definition. You can edit the YAML directly. The app checks the YAML when you save it. The

@@ -328,6 +328,12 @@ the command in your terminal with the Databricks CLI, as you, or use **Share** i
 itself: apps cannot get the `access-management` scope that the permissions API needs. Each person also needs
 SELECT on each promoted view (Governance of each sub-project) and CAN USE on the SQL warehouse.
 
+**Use it as an agent tool.** When the agent exists, the tab shows the URL of the managed MCP server of its Genie
+space (`<workspace>/api/2.0/mcp/genie/<space id>`) and Python that connects to it with `databricks-mcp`. Other
+agents (a custom agent, Agent Bricks, Genie Code or any MCP client) then get answers from the governed measures of
+the promoted views. The caller needs access to the space and its views. The managed MCP servers are a Public
+Preview: a workspace admin turns on **Managed MCP Servers** in the Previews page.
+
 ## 6. Overview
 
 The Overview tab has two parts:

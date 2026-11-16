@@ -14,6 +14,7 @@ import {
 import type { AgentView, Principal } from '../../../shared/agent';
 import { api, useResource } from '../api';
 import { DataState } from './DataState';
+import { AgentToolSection } from './AgentToolSection';
 import { SqlBlock } from './SqlBlock';
 
 /**
@@ -245,6 +246,7 @@ export function AgentPanel({ projectId }: { projectId: string }) {
               {config && <SqlBlock label="Genie space settings (JSON)" sql={config} />}
             </div>
           </Modal>
+          {v.agent && base && <AgentToolSection base={base} spaceId={v.agent.spaceId} />}
         </section>
       )}
     </DataState>

@@ -191,6 +191,8 @@ measures, filters), then a draft metric view in a new sub-project.
     Fabric tenant to test; none exist in the dev workspace.
   - Tableau (self-hosted, one shared PAT): every user would read as one Tableau account, so Tableau permissions are
     lost. Not safe for a multi-user app unless the Tableau MCP gets per-user OAuth.
+  Decision, 2026-11-16: h7b stops here. The file import covers Power BI and Tableau; the live path above is the
+  design if it is needed later.
 - Parsers: only permissive licenses (MIT, Apache-2.0, BSD), each added to `LICENSE-THIRD-PARTY.md`. Uploaded
   files are untrusted: size limits, zip limits (no path traversal, no zip bombs), XML without external entities.
 

@@ -178,6 +178,19 @@ measures, filters), then a draft metric view in a new sub-project.
 - **Migration MCPs (later, h7b):** live read of Tableau or Power BI models through the MCPs in the guide, to
   check a parsed file against the live source. Only after we confirm that an app server can call them as the
   user. The Tableau MCP uses one shared PAT, so it is not safe for multi-user apps as is.
+  Check, 2026-11-16 (Databricks docs: "Use MCP tools in an app", "Register an MCP service", "MCP authentication
+  and networking", "Databricks Apps authorization"):
+  - Path: register the external MCP server as an MCP Service in Unity Gateway (UI or API; SQL is not supported),
+    on an HTTP connection. Call it at `/ai-gateway/mcp-services/<catalog>.<schema>.<name>`.
+  - Scopes: tool calls need `ai-gateway`, which apps can request. Discovery and the sign-in status APIs need
+    `unity-catalog`, which is not in the apps scope list. So the app takes the MCP name from config, and when a call
+    fails for a missing provider sign-in, it links to `/mcp-service-login?name=<name>`; it cannot check the status.
+  - Identity: as each user only with Apps user authorization plus per-user OAuth on the connection; each user signs
+    in to the provider once. A bearer token or M2M connection makes every caller one shared provider account.
+  - Power BI (Fabric MCP, per-user OAuth): fits this path. Needs a registered MCP Service, its connection, and a
+    Fabric tenant to test; none exist in the dev workspace.
+  - Tableau (self-hosted, one shared PAT): every user would read as one Tableau account, so Tableau permissions are
+    lost. Not safe for a multi-user app unless the Tableau MCP gets per-user OAuth.
 - Parsers: only permissive licenses (MIT, Apache-2.0, BSD), each added to `LICENSE-THIRD-PARTY.md`. Uploaded
   files are untrusted: size limits, zip limits (no path traversal, no zip bombs), XML without external entities.
 

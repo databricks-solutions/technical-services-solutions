@@ -37,6 +37,33 @@ export function kpisOfMetricView(view: string, yaml: string): DiscoveredKpi[] {
   return (parsed?.measures ?? []).map((m) => ({ view, kind: 'metric_view', name: m.name, expr: m.expr, source }));
 }
 
+/**
+ * The dimensions of a metric view, each with the table of its column: `customer.region` reads the table of the join
+ * named customer, an unqualified column reads the source. So two `region` dimensions on other tables do not match.
+ */
+export function dimensionsOfMetricView(view: string, yaml: string): DiscoveredKpi[] {
+  const parsed = validateMetricView(yaml).view;
+  if (!parsed) return [];
+  const tables = new Map<string, string>();
+  const walk = (joins: typeof parsed.joins) => {
+    for (const j of joins ?? []) {
+      const t = sourceKey(j.source);
+      if (t) tables.set(j.name.toLowerCase(), t);
+      walk(j.joins);
+    }
+  };
+  walk(parsed.joins);
+  const source = sourceKey(parsed.source);
+  return parsed.dimensions.map((d) => {
+    // The first join name in the expression, such as customer in UPPER(customer.region).
+    const alias = [...d.expr.matchAll(/`?([A-Za-z_]\w*)`?\.[`A-Za-z_]/g)]
+      .map((m) => m[1].toLowerCase())
+      .find((x) => tables.has(x));
+    const table = alias ? tables.get(alias) : source;
+    return { view, kind: 'metric_view', name: d.name, expr: d.expr, source: table };
+  });
+}
+
 /** Splits at top-level commas. */
 function items(list: string): string[] {
   const out: string[] = [];
@@ -104,8 +131,11 @@ export function kpisOfSqlView(view: string, sql: string): DiscoveredKpi[] {
   return out;
 }
 
-/** Groups KPIs of two or more views that share a normalized name or expression, conflicts first. */
-export function consolidate(kpis: DiscoveredKpi[]): KpiGroup[] {
+/**
+ * Groups KPIs of two or more views that share a normalized name or expression, conflicts first. With byTable (for
+ * dimensions), the same expression on another table is a different table: `region` of customer and of supplier.
+ */
+export function consolidate(kpis: DiscoveredKpi[], { byTable = false } = {}): KpiGroup[] {
   const parent = new Map<string, string>();
   const find = (k: string): string => {
     const p = parent.get(k) ?? k;
@@ -131,9 +161,10 @@ export function consolidate(kpis: DiscoveredKpi[]): KpiGroup[] {
     let differentTables = false;
     for (const a of members)
       for (const b of members) {
-        if (normalizeName(a.name) !== normalizeName(b.name) || normalizeExpr(a.expr) === normalizeExpr(b.expr))
-          continue;
-        if (a.source && b.source && a.source !== b.source) differentTables = true;
+        const otherTable = !!a.source && !!b.source && a.source !== b.source;
+        if (normalizeName(a.name) !== normalizeName(b.name)) continue;
+        if (normalizeExpr(a.expr) === normalizeExpr(b.expr) && !(byTable && otherTable)) continue;
+        if (otherTable) differentTables = true;
         else conflict = true;
       }
     const count = new Map<string, number>();

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { consolidate, kpisOfMetricView, kpisOfSqlView, normalizeExpr, normalizeName } from './consolidate';
+import {
+  consolidate,
+  dimensionsOfMetricView,
+  kpisOfMetricView,
+  kpisOfSqlView,
+  normalizeExpr,
+  normalizeName,
+} from './consolidate';
 
 const yaml = (measures: string) => `version: 1.1
 source: main.sales.orders
@@ -72,5 +79,42 @@ describe('consolidate', () => {
   });
   it('ignores a KPI that only one view has', () => {
     expect(consolidate(kpisOfSqlView('a', 'SELECT SUM(x) AS x1, SUM(x) AS x2 FROM t'))).toEqual([]);
+  });
+});
+
+describe('dimensions across views', () => {
+  const view = (dims: string) => `version: 1.1
+source: main.sales.orders
+joins:
+  - name: customer
+    source: main.sales.customer
+    "on": source.cust_id = customer.id
+  - name: supplier
+    source: main.sales.supplier
+    "on": source.supp_id = supplier.id
+dimensions:
+${dims}
+measures:
+  - name: Revenue
+    expr: SUM(amount)`;
+  it('reads the table of each dimension through the joins', () => {
+    const dims = dimensionsOfMetricView(
+      'a',
+      view('  - name: Region\n    expr: customer.region\n  - name: Status\n    expr: status')
+    );
+    expect(dims.map((d) => [d.name, d.source])).toEqual([
+      ['Region', 'main.sales.customer'],
+      ['Status', 'main.sales.orders'],
+    ]);
+  });
+  it('flags the same dimension with another definition, and the same name on another table', () => {
+    const a = dimensionsOfMetricView('a', view('  - name: Region\n    expr: customer.region'));
+    const b = dimensionsOfMetricView('b', view('  - name: Region\n    expr: UPPER(customer.region)'));
+    const c = dimensionsOfMetricView('c', view('  - name: Region\n    expr: supplier.region'));
+    const [same] = consolidate([...a, ...b]);
+    expect(same.conflict).toBe(true);
+    const [other] = consolidate([...a, ...c], { byTable: true });
+    expect(other.conflict).toBe(false);
+    expect(other.differentTables).toBe(true);
   });
 });

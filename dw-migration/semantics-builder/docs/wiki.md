@@ -982,6 +982,12 @@ Click **Metric views** in the left navigation. The page has two tabs.
 than one view, shows the differences in the formulas, and proposes one definition. You can import it, or add it to
 the dictionary as certified.
 
+It also compares the **dimensions** of the metric views. A dimension name in two or more views shows one of these
+states: **Same definition**, **Different definitions** (for example `customer.region` and
+`UPPER(customer.region)`), or **Same name, other tables** (for example the region of the customer and the region
+of the supplier). The table of each dimension comes from the joins of its view. **Add to a dictionary** stores the
+proposed definition as a certified dimension, so new designs use the same one.
+
 ## 22. The SQL path and its safety rules
 
 All SQL goes through one path in the server. These rules apply:

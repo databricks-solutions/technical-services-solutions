@@ -1,7 +1,7 @@
 import type { Application, Request } from 'express';
 import { discoverSchema } from '../../shared/discover';
 import type { DiscoveredKpi, DiscoverResult } from '../../shared/discover';
-import { consolidate, kpisOfMetricView, kpisOfSqlView } from '../discover/consolidate';
+import { consolidate, dimensionsOfMetricView, kpisOfMetricView, kpisOfSqlView } from '../discover/consolidate';
 import type { UcDeps } from '../uc/metadata';
 import { actorOf, handle } from './http';
 
@@ -18,6 +18,7 @@ export function registerDiscoverRoutes(app: Application, ucFor: (req: Request) =
       const problems: string[] = [];
       const views: DiscoverResult['views'] = [];
       const kpis: DiscoveredKpi[] = [];
+      const dimensions: DiscoveredKpi[] = [];
       const lists = await Promise.all(
         [...new Set(schemas)].map(async (s) => {
           const [catalog, schema] = s.split('.');
@@ -40,11 +41,17 @@ export function registerDiscoverRoutes(app: Application, ucFor: (req: Request) =
           kind === 'metric_view'
             ? kpisOfMetricView(t.full_name, t.view_definition)
             : kpisOfSqlView(t.full_name, t.view_definition);
+        if (kind === 'metric_view') dimensions.push(...dimensionsOfMetricView(t.full_name, t.view_definition));
         if (!found.length) continue;
         views.push({ fullName: t.full_name, kind, kpis: found.length });
         kpis.push(...found);
       }
-      return { views, groups: consolidate(kpis), problems };
+      return {
+        views,
+        groups: consolidate(kpis),
+        dimensionGroups: consolidate(dimensions, { byTable: true }),
+        problems,
+      };
     })
   );
 }

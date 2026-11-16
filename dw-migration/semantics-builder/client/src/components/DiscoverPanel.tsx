@@ -23,8 +23,16 @@ import { MONO } from './SqlBlock';
 
 const q = encodeURIComponent;
 
-/** Store the proposed definition as a certified metric in the dictionary of a project the user picks. */
-function CertifyModal({ group, onClose }: { group: KpiGroup; onClose: () => void }) {
+/** Store the proposed definition as a certified metric or dimension in the dictionary of a project the user picks. */
+function CertifyModal({
+  group,
+  kind,
+  onClose,
+}: {
+  group: KpiGroup;
+  kind: 'metric' | 'dimension';
+  onClose: () => void;
+}) {
   const projects = useResource<ProjectSummary[]>('/api/projects');
   const [projectId, setProjectId] = useState('');
   const [busy, setBusy] = useState(false);
@@ -35,6 +43,7 @@ function CertifyModal({ group, onClose }: { group: KpiGroup; onClose: () => void
     setBusy(true);
     setError(undefined);
     api(`/api/projects/${projectId}/dictionary/certify`, {
+      kind,
       name: c.name,
       formula: c.expr,
       ...(c.source ? { source: c.source } : {}),
@@ -64,7 +73,7 @@ function CertifyModal({ group, onClose }: { group: KpiGroup; onClose: () => void
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <Typography.Text color="secondary">
-          The entry is a certified metric. Its sub-projects use it. An entry with the same name is replaced.
+          The entry is a certified {kind}. Its sub-projects use it. An entry with the same name is replaced.
         </Typography.Text>
         <code style={{ ...MONO, overflowWrap: 'anywhere' }}>{c.expr}</code>
         <div>
@@ -100,7 +109,7 @@ export function DiscoverPanel() {
   const [error, setError] = useState<string>();
   const [result, setResult] = useState<DiscoverResult>();
   const [importing, setImporting] = useState<KpiGroup>();
-  const [certifying, setCertifying] = useState<KpiGroup>();
+  const [certifying, setCertifying] = useState<{ group: KpiGroup; kind: 'metric' | 'dimension' }>();
   const catalogs = useResource<string[]>('/api/uc/catalogs?purpose=browse');
   const schemas = useResource<string[]>(catalog ? `/api/uc/schemas?catalog=${q(catalog)}` : null);
 
@@ -233,7 +242,10 @@ export function DiscoverPanel() {
                   </TableCell>
                   <TableCell>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
-                      <Button componentId="gsb.discover.certify" onClick={() => setCertifying(g)}>
+                      <Button
+                        componentId="gsb.discover.certify"
+                        onClick={() => setCertifying({ group: g, kind: 'metric' })}
+                      >
                         Add to a dictionary
                       </Button>
                       {g.canonical.kind === 'metric_view' ? (
@@ -251,9 +263,85 @@ export function DiscoverPanel() {
               ))}
             </Table>
           )}
+          {result.dimensionGroups.length > 0 && (
+            <>
+              <Typography.Title level={4} withoutMargins>
+                Dimensions in two or more metric views
+              </Typography.Title>
+              <Typography.Text color="secondary">
+                {result.dimensionGroups.filter((g) => g.conflict).length} with other definitions,{' '}
+                {result.dimensionGroups.filter((g) => g.differentTables).length} with the same name on other tables. Add
+                one definition to a dictionary, so new designs use the same one.
+              </Typography.Text>
+              <Table aria-label="Shared dimensions" scrollable>
+                <TableRow isHeader>
+                  <TableHeader componentId="gsb.discover.h_dim">Dimension</TableHeader>
+                  <TableHeader componentId="gsb.discover.h_dim_state">State</TableHeader>
+                  <TableHeader componentId="gsb.discover.h_dim_canonical">Proposed definition</TableHeader>
+                  <TableHeader componentId="gsb.discover.h_dim_views">In views</TableHeader>
+                  <TableHeader componentId="gsb.discover.h_dim_actions">Actions</TableHeader>
+                </TableRow>
+                {result.dimensionGroups.map((g) => (
+                  <TableRow key={`${g.canonical.view}:${g.canonical.name}`}>
+                    <TableCell>
+                      <Typography.Text bold>{g.canonical.name}</Typography.Text>
+                    </TableCell>
+                    <TableCell>
+                      {g.conflict ? (
+                        <Tag componentId="gsb.discover.dim_state" color="coral">
+                          Different definitions
+                        </Tag>
+                      ) : g.differentTables ? (
+                        <Tag
+                          componentId="gsb.discover.dim_state"
+                          color="lemon"
+                          title="The same name reads a column of another table, for example the region of the customer or of the supplier."
+                        >
+                          Same name, other tables
+                        </Tag>
+                      ) : (
+                        <Tag componentId="gsb.discover.dim_state" color="teal">
+                          Same definition
+                        </Tag>
+                      )}
+                    </TableCell>
+                    <TableCell multiline>
+                      <code style={{ ...MONO, overflowWrap: 'anywhere' }}>{g.canonical.expr}</code>
+                      {g.canonical.source && (
+                        <div>
+                          <Typography.Text color="secondary">on {g.canonical.source}</Typography.Text>
+                        </div>
+                      )}
+                    </TableCell>
+                    <TableCell multiline>
+                      <ul style={{ margin: 0, paddingLeft: 16 }}>
+                        {g.kpis.map((k) => (
+                          <li key={`${k.view}:${k.name}`}>
+                            <code style={MONO}>{k.view}</code>: {k.name} ={' '}
+                            <code style={{ ...MONO, overflowWrap: 'anywhere' }}>{k.expr}</code>
+                            {k.source && <Typography.Text color="secondary"> on {k.source}</Typography.Text>}
+                          </li>
+                        ))}
+                      </ul>
+                    </TableCell>
+                    <TableCell>
+                      <Button
+                        componentId="gsb.discover.certify_dimension"
+                        onClick={() => setCertifying({ group: g, kind: 'dimension' })}
+                      >
+                        Add to a dictionary
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </Table>
+            </>
+          )}
         </>
       )}
-      {certifying && <CertifyModal group={certifying} onClose={() => setCertifying(undefined)} />}
+      {certifying && (
+        <CertifyModal group={certifying.group} kind={certifying.kind} onClose={() => setCertifying(undefined)} />
+      )}
       {importing && (
         <ImportModal
           initialView={importing.canonical.view}

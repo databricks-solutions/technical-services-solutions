@@ -219,7 +219,7 @@ export function registerDictionaryRoutes(app: Application, db: Db, runFor: (req:
     })
   );
 
-  /** Adds or replaces one certified metric, from a definition that discover proposes. */
+  /** Adds or replaces one certified metric or dimension, from a definition that discover proposes. */
   app.post(
     '/api/projects/:id/dictionary/certify',
     handle(async (req) => {
@@ -227,11 +227,11 @@ export function registerDictionaryRoutes(app: Application, db: Db, runFor: (req:
       const project = await owner(actor, idParam.parse(req.params).id);
       const body = certifySchema.parse(req.body);
       const entry: DictionaryEntry = {
-        kind: 'metric',
+        kind: body.kind,
         name: body.name,
         definition: `Canonical definition of ${body.name}, used by ${body.views} view${body.views === 1 ? '' : 's'}.`,
         formula: body.formula,
-        aggregation: aggregationOf(body.formula),
+        ...(body.kind === 'metric' ? { aggregation: aggregationOf(body.formula) } : {}),
         synonyms: [...new Set(body.synonyms.filter((n) => n.toLowerCase() !== body.name.toLowerCase()))],
         ...(body.source ? { source: body.source } : {}),
         status: 'certified',
@@ -239,11 +239,11 @@ export function registerDictionaryRoutes(app: Application, db: Db, runFor: (req:
       };
       await db.query(
         `INSERT INTO gsb.dictionary_entry (project_id, kind, name, entry, source_file, imported_by)
-         VALUES ($1, 'metric', $2, $3, 'discover', $4)
+         VALUES ($1, $5, $2, $3, 'discover', $4)
          ON CONFLICT (project_id, kind, lower(name))
          DO UPDATE SET entry = EXCLUDED.entry, source_file = 'discover', imported_by = EXCLUDED.imported_by,
            imported_at = now()`,
-        [project.id, entry.name, entry, actor]
+        [project.id, entry.name, entry, actor, entry.kind]
       );
       await db.query(
         `INSERT INTO gsb.audit_log (actor, action, project_id, target, outcome, detail)

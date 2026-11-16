@@ -25,6 +25,8 @@ export interface KpiGroup {
 export interface DiscoverResult {
   views: { fullName: string; kind: DiscoveredKpi['kind']; kpis: number }[];
   groups: KpiGroup[];
+  /** Dimensions of two or more metric views, grouped like KPIs: the same name with other definitions first. */
+  dimensionGroups: KpiGroup[];
   problems: string[];
 }
 
@@ -36,8 +38,9 @@ export const discoverSchema = z.object({
     .max(MAX_DISCOVER_SCHEMAS),
 });
 
-/** A proposed definition, to store as a certified metric in a project dictionary. */
+/** A proposed definition, to store as a certified metric or dimension in a project dictionary. */
 export const certifySchema = z.strictObject({
+  kind: z.enum(['metric', 'dimension']).default('metric'),
   name: z.string().trim().min(1).max(200),
   formula: z.string().trim().min(1).max(4000),
   source: z.string().trim().max(400).optional(),

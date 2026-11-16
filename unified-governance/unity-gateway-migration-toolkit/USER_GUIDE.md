@@ -155,6 +155,7 @@ Import the newer installer and run it with the same widgets. Results history is 
 Run the new installer with the same widgets. Tables, jobs and scans don't change.
 
 - **Read access to the results when the jobs run as a service principal.** The service principal owns the results tables it creates, and owning the catalog or schema doesn't give read access to tables someone else owns, so the app (which reads as you) could fail with "does not have SELECT on Table ...". The installer now grants you and the operators `USE SCHEMA, SELECT` on the results schema when **Run jobs as service principal** is set. If a grant fails (you don't own the schema), it prints the statement for an admin.
+- **Access to the services Apply creates, for the same reason.** The service principal also owns the model services and provider services the apply job creates, so the person who ran Apply couldn't list or call them. Apply now grants `EXECUTE` on each model service it creates (or finds in place from the same run) to the person who asked for the run, when the job runs as someone else. Only `EXECUTE`, only those services; the dry run lists it as `would_grant`, the results show it like other grants, and a rollback that deletes the service takes the grant with it. If the grant fails, the service stays and the row says `needs_attention`. Calling the service also needs `USE CATALOG` and `USE SCHEMA` on its catalog and schema, which you usually have on a target schema you chose.
 
 #### Upgrade notes: 0.10.2 to 0.10.3
 
@@ -831,6 +832,7 @@ Grouped by where the problem shows up.
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| You can't list or call a model service that Apply created ("does not have permission to access this resource") | The jobs run as a service principal, which owns the services it creates | 0.10.4 and later grant `EXECUTE` to the person who ran Apply. For older runs or other users, the owner or an admin grants `EXECUTE` on the service (`databricks grants update model_service <catalog>.<schema>.<service> --json '{"changes":[{"principal":"<user>","add":["EXECUTE"]}]}'`) or on the whole schema (`GRANT USE SCHEMA, EXECUTE ON SCHEMA <catalog>.<schema> TO <user>`) |
 | App: "Couldn't load ..." with "does not have SELECT on Table '<results catalog>.<results schema>.ug_migration_...'" | The jobs run as a service principal, which owns the results tables; owning the catalog or schema doesn't give read access to tables someone else owns | Run the installer again (0.10.4 or later grants you and the operators `USE SCHEMA, SELECT` on the results schema), or run that GRANT for the user |
 | "Install: Results catalog ... doesn't exist" | Catalog missing or not visible to you | Pick a catalog where you can create a schema |
 | "another toolkit install exists under app name ..." | A toolkit install (0.7.0, 0.8.0 or a bundle deploy) is present | Set **Install: App name** to that name to update it, uninstall it, or set **Allow a second install** |

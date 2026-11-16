@@ -395,7 +395,8 @@ try:
         results = apply_mod.apply(w, endpoints, g("target_catalog"), g("target_schema"), execute, secrets,
                                   log_path, grants=flag("grants"), ack_guardrails=flag("ack_guardrails"),
                                   smoke=flag("smoke_test"), apply_id=apply_id,
-                                  is_active=lambda aid: store.is_run_active(spark, hub_client, schema, aid))
+                                  is_active=lambda aid: store.is_run_active(spark, hub_client, schema, aid),
+                                  requester=g("requested_by"))
     results = [apply_mod._mask(r) for r in results]
     store.write_apply_items(spark, schema, apply_id, results)
     status, summary = apply_mod.run_outcome(results)  # acknowledged guardrails are not a problem

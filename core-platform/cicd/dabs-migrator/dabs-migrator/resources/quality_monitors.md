@@ -4,6 +4,18 @@ Lakehouse Monitoring — data/ML quality monitors on UC tables.
 
 Docs: https://docs.databricks.com/aws/en/dev-tools/bundles/resources#quality_monitor
 
+## Migration: environment isolation
+
+Applies the environment-value hard rules in `SKILL.md`. A live read returns the source environment's values. Put them only in the source target's `targets.<target>.variables`; every other target, and `dev` in particular, gets its own value. Never leave a literal from the live read in the fields below.
+
+| Field | Use |
+|---|---|
+| `table_name`, `baseline_table_name` | `${var.catalog}.${var.schema}.<table>`. One monitor per table, so a `dev` monitor must point at the dev table |
+| `output_schema_name` | `${var.catalog}.${var.schema}` |
+| `schedule.pause_status` | source `UNPAUSED`: `${var.schedule_pause_status}`. Source `PAUSED`: keep `PAUSED` |
+| `warehouse_id` | `${var.warehouse_id}` |
+| `notifications.*.email_addresses` | `${var.notification_emails}` |
+
 ## Complete schema reference
 
 Required fields: `assets_dir`, `output_schema_name`, `table_name`

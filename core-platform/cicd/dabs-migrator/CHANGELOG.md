@@ -6,6 +6,20 @@ Entries are reverse-chronological. Each entry: date, what changed, **why** (with
 
 ---
 
+## 2026-10-28: Environment isolation rules in the resource docs (#108)
+
+**Change:** added a "Migration: environment isolation" section to `resources/` for pipelines, jobs, alerts, quality monitors, model serving endpoints, volumes, registered models, apps, external locations, dashboards and Genie spaces. Each lists the fields a live read fills with environment values and what to use instead: `${var.catalog}` / `${var.schema}` / `${var.warehouse_id}` / `${var.notification_emails}` / `${var.schedule_pause_status}`, and `${resources.pipelines.<key>.id}` / `${resources.jobs.<key>.id}` for job task references. `alerts.md` no longer says to preserve `pause_status` exactly: a paused source stays `PAUSED`, an active source uses `${var.schedule_pause_status}`.
+
+**Why:** `SKILL.md` already said not to hardcode catalogs, schemas and IDs, but the resource docs (which the agent follows field by field) copied the live values. A dev pipeline then pointed at the production schema, a dev job triggered the production pipeline through a literal `pipeline_id`, and a copied `UNPAUSED` ran dev on the production schedule.
+
+**Verified (CLI v1.17.0, `bundle validate -t dev`, no deploy):** a pipeline with `catalog`, `schema`, `event_log`, `configuration` and `notifications[].email_recipients` set from variables resolves every value to the dev catalog and personal schema, and recipients to `[]`; a job task with `pipeline_id: ${resources.pipelines.<key>.id}` validates (the ID resolves at deploy).
+
+**Open:** whether `dataset_catalog` / `dataset_schema` rewrite fully qualified names inside dashboard SQL, and whether `${var.*}` is interpolated inside a Genie space `file_path` JSON. Both docs say to list such resources in the report until confirmed.
+
+**Where:** `resources/*.md` (sections above), this entry.
+
+---
+
 ## 2026-10-28: Per-target environment values; CI no longer overrides catalog/schema (#108, #116)
 
 **Change:**

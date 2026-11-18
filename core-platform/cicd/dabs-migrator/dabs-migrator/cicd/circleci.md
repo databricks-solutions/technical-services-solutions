@@ -26,15 +26,21 @@ jobs:
           command: |
             set -euo pipefail
             bash scripts/auto-bind.sh <source_target>
-            PLAN=$(databricks bundle plan -t <source_target> 2>&1)
-            printf '%s\n' "$PLAN"
-            if printf '%s\n' "$PLAN" | grep -qiE '\b(recreate|delete)\b'; then
-              echo "ERROR: Plan shows recreate/delete for a bound resource."
-              echo "The bind may have used the wrong ID, or the YAML config does not match the source asset."
-              echo "Review the plan output above, correct bindings/<source_target>.yml if needed, and re-run."
-              exit 1
+            PLAN_JSON=$(databricks bundle plan -t <source_target> -o json 2>&1)
+            printf '%s\n' "$PLAN_JSON" | jq .
+            if echo "$PLAN_JSON" | jq -e '[.plan | to_entries[] | select(.value.action == "recreate" or .value.action == "delete")] | length > 0' &>/dev/null; then
+              echo "ERROR: Plan shows recreate/delete — config mismatch or wrong bind ID."; exit 1
             fi
-            echo "Plan check passed — bound resources will be updated in-place, new resources will be created."
+            if [[ -f "bindings/<source_target>.yml" ]]; then
+              while IFS= read -r line; do
+                [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
+                key=$(echo "$line" | cut -d: -f1 | tr -d ' '); [[ -z "$key" ]] && continue
+                if echo "$PLAN_JSON" | jq -e --arg k "$key" '[.plan | to_entries[] | select(.key | endswith("." + $k)) | select(.value.action == "create")] | length > 0' &>/dev/null; then
+                  echo "ERROR: Bound resource '$key' plans as 'create' — bind may have failed."; exit 1
+                fi
+              done < "bindings/<source_target>.yml"
+            fi
+            echo "Plan check passed."
             databricks bundle deploy -t <source_target>
 
 # Gate it behind a manual approval in the workflow:

@@ -9,6 +9,25 @@ Docs: https://docs.databricks.com/aws/en/dev-tools/bundles/resources#secret_scop
 - **Never** put secret values in YAML or source. The bundle creates the scope; populate values out-of-band via `databricks secrets put-secret` or your secret manager.
 - Reference secrets at runtime as `{{secrets/<scope>/<key>}}` from job/pipeline configs.
 
+## Destroy protection
+
+Always set `lifecycle.prevent_destroy: true` on migrated secret scopes. Once bound, the bundle owns the scope — running `databricks bundle destroy`, removing this YAML entry, or renaming the resource key will **delete the original scope and all secrets it contains**. Consumers reading `{{secrets/<scope>/<key>}}` at runtime will fail immediately.
+
+```yaml
+resources:
+  secret_scopes:
+    my_scope:
+      lifecycle:
+        prevent_destroy: true
+      # ... rest of config
+```
+
+To intentionally delete a bound scope: set `prevent_destroy: false`, run `databricks bundle deploy`, then `databricks bundle destroy`.
+
+To remove a scope from bundle management without deleting it: set `prevent_destroy: false`, `bundle deploy`, then `databricks bundle deployment unbind <key> -t <target>`, remove the YAML key, and `bundle deploy` again.
+
+> ⚠️ **Never rename a bound resource's key.** A key rename is treated as delete + create by the bundle.
+
 ## Complete schema reference
 
 Required fields: `name`

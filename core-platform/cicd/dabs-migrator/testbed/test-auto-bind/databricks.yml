@@ -8,4 +8,4 @@ include:
 targets:
   staging:
     workspace:
-      host: https://adb-7405613676539969.9.azuredatabricks.net
+      host: ${var.workspace_host}  # replace with your staging workspace URL, or omit to use the CLI auth profile

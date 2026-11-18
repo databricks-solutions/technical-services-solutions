@@ -35,7 +35,7 @@ jobs:
           DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
         run: bash scripts/auto-bind.sh <source_target>
 
-      - name: Plan — verify bound resources show update, not recreate/delete
+      - name: Plan — verify bound resources show update, not create/recreate/delete
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
@@ -43,15 +43,30 @@ jobs:
           DATABRICKS_BUNDLE_ENV: <source_target>
         run: |
           set -euo pipefail
-          PLAN=$(databricks bundle plan -t <source_target> 2>&1)
-          printf '%s\n' "$PLAN"
-          if printf '%s\n' "$PLAN" | grep -qiE '\b(recreate|delete)\b'; then
-            echo "ERROR: Plan shows recreate/delete for a bound resource."
-            echo "The bind may have used the wrong ID, or the YAML config does not match the source asset."
-            echo "Review the plan output above, correct bindings/<source_target>.yml if needed, and re-run."
+          PLAN_JSON=$(databricks bundle plan -t <source_target> -o json 2>&1)
+          printf '%s\n' "$PLAN_JSON" | jq .
+
+          # Fail on recreate or delete for any resource
+          if echo "$PLAN_JSON" | jq -e '[.plan | to_entries[] | select(.value.action == "recreate" or .value.action == "delete")] | length > 0' &>/dev/null; then
+            echo "ERROR: Plan shows recreate/delete — config mismatch or wrong bind ID."
             exit 1
           fi
-          echo "Plan check passed — bound resources will be updated in-place, new resources will be created."
+
+          # Fail if any key listed in bindings/<source_target>.yml plans as 'create' (missed bind)
+          if [[ -f "bindings/<source_target>.yml" ]]; then
+            while IFS= read -r line; do
+              [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
+              key=$(echo "$line" | cut -d: -f1 | tr -d ' ')
+              [[ -z "$key" ]] && continue
+              if echo "$PLAN_JSON" | jq -e --arg k "$key" \
+                '[.plan | to_entries[] | select(.key | endswith("." + $k)) | select(.value.action == "create")] | length > 0' &>/dev/null; then
+                echo "ERROR: Bound resource '$key' plans as 'create' — bind may have failed or used the wrong ID."
+                exit 1
+              fi
+            done < "bindings/<source_target>.yml"
+          fi
+
+          echo "Plan check passed — bound resources will update in-place, new resources will be created."
 
       - name: Deploy bundle
         env:

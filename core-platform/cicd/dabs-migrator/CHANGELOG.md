@@ -6,6 +6,27 @@ Entries are reverse-chronological. Each entry: date, what changed, **why** (with
 
 ---
 
+## 2026-11-18: Reviewer feedback — bind by ID primary, improved plan check, secret_scopes/experiments
+
+**Changes from reviewer feedback:**
+
+1. **`scripts/auto-bind.sh` redesign — bind by ID, name as fallback only.**
+   The previous version bound purely by name, which could silently bind the wrong asset if two resources share a name (the plan check shows `update` either way). The script now reads explicit IDs from `bindings/<target>.yml` as the primary path (populated during migration step 4). Name lookup is a fallback for resources not in the file, requiring confirmation (interactive prompt or `CONFIRM_NAME_FALLBACK=yes`). On "already managed", the actual bound ID is read from the bundle state file rather than the found-by-name ID.
+
+2. **`jq --arg` for name matching.** The previous `select(.name == \"$name\")` interpolation broke on names containing quotes or backslashes. Fixed to `jq --arg n "$name" '[.[] | select(.name == $n)]'`.
+
+3. **Plan check uses `bundle plan -o json`.** Replaced text grep with structured JSON parsing (`.plan[*].action`). Now also fails when a key listed in `bindings/<target>.yml` has action `"create"` (missed bind — the resource wasn't actually bound, so the first deploy would create a duplicate rather than update the original).
+
+4. **`secret_scopes` and `experiments` added to `prevent_destroy` protection.** Both resource types had `lifecycle.prevent_destroy` in their schemas but no enforcement rule or "Destroy protection" section. Added to the SKILL.md hard rule and to both resource files.
+
+5. **Unbind-then-remove recipe.** `prevent_destroy: true` blocks accidental removal of a YAML key (deploy would plan a delete). Added a detach-without-delete recipe to `pipelines.md`, `experiments.md`, `secret_scopes.md`, and the SKILL.md hard rule: (1) set `prevent_destroy: false`, (2) `bundle deploy`, (3) `bundle deployment unbind <key> -t <target>`, (4) remove key, (5) `bundle deploy`.
+
+6. **Banner updated.** #106 and #107 now shown as "fixed, pending sandbox validation"; #108 remains listed as open.
+
+7. **Testbed host placeholder.** `testbed/test-auto-bind/databricks.yml` previously contained a real workspace host. Replaced with `${var.workspace_host}` placeholder.
+
+---
+
 ## 2026-11-18: Auto-discover and bind resources by name (scripts/auto-bind.sh)
 
 **Why this change:** The previous bind workflow required engineers to manually look up the numeric ID of each resource in the target workspace (Prod/QA) and write it into `bindings/<target>.yml`. This was error-prone (wrong IDs, IDs copied from the wrong workspace) and introduced friction. Additionally, resources that do not exist yet in a target workspace (net-new) would cause a bind error if accidentally listed — but were not clearly distinguished from resources that *should* exist.

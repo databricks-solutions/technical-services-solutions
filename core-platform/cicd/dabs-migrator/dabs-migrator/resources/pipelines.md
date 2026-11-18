@@ -71,7 +71,9 @@ resources:
       # ... rest of config
 ```
 
-To intentionally destroy a bound pipeline: set `prevent_destroy: false`, run `databricks bundle deploy`, then `databricks bundle destroy`.
+**To intentionally delete** a bound pipeline: (1) set `prevent_destroy: false`, (2) `databricks bundle deploy`, (3) `databricks bundle destroy`.
+
+**To remove a pipeline from bundle management without deleting it** (detach): (1) set `prevent_destroy: false`, (2) `bundle deploy`, (3) `databricks bundle deployment unbind <key> -t <target>`, (4) remove the YAML key, (5) `bundle deploy`. The pipeline continues to exist in the workspace, unmanaged by the bundle.
 
 > ⚠️ **Never rename a bound resource's key.** A key rename is treated as delete + create by the bundle and will delete the original pipeline and its managed tables.
 

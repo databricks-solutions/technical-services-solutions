@@ -234,7 +234,7 @@ Scan again: 0.10.1 finds more calls and fewer false ones. Tables and jobs don't 
 - **Notebooks.** Upload `ug_migration_*.py` and `notebook/` to a workspace folder, keeping the layout.
 - **Bundle.** See [Bundle](#bundle).
 
-Use one install method per workspace. For a second install side by side, set **4. App name** and **17. Allow a second install**. A second install shows a **Second install: <app name>** badge in the app header, so it's hard to confuse with the main one.
+Use one install method per workspace. For a second install side by side, set `app_name` and `second_install=True`. A second install shows a **Second install: <app name>** badge in the app header, so it's hard to confuse with the main one.
 
 ---
 
@@ -384,11 +384,11 @@ Apply creates provider services, model services and grants for **external model*
 1. **Target schema.** Choose it in the **Target schema for the new services** panel: it's prefilled from the scan (default: the install's schema for new model services, `<catalog>.ug_migrated` for installs from 0.11.0, `ai_gateway.migrated` before), and you can change it without a new scan. The proposed service names follow what you type. Create the schema first: the apply identity needs `USE CATALOG`, `USE SCHEMA` and `CREATE SERVICE` on it. A dry run for one target doesn't unlock an execute for another.
 2. **Secrets.** Each new provider service needs its API key. Under **Provider API keys** choose one of:
    - **Reference Unity Catalog secrets (recommended):** name an existing Unity Catalog secret that holds each key, for example `"llm/openai": "secrets/ai_gateway.migrated.openai_key"`. It must be in an allowed secret schema (not necessarily the target schema), and the apply identity must be able to read it.
-   - **Create Unity Catalog secrets from the workspace secrets:** for endpoints that keep their key in a workspace secret (`{{secrets/scope/key}}`) and have no Unity Catalog secret yet. Pick a schema from the allowed secret schemas; the app proposes a name per secret (`<schema>.<scope>_<key>`), which you can change. The apply job reads each workspace secret with its own identity and stores the value in a new Unity Catalog secret, which the provider service then references. Values are never shown or logged. The dry run checks each workspace secret can be read (`would_create_secret`); execute creates them (`created_secret`). A secret that already exists under the chosen name is reused as is (`exists`; its value can't be compared, so check it holds the right key). Rollback deletes the secrets that run created, after the services that used them. Needs **10. Allowed secret schemas**, and READ on each secret scope for the job identity.
-   - **Copy the workspace secret values into the provider service:** puts the key value itself into the provider service. Needs **11. Allow reading secret values**. Keep it off unless you need it.
+   - **Create Unity Catalog secrets from the workspace secrets:** for endpoints that keep their key in a workspace secret (`{{secrets/scope/key}}`) and have no Unity Catalog secret yet. Pick a schema from the allowed secret schemas; the app proposes a name per secret (`<schema>.<scope>_<key>`), which you can change. The apply job reads each workspace secret with its own identity and stores the value in a new Unity Catalog secret, which the provider service then references. Values are never shown or logged. The dry run checks each workspace secret can be read (`would_create_secret`); execute creates them (`created_secret`). A secret that already exists under the chosen name is reused as is (`exists`; its value can't be compared, so check it holds the right key). Rollback deletes the secrets that run created, after the services that used them. Needs `secret_schemas`, and READ on each secret scope for the job identity.
+   - **Copy the workspace secret values into the provider service:** puts the key value itself into the provider service. Needs `allow_secret_read=True`. Keep it off unless you need it.
 
    An endpoint with a plaintext key (not a secret) is `manual`: the API hides the value, so store it as a Unity Catalog secret first.
-3. **Allowed secret schemas.** The schema of each secret must be in **10. Allowed secret schemas**, or apply stops before any change.
+3. **Allowed secret schemas.** The schema of each secret must be in `secret_schemas`, or apply stops before any change.
 4. **Grants** are off unless you tick **Copy legacy endpoint permissions as EXECUTE / MANAGE grants**. Workspace-local `admins` and `users` are skipped and flagged.
 
 #### Dry run
@@ -682,7 +682,7 @@ SELECT job_id, name FROM system.lakeflow.jobs WHERE tags['Project'] = 'unity-gat
 
 | Where | How to set it | Scope |
 |---|---|---|
-| Installer | Widget **12. Legacy deadline** | Snapshot and scan jobs and the app. Run the installer again to change it; an update keeps it |
+| Installer | `deadline` argument to `install(...)` | Snapshot and scan jobs and the app. Run the installer again to change it; an update keeps it |
 | Bundle | Variable `deadline`, for example `--var deadline=2027-06-01` | Snapshot and scan jobs and the app |
 | CLI | `--deadline YYYY-MM-DD` on the planner and account view | That run only |
 | Environment | `UGMIG_DEADLINE=YYYY-MM-DD` | The default for the CLIs and the app |
@@ -877,20 +877,20 @@ The installer prints one checklist before it changes anything. Each `FIX` line h
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| "choose 1. Catalog" or "results catalog ... doesn't exist" | No catalog picked, or one you can't see | Pick a catalog where you have `USE CATALOG` and `CREATE SCHEMA` |
+| "choose catalog" or "results catalog ... doesn't exist" | No catalog picked, or one you can't see | Pick a catalog where you have `USE CATALOG` and `CREATE SCHEMA` |
 | "you can't create <catalog>.ug_migration" | No `CREATE SCHEMA` on the catalog | Send the catalog owner the `GRANT` in the message, or pick another catalog |
-| `[NOTE] Schema for new model services: catalog ... doesn't exist` | Widget 3 (or an install from before 0.11.0, which keeps `ai_gateway.migrated`) names a catalog that isn't there | Enter a schema in a catalog you can use in **3**, or create the catalog. Scans work meanwhile |
-| `[NOTE] Schema for new model services: couldn't create ...` | No `CREATE SCHEMA` on that catalog | Run the printed SQL as the catalog owner, or enter a schema you have in **3** |
-| "another toolkit install exists under app name ..." | Several installs, or a bundle deploy | Set **4. App name** to that name to update it, uninstall it, or set **17. Allow a second install** to `yes` |
-| "this workspace has several toolkit installs" | Blank app name with more than one install | Set **4. App name** (or **2. App name** in UNINSTALL) to one of the names listed |
-| "an app named ... isn't a toolkit app" or "deployed by the bundle" | The name belongs to another app or the bundle | Choose another name, or set **15. Adopt an existing app** to `yes` if it can be replaced |
+| `[NOTE] Schema for new model services: catalog ... doesn't exist` | `target_schema` (or an install from before 0.11.0, which keeps `ai_gateway.migrated`) names a catalog that isn't there | Enter a schema in a catalog you can use in `target_schema`, or create the catalog. Scans work meanwhile |
+| `[NOTE] Schema for new model services: couldn't create ...` | No `CREATE SCHEMA` on that catalog | Run the printed SQL as the catalog owner, or enter a schema you have in `target_schema` |
+| "another toolkit install exists under app name ..." | Several installs, or a bundle deploy | Set `app_name` to that name to update it, uninstall it, or set `second_install=True` |
+| "this workspace has several toolkit installs" | Blank app name with more than one install | Set `app_name` (or **2. App name** in UNINSTALL) to one of the names listed |
+| "an app named ... isn't a toolkit app" or "deployed by the bundle" | The name belongs to another app or the bundle | Choose another name, or set `adopt_app=True` if it can be replaced |
 | "the SQL warehouse can't read ... system tables" | No `SELECT` on the system tables | An account admin runs the `GRANT` in the message |
 | "the SQL warehouse ... is <state>, not RUNNING" | It didn't start | Start it in SQL Warehouses, or pick another |
-| "you can't write to ..." or "install folder ... has files that aren't the toolkit's" | No privilege on the schema, or a folder that isn't empty | Run the `GRANT` in the message, or choose an empty **9. Install folder** |
-| "this would downgrade the toolkit" | The installed version is newer | Install the newer version, or set **16. Allow downgrade** to `yes` |
-| "the operators of this install ... can't be read back" | The first update of an install from 0.10 or earlier | Fill in **5. Operators**, then Run all again |
-| "6. Run jobs as service principal: no service principal named ..." or "... are named ..." | The name isn't in this workspace, or several share it | Enter its application ID (Settings > Identity and access > Service principals) |
-| "14. Central mode: OAuth secret: the secret scope ... doesn't exist", "... has no key ...", "... can't read the secret scope ..." | The central mode secret isn't set up | Run the `databricks secrets` command in the message |
+| "you can't write to ..." or "install folder ... has files that aren't the toolkit's" | No privilege on the schema, or a folder that isn't empty | Run the `GRANT` in the message, or choose an empty `install_folder` |
+| "this would downgrade the toolkit" | The installed version is newer | Install the newer version, or set `allow_downgrade=True` |
+| "the operators of this install ... can't be read back" | The first update of an install from 0.10 or earlier | Set `operators`, then Run all again |
+| "run_as: no service principal named ..." or "... are named ..." | The name isn't in this workspace, or several share it | Enter its application ID (Settings > Identity and access > Service principals) |
+| "central_secret: the secret scope ... doesn't exist", "... has no key ...", "... can't read the secret scope ..." | The central mode secret isn't set up | Run the `databricks secrets` command in the message |
 | A red "Nothing was changed" error after the checklist | A FIX item stopped the install, as designed | Fix each FIX line, then Run all again |
 | Old widgets (`results_catalog`, `action`, ...) in the panel | A notebook from 0.10 or earlier, updated in place | Import the new installer as a new notebook, or remove the old widgets once |
 
@@ -899,7 +899,7 @@ The installer prints one checklist before it changes anything. Each `FIX` line h
 | Symptom | Cause | Fix |
 |---|---|---|
 | 401 "No user token" | User authorization is off | Run the installer again (it sets the `sql` scope), or add `user_api_scopes: [sql]` to the bundle app |
-| 403 "Only the app's operators can start ..." | You aren't in **5. Operators** | Add your email to **5. Operators** and run the installer again (bundle: `--var operators=...`) |
+| 403 "Only the app's operators can start ..." | You aren't in `operators` | Add your email to `operators` and run the installer again (bundle: `--var operators=...`) |
 | 409 "... is already running" | One run of each job at a time | Wait, or open the run link in the message |
 | "No snapshot yet" | No snapshot in the results schema | **Refresh snapshot** (operators), or run the snapshot job once |
 | Pages are empty | No `SELECT` on the results schema, or another results schema | Grant `USE CATALOG`, `USE SCHEMA` and `SELECT`. Check the results schema on About |

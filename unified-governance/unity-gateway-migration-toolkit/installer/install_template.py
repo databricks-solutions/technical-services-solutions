@@ -37,6 +37,38 @@ def _in_job():
         return False
 
 
+INSTALL_WIDGETS = ["01_catalog", "02_warehouse", "03_target", "04_app_name", "05_operators", "06_run_as",
+                   "07_create_target", "08_results_schema", "09_install_folder", "10_secret_schemas",
+                   "11_allow_secret_read", "12_deadline", "13_central_workspaces", "14_central_secret",
+                   "15_adopt_app", "16_allow_downgrade", "17_second_install"]
+if not _in_job():
+    for _old in OLD_WIDGETS + INSTALL_WIDGETS:
+        if _widget_exists(_old):
+            dbutils.widgets.remove(_old)
+if MODE == "uninstall":
+    dbutils.widgets.dropdown("01_action", "preview", ["preview", "remove"], "1. Action (preview changes nothing)")
+    dbutils.widgets.text("02_app_name", "", "2. App name (blank = the only install in this workspace)")
+    dbutils.widgets.dropdown("03_rollback_services", "no", ["no", "yes"],
+                             "3. Roll back services created by apply (yes = delete them too)")
+    dbutils.widgets.dropdown("04_drop_data", "no", ["no", "yes"],
+                             "4. Remove results tables (and the schema, if the toolkit made it and it's empty)")
+    dbutils.widgets.dropdown("05_remove_logs", "no", ["no", "yes"],
+                             "5. Remove apply logs (no = keep them, so kept services can be rolled back later)")
+    dbutils.widgets.text("06_results_schema", "", "6. Results schema (catalog.schema; only if the run asks for it)")
+    dbutils.widgets.dropdown("07_adopt_app", "no", ["no", "yes"],
+                             "7. Also remove an app the installer didn't make (bundle or same name; only if the run asks for it)")
+
+# COMMAND ----------
+
+# MAGIC %md __PROMPT__
+
+# COMMAND ----------
+
+# MAGIC %pip install --quiet "databricks-sdk==0.158.0"
+# MAGIC %restart_python
+
+# COMMAND ----------
+
 PARAMS: dict = {}
 
 
@@ -61,37 +93,9 @@ def install(catalog=None, warehouse=None, target_schema=None, preview=True, app_
     PARAMS.update(locals())
 
 
-if not _in_job():
-    for _old in OLD_WIDGETS:
-        if _widget_exists(_old):
-            dbutils.widgets.remove(_old)
-if MODE == "uninstall":
-    dbutils.widgets.dropdown("01_action", "preview", ["preview", "remove"], "1. Action (preview changes nothing)")
-    dbutils.widgets.text("02_app_name", "", "2. App name (blank = the only install in this workspace)")
-    dbutils.widgets.dropdown("03_rollback_services", "no", ["no", "yes"],
-                             "3. Roll back services created by apply (yes = delete them too)")
-    dbutils.widgets.dropdown("04_drop_data", "no", ["no", "yes"],
-                             "4. Remove results tables (and the schema, if the toolkit made it and it's empty)")
-    dbutils.widgets.dropdown("05_remove_logs", "no", ["no", "yes"],
-                             "5. Remove apply logs (no = keep them, so kept services can be rolled back later)")
-    dbutils.widgets.text("06_results_schema", "", "6. Results schema (catalog.schema; only if the run asks for it)")
-    dbutils.widgets.dropdown("07_adopt_app", "no", ["no", "yes"],
-                             "7. Also remove an app the installer didn't make (bundle or same name; only if the run asks for it)")
-
-# COMMAND ----------
-
 # Settings: edit install(...) above, then Run all. Interactive defaults preview; notebook jobs execute with their parameters.
 if MODE == "install":
     install(preview=False, adopt_app=None, allow_downgrade=None, second_install=None) if _in_job() else install()
-
-# COMMAND ----------
-
-# MAGIC %md __PROMPT__
-
-# COMMAND ----------
-
-# MAGIC %pip install --quiet "databricks-sdk==0.158.0"
-# MAGIC %restart_python
 
 # COMMAND ----------
 
@@ -342,11 +346,10 @@ def central_problems(workspaces: str, secret_ref: str, run_as: str) -> tuple[lis
         if not ids:
             problems.append("central_secret is set, but no workspaces to manage")
         if not run_as:
-            problems.append("central mode scans other workspaces as a service principal: set 6. Run jobs as "
-                            "service principal to its name or application ID")
+            problems.append("central mode scans other workspaces as a service principal: set run_as to its name or application ID")
         if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", ref):
             problems.append("central_secret must be scope/key: a Databricks secret scope and key holding "
-                            "a Databricks OAuth secret of the service principal in 6 (not an Entra ID client secret)")
+                            "a Databricks OAuth secret for run_as (not an Entra ID client secret)")
     return ids, problems
 
 
@@ -644,7 +647,7 @@ def checklist_lines(checks: list[tuple[str, str, str]]) -> list[str]:
 def creates_lines(folder: str, results: str, target: str, target_state: str, app_name: str, run_as_label: str) -> list[str]:
     """What the install creates or updates, by name, so nothing it makes is a surprise."""
     tgt = {"exists": "already exists, kept as is", "created": "created for you",
-           "missing": "not created (see the checklist)"}.get(target_state, target_state)
+           "will_create": "will be created after confirmation", "missing": "not created (see the checklist)"}.get(target_state, target_state)
     return [f"  - Toolkit files: {folder}",
             f"  - Results schema (scan results and history): {results}",
             f"  - Schema for new model services (Apply creates services here, only when you run it): {target} ({tgt})",
@@ -713,8 +716,10 @@ SETTING_WIDGETS = {"catalog": "01_catalog", "warehouse": "02_warehouse", "target
 def setting(key: str) -> str:
     """An install() argument, falling back to its old notebook-job parameter only when it wasn't supplied."""
     value = PARAMS.get(key)
-    if value is None:
+    if value is None and _in_job():
         value = widget(SETTING_WIDGETS[key])
+    elif value is None:
+        value = ""
     if isinstance(value, bool):
         return "yes" if value else "no"
     if isinstance(value, (list, tuple)):
@@ -985,6 +990,8 @@ if kept and not UNINSTALL:
     print("kept from the existing install: " + ", ".join(kept) + " (set advanced arguments to change them; 'none' clears one)")
 
 problems = []
+if CATALOG == "hive_metastore":
+    problems.append("catalog hive_metastore isn't supported: choose a Unity Catalog catalog for the toolkit's schemas")
 if CATALOG_GIVEN and not re.fullmatch(NAME, CATALOG):
     problems.append("catalog must use letters, digits and underscores")
 if not re.fullmatch(NAME, SCHEMA):
@@ -1151,7 +1158,7 @@ def target_check(create_now: bool) -> tuple[str, str, str]:
                                    "target_schema to a schema in a catalog you can use (blank = "
                                    f"<catalog>.{TARGET_SCHEMA_NAME}), or create it. Scans work without it; Apply waits")
     if not create_now:
-        return "ok", "missing", f"{TARGET} doesn't exist: it will be created"
+        return "ok", "will_create", f"{TARGET} doesn't exist: it will be created"
     err = run_sql(f"CREATE SCHEMA IF NOT EXISTS `{cat}`.`{TARGET.split('.', 1)[1]}` COMMENT '{target_comment(APP_NAME)}'")
     if err:
         return "note", "missing", (f"couldn't create {TARGET} ({err[:160]}). {create_schema_fix(cat, cat_info.owner, me)}, "
@@ -1255,8 +1262,7 @@ def preflight() -> tuple[list[str], list[str], str]:
         # shared-location checks below still apply).
         if foreign and not SECOND_INSTALL and not (MINE or EXISTING_APP):
             found.append("another toolkit install exists under app name " + ", ".join(foreign) + ": set app_name "
-                         "to that name to update it, or uninstall it first (to run two side by side, set 17. Allow a "
-                         "second install = yes, with other results schema and install folder)")
+                         "to that name to update it, or uninstall it first (to run two side by side, set second_install=True, with other results schema and install folder)")
         for c in clash:
             label = "results schema" if c["kind"] == "results" else "install folder"
             found.append(f"the {label} {RESULTS if c['kind'] == 'results' else FOLDER} is used by the toolkit install of app "

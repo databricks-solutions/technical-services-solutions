@@ -46,13 +46,13 @@ Example checklist:
 Checklist:
   [OK  ] Databricks Apps: you can create apps
   [OK  ] Catalog: main (the results schema goes here)
-  [NOTE] SQL warehouse: Serverless Starter Warehouse (0123456789abcdef) will be started after you set preview=False
+  [OK  ] SQL warehouse: Serverless Starter Warehouse (0123456789abcdef) is running
   [NOTE] Results schema: main.ug_migration will be created after you set preview=False
   [FIX ] the SQL warehouse can't read system.serving.endpoint_usage (the snapshot and scans need SELECT on it). Ask an account admin to run: GRANT ...
   [OK  ] Schema for new model services: main.ug_migrated doesn't exist: it will be created
 ```
 
-- **FIX** stops before any write and names the exact `GRANT` or setting to fix.
+- **Preview makes no writes.** A FIX stops there, or stops the confirmed install before any remaining resources change. After confirmation, a warehouse may already have started when a later system-table FIX appears.
 - **NOTE** doesn't stop it. Preview never starts a warehouse or creates a schema. If the schema for new model services can't be created after confirmation, the install still finishes: scans work, and Apply waits with the SQL.
 
 When installation finishes, open the app, wait a few minutes for the first snapshot, then go to **Scans** and click **Start scan**.

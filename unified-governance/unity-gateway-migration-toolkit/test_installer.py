@@ -892,10 +892,11 @@ def run_notebook(monkeypatch, ws, widgets=None):
     status = "completed"
     try:
         for i, cell in enumerate(cells):
-            if mode == "install" and cell.lstrip().startswith("# Settings:"):
-                if legacy_job:
-                    ns["install"](preview=False, adopt_app=None, allow_downgrade=None, second_install=None)
-                else:
+            if mode == "install" and "# Settings:" in cell:
+                ns["PARAMS"] = {}
+                ns.pop("install", None)  # %restart_python clears both the function and its recorded arguments
+                exec(compile(cell, "settings-cell", "exec"), ns)
+                if not legacy_job:
                     kwargs = {
                         "catalog": vals.get("01_catalog") or None,
                         "warehouse": vals.get("02_warehouse") or None,
@@ -965,7 +966,7 @@ def test_settings_are_the_first_code_cell_and_the_prompt_follows(mode):
     assert ("Installs the toolkit in this workspace" if mode == "install" else "Removes a toolkit install") in cells[0]
     assert f'MODE = "{mode}"' in cells[1]
     if mode == "install":
-        assert "def install(" in cells[1] and cells[2].lstrip().startswith("# Settings:")
+        assert any("def install(" in cell for cell in cells) and any("# Settings:" in cell for cell in cells)
     else:
         assert "dbutils.widgets" in cells[1] and any(cell.strip().endswith("it changes nothing") for cell in cells[1:4])
     assert any("# MAGIC %pip" in cell for cell in cells[1:5])
@@ -1632,9 +1633,9 @@ def test_update_changes_only_the_fields_the_installer_owns():
 
 def test_install_call_replaces_install_widgets_only():
     install_cells = _notebook_text("install").split("\n# COMMAND ----------\n")
-    assert "def install(" in install_cells[1]
+    assert any("def install(" in cell for cell in install_cells)
     assert 'D("01_catalog"' not in install_cells[1] and 'T("03_target"' not in install_cells[1]
-    assert any(cell.lstrip().startswith("# Settings:") for cell in install_cells)
+    assert any("# Settings:" in cell for cell in install_cells)
     uninstall_cells = _notebook_text("uninstall").split("\n# COMMAND ----------\n")
     assert 'dbutils.widgets.dropdown("01_action"' in uninstall_cells[1]
 
@@ -1674,6 +1675,8 @@ def test_interactive_preview_does_not_start_a_warehouse_or_create_schemas(monkey
     assert snapshot_of(ws) == before
     assert "Checklist:" in res.text and "This install would create or update:" in res.text
     assert "preview=False" in res.text and "will be started" in res.text
+    assert "(will be created after confirmation)" in res.text
+    assert "not created (see the checklist)" not in res.text
 
 
 def test_preview_with_service_principal_does_not_grant_results_access(monkeypatch):
@@ -1692,6 +1695,31 @@ def test_confirmed_install_executes_and_starts_the_warehouse(monkeypatch):
     assert not res.raised, res.status
     assert ws.warehouses[WH_ID]["state"] == "RUNNING"
     assert APP in ws.apps and "main.ug_migration" in ws.schemas and "main.ug_migrated" in ws.schemas
+
+
+def test_no_input_update_ignores_stale_install_widgets(monkeypatch):
+    ws = FakeWS()
+    ids = seed_install(ws)
+    for job in ws.jobs.values():
+        job.run_as = jobs.JobRunAs(service_principal_name=SP_ID)
+    ws.warehouses["ffff0000"] = {"name": "stale", "state": "RUNNING"}
+    res = run_notebook(monkeypatch, ws, {"__mode__": "install", "__interactive__": True, "__preview__": False,
+                                        "01_catalog": "other", "02_warehouse": "stale (ffff0000)", "06_run_as": "stale"})
+    assert not res.raised, res.status
+    assert ws.apps[APP].resources[0].sql_warehouse.id == WH_ID
+    assert all(j.run_as == jobs.JobRunAs(service_principal_name=SP_ID) for j in ws.jobs.values())
+    assert "other.ug_migrated" not in ws.schemas and "other.ug_migration" not in ws.schemas
+
+
+def test_explicit_hive_metastore_is_rejected_before_any_write(monkeypatch):
+    ws = FakeWS()
+    ws.catalogs["hive_metastore"] = "admins"
+    before = snapshot_of(ws)
+    widgets = install_widgets(results_catalog="hive_metastore")
+    widgets["__preview__"] = False
+    res = run_notebook(monkeypatch, ws, widgets)
+    assert res.raised and "hive_metastore isn't supported" in res.status, res.status
+    assert snapshot_of(ws) == before
 
 
 # ---------------------------------------------------------------------------------------------------------------------

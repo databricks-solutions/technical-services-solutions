@@ -8,17 +8,11 @@ __INTRO__
 
 # COMMAND ----------
 
-# The widgets: 17 (install, 1 to 3 first, the rest optional) or 7 (uninstall). make_installer builds two notebooks from
-# this template: INSTALL (MODE install) and UNINSTALL. Widget names start with a two-digit number: the panel sorts by
-# name, so the number keeps them in order. This cell runs before the pip cell, on the runtime's own SDK (0.20.0 on
-# serverless, seen live), so it only uses calls that SDK has, and the REST API for apps.
+# The install settings are a Python call, not a widget panel. Uninstall keeps its small, separate widget set.
 MODE = "__MODE__"
 import json as _json
-from databricks.sdk import WorkspaceClient
 
-w = WorkspaceClient()
-CHOOSE_CATALOG, CHOOSE_WAREHOUSE, KEEP = "<choose a catalog>", "<choose a warehouse>", "<keep the current one>"
-# Names used by earlier builds of this notebook. An old notebook updated in place keeps them in its panel: removed.
+# Names used by earlier notebook builds. Remove them interactively; notebook-job parameters stay as fallbacks below.
 OLD_WIDGETS = ["action", "results_catalog", "warehouse", "operators", "app_name", "results_schema", "install_folder",
                "adopt_app", "allow_downgrade", "second_install", "secret_schemas", "allow_secret_read", "deadline", "run_as",
                "central_workspaces", "central_secret", "drop_data", "remove_logs", "rollback_services", "04_setup",
@@ -43,69 +37,35 @@ def _in_job():
         return False
 
 
-def _toolkit_app_here():
-    token = None
-    for _ in range(50):
-        page = w.api_client.do("GET", "/api/2.0/apps", query={"page_size": 100, **({"page_token": token} if token else {})})
-        if any((a.get("description") or "").startswith("Unity Gateway Migration Toolkit") for a in page.get("apps") or []):
-            return True
-        token = page.get("next_page_token")
-        if not token:
-            return False
-    return True  # too many apps to tell: treat it as an update (nothing is preselected)
+PARAMS: dict = {}
 
 
-if not _in_job():  # a job's parameters are not panel widgets: nothing to tidy
+def install(catalog=None, warehouse=None, target_schema=None, preview=True, app_name=None, operators=None, run_as=None,
+            create_target=None, results_schema=None, install_folder=None, secret_schemas=None, allow_secret_read=None,
+            deadline=None, central_workspaces=None, central_secret=None, adopt_app=False, allow_downgrade=False,
+            second_install=False):
+    """Set up the toolkit. The first interactive run previews; set preview=False to create or update resources.
+
+    catalog: results catalog; None reuses the install's, else uses the workspace default.
+    warehouse: SQL warehouse name or ID; None reuses the install's, else uses the only running warehouse.
+    target_schema: catalog.schema for new model services; None = <catalog>.ug_migrated.
+    preview: True shows checks and the plan without writes; False executes. The default notebook job sets False for
+        backward compatibility. All other None values reuse the existing install or the documented default.
+    operators, central_workspaces and secret_schemas accept a comma-separated string or a list.
+    run_as: service principal name or application ID for the jobs.
+    central_secret: scope/key of a Databricks secret holding a Databricks OAuth secret for run_as (not an Entra ID secret).
+    """
+    if not isinstance(preview, bool):
+        raise TypeError("preview must be True or False")
+    PARAMS.clear()
+    PARAMS.update(locals())
+
+
+if not _in_job():
     for _old in OLD_WIDGETS:
         if _widget_exists(_old):
             dbutils.widgets.remove(_old)
-if MODE == "install":
-    try:
-        _update = _toolkit_app_here()
-    except Exception:  # noqa: BLE001
-        _update = False
-    try:
-        catalog_names = sorted({c.name for c in w.catalogs.list() if c.name})
-    except Exception:  # can't list catalogs: the dropdown only offers the placeholder, and the install asks you to choose
-        catalog_names = []
-    warehouses = sorted(w.warehouses.list(), key=lambda x: (x.state is None or x.state.value != "RUNNING", x.name or ""))
-    wh_labels = [f"{x.name} ({x.id})" for x in warehouses]
-    if _update:  # an install is here: keep its catalog and warehouse unless you pick others
-        cat_choices, cat_default = [KEEP] + catalog_names, KEEP
-        wh_choices, wh_default = [KEEP] + wh_labels, KEEP
-    else:  # a new install: the workspace's default catalog and a running warehouse, so Run all installs right away
-        try:
-            current = spark.sql("SELECT current_catalog()").collect()[0][0]
-        except Exception:  # noqa: BLE001
-            current = ""
-        usable = [c for c in catalog_names if c not in ("system", "samples", "hive_metastore", "__databricks_internal")]
-        cat_default = current if current in usable else (usable[0] if len(usable) == 1 else CHOOSE_CATALOG)
-        cat_choices = [CHOOSE_CATALOG] + catalog_names
-        wh_default = wh_labels[0] if wh_labels else CHOOSE_WAREHOUSE  # running ones first
-        wh_choices = ([CHOOSE_WAREHOUSE] if len(wh_labels) != 1 else []) + wh_labels
-    T, D = dbutils.widgets.text, dbutils.widgets.dropdown
-    D("01_catalog", cat_default, cat_choices, "1. Catalog (the toolkit creates its schemas here)")
-    D("02_warehouse", wh_default, wh_choices, "2. SQL warehouse")
-    T("03_target", "", "3. Schema for new model services (blank = <catalog>.ug_migrated, created for you)")
-    # Optional: blank keeps the default, or what the install already in this workspace uses. "none" clears a setting.
-    T("04_app_name", "", "4. (optional) App name (blank = ug-migration-toolkit, or the install already here)")
-    T("05_operators", "", "5. (optional) Operators who can start jobs in the app (emails; blank = you, or the current list)")
-    T("06_run_as", "", "6. (optional) Run jobs as service principal (its name or application ID; blank = you, or the current one)")
-    D("07_create_target", "current", ["current", "yes", "no"],
-      "7. (optional) Create schema 3 if it's missing (current = yes, or the install's choice; no = you create it)")
-    T("08_results_schema", "", "8. (optional) Results schema name (blank = ug_migration, or the current one)")
-    T("09_install_folder", "", "9. (optional) Install folder (blank = your home folder/ug-migration-toolkit, or the current one)")
-    T("10_secret_schemas", "", "10. (optional) Allowed secret schemas for Apply (catalog.schema, comma-separated; blank = off)")
-    D("11_allow_secret_read", "current", ["current", "no", "yes"],
-      "11. (optional) Allow reading secret values (risk: Apply copies legacy secret values, in plain text)")
-    T("12_deadline", "", "12. (optional) Legacy deadline (YYYY-MM-DD; blank = 2027-03-30, or the current one)")
-    T("13_central_workspaces", "", "13. (optional) Central mode: workspace IDs to manage (blank = off, or the current list)")
-    T("14_central_secret", "", "14. (optional) Central mode: scope/key of a Databricks secret holding a Databricks OAuth "
-                               "secret of the service principal in 6 (not an Entra ID secret)")
-    D("15_adopt_app", "no", ["no", "yes"], "15. (optional) Adopt an existing app with this name (yes overwrites it)")
-    D("16_allow_downgrade", "no", ["no", "yes"], "16. (optional) Allow downgrade (an older version over a newer one)")
-    D("17_second_install", "no", ["no", "yes"], "17. (optional) Allow a second install (own app name, results schema, folder)")
-else:
+if MODE == "uninstall":
     dbutils.widgets.dropdown("01_action", "preview", ["preview", "remove"], "1. Action (preview changes nothing)")
     dbutils.widgets.text("02_app_name", "", "2. App name (blank = the only install in this workspace)")
     dbutils.widgets.dropdown("03_rollback_services", "no", ["no", "yes"],
@@ -117,6 +77,12 @@ else:
     dbutils.widgets.text("06_results_schema", "", "6. Results schema (catalog.schema; only if the run asks for it)")
     dbutils.widgets.dropdown("07_adopt_app", "no", ["no", "yes"],
                              "7. Also remove an app the installer didn't make (bundle or same name; only if the run asks for it)")
+
+# COMMAND ----------
+
+# Settings: edit install(...) above, then Run all. Interactive defaults preview; notebook jobs execute with their parameters.
+if MODE == "install":
+    install(preview=False, adopt_app=None, allow_downgrade=None, second_install=None) if _in_job() else install()
 
 # COMMAND ----------
 
@@ -592,6 +558,31 @@ def parse_target(raw: str) -> tuple[str, str | None]:
     return t, None
 
 
+def warehouse_choice(given: str, saved: str, warehouses: list[dict]) -> tuple[str, str | None]:
+    """Resolve a warehouse name/ID, or an unambiguous default; never pick one of several for the user."""
+    given = (given or "").strip()
+    if given and given not in (CHOOSE_WAREHOUSE, KEEP_CURRENT):
+        match = re.search(r"\(([0-9a-f]+)\)$", given)
+        ident = match.group(1) if match else given
+        found = [x for x in warehouses if x["id"] == ident or x["name"] in (given, ident)]
+        if len(found) == 1:
+            return found[0]["id"], None
+        choices = ", ".join(f"{x['name']} ({x['id']})" for x in warehouses) or "none available"
+        return "", f"SQL warehouse {given!r} wasn't found; choose 2. SQL warehouse from: {choices}"
+    if saved:
+        return saved, None
+    running = [x for x in warehouses if x.get("state") == "RUNNING"]
+    if len(running) == 1:
+        return running[0]["id"], None
+    if len(running) > 1:
+        return "", "several running warehouses; choose 2. SQL warehouse by name or ID"
+    if len(warehouses) == 1:
+        return warehouses[0]["id"], None
+    if not warehouses:
+        return "", "choose 2. SQL warehouse (none found: ask a workspace admin to create one or give you CAN USE on one)"
+    return "", "no running SQL warehouse and several available; choose 2. SQL warehouse by name or ID"
+
+
 def pick(widget: str, saved: str, default: str) -> str:
     """A setting: what the widget says, else what the install already uses, else the default. 'none' or 'off' clears
     it (back to the default), so an update never silently drops a setting, and dropping one is a choice."""
@@ -710,7 +701,8 @@ def widget(name: str, default: str = "") -> str:
         return default
 
 
-SETTING_WIDGETS = {"app_name": "04_app_name", "operators": "05_operators", "run_as": "06_run_as",
+SETTING_WIDGETS = {"catalog": "01_catalog", "warehouse": "02_warehouse", "target_schema": "03_target",
+                   "app_name": "04_app_name", "operators": "05_operators", "run_as": "06_run_as",
                    "create_target": "07_create_target", "results_schema": "08_results_schema",
                    "install_folder": "09_install_folder", "secret_schemas": "10_secret_schemas",
                    "allow_secret_read": "11_allow_secret_read", "deadline": "12_deadline",
@@ -719,14 +711,21 @@ SETTING_WIDGETS = {"app_name": "04_app_name", "operators": "05_operators", "run_
 
 
 def setting(key: str) -> str:
-    """An optional install widget (4 to 17). Blank keeps the default or what the install here already uses; the two
-    dropdowns that default to "current" mean the same as blank."""
-    v = widget(SETTING_WIDGETS[key]).strip()
-    return "" if v == "current" else v
+    """An install() argument, falling back to its old notebook-job parameter only when it wasn't supplied."""
+    value = PARAMS.get(key)
+    if value is None:
+        value = widget(SETTING_WIDGETS[key])
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, (list, tuple)):
+        return ",".join(str(v).strip() for v in value if str(v).strip())
+    value = str(value or "").strip()
+    return "" if value == "current" else value
 
 
-# Read the widgets and settings only. The values are settled after the existing install is read (blank keeps it).
+# Read the settings only. The values are settled after the existing install is read (None keeps it).
 UNINSTALL = MODE == "uninstall"
+INSTALL_PREVIEW = not UNINSTALL and PARAMS.get("preview", True)
 ACTION = ("uninstall: remove" if widget("01_action") == "remove" else "uninstall: preview") if UNINSTALL else "install"
 PREVIEW = ACTION == "uninstall: preview"
 APP_RAW = widget("02_app_name") if UNINSTALL else setting("app_name")
@@ -736,13 +735,12 @@ if UNINSTALL:
         raise ValueError(f"Nothing was changed: 6. Results schema must be catalog.schema, not {_given!r}")
     CATALOG_PICKED, SCHEMA_RAW = (_given.split(".", 1) + [""])[:2] if "." in _given else ("", "")
 else:
-    CATALOG_PICKED, SCHEMA_RAW = widget("01_catalog").strip(), setting("results_schema")
+    CATALOG_PICKED, SCHEMA_RAW = setting("catalog"), setting("results_schema")
 CATALOG_GIVEN = CATALOG_PICKED not in ("", CHOOSE_CATALOG, KEEP_CURRENT)
 CATALOG = CATALOG_PICKED if CATALOG_GIVEN else ""
 SCHEMA_GIVEN = bool(SCHEMA_RAW.strip())
-_wh = re.search(r"\(([0-9a-f]+)\)$", widget("02_warehouse")) if not UNINSTALL else None
-WAREHOUSE_GIVEN = _wh.group(1) if _wh else ""
-TARGET_RAW = widget("03_target") if not UNINSTALL else ""
+WAREHOUSE_GIVEN = setting("warehouse")
+TARGET_RAW = setting("target_schema")
 OPERATORS_RAW = setting("operators")
 RUN_AS_RAW = setting("run_as")
 CREATE_TARGET_RAW = setting("create_target")
@@ -884,6 +882,14 @@ MINE = [i for i in INSTALLS if i["app"] == APP_NAME]
 EXISTING_APP = get_app()
 SAVED = saved_settings(MINE, {e.name: e.value for e in (EXISTING_APP.active_deployment.env_vars or [])}
                        if EXISTING_APP and EXISTING_APP.active_deployment else {})
+if not UNINSTALL and not CATALOG_PICKED and not next((i["results"] for i in MINE if i["results"]), ""):
+    try:
+        current = spark.sql("SELECT current_catalog()").collect()[0][0]
+    except Exception:  # noqa: BLE001 (preflight gives the actionable catalog error)
+        current = ""
+    if current not in ("system", "samples", "hive_metastore", "__databricks_internal"):
+        CATALOG = current
+        CATALOG_GIVEN = bool(CATALOG)
 SCHEMA = results_schema_for(SCHEMA_RAW, APP_NAME)
 RESULTS = f"{CATALOG}.{SCHEMA}"
 FOLDER = folder_for(FOLDER_RAW, me, APP_NAME)
@@ -935,9 +941,9 @@ if UNINSTALL and not CATALOG:
 MARKER_KIND, MARKER_APP = marker_status(read_marker(), APP_NAME)
 SAVED_MARKER = parse_marker(read_marker() or "") if MARKER_KIND == "ours" else {}
 
-# Settle every setting: the widget, else what this install already uses, else the default. Quick setup leaves the
-# custom widgets off the panel, so an update keeps the install's settings without asking for them again.
-WAREHOUSE_ID = WAREHOUSE_GIVEN or SAVED["warehouse"]
+# Settle every setting: install(), else what this install already uses, else the documented default.
+WAREHOUSE_ID, warehouse_problem = warehouse_choice(WAREHOUSE_GIVEN, SAVED["warehouse"], [
+    {"id": x.id, "name": x.name, "state": x.state.value if x.state else ""} for x in w.warehouses.list()])
 SAVED_OPERATORS = ",".join(SAVED_MARKER.get("operators") or []) or SAVED["operators"]
 OPERATOR_LIST = split_list(pick(OPERATORS_RAW, SAVED_OPERATORS, ""))
 if not OPERATOR_LIST and not IS_SP:
@@ -995,14 +1001,16 @@ if not UNINSTALL:
     if not CATALOG:
         problems.append("choose 1. Catalog (the toolkit creates its schemas there; you need USE CATALOG and "
                         "CREATE SCHEMA on it)")
-    if not WAREHOUSE_ID:
+    if warehouse_problem:
+        problems.append(warehouse_problem)
+    elif not WAREHOUSE_ID:
         problems.append("choose 2. SQL warehouse (none found: ask a workspace admin to create one or give you CAN USE "
                         "on one)")
     if IS_SP and not split_list(pick(OPERATORS_RAW, SAVED_OPERATORS, "")):
-        problems.append("this runs as a service principal, so set 5. Operators to the emails of the people "
+        problems.append("this runs as a service principal, so set operators to the emails of the people "
                         "who can start jobs in the app")
 if problems:
-    raise ValueError("Nothing was changed. Fix the widgets first: " + "; ".join(problems))
+    raise ValueError("Nothing was changed. Fix install(...) settings first: " + "; ".join(problems))
 print(f"{ACTION}: app {APP_NAME}, results {RESULTS}, folder {FOLDER}" + ("" if UNINSTALL else
       f", schema for new model services {TARGET}, operators {', '.join(OPERATOR_LIST) or '(none)'}, jobs run as {JOB_IDENTITY}"))
 

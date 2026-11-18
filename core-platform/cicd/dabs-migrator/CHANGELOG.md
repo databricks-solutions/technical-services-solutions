@@ -6,6 +6,28 @@ Entries are reverse-chronological. Each entry: date, what changed, **why** (with
 
 ---
 
+## 2026-11-18: Redesign bind strategy — dev creates a new copy, staging/prod binds (#106 follow-up)
+
+**Why this change:** Binding a resource to a `dev` target and then deploying applies `mode: development` decorations to the original workspace asset — the name is prefixed with `[dev <user>]`, the personal dev schema replaces the original, schedules are paused, and `run_as` is removed. For pipelines, changing the schema triggers a full recreate of all managed tables. This was confirmed empirically via `bundle plan` and `resources.json` inspection: the CLI reports `update` (not `recreate`), so the plan-check guard we added would not catch it. The original asset is silently modified on the first dev deploy.
+
+**New design:**
+- **dev source target:** no bind. The first `bundle deploy -t dev` creates a new isolated dev copy (name prefixed `[dev <user>]`, personal schema, paused schedules). The original workspace asset continues running independently. This is the desired behavior — developer gets a sandbox, production is untouched.
+- **staging/prod source targets:** bind as before. The first deploy on a staging or prod workspace must bind first to update the existing asset rather than duplicate it.
+
+**Changes:**
+1. `SKILL.md` agent instruction 3: removed bind prerequisite for dev deploys.
+2. `SKILL.md` project layout: marked `bindings/` as "staging/prod source targets only — not generated for dev".
+3. `SKILL.md` step 2 (incremental): updated bind reference to staging/prod only.
+4. `SKILL.md` step 4: `bind_id` recording only for staging/prod source targets.
+5. `SKILL.md` step 5: restructured — explicit dev skip block at the top explaining why dev doesn't bind; staging/prod sub-steps unchanged.
+6. `SKILL.md` CI/CD action contract: updated binding note to "staging and prod source targets only".
+7. `SKILL.md` hard rules: added "Never bind a resource to a `dev` target"; modified "Never run the first deploy without bind" to add dev exemption.
+8. All six `cicd/*.md` files: added "Dev source targets do not use this workflow" callout at the top of the Binding section.
+9. `templates/README.md.tmpl`: restructured Binding section to explain the two-path design.
+10. `testbed/dm_job_bundle`: removed `bindings/dev.yml`; updated README to reflect no-bind dev design.
+
+---
+
 ## 2026-10-30: Plan check before first deploy (reviewer feedback on #106)
 
 **Changes:**

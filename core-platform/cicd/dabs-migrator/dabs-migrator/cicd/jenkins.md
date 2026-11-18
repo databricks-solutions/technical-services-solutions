@@ -2,9 +2,11 @@
 
 Declarative `Jenkinsfile` at repo root. Assumes Jenkins agents have `curl` and `bash`.
 
-## Binding (one-time, source target only)
+## Binding (one-time, staging and prod source targets only)
 
-Before the first recurring deploy to the source workspace, add a temporary `Bind and deploy` stage to the `Jenkinsfile`, run it once (the `input` block requires a manual click), and then remove the stage.
+> **Dev source targets do not use this stage.** The first `bundle deploy -t dev` intentionally creates a new isolated dev copy — no bind needed. Only generate and run this stage when `source_target` is `staging` or `prod`.
+
+Before the first recurring deploy to a staging or prod source workspace, add a temporary `Bind and deploy` stage to the `Jenkinsfile`, run it once (the `input` block requires a manual click), and then remove the stage.
 
 ```groovy
 // Add temporarily to Jenkinsfile — remove after the first successful run.

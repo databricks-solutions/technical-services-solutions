@@ -2,9 +2,11 @@
 
 `.circleci/config.yml` at repo root.
 
-## Binding (one-time, source target only)
+## Binding (one-time, staging and prod source targets only)
 
-Before the first recurring deploy to the source workspace, add a temporary `bind-and-deploy-<source_target>` job to `.circleci/config.yml`, gate it behind an `approval` job, run it once, and then remove both jobs.
+> **Dev source targets do not use this job.** The first `bundle deploy -t dev` intentionally creates a new isolated dev copy — no bind needed. Only generate and run this job when `source_target` is `staging` or `prod`.
+
+Before the first recurring deploy to a staging or prod source workspace, add a temporary `bind-and-deploy-<source_target>` job to `.circleci/config.yml`, gate it behind an `approval` job, run it once, and then remove both jobs.
 
 ```yaml
 # Add temporarily to .circleci/config.yml — remove after the first successful run.

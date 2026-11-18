@@ -2,9 +2,11 @@
 
 Single `bitbucket-pipelines.yml` at repo root.
 
-## Binding (one-time, source target only)
+## Binding (one-time, staging and prod source targets only)
 
-Before the first recurring deploy to the source workspace, add a custom pipeline to `bitbucket-pipelines.yml`, trigger it manually once from the Bitbucket UI (Pipelines → Run pipeline → custom), and then remove the step.
+> **Dev source targets do not use this pipeline.** The first `bundle deploy -t dev` intentionally creates a new isolated dev copy — no bind needed. Only generate and run this pipeline when `source_target` is `staging` or `prod`.
+
+Before the first recurring deploy to a staging or prod source workspace, add a custom pipeline to `bitbucket-pipelines.yml`, trigger it manually once from the Bitbucket UI (Pipelines → Run pipeline → custom), and then remove the step.
 
 ```yaml
 # Add temporarily under pipelines.custom in bitbucket-pipelines.yml.

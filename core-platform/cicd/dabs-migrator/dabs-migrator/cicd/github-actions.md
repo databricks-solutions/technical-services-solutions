@@ -4,9 +4,11 @@ Default CI/CD tool. Generates three workflows under `.github/workflows/`.
 
 Reference: https://docs.databricks.com/aws/en/dev-tools/bundles/jobs-tutorial
 
-## Binding (one-time, source target only)
+## Binding (one-time, staging and prod source targets only)
 
-Before the first recurring deploy to the source workspace, run a one-time bind-and-deploy workflow that links each bundle resource to its existing workspace counterpart. This workflow is separate from the three recurring files below. Emit it as `.github/workflows/bind_and_deploy_<source_target>.yml`, run it once with environment approval, and then delete the file.
+> **Dev source targets do not use this workflow.** The first `bundle deploy -t dev` intentionally creates a new isolated dev copy — no bind needed. Only generate and run this workflow when `source_target` is `staging` or `prod`.
+
+Before the first recurring deploy to a staging or prod source workspace, run a one-time bind-and-deploy workflow that links each bundle resource to its existing workspace counterpart. This workflow is separate from the three recurring files below. Emit it as `.github/workflows/bind_and_deploy_<source_target>.yml`, run it once with environment approval, and then delete the file.
 
 ```yaml
 # .github/workflows/bind_and_deploy_<source_target>.yml

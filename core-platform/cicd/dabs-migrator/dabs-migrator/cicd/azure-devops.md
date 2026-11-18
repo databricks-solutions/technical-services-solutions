@@ -2,9 +2,11 @@
 
 Generates three pipelines under `.azure-pipelines/`.
 
-## Binding (one-time, source target only)
+## Binding (one-time, staging and prod source targets only)
 
-Before the first recurring deploy to the source workspace, run a one-time bind-and-deploy pipeline. Emit it as `.azure-pipelines/bind_and_deploy_<source_target>.yml`, trigger it manually once (with environment approval), and then delete the file.
+> **Dev source targets do not use this pipeline.** The first `bundle deploy -t dev` intentionally creates a new isolated dev copy — no bind needed. Only generate and run this pipeline when `source_target` is `staging` or `prod`.
+
+Before the first recurring deploy to a staging or prod source workspace, run a one-time bind-and-deploy pipeline. Emit it as `.azure-pipelines/bind_and_deploy_<source_target>.yml`, trigger it manually once (with environment approval), and then delete the file.
 
 ```yaml
 # .azure-pipelines/bind_and_deploy_<source_target>.yml

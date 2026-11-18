@@ -64,34 +64,28 @@ INTRO = {
     "install": """\
 Installs the toolkit in this workspace. No CLI, Git or local setup.
 
-Click **Run all** (about 5 minutes). It adds the widgets at the top, prefilled with this workspace's default catalog and
-a running SQL warehouse, checks everything, and installs. The app link is printed at the end.
+1. Click **Run all**. The first run checks the workspace and shows what it will create, but changes nothing.
+2. Review the checklist and plan, then set `preview=False` in `install(...)` and click **Run all** again to install.
 
-The first three widgets are the ones that matter: **1. Catalog** (the toolkit creates its schemas there), **2. SQL
-warehouse**, and **3. Schema for new model services** (blank: `<catalog>.ug_migrated` is created for you; or enter
-`catalog.schema` of one you have). To change one, change it and click Run all again.
+The usual settings need no edit: `catalog=None` uses the workspace default, `warehouse=None` finds an unambiguous running
+warehouse, and `target_schema=None` creates `<catalog>.ug_migrated`. Use `catalog="main"`, `warehouse="Shared"` or
+`target_schema="main.models"` to override them. `help(install)` lists every advanced setting, including central mode and
+secret mapping. Lists or comma-separated strings work for `operators`, `central_workspaces` and `secret_schemas`.
 
-Before anything changes, a checklist marks each check OK, FIX or NOTE. If anything needs fixing, nothing is created or
-changed, the run ends with a red "Nothing was changed" error, and the message says exactly what to grant or set.
+The checklist marks each check OK, FIX or NOTE. A stopped warehouse and missing schemas are created or started only after
+confirmation. FIX stops before any write and names the exact GRANT or setting to fix.
 
-**What it creates**
-- In the catalog you pick: the results schema `ug_migration` (scan results and history), and the schema for new
-  model services `ug_migrated` (empty until you run Apply). The service names end up in your callers' code
-  (`catalog.schema.service`), so pick the schema you want to keep.
-- The toolkit files in your home folder (`ug-migration-toolkit`).
-- Three jobs the app starts (account snapshot, workspace scan, apply), tagged `Project = unity-gateway-migration-toolkit`.
-- The **Unity Gateway Migration Toolkit** app. The first snapshot starts at the end; it reads account-wide system tables.
+**What it creates after confirmation**
+- In the chosen catalog: results schema `ug_migration` and model-service schema `ug_migrated` (empty until Apply).
+- The toolkit files, three jobs and the **Unity Gateway Migration Toolkit** app. The first snapshot reads account-wide system tables.
 
 **What you need:** permission to create apps and jobs (usually a workspace admin), `USE CATALOG` and `CREATE SCHEMA`
 on the catalog, `CAN USE` on the warehouse, and `SELECT` on the system tables (if it's missing, the checklist prints
 the GRANT to send an account admin).
 
-**Widgets 4 to 17 are optional** (app name, operators, a service principal for the jobs, central mode, secret mapping
-and more). Most installs leave them blank: blank keeps the default, or what the install already here uses.
-
-**To update**, import the newer installer and click Run all. It finds the install and keeps its settings. (From 0.10
-or earlier it asks once for the operators, who can start jobs in the app: Databricks doesn't return them.) To remove
-the toolkit, use the UNINSTALL notebook from the same zip.""",
+**To update**, import the newer installer and use the same call. None reuses every existing setting. (From 0.10 or
+earlier it asks once for the operators, who can start jobs in the app: Databricks doesn't return them.) Notebook jobs
+execute with `preview=False` and keep the old parameter names. To remove the toolkit, use the UNINSTALL notebook.""",
     "uninstall": """\
 Removes a toolkit install from this workspace.
 
@@ -102,7 +96,7 @@ Model services created by Apply stay unless you set **3** to `yes`. Schemas that
 Uninstall refuses while a toolkit job is running.""",
 }
 TITLE = {"install": "Install the Unity Gateway Migration Toolkit", "uninstall": "Uninstall the Unity Gateway Migration Toolkit"}
-PROMPT = {"install": "Widgets 1 to 3 above are the ones that matter; 4 to 17 are optional",
+PROMPT = {"install": "Edit install(...) above: preview=True first; set preview=False to install",
           "uninstall": "Run all with 1. Action = preview first: it changes nothing"}
 
 

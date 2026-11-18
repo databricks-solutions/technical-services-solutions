@@ -16,7 +16,7 @@ One notebook installs everything inside your workspace in about 5 minutes. No CL
 | What | Name (defaults) | Notes |
 |---|---|---|
 | Results schema | `<catalog>.ug_migration` | Scan results and history. Keep it to the migration team: scans store matched code lines |
-| Schema for new model services | `<catalog>.ug_migrated` | Empty until you run Apply. The service names end up in your callers' code (`<catalog>.ug_migrated.<service>`), so pick the schema you want to keep. Already have one? Enter it in widget 3 |
+| Schema for new model services | `<catalog>.ug_migrated` | Empty until you run Apply. The service names end up in your callers' code (`<catalog>.ug_migrated.<service>`), so pick the schema you want to keep. Already have one? Set `target_schema` to it |
 | Toolkit files | `/Workspace/Users/<you>/ug-migration-toolkit` | Replaced on every update |
 | Three jobs | `[ug-migration-toolkit] Unity Gateway migration snapshot`, `workspace scan`, `apply` | Started from the app. Tagged `Project = unity-gateway-migration-toolkit`. The weekly snapshot is paused |
 | The app | `ug-migration-toolkit` (Compute > Apps) | Where you work: Overview, Scans, Apply, Verify & cut over. Only operators (default: you) can start jobs in it; others can view |
@@ -26,57 +26,60 @@ The install never changes your endpoints or code. Changes happen later, only whe
 ## Install
 
 1. Download `unity-gateway-migration-toolkit.zip` from the [release page](https://github.com/databricks-solutions/technical-services-solutions/releases/tag/unity-gateway-migration-toolkit-latest) and unzip it. In the workspace, open your home folder, choose **Import**, and import `INSTALL_unity_gateway_migration_toolkit_0_11_0.py` from the zip's top folder.
-2. Open the notebook and click **Run all** (about 5 minutes). It adds the widgets at the top, prefilled with this workspace's default catalog and a running SQL warehouse, checks everything, and installs. The app link is printed at the end.
+2. Open the notebook and click **Run all**. The first run checks the workspace and shows the plan, but changes nothing.
+3. Review the checklist, then set `preview=False` in `install(...)` and click **Run all** again to install. The app link is printed at the end.
 
-That's it for most installs. The first three widgets are the ones that matter:
+The usual settings need no edit:
 
-| Widget | What it is |
+| `install(...)` argument | Default |
 |---|---|
-| **1. Catalog** | Where the toolkit creates its two schemas |
-| **2. SQL warehouse** | What the app and jobs query through |
-| **3. Schema for new model services** | Blank: `<catalog>.ug_migrated` is created for you. Or enter `catalog.schema` of a schema you already have, or want created |
+| `catalog` | `None`: the workspace's default catalog, or the current install's catalog. The toolkit creates its two schemas there |
+| `warehouse` | `None`: the current install's warehouse, else an unambiguous running warehouse by name or ID |
+| `target_schema` | `None`: `<catalog>.ug_migrated`, created after confirmation. Or use `catalog.schema` of an existing schema |
+| `preview` | `True` interactively: show checks and the plan without writes. Set `False` to install |
 
-To use another catalog or warehouse, change the widget and click **Run all** again. If the workspace has no default catalog you can use, the first run stops and asks you to pick one in **1. Catalog**.
+If the default catalog isn't usable or several running warehouses are available, the checklist asks for one explicit choice instead of guessing.
 
-Before anything changes, the notebook prints one checklist (shortened here):
+Example checklist:
 
 ```
 Checklist:
   [OK  ] Databricks Apps: you can create apps
   [OK  ] Catalog: main (the results schema goes here)
-  [OK  ] SQL warehouse: Serverless Starter Warehouse (0123456789abcdef) is running
+  [NOTE] SQL warehouse: Serverless Starter Warehouse (0123456789abcdef) will be started after you set preview=False
+  [NOTE] Results schema: main.ug_migration will be created after you set preview=False
   [FIX ] the SQL warehouse can't read system.serving.endpoint_usage (the snapshot and scans need SELECT on it). Ask an account admin to run: GRANT ...
   [OK  ] Schema for new model services: main.ug_migrated doesn't exist: it will be created
 ```
 
-- **FIX** stops the install. Nothing is created or changed (a stopped SQL warehouse may have been started for the checks), and the cell ends with a red "Nothing was changed" error, which is expected. Fix each FIX item (the message has the exact `GRANT` or the widget to set), then Run all again.
-- **NOTE** doesn't stop it. For example, if the schema for new model services can't be created, the install goes on, scans work, and Apply waits until the schema exists. The SQL to create it is printed.
+- **FIX** stops before any write and names the exact `GRANT` or setting to fix.
+- **NOTE** doesn't stop it. Preview never starts a warehouse or creates a schema. If the schema for new model services can't be created after confirmation, the install still finishes: scans work, and Apply waits with the SQL.
 
-When it finishes, open the app, wait a few minutes for the first snapshot, then go to **Scans** and click **Start scan**.
+When installation finishes, open the app, wait a few minutes for the first snapshot, then go to **Scans** and click **Start scan**.
 
-## Optional widgets
+## Optional settings
 
-Widgets 4 to 17 are marked **(optional)**. Most installs leave them blank. Blank keeps the default, or what the install already in the workspace uses; `none` clears a setting.
+`help(install)` lists every advanced keyword argument. `None` keeps the current install's setting or the documented default.
 
-| Widget | Use it for |
+| Argument | Use it for |
 |---|---|
-| 4. App name | A second install. An older install (`unity-gateway-migration` from 0.8, `ug-migration` from 0.7) is found without it when it's the only one |
-| 5. Operators | Who can start jobs in the app. Default: you |
-| 6. Run jobs as service principal | A shared install: the jobs run as this service principal. Its name or application ID. You need its **Service principal: User** role |
-| 7. Create schema 3 if it's missing | `no` if you'll create it yourself (the SQL is printed) |
-| 8, 9. Results schema name, install folder | Other locations |
-| 10, 11. Allowed secret schemas, allow reading secret values | Secret mapping in Apply |
-| 12. Legacy deadline | A date other than March 30, 2027 |
-| 13, 14. Central mode | One install that also manages other workspaces. See [Central mode](#central-mode) |
-| 15 to 17. Adopt an existing app, allow downgrade, allow a second install | Special cases. The checklist tells you when you need one |
+| `app_name` | A second install. An older install (`unity-gateway-migration` from 0.8, `ug-migration` from 0.7) is found without it when it's the only one |
+| `operators` | Who can start jobs in the app. Default: you. A list or comma-separated string works |
+| `run_as` | A shared install: the jobs run as this service principal's name or application ID. You need its **Service principal: User** role |
+| `create_target` | `False` if you'll create the model-service schema yourself (the SQL is printed) |
+| `results_schema`, `install_folder` | Other locations |
+| `secret_schemas`, `allow_secret_read` | Secret mapping in Apply. Lists or comma-separated schemas work |
+| `deadline` | A date other than March 30, 2027 |
+| `central_workspaces`, `central_secret` | One install that also manages other workspaces. See [Central mode](#central-mode) |
+| `adopt_app`, `allow_downgrade`, `second_install` | Special cases. The checklist tells you when you need one |
 
-A job that runs the installer passes the widget names as parameters (`01_catalog`, `06_run_as`, ...).
+Notebook jobs execute with `preview=False` and keep the old parameter names (`01_catalog`, `06_run_as`, ...), so existing automation doesn't stop at preview. New job parameters are used only when the corresponding `install(...)` argument is `None`.
 
 ## Central mode
 
 One install (the hub) can also scan and change other workspaces in the account. Most customers don't need it: installing the toolkit in each workspace is simpler. If you do want it:
 
-1. **A service principal** that is a workspace admin in each workspace to manage. Enter its name or application ID in **6. Run jobs as service principal**.
+1. **A service principal** that is a workspace admin in each workspace to manage. Set `run_as` to its name or application ID.
 2. **A Databricks OAuth secret** for it: Settings > Identity and access > Service principals > the service principal > **Secrets** > Generate secret. This is a Databricks secret, not an Entra ID (Azure) client secret.
 3. **Store it in a Databricks secret scope** the service principal can read:
    ```
@@ -84,8 +87,8 @@ One install (the hub) can also scan and change other workspaces in the account. 
    databricks secrets put-secret ugmig sp_secret
    databricks secrets put-acl ugmig <application ID> READ
    ```
-   Enter `ugmig/sp_secret` in **14. Central mode: OAuth secret**.
-4. **The workspace IDs** to manage in **13. Central mode: workspace IDs**. A workspace created in the last few hours may not be listed in `system.access.workspaces_latest` yet; scans of it fail until it is.
+   Set `central_secret="ugmig/sp_secret"`.
+4. Set `central_workspaces` to the workspace IDs to manage, as a list or comma-separated string. A workspace created in the last few hours may not be listed in `system.access.workspaces_latest` yet; scans of it fail until it is.
 5. **Network policies.** The toolkit's jobs run on serverless compute, and Databricks only lets serverless compute in one workspace call another when cross-workspace network policies allow it. Without this, scans of the other workspaces fail with "Cert validation failed ... trusted workload checks did not pass". It isn't a credentials problem. An account admin, in the account console:
    - **Ingress (each managed workspace):** enables the **Cross Workspace Network Policy** preview (**Previews**), then in Security > Networking > Context-based ingress & egress, on the policy attached to that workspace, clears **Compatibility mode** on the **Ingress** tab and allows the hub's workspace ID under **Restrict access to specific source workspaces**. "Allow access from all public IPs" doesn't cover this. A policy named default-policy applies to every workspace without its own policy, so a dedicated policy for the managed workspace is safer.
    - **Egress (the hub):** nothing to do if its policy allows access to all destinations. If egress is restricted, add the managed workspaces under **Allowed Databricks workspace destinations**.
@@ -96,11 +99,11 @@ The checklist checks the secret scope, the key and the service principal's READ,
 
 ## Update
 
-Import the newer installer and click **Run all**. With an install already in the workspace, **1. Catalog** and **2. SQL warehouse** start at "keep the current one", and every setting is kept: catalog and schemas, warehouse, operators, the jobs' service principal, central mode and secret mapping. The run lists what it kept.
+Import the newer installer and use the same `install(...)` call. `None` reuses every current setting: catalog and schemas, warehouse, operators, the jobs' service principal, central mode and secret mapping. The run lists what it kept.
 
-**Updating from 0.10 or earlier:** those installs didn't record their operators, and Databricks doesn't return them, so the first update asks for them once (a FIX). Enter them in **5. Operators** (your email alone is fine), then Run all again. Later updates keep them.
+**Updating from 0.10 or earlier:** those installs didn't record their operators, and Databricks doesn't return them, so the first update asks for them once (a FIX). Set `operators` (your email alone is fine), then Run all again. Later updates keep them.
 
-The [user guide](USER_GUIDE.md#installer-widgets) lists every widget, and [Troubleshooting](USER_GUIDE.md#9-troubleshooting) maps each installer message to its fix.
+The [user guide](USER_GUIDE.md#installer-settings) lists every setting, and [Troubleshooting](USER_GUIDE.md#9-troubleshooting) maps each installer message to its fix.
 
 ## Uninstall
 

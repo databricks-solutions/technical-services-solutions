@@ -893,7 +893,9 @@ def run_notebook(monkeypatch, ws, widgets=None):
     try:
         for i, cell in enumerate(cells):
             if mode == "install" and cell.lstrip().startswith("# Settings:"):
-                if not legacy_job:
+                if legacy_job:
+                    ns["install"](preview=False, adopt_app=None, allow_downgrade=None, second_install=None)
+                else:
                     kwargs = {
                         "catalog": vals.get("01_catalog") or None,
                         "warehouse": vals.get("02_warehouse") or None,
@@ -1817,11 +1819,13 @@ def test_run_as_service_principal_lets_you_and_the_operators_read_the_results(mo
     """The service principal owns the results tables it creates; owning the catalog doesn't let you read them, and the
     app reads as the signed-in user (seen live: "does not have SELECT on Table ...")."""
     ws = FakeWS()
-    res = run_notebook(monkeypatch, ws, install_widgets(run_as=SP_ID, operators=f"{ME}, ops@example.com"))
+    widgets = install_widgets(run_as=SP_ID, operators=f"{ME}, ops@example.com")
+    widgets["__legacy_job__"] = True  # old notebook-job parameters still execute and must retain these grants
+    res = run_notebook(monkeypatch, ws, widgets)
     assert not res.raised, res.status
+    assert res.params["preview"] is False
     for who in (ME, "ops@example.com"):
-        assert f"granted: GRANT USE SCHEMA, SELECT ON SCHEMA `main`.`ug_migration` TO `{who}`;" in res.text
-    assert res.text.count(f"SELECT ON SCHEMA `main`.`ug_migration` TO `{ME}`") == 1  # no duplicate for you
+        assert res.text.count(f"granted: GRANT USE SCHEMA, SELECT ON SCHEMA `main`.`ug_migration` TO `{who}`;") == 1
 
 
 def test_results_read_grants_only_when_a_service_principal_runs_the_jobs():

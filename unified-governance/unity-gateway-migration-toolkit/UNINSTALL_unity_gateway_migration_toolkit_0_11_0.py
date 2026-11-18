@@ -95,6 +95,8 @@ def install(catalog=None, warehouse=None, target_schema=None, preview=True, app_
     run_as: service principal name or application ID for the jobs.
     central_secret: scope/key of a Databricks secret holding a Databricks OAuth secret for run_as (not an Entra ID secret).
     """
+    if MODE != "install":
+        return
     if not isinstance(preview, bool):
         raise TypeError("preview must be True or False")
     preview = False if _in_job() else preview
@@ -103,14 +105,13 @@ def install(catalog=None, warehouse=None, target_schema=None, preview=True, app_
 
 # COMMAND ----------
 
-# Settings: edit install(...) above, then Run all. Interactive defaults preview; notebook jobs execute with their parameters.
-if MODE == "install":
-    install(
-        catalog=None,        # None = workspace default catalog
-        warehouse=None,      # None = existing install, else the only running warehouse
-        target_schema=None,  # None = <catalog>.ug_migrated
-        preview=True,        # set False and Run all to install
-    )
+# Settings: Run all to preview, or set preview=False to install. Interactive defaults preview; notebook jobs execute with their parameters.
+install(
+    catalog=None,        # None = workspace default catalog
+    warehouse=None,      # None = existing install, else the only running warehouse
+    target_schema=None,  # None = <catalog>.ug_migrated
+    preview=True,        # set False and Run all to install
+)
 
 # COMMAND ----------
 

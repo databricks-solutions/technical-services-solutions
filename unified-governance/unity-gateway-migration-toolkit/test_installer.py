@@ -1651,6 +1651,9 @@ def test_install_helpers_live_after_restart_and_visible_cell_is_only_the_call():
     assert "install(" in cells[visible]
     assert all(f"{name}=None" in cells[visible] for name in ("catalog", "warehouse", "target_schema"))
     assert "preview=True" in cells[visible]
+    assert "if MODE" not in cells[visible]
+    assert "edit install(...) above" not in cells[visible]
+    assert "Run all to preview" in cells[visible]
 
 
 def test_default_catalog_falls_back_to_the_only_usable_catalog(monkeypatch):

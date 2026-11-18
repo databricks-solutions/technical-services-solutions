@@ -31,7 +31,19 @@
 
 # COMMAND ----------
 
-# The install settings are a Python call, not a widget panel. Uninstall keeps its small, separate widget set.
+# Legacy cleanup, install helpers and the visible install(...) call all run after %restart_python.
+
+# COMMAND ----------
+
+# MAGIC %md Edit install(...) above: preview=True first; set preview=False to install
+
+# COMMAND ----------
+
+# MAGIC %pip install --quiet "databricks-sdk==0.158.0"
+# MAGIC %restart_python
+
+# COMMAND ----------
+
 MODE = "install"
 import json as _json
 
@@ -42,6 +54,10 @@ OLD_WIDGETS = ["action", "results_catalog", "warehouse", "operators", "app_name"
                "05_app_name", "06_operators", "07_run_as", "08_create_target", "09_results_schema", "10_install_folder",
                "11_secret_schemas", "12_allow_secret_read", "13_deadline", "14_central_workspaces", "15_central_secret",
                "16_adopt_app", "17_allow_downgrade", "18_second_install"]
+INSTALL_WIDGETS = ["01_catalog", "02_warehouse", "03_target", "04_app_name", "05_operators", "06_run_as",
+                   "07_create_target", "08_results_schema", "09_install_folder", "10_secret_schemas",
+                   "11_allow_secret_read", "12_deadline", "13_central_workspaces", "14_central_secret",
+                   "15_adopt_app", "16_allow_downgrade", "17_second_install"]
 
 
 def _widget_exists(name):
@@ -60,10 +76,6 @@ def _in_job():
         return False
 
 
-INSTALL_WIDGETS = ["01_catalog", "02_warehouse", "03_target", "04_app_name", "05_operators", "06_run_as",
-                   "07_create_target", "08_results_schema", "09_install_folder", "10_secret_schemas",
-                   "11_allow_secret_read", "12_deadline", "13_central_workspaces", "14_central_secret",
-                   "15_adopt_app", "16_allow_downgrade", "17_second_install"]
 if not _in_job():
     for _old in OLD_WIDGETS + INSTALL_WIDGETS:
         if _widget_exists(_old):
@@ -81,44 +93,41 @@ if MODE == "uninstall":
     dbutils.widgets.dropdown("07_adopt_app", "no", ["no", "yes"],
                              "7. Also remove an app the installer didn't make (bundle or same name; only if the run asks for it)")
 
-# COMMAND ----------
-
-# MAGIC %md Edit install(...) above: preview=True first; set preview=False to install
-
-# COMMAND ----------
-
-# MAGIC %pip install --quiet "databricks-sdk==0.158.0"
-# MAGIC %restart_python
-
-# COMMAND ----------
 
 PARAMS: dict = {}
 
 
 def install(catalog=None, warehouse=None, target_schema=None, preview=True, app_name=None, operators=None, run_as=None,
             create_target=None, results_schema=None, install_folder=None, secret_schemas=None, allow_secret_read=None,
-            deadline=None, central_workspaces=None, central_secret=None, adopt_app=False, allow_downgrade=False,
-            second_install=False):
+            deadline=None, central_workspaces=None, central_secret=None, adopt_app=None, allow_downgrade=None,
+            second_install=None):
     """Set up the toolkit. The first interactive run previews; set preview=False to create or update resources.
 
     catalog: results catalog; None reuses the install's, else uses the workspace default.
     warehouse: SQL warehouse name or ID; None reuses the install's, else uses the only running warehouse.
     target_schema: catalog.schema for new model services; None = <catalog>.ug_migrated.
-    preview: True shows checks and the plan without writes; False executes. The default notebook job sets False for
-        backward compatibility. All other None values reuse the existing install or the documented default.
+    preview: True shows checks and the plan without writes; False executes. When run as a notebook job it is always
+        False for backward compatibility. All other None values reuse the existing install or the documented default.
     operators, central_workspaces and secret_schemas accept a comma-separated string or a list.
     run_as: service principal name or application ID for the jobs.
     central_secret: scope/key of a Databricks secret holding a Databricks OAuth secret for run_as (not an Entra ID secret).
     """
     if not isinstance(preview, bool):
         raise TypeError("preview must be True or False")
+    preview = False if _in_job() else preview
     PARAMS.clear()
     PARAMS.update(locals())
 
+# COMMAND ----------
 
 # Settings: edit install(...) above, then Run all. Interactive defaults preview; notebook jobs execute with their parameters.
 if MODE == "install":
-    install(preview=False, adopt_app=None, allow_downgrade=None, second_install=None) if _in_job() else install()
+    install(
+        catalog=None,        # None = workspace default catalog
+        warehouse=None,      # None = existing install, else the only running warehouse
+        target_schema=None,  # None = <catalog>.ug_migrated
+        preview=True,        # set False and Run all to install
+    )
 
 # COMMAND ----------
 
@@ -911,13 +920,17 @@ EXISTING_APP = get_app()
 SAVED = saved_settings(MINE, {e.name: e.value for e in (EXISTING_APP.active_deployment.env_vars or [])}
                        if EXISTING_APP and EXISTING_APP.active_deployment else {})
 if not UNINSTALL and not CATALOG_PICKED and not next((i["results"] for i in MINE if i["results"]), ""):
+    excluded = ("system", "samples", "hive_metastore", "__databricks_internal")
     try:
         current = spark.sql("SELECT current_catalog()").collect()[0][0]
+        usable = sorted({c.name for c in w.catalogs.list() if c.name and c.name not in excluded})
     except Exception:  # noqa: BLE001 (preflight gives the actionable catalog error)
-        current = ""
-    if current not in ("system", "samples", "hive_metastore", "__databricks_internal"):
+        current, usable = "", []
+    if current in usable:
         CATALOG = current
-        CATALOG_GIVEN = bool(CATALOG)
+    elif len(usable) == 1:
+        CATALOG = usable[0]
+    CATALOG_GIVEN = bool(CATALOG)
 SCHEMA = results_schema_for(SCHEMA_RAW, APP_NAME)
 RESULTS = f"{CATALOG}.{SCHEMA}"
 FOLDER = folder_for(FOLDER_RAW, me, APP_NAME)

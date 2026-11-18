@@ -892,9 +892,9 @@ def run_notebook(monkeypatch, ws, widgets=None):
     status = "completed"
     try:
         for i, cell in enumerate(cells):
+            if "# MAGIC %restart_python" in cell:
+                ns = {k: v for k, v in ns.items() if k in ("dbutils", "spark", "displayHTML", "print")}
             if mode == "install" and "# Settings:" in cell:
-                ns["PARAMS"] = {}
-                ns.pop("install", None)  # %restart_python clears both the function and its recorded arguments
                 exec(compile(cell, "settings-cell", "exec"), ns)
                 if not legacy_job:
                     kwargs = {
@@ -964,11 +964,11 @@ def test_settings_are_the_first_code_cell_and_the_prompt_follows(mode):
     assert cells[0].startswith("# Databricks notebook source")
     assert "__" not in cells[0].replace("__init__", "")  # every placeholder filled in
     assert ("Installs the toolkit in this workspace" if mode == "install" else "Removes a toolkit install") in cells[0]
-    assert f'MODE = "{mode}"' in cells[1]
+    assert any(f'MODE = "{mode}"' in cell for cell in cells)
     if mode == "install":
         assert any("def install(" in cell for cell in cells) and any("# Settings:" in cell for cell in cells)
     else:
-        assert "dbutils.widgets" in cells[1] and any(cell.strip().endswith("it changes nothing") for cell in cells[1:4])
+        assert any("dbutils.widgets" in cell for cell in cells) and any(cell.strip().endswith("it changes nothing") for cell in cells[1:5])
     assert any("# MAGIC %pip" in cell for cell in cells[1:5])
 
 
@@ -1637,7 +1637,30 @@ def test_install_call_replaces_install_widgets_only():
     assert 'D("01_catalog"' not in install_cells[1] and 'T("03_target"' not in install_cells[1]
     assert any("# Settings:" in cell for cell in install_cells)
     uninstall_cells = _notebook_text("uninstall").split("\n# COMMAND ----------\n")
-    assert 'dbutils.widgets.dropdown("01_action"' in uninstall_cells[1]
+    assert any('dbutils.widgets.dropdown("01_action"' in cell for cell in uninstall_cells)
+
+
+def test_install_helpers_live_after_restart_and_visible_cell_is_only_the_call():
+    cells = _notebook_text("install").split("\n# COMMAND ----------\n")
+    restart = next(i for i, cell in enumerate(cells) if "%restart_python" in cell)
+    helper = next(i for i, cell in enumerate(cells) if "def install(" in cell)
+    visible = next(i for i, cell in enumerate(cells) if "# Settings:" in cell)
+    assert restart < helper < visible
+    assert "MODE" in cells[helper] and "_in_job" in cells[helper] and "PARAMS" in cells[helper]
+    assert "def install(" not in cells[visible]
+    assert "install(" in cells[visible]
+    assert all(f"{name}=None" in cells[visible] for name in ("catalog", "warehouse", "target_schema"))
+    assert "preview=True" in cells[visible]
+
+
+def test_default_catalog_falls_back_to_the_only_usable_catalog(monkeypatch):
+    ws = FakeWS()
+    ws.current_catalog = "missing-from-metastore"
+    ws.catalogs = {"main": "admins"}
+    res = run_notebook(monkeypatch, ws, {"__mode__": "install", "__interactive__": True, "__preview__": False})
+    assert not res.raised, res.status
+    assert "main.ug_migration" in ws.schemas and "main.ug_migrated" in ws.schemas
+    assert "missing-from-metastore.ug_migration" not in ws.schemas
 
 
 def test_install_call_records_bool_and_list_settings(monkeypatch):

@@ -33,15 +33,8 @@ stages:
                 - checkout: self
                 - script: curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
                   displayName: Install Databricks CLI
-                - script: |
-                    set -euo pipefail
-                    grep -v '^#' bindings/<source_target>.yml | while IFS=': ' read -r key bind_id; do
-                      [ -z "$key" ] && continue
-                      bind_id=$(printf '%s' "$bind_id" | tr -d '"')
-                      echo "Binding $key -> $bind_id"
-                      databricks bundle deployment bind "$key" "$bind_id" -t <source_target> --auto-approve
-                    done
-                  displayName: Bind migrated resources
+                - script: bash scripts/auto-bind.sh <source_target>
+                  displayName: Auto-discover and bind migrated resources
                   env:
                     DATABRICKS_HOST: $(DATABRICKS_HOST)
                     DATABRICKS_CLIENT_ID: $(DATABRICKS_CLIENT_ID)
@@ -50,14 +43,14 @@ stages:
                     set -euo pipefail
                     PLAN=$(databricks bundle plan -t <source_target> 2>&1)
                     printf '%s\n' "$PLAN"
-                    if printf '%s\n' "$PLAN" | grep -qiE '\b(create|recreate|delete)\b'; then
-                      echo "ERROR: Plan shows create/recreate/delete for a bound resource."
+                    if printf '%s\n' "$PLAN" | grep -qiE '\b(recreate|delete)\b'; then
+                      echo "ERROR: Plan shows recreate/delete for a bound resource."
                       echo "The bind may have used the wrong ID, or the YAML config does not match the source asset."
                       echo "Review the plan output above, correct bindings/<source_target>.yml if needed, and re-run."
                       exit 1
                     fi
-                    echo "Plan check passed — all bound resources will be updated in-place."
-                  displayName: Plan — verify bound resources show update, not create/recreate/delete
+                    echo "Plan check passed — bound resources will be updated in-place, new resources will be created."
+                  displayName: Plan — verify bound resources show update, not recreate/delete
                   env:
                     DATABRICKS_HOST: $(DATABRICKS_HOST)
                     DATABRICKS_CLIENT_ID: $(DATABRICKS_CLIENT_ID)

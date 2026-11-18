@@ -6,6 +6,31 @@ Entries are reverse-chronological. Each entry: date, what changed, **why** (with
 
 ---
 
+## 2026-11-18: Auto-discover and bind resources by name (scripts/auto-bind.sh)
+
+**Why this change:** The previous bind workflow required engineers to manually look up the numeric ID of each resource in the target workspace (Prod/QA) and write it into `bindings/<target>.yml`. This was error-prone (wrong IDs, IDs copied from the wrong workspace) and introduced friction. Additionally, resources that do not exist yet in a target workspace (net-new) would cause a bind error if accidentally listed — but were not clearly distinguished from resources that *should* exist.
+
+**New design:**
+- `scripts/auto-bind.sh <target>` queries the target workspace for each `jobs` and `pipelines` resource by its resolved bundle name.
+- **1 match** → binds automatically.
+- **0 matches** → skips; the first `bundle deploy` creates the resource new. No error, no manual step.
+- **2+ matches** → exits with error and instructions to resolve manually (name collision).
+- Writes `bindings/<target>.yml` as an auto-generated audit trail — commit this file.
+- Unity Catalog resources (`schemas`, `volumes`, `catalogs`, `registered_models`, etc.) are not auto-discovered; add their UC path bind arguments manually to `bindings/<target>.yml` if needed.
+- Re-run safe: keys already present in `bindings/<target>.yml` are skipped on subsequent runs.
+- The plan check in the one-time CI workflow was updated from `create|recreate|delete` → `recreate|delete`. `create` is now expected for resources not found by name that will be provisioned new.
+
+**Changes:**
+1. `scripts/auto-bind.sh` — new script.
+2. `SKILL.md` step 5a: replaced manual bindings file write with `auto-bind.sh` invocation.
+3. `SKILL.md` step 4: removed manual bind_id recording for jobs/pipelines.
+4. `SKILL.md` step 7: added `scripts/auto-bind.sh` to generated supporting files.
+5. `SKILL.md` project layout: added `scripts/` directory, updated `bindings/` description.
+6. All 6 `cicd/*.md` files: replaced grep-and-bind loop with `bash scripts/auto-bind.sh`, updated plan check to `recreate|delete`.
+7. `templates/README.md.tmpl`: updated binding section.
+
+---
+
 ## 2026-11-18: Redesign bind strategy — dev creates a new copy, staging/prod binds (#106 follow-up)
 
 **Why this change:** Binding a resource to a `dev` target and then deploying applies `mode: development` decorations to the original workspace asset — the name is prefixed with `[dev <user>]`, the personal dev schema replaces the original, schedules are paused, and `run_as` is removed. For pipelines, changing the schema triggers a full recreate of all managed tables. This was confirmed empirically via `bundle plan` and `resources.json` inspection: the CLI reports `update` (not `recreate`), so the plan-check guard we added would not catch it. The original asset is silently modified on the first dev deploy.

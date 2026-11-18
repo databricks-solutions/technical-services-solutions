@@ -2,6 +2,77 @@
 
 Generates three pipelines under `.azure-pipelines/`.
 
+## Binding (one-time, staging and prod source targets only)
+
+> **Dev source targets do not use this pipeline.** The first `bundle deploy -t dev` intentionally creates a new isolated dev copy — no bind needed. Only generate and run this pipeline when `source_target` is `staging` or `prod`.
+
+Before the first recurring deploy to a staging or prod source workspace, run a one-time bind-and-deploy pipeline. Emit it as `.azure-pipelines/bind_and_deploy_<source_target>.yml`, trigger it manually once (with environment approval), and then delete the file.
+
+```yaml
+# .azure-pipelines/bind_and_deploy_<source_target>.yml
+# ONE-TIME: binds migrated resources to their source workspace counterparts, then deploys.
+# Delete this file after the first successful run.
+trigger: none
+pr: none
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: databricks-bundle
+
+stages:
+  - stage: BindAndDeploy
+    jobs:
+      - deployment: bind_and_deploy
+        environment: <source_target>   # add approvals/checks in the environment settings
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - script: curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+                  displayName: Install Databricks CLI
+                - script: bash scripts/auto-bind.sh <source_target>
+                  displayName: Auto-discover and bind migrated resources
+                  env:
+                    DATABRICKS_HOST: $(DATABRICKS_HOST)
+                    DATABRICKS_CLIENT_ID: $(DATABRICKS_CLIENT_ID)
+                    DATABRICKS_CLIENT_SECRET: $(DATABRICKS_CLIENT_SECRET)
+                - script: |
+                    set -euo pipefail
+                    PLAN_JSON=$(databricks bundle plan -t <source_target> -o json 2>&1)
+                    printf '%s\n' "$PLAN_JSON" | jq .
+                    if echo "$PLAN_JSON" | jq -e '[.plan | to_entries[] | select(.value.action == "recreate" or .value.action == "delete")] | length > 0' &>/dev/null; then
+                      echo "ERROR: Plan shows recreate/delete — config mismatch or wrong bind ID."; exit 1
+                    fi
+                    if [[ -f "bindings/<source_target>.yml" ]]; then
+                      while IFS= read -r line; do
+                        [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
+                        key=$(echo "$line" | cut -d: -f1 | tr -d ' '); [[ -z "$key" ]] && continue
+                        if echo "$PLAN_JSON" | jq -e --arg k "$key" '[.plan | to_entries[] | select(.key | endswith("." + $k)) | select(.value.action == "create")] | length > 0' &>/dev/null; then
+                          echo "ERROR: Bound resource '$key' plans as 'create' — bind may have failed."; exit 1
+                        fi
+                      done < "bindings/<source_target>.yml"
+                    fi
+                    echo "Plan check passed."
+                  displayName: Plan — verify bound resources show update, not create/recreate/delete
+                  env:
+                    DATABRICKS_HOST: $(DATABRICKS_HOST)
+                    DATABRICKS_CLIENT_ID: $(DATABRICKS_CLIENT_ID)
+                    DATABRICKS_CLIENT_SECRET: $(DATABRICKS_CLIENT_SECRET)
+                    DATABRICKS_BUNDLE_ENV: <source_target>
+                - script: databricks bundle deploy -t <source_target>
+                  displayName: Deploy bundle
+                  env:
+                    DATABRICKS_HOST: $(DATABRICKS_HOST)
+                    DATABRICKS_CLIENT_ID: $(DATABRICKS_CLIENT_ID)
+                    DATABRICKS_CLIENT_SECRET: $(DATABRICKS_CLIENT_SECRET)
+                    DATABRICKS_BUNDLE_ENV: <source_target>
+```
+
+> Do **not** add `bundle deployment bind` to `pr-validate.yml`, `deploy-staging.yml`, or `deploy-prod.yml`. Binding is one-time; repeating it in recurring pipelines fails on the second run.
+
 ## Required variables (variable group `databricks-bundle`)
 
 | Variable | Notes |

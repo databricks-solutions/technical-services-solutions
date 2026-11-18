@@ -4,6 +4,81 @@ Default CI/CD tool. Generates three workflows under `.github/workflows/`.
 
 Reference: https://docs.databricks.com/aws/en/dev-tools/bundles/jobs-tutorial
 
+## Binding (one-time, staging and prod source targets only)
+
+> **Dev source targets do not use this workflow.** The first `bundle deploy -t dev` intentionally creates a new isolated dev copy — no bind needed. Only generate and run this workflow when `source_target` is `staging` or `prod`.
+
+Before the first recurring deploy to a staging or prod source workspace, run a one-time bind-and-deploy workflow that links each bundle resource to its existing workspace counterpart. This workflow is separate from the three recurring files below. Emit it as `.github/workflows/bind_and_deploy_<source_target>.yml`, run it once with environment approval, and then delete the file.
+
+```yaml
+# .github/workflows/bind_and_deploy_<source_target>.yml
+# ONE-TIME: binds migrated resources to their source workspace counterparts, then deploys.
+# Delete this file after the first successful run.
+name: "Bind and deploy (one-time, <source_target>)"
+on:
+  workflow_dispatch:
+
+jobs:
+  bind-and-deploy:
+    runs-on: ubuntu-latest
+    environment: <source_target>   # configure required reviewers in repo settings
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Databricks CLI
+        uses: databricks/setup-cli@main
+
+      - name: Auto-discover and bind migrated resources
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+        run: bash scripts/auto-bind.sh <source_target>
+
+      - name: Plan — verify bound resources show update, not create/recreate/delete
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+          DATABRICKS_BUNDLE_ENV: <source_target>
+        run: |
+          set -euo pipefail
+          PLAN_JSON=$(databricks bundle plan -t <source_target> -o json 2>&1)
+          printf '%s\n' "$PLAN_JSON" | jq .
+
+          # Fail on recreate or delete for any resource
+          if echo "$PLAN_JSON" | jq -e '[.plan | to_entries[] | select(.value.action == "recreate" or .value.action == "delete")] | length > 0' &>/dev/null; then
+            echo "ERROR: Plan shows recreate/delete — config mismatch or wrong bind ID."
+            exit 1
+          fi
+
+          # Fail if any key listed in bindings/<source_target>.yml plans as 'create' (missed bind)
+          if [[ -f "bindings/<source_target>.yml" ]]; then
+            while IFS= read -r line; do
+              [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
+              key=$(echo "$line" | cut -d: -f1 | tr -d ' ')
+              [[ -z "$key" ]] && continue
+              if echo "$PLAN_JSON" | jq -e --arg k "$key" \
+                '[.plan | to_entries[] | select(.key | endswith("." + $k)) | select(.value.action == "create")] | length > 0' &>/dev/null; then
+                echo "ERROR: Bound resource '$key' plans as 'create' — bind may have failed or used the wrong ID."
+                exit 1
+              fi
+            done < "bindings/<source_target>.yml"
+          fi
+
+          echo "Plan check passed — bound resources will update in-place, new resources will be created."
+
+      - name: Deploy bundle
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+          DATABRICKS_BUNDLE_ENV: <source_target>
+        run: databricks bundle deploy -t <source_target>
+```
+
+> Do **not** add `bundle deployment bind` to `pr_validate.yml`, `deploy_to_staging.yml`, or `deploy_to_prod.yml`. Binding is one-time; repeating it in recurring pipelines fails on the second run.
+
 ## Required repo secrets
 
 | Secret | Where used | Notes |

@@ -6,6 +6,122 @@ Entries are reverse-chronological. Each entry: date, what changed, **why** (with
 
 ---
 
+## 2026-11-18: Reviewer feedback — bind by ID primary, improved plan check, secret_scopes/experiments
+
+**Changes from reviewer feedback:**
+
+1. **`scripts/auto-bind.sh` redesign — bind by ID, name as fallback only.**
+   The previous version bound purely by name, which could silently bind the wrong asset if two resources share a name (the plan check shows `update` either way). The script now reads explicit IDs from `bindings/<target>.yml` as the primary path (populated during migration step 4). Name lookup is a fallback for resources not in the file, requiring confirmation (interactive prompt or `CONFIRM_NAME_FALLBACK=yes`). On "already managed", the actual bound ID is read from the bundle state file rather than the found-by-name ID.
+
+2. **`jq --arg` for name matching.** The previous `select(.name == \"$name\")` interpolation broke on names containing quotes or backslashes. Fixed to `jq --arg n "$name" '[.[] | select(.name == $n)]'`.
+
+3. **Plan check uses `bundle plan -o json`.** Replaced text grep with structured JSON parsing (`.plan[*].action`). Now also fails when a key listed in `bindings/<target>.yml` has action `"create"` (missed bind — the resource wasn't actually bound, so the first deploy would create a duplicate rather than update the original).
+
+4. **`secret_scopes` and `experiments` added to `prevent_destroy` protection.** Both resource types had `lifecycle.prevent_destroy` in their schemas but no enforcement rule or "Destroy protection" section. Added to the SKILL.md hard rule and to both resource files.
+
+5. **Unbind-then-remove recipe.** `prevent_destroy: true` blocks accidental removal of a YAML key (deploy would plan a delete). Added a detach-without-delete recipe to `pipelines.md`, `experiments.md`, `secret_scopes.md`, and the SKILL.md hard rule: (1) set `prevent_destroy: false`, (2) `bundle deploy`, (3) `bundle deployment unbind <key> -t <target>`, (4) remove key, (5) `bundle deploy`.
+
+6. **Banner updated.** #106 and #107 now shown as "fixed, pending sandbox validation"; #108 remains listed as open.
+
+7. **Testbed host placeholder.** `testbed/test-auto-bind/databricks.yml` previously contained a real workspace host. Replaced with `${var.workspace_host}` placeholder.
+
+---
+
+## 2026-11-18: Auto-discover and bind resources by name (scripts/auto-bind.sh)
+
+**Why this change:** The previous bind workflow required engineers to manually look up the numeric ID of each resource in the target workspace (Prod/QA) and write it into `bindings/<target>.yml`. This was error-prone (wrong IDs, IDs copied from the wrong workspace) and introduced friction. Additionally, resources that do not exist yet in a target workspace (net-new) would cause a bind error if accidentally listed — but were not clearly distinguished from resources that *should* exist.
+
+**New design:**
+- `scripts/auto-bind.sh <target>` queries the target workspace for each `jobs` and `pipelines` resource by its resolved bundle name.
+- **1 match** → binds automatically.
+- **0 matches** → skips; the first `bundle deploy` creates the resource new. No error, no manual step.
+- **2+ matches** → exits with error and instructions to resolve manually (name collision).
+- Writes `bindings/<target>.yml` as an auto-generated audit trail — commit this file.
+- Unity Catalog resources (`schemas`, `volumes`, `catalogs`, `registered_models`, etc.) are not auto-discovered; add their UC path bind arguments manually to `bindings/<target>.yml` if needed.
+- Re-run safe: keys already present in `bindings/<target>.yml` are skipped on subsequent runs.
+- The plan check in the one-time CI workflow was updated from `create|recreate|delete` → `recreate|delete`. `create` is now expected for resources not found by name that will be provisioned new.
+
+**Changes:**
+1. `scripts/auto-bind.sh` — new script.
+2. `SKILL.md` step 5a: replaced manual bindings file write with `auto-bind.sh` invocation.
+3. `SKILL.md` step 4: removed manual bind_id recording for jobs/pipelines.
+4. `SKILL.md` step 7: added `scripts/auto-bind.sh` to generated supporting files.
+5. `SKILL.md` project layout: added `scripts/` directory, updated `bindings/` description.
+6. All 6 `cicd/*.md` files: replaced grep-and-bind loop with `bash scripts/auto-bind.sh`, updated plan check to `recreate|delete`.
+7. `templates/README.md.tmpl`: updated binding section.
+
+---
+
+## 2026-11-18: Redesign bind strategy — dev creates a new copy, staging/prod binds (#106 follow-up)
+
+**Why this change:** Binding a resource to a `dev` target and then deploying applies `mode: development` decorations to the original workspace asset — the name is prefixed with `[dev <user>]`, the personal dev schema replaces the original, schedules are paused, and `run_as` is removed. For pipelines, changing the schema triggers a full recreate of all managed tables. This was confirmed empirically via `bundle plan` and `resources.json` inspection: the CLI reports `update` (not `recreate`), so the plan-check guard we added would not catch it. The original asset is silently modified on the first dev deploy.
+
+**New design:**
+- **dev source target:** no bind. The first `bundle deploy -t dev` creates a new isolated dev copy (name prefixed `[dev <user>]`, personal schema, paused schedules). The original workspace asset continues running independently. This is the desired behavior — developer gets a sandbox, production is untouched.
+- **staging/prod source targets:** bind as before. The first deploy on a staging or prod workspace must bind first to update the existing asset rather than duplicate it.
+
+**Changes:**
+1. `SKILL.md` agent instruction 3: removed bind prerequisite for dev deploys.
+2. `SKILL.md` project layout: marked `bindings/` as "staging/prod source targets only — not generated for dev".
+3. `SKILL.md` step 2 (incremental): updated bind reference to staging/prod only.
+4. `SKILL.md` step 4: `bind_id` recording only for staging/prod source targets.
+5. `SKILL.md` step 5: restructured — explicit dev skip block at the top explaining why dev doesn't bind; staging/prod sub-steps unchanged.
+6. `SKILL.md` CI/CD action contract: updated binding note to "staging and prod source targets only".
+7. `SKILL.md` hard rules: added "Never bind a resource to a `dev` target"; modified "Never run the first deploy without bind" to add dev exemption.
+8. All six `cicd/*.md` files: added "Dev source targets do not use this workflow" callout at the top of the Binding section.
+9. `templates/README.md.tmpl`: restructured Binding section to explain the two-path design.
+10. `testbed/dm_job_bundle`: removed `bindings/dev.yml`; updated README to reflect no-bind dev design.
+
+---
+
+## 2026-10-30: Plan check before first deploy (reviewer feedback on #106)
+
+**Changes:**
+1. All six `cicd/*.md` one-time bind-and-deploy snippets: added a `databricks bundle plan -t <source_target>` step between bind and deploy. The step fails if any bound resource shows `create`, `recreate`, or `delete` in the plan output (expected action for a correctly bound resource is `update`). This catches wrong IDs in `bindings/*.yml` before the deploy overwrites the source asset's configuration.
+2. `SKILL.md` step 5e: added a plan-check instruction for the local dev bind path.
+3. `SKILL.md` step 5f: noted that the one-time CI workflow includes the plan check.
+
+**Why the plan check matters:** the first deploy to a source workspace overwrites the original asset's configuration (name, schedule, cluster, etc.). A `create` in the plan after bind means the binding failed silently — deploying would create a duplicate instead of updating the original. Failing on `create`/`recreate`/`delete` makes the misconfiguration visible before any data is touched.
+
+---
+
+## 2026-10-30: Enforce `lifecycle.prevent_destroy: true` on migrated stateful resources (#107)
+
+**Failure mode this fixes:** Once a resource is bound, the bundle fully owns it. Three actions silently delete the original asset and its data: (1) `databricks bundle destroy`; (2) removing the resource's YAML key and running `bundle deploy`; (3) renaming the resource key (a rename = delete + create in bundle semantics). For pipelines, the delete also drops all managed DLT/SDP tables. For schemas, volumes, and catalogs it drops the data itself. The skill had no rule requiring `lifecycle.prevent_destroy: true`, and the resource docs showed it only as an optional schema field with no migration guidance.
+
+**Changes:**
+1. `SKILL.md` new hard rule: "Never deploy a migrated stateful resource without `lifecycle.prevent_destroy: true`." Lists all affected types: `pipelines`, `schemas`, `volumes`, `catalogs`, `registered_models`, `database_instances`, `database_catalogs`, `synced_database_tables`, `vector_search_indexes`, and all 6 `postgres_*` types. Explains the intentional-destroy escape hatch (set `false`, deploy, destroy).
+2. `SKILL.md` footnote updated: "last eight rules" → "last nine rules".
+3. `SKILL.md` pause banner updated: removed "Stateful resources have no destroy protection" (now fixed). Removed `#107` from the open issues list. Pause remains for `#108` (dev→prod catalog isolation) and follow-ups.
+4. All 16 affected `resources/<type>.md` files: added a **Destroy protection** section before the schema reference with a YAML example, the intentional-destroy escape hatch, and a ⚠️ callout about key renames. Files updated: `pipelines.md`, `schemas.md`, `volumes.md`, `catalogs.md`, `registered_models.md`, `database_instances.md`, `database_catalogs.md`, `synced_database_tables.md`, `vector_search_indexes.md`, `postgres_branches.md`, `postgres_catalogs.md`, `postgres_databases.md`, `postgres_endpoints.md`, `postgres_projects.md`, `postgres_roles.md`, `postgres_synced_tables.md`.
+5. `templates/README.md.tmpl` destroy callout: expanded the type list, added "never rename a resource key after binding" warning.
+
+**Why `prevent_destroy` must be set at migration time, not later:** The agent cannot distinguish "user intentionally deleted this key to decommission the asset" from "user accidentally deleted or renamed the key". The safest default for a migrated asset (which the user wants to keep running) is to block destroy unconditionally and require an explicit opt-out.
+
+**Rule location:** `SKILL.md` hard rules section; per-type guidance in `resources/<type>.md` Destroy protection sections.
+
+---
+
+## 2026-10-30: Bind migrated resources before first deploy (#106)
+
+**Change:**
+1. `SKILL.md` pause banner: removed "Migrated assets are not bound" (now fixed); removed #106 from the open-issues list. Item 3 of the agent instructions now requires a successful bind on the source target before any `bundle deploy`, and drops the old "Never run `bundle deployment bind`" prohibition.
+2. `SKILL.md` workflow: step 4 now records `bind_id` for every migrated resource. New step 5 writes `bindings/<source_target>.yml`, validates the bundle, asks for confirmation, and runs `databricks bundle deployment bind <key> <bind_id> -t <source_target> --auto-approve` for each key. Old steps 5→6, 6→7, 7→8.
+3. `SKILL.md` "Reading assets" table: added **Bind argument** column to the existing name-to-ID table; added a fourth rule with a UC full-name table for schemas, volumes, registered_models, quality_monitors, catalogs, external_locations, apps, experiments, serving endpoints, and secret scopes.
+4. `SKILL.md` CI/CD action contract: added a "Binding (one-time, source target only)" note pointing at the one-time workflow; the recurring pipelines remain bind-free.
+5. `SKILL.md` hard rules: four new rules — never deploy without a prior bind on the source target; never bind non-source targets with source IDs; never put bind in recurring CI pipelines; never use `bundle generate --bind` as a YAML source.
+6. `templates/bindings.yml.tmpl`: new template for the committed bind map (`bindings/<source_target>.yml`).
+7. `templates/README.md.tmpl`: new "Binding (one-time per source workspace)" section with local and CI instructions, and a `never destroy` reminder.
+8. `cicd/*.md` (all six tools): new "Binding (one-time, source target only)" section with a one-time bind-and-deploy workflow snippet; recurring pipelines unchanged.
+
+**Why:** the skill read live assets and wrote YAML, but never recorded IDs or ran `bundle deployment bind`. The first `bundle deploy` therefore created duplicate resources. For pipelines, Unity Catalog allows only one pipeline to manage a streaming table or materialized view; the second pipeline failed on deploy, and teams cleaning up by deleting the original pipeline caused Databricks to drop the tables it managed — **data loss**. Jobs doubled their runs. Named UC objects (schemas, volumes, catalogs) failed with "already exists". Dashboards, Genie spaces, and alerts silently duplicated. Fix: record `bind_id` during the YAML generation step and bind each resource to its source workspace counterpart before the first deploy.
+
+**Why not `bundle generate --bind`:** `bundle generate` writes hardcoded resolved IDs into the YAML (concrete warehouse IDs, catalog names, etc.) and fights the no-hardcode rules that were added for #108. The existing schema-mapped YAML path is kept; bind is a separate one-time step.
+
+**Where:** `SKILL.md` (pause banner, workflow, reading table, CI/CD contract, hard rules), `templates/bindings.yml.tmpl` (new), `templates/README.md.tmpl` (Binding section), `cicd/*.md` (Binding section), this entry.
+
+---
+
 ## 2026-10-28: Per-target environment values; CI no longer overrides catalog/schema (#108, #116)
 
 **Change:**

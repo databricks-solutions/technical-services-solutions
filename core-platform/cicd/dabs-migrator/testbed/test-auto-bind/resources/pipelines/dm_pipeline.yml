@@ -1,0 +1,12 @@
+resources:
+  pipelines:
+    dm_pipeline:
+      lifecycle:
+        prevent_destroy: true
+      name: dm_pipeline
+      development: false
+      catalog: test_catalog
+      schema: test_schema
+      libraries:
+        - notebook:
+            path: /placeholder

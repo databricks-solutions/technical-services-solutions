@@ -2,6 +2,59 @@
 
 `.circleci/config.yml` at repo root.
 
+## Binding (one-time, staging and prod source targets only)
+
+> **Dev source targets do not use this job.** The first `bundle deploy -t dev` intentionally creates a new isolated dev copy — no bind needed. Only generate and run this job when `source_target` is `staging` or `prod`.
+
+Before the first recurring deploy to a staging or prod source workspace, add a temporary `bind-and-deploy-<source_target>` job to `.circleci/config.yml`, gate it behind an `approval` job, run it once, and then remove both jobs.
+
+```yaml
+# Add temporarily to .circleci/config.yml — remove after the first successful run.
+jobs:
+  bind-and-deploy-<source_target>:
+    executor: ubuntu
+    steps:
+      - checkout
+      - install-cli
+      - run:
+          name: Bind migrated resources and deploy to <source_target>
+          environment:
+            DATABRICKS_HOST: $DATABRICKS_HOST
+            DATABRICKS_CLIENT_ID: $DATABRICKS_CLIENT_ID
+            DATABRICKS_CLIENT_SECRET: $DATABRICKS_CLIENT_SECRET
+            DATABRICKS_BUNDLE_ENV: <source_target>
+          command: |
+            set -euo pipefail
+            bash scripts/auto-bind.sh <source_target>
+            PLAN_JSON=$(databricks bundle plan -t <source_target> -o json 2>&1)
+            printf '%s\n' "$PLAN_JSON" | jq .
+            if echo "$PLAN_JSON" | jq -e '[.plan | to_entries[] | select(.value.action == "recreate" or .value.action == "delete")] | length > 0' &>/dev/null; then
+              echo "ERROR: Plan shows recreate/delete — config mismatch or wrong bind ID."; exit 1
+            fi
+            if [[ -f "bindings/<source_target>.yml" ]]; then
+              while IFS= read -r line; do
+                [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
+                key=$(echo "$line" | cut -d: -f1 | tr -d ' '); [[ -z "$key" ]] && continue
+                if echo "$PLAN_JSON" | jq -e --arg k "$key" '[.plan | to_entries[] | select(.key | endswith("." + $k)) | select(.value.action == "create")] | length > 0' &>/dev/null; then
+                  echo "ERROR: Bound resource '$key' plans as 'create' — bind may have failed."; exit 1
+                fi
+              done < "bindings/<source_target>.yml"
+            fi
+            echo "Plan check passed."
+            databricks bundle deploy -t <source_target>
+
+# Gate it behind a manual approval in the workflow:
+workflows:
+  bind-and-deploy-once:
+    jobs:
+      - hold-bind:
+          type: approval
+      - bind-and-deploy-<source_target>:
+          requires: [hold-bind]
+```
+
+> Do **not** add `bundle deployment bind` to the `validate`, `deploy-staging`, or `deploy-prod` jobs. Binding is one-time; repeating it in recurring jobs fails on the second run.
+
 ## Required project environment variables
 
 | Variable |

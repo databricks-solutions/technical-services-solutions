@@ -58,6 +58,25 @@ Each should `import dlt` and define `@dlt.table`-decorated functions.
 - **Serverless** — drop the `clusters:` block; set `serverless: true`.
 - **SQL pipeline** — replace `.py` libraries with `.sql` files and switch the entry kind to `file:` (one `file:` entry per `.sql` source).
 
+## Destroy protection
+
+Always set `lifecycle.prevent_destroy: true` on migrated pipelines. Once bound, the bundle owns the pipeline — running `databricks bundle destroy`, removing this YAML entry, or renaming the resource key will **delete the original pipeline and drop all tables it manages**.
+
+```yaml
+resources:
+  pipelines:
+    my_pipeline:
+      lifecycle:
+        prevent_destroy: true
+      # ... rest of config
+```
+
+**To intentionally delete** a bound pipeline: (1) set `prevent_destroy: false`, (2) `databricks bundle deploy`, (3) `databricks bundle destroy`.
+
+**To remove a pipeline from bundle management without deleting it** (detach): (1) set `prevent_destroy: false`, (2) `bundle deploy`, (3) `databricks bundle deployment unbind <key> -t <target>`, (4) remove the YAML key, (5) `bundle deploy`. The pipeline continues to exist in the workspace, unmanaged by the bundle.
+
+> ⚠️ **Never rename a bound resource's key.** A key rename is treated as delete + create by the bundle and will delete the original pipeline and its managed tables.
+
 ## Complete schema reference
 
 ```yaml

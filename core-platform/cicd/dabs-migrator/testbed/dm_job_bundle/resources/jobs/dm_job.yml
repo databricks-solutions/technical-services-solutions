@@ -1,6 +1,8 @@
 resources:
   jobs:
     dm_job:
+      lifecycle:
+        prevent_destroy: true
       name: dm_job
       description: Seed job with a single serverless notebook task.
       max_concurrent_runs: 1

@@ -1,163 +1,154 @@
 # Assessment Skills
 
-Workspace skills that support the AI/BI migration process. Each skill lives in
-its own subfolder and can be run independently from Databricks Assistant / Genie.
+Genie Code skills that support the AI/BI migration process. Each skill lives in
+its own subfolder and can be run independently from Genie Code.
+
+All skills in this folder share the same approach:
+
+- **Read-only.** They profile source BI files and produce a Migration Assessment
+  Report — they never convert anything or create datasets, widgets, or dashboards.
+- **Anchored to `/importBI`.** Each skill wraps the
+  [`/importBI`](https://docs.databricks.com/aws/en/dashboards/manage/import-bi)
+  migration agent in profile-only mode. Every feature is classified by what
+  `/importBI` reports it can handle today: ✅ Auto / ⚠️ Auto + workaround / 🔧 Manual.
+- **Automation uplift.** An extra section estimates how much more can be automated
+  by applying [uc-semantics-patterns](https://github.com/databricks-solutions/uc-semantics-patterns)
+  recipes during migration.
 
 ## Skills
 
-| Skill | Folder | Purpose |
+| Skill | Source files | Purpose |
 |---|---|---|
-| **pbi-migration-assessment** | [`pbi-migration-assessment/`](pbi-migration-assessment) | Bulk profiling & migration-readiness assessment for Power BI reports, as a wrapper around `/importBI`. |
-| **tableau-migration-assessment** | [`tableau-migration-assessment/`](tableau-migration-assessment) | Bulk profiling & migration-readiness assessment for Tableau workbooks and data sources, as a wrapper around `/importBI`. |
+| [**pbi-migration-assessment**](pbi-migration-assessment) | `.pbit` / `.tmdl` | Bulk profiling & migration-readiness assessment for Power BI reports and semantic models. |
+| [**tableau-migration-assessment**](tableau-migration-assessment) | `.twb` / `.twbx` / `.tds` / `.tdsx` | Bulk profiling & migration-readiness assessment for Tableau workbooks and data sources. |
+
+Each skill folder has its own README with supported file types, example prompts,
+workflow, and output details.
+
+## Prerequisites
+
+- A Databricks workspace with **Genie Code** and the **`/importBI`** agent available
+  (partner-powered AI features enabled for the account and workspace — see
+  [Import BI files using Genie Code](https://docs.databricks.com/aws/en/dashboards/manage/import-bi)).
+- Source files either attached in the chat or stored in a **Unity Catalog Volume**.
+  Files over 100 MB, and any bulk assessment, must be in a Volume — direct chat
+  uploads are limited to 100 MB and not accepted for bulk import.
+- **Outbound access to github.com** from the workspace. The Automation Uplift
+  section and the pattern-based conversion read
+  [uc-semantics-patterns](https://github.com/databricks-solutions/uc-semantics-patterns)
+  live at each run. Without it, the Uplift section shows "Pattern repo
+  unavailable — uplift not computed" and the conversion cannot apply the recipes.
+
+## Disclaimer
+
+> [!CAUTION]
+> **Estimates, not guarantees.** The assessment and the conversion are performed
+> by AI agents (`/importBI` and these skills) that rely on large language models.
+> Both are under active development, so results may vary between runs and may not
+> be fully accurate or complete. Complexity ratings, ✅/⚠️/🔧 classifications,
+> automation percentages, and uplift estimates are indicative and intended to
+> support planning only. Have a qualified team member review the report against
+> the source files, and validate converted dashboards and metric views against the
+> original reports before relying on them for project scoping, effort estimates,
+> commitments, or production use.
 
 ## Installing a skill
 
-Each skill needs its own subfolder containing a `SKILL.md`. You can install it
-in one of two places.
+These skills follow the open [Agent Skills](https://docs.databricks.com/aws/en/assistant/skills)
+standard, so installing one is just a matter of dropping its folder into a
+`.assistant/skills/` directory — no packaging or marketplace step.
 
-### Personal (user) skill
+### 1. Pick where it lives
 
-- Save the skill's folder to `/Workspace/Users/[user@databricks.com]/.assistant/skills/`.
-- Only you can see and use it.
+- **User skill (just you):** `/Workspace/Users/[user@databricks.com]/.assistant/skills/`
+  — good for personal use or prototyping before promoting it to the workspace.
+- **Workspace skill (whole team):** `/Workspace/.assistant/skills/` — everyone in
+  the workspace uses the same version. Requires access to the workspace skills
+  folder (a workspace admin can save it, or grant others access to add or update
+  skills).
 
-### Workspace (shared) skill
+> [!TIP]
+> Keep only one copy. If the same skill is installed both as a workspace skill
+> and in a personal folder, delete the personal copy so nobody runs an outdated
+> version.
 
-Use this when the whole team should use the same version of the skill, rather
-than each person keeping a copy in their personal folder.
+### 2. Add the skill folder
 
-- A **workspace administrator** saves the skill's folder to
-  `/Workspace/.assistant/skills/`, for example
-  `/Workspace/.assistant/skills/pbi-migration-assessment/SKILL.md`.
-- Everyone in the workspace can use it. Admins can also grant other users
-  access to the skills folder so they can add or update skills.
-- Keep only one copy. If the same skill is also in a personal folder, delete
-  the personal copy so nobody runs an outdated version.
-- When prompting, refer to the skill by name ("the pbi-migration-assessment
-  skill") instead of "my … skill", or use the `@` mention to invoke it
-  explicitly.
+1. In the **Genie Code** pane, click **Settings → Open skills folder** to jump to
+   the right `.assistant/skills/` directory (user or workspace).
+2. Create a folder named after the skill, e.g. `pbi-migration-assessment/`.
+3. Add the skill's **`SKILL.md`** to that folder. `SKILL.md` is required — its
+   `name` / `description` frontmatter is what Genie Code uses to load the skill.
+   (`README.md` is optional; it is only an overview.)
+   ```
+   /Workspace/.assistant/skills/
+   ├── pbi-migration-assessment/
+   │   └── SKILL.md
+   └── tableau-migration-assessment/
+       └── SKILL.md
+   ```
+4. Start a **new chat**. Edits to a skill only take effect in new chats — if it
+   still looks stale, hard-refresh the browser tab to clear cached skill metadata.
 
-See [Genie Code skills](https://docs.databricks.com/aws/en/assistant/skills)
-for details.
+> [!TIP]
+> Back your `.assistant/skills/` folder with a **Databricks Git folder** to version
+> the skills and share them with your team.
+>
+> **Other agents:** because `SKILL.md` follows the Agent Skills standard, the same
+> skills also install into Claude Code, Cursor, or GitHub Copilot — see
+> [Agent skills for AI coding assistants](https://docs.databricks.com/aws/en/agent-skills).
 
----
+## How to invoke
 
-## pbi-migration-assessment
-
-A custom skill that wraps `/importBI` to produce a consolidated Power BI
-migration assessment report.
-
-It runs a **read-only profiling pass** over one or more Power BI report files
-(`.pbit`) — either attached directly or bulk-loaded from a Unity Catalog Volume —
-without performing any conversion. For each report it profiles the data sources,
-data model, DAX measures, visualizations, filters, and interactivity, then
-consolidates the findings into a single Migration Assessment Report. The report
-flags prerequisites and blockers and classifies every feature into an
-automate-vs-manual split anchored to what `/importBI` handles today (✅ Auto /
-⚠️ Auto + workaround / 🔧 Manual), plus an automation-uplift estimate from
-applying UC semantics patterns during migration.
-
-> [!CAUTION]
-> **Disclaimer — estimates, not guarantees.** The assessment and the
-> conversion are performed by an AI agent (`/importBI` and this skill) that
-> relies on large language models. Both are under active development, so
-> results may vary between runs and may not be fully accurate or complete.
-> Complexity ratings, ✅/⚠️/🔧 classifications, automation percentages, and
-> uplift estimates are indicative and intended to support planning only.
-> Have a qualified team member review the report against the source
-> `.pbit` files, and validate converted dashboards and metric views against
-> the original Power BI reports before relying on them for project scoping,
-> effort estimates, commitments, or production use.
-
-> [!NOTE]
-> If you observe on some runs that the skill is abandoned and the process falls
-> back to plain `/importBI` assessment, prompt additionally:
-> "use the pbi-migration-assessment skill to wrap up the migration report".
-
-> [!IMPORTANT]
-> The Automation Uplift section of the assessment and the pattern-based
-> conversion both read
-> [uc-semantics-patterns](https://github.com/databricks-solutions/uc-semantics-patterns)
-> live. This needs **access to GitHub from the Databricks workspace** (outbound
-> network to github.com). Without it, the Uplift section shows "Pattern repo
-> unavailable — uplift not computed" and the conversion cannot apply the recipes.
-
-### User journey
-
-#### 1. Run the assessment
-- Install the `pbi-migration-assessment` folder (see [Installing a skill](#installing-a-skill)).
-- Open a new dashboard page.
-- In Genie Code: "assess the Power BI report with my pbi-migration-assessment skill" (attach the file, or point to the volume).
-  For a workspace skill, say "with the pbi-migration-assessment skill".
-- Review the result in the chat.
-
-**Get the main report and the manual adjustments list in one run.** To receive
-the detailed 🔧 Manual Adjustment Report together with the assessment, ask for
-it in the first prompt:
+Call the skill explicitly with an `@` mention in the prompt:
 
 ```
-Assess the Power BI report(s) <attached file | in /Volumes/<catalog>/<schema>/<volume>/>
-with the pbi-migration-assessment skill. After the main Migration Assessment Report,
-also produce the detailed 🔧 Manual Adjustment Report: list every 🔧 Manual measure
-with its table and a short reason, grouped as in the Feature Classification table,
-and check that the counts match the summary.
+@tableau-migration-assessment profile these workbooks for AI/BI migration.
 ```
 
-#### 2. Get the detailed 🔧 Manual Adjustment Report
-- When the main report is finished, the skill asks whether you want a detailed
-  🔧 Manual Adjustment Report. Answer "yes".
-- If the skill didn't ask, or you want the report later, prompt in the same
-  conversation: "create the 🔧 Manual Adjustment Report for the
-  manual-adjustment measures from the assessment".
-- The report groups the 🔧 measures the same way as the Feature Classification
-  table and gives each measure a short reason, e.g. `Matrix Display | TREATAS
-  on literals + ISINSCOPE + FORMAT text`. It ends with a consistency line
-  checked against the 🔧 counts in the main report.
-- Use it to plan and assign the manual work.
+Genie Code can also pick the skill up from a prompt like "assess these Power BI
+reports for migration", but this isn't guaranteed — without the explicit call the
+run may fall back to the default `/importBI` assessment.
 
-#### 3. (Optional) Save results
-- First switch the Genie Code context to your workspace user folder
-  (`/Workspace/Users/[user@databricks.com]/`) and stay in the same
-  conversation. Do not start a new chat, or the results are lost.
-- Then prompt: "save results in MD and HTML format in my user folder". This
-  saves the main assessment and, if you created it, the Manual Adjustment Report.
+## User journey
 
-#### 4. Convert with uc-semantics-patterns (when the assessment shows uplift)
-Use this step when the **Automation Uplift with Reference Patterns** section
-lists 🔧 features that can be reclassified and shows a positive uplift (+pp).
-It needs GitHub access from the workspace (see the note above). If the
-assessment said "Pattern repo unavailable", fix the access and rerun the
-assessment, or skip this step.
+The journey is the same for every skill; see each skill's README for
+ready-to-copy prompts.
 
-- Start the conversion with `/importBI` and add the repo as an extra reference
-  for converting calculations. You don't need to list specific measures.
-- Example prompt:
+1. **Install** the skill folder (see [Installing a skill](#installing-a-skill)).
+2. **Open a new dashboard page** and start a chat in Genie Code.
+3. **Run the assessment** — call the skill with `@`, e.g.
+   *"`@<skill-name>` assess the report(s) `<attached file | in /Volumes/...>`"*.
+   To get the detailed 🔧 Manual Adjustment Report in the same run, ask for it in
+   the first prompt.
+4. **Review the result** in the chat.
+5. **Get the 🔧 Manual Adjustment Report** — if you didn't ask for it up front, the
+   skill offers it after the main report; answer "yes". It names every 🔧 item
+   with a short reason, so you can plan and assign the manual work.
+6. **Save the results (optional)** — first switch the Genie Code context to your
+   workspace user folder (`/Workspace/Users/[user@databricks.com]/`) *in the same
+   conversation*, then prompt: *"save results in MD and HTML format in my user
+   folder"*.
+7. **Convert (when ready)** — when the Automation Uplift section shows a positive
+   uplift, start the conversion with `/importBI` and add the patterns repo as an
+   extra reference for the calculations. You don't need to list specific items.
+   ```
+   /importBI Convert the report [attach the file, or provide a volume path], as additional
+   reference for the calculations conversion use https://github.com/databricks-solutions/uc-semantics-patterns
+   ```
+   After conversion, check the ⚠️ items against the report's Validation Checks;
+   items that remain 🔧 still need manual work.
 
-  ```
-  /importBI Convert the report [attach the report, or provide a volume path], as additional
-  reference for the calculations conversion use https://github.com/databricks-solutions/uc-semantics-patterns
-  ```
+## Troubleshooting
 
-- Tips:
-  - After conversion, check the ⚠️ items against the report's Validation Checks.
-  - Items that remain 🔧 (see the Manual Adjustment Report) still need manual work.
+| Symptom | What to do |
+|---|---|
+| The skill is abandoned and the run falls back to a plain `/importBI` assessment | Prompt additionally: *"`@<skill-name>` wrap up the migration report"*. |
+| The skill isn't picked up, or old behavior persists after an edit | Start a new chat; if still stale, hard-refresh the browser tab. |
+| Uplift section says "Pattern repo unavailable" | Enable outbound access to github.com from the workspace and rerun the assessment, or skip the pattern-based conversion. |
+| Results are gone after saving | Results only exist in the current conversation — switch context and save *before* starting a new chat. |
 
----
+## Skill definition
 
-## tableau-migration-assessment
-
-A custom skill that wraps `/importBI` to produce a consolidated Tableau migration
-assessment report.
-
-It runs a **read-only profiling pass** over one or more Tableau files
-(`.twb` / `.twbx` workbooks and `.tds` / `.tdsx` data sources) — either attached
-directly or bulk-loaded from a Unity Catalog Volume — without performing any
-conversion. For each file it profiles the data sources, data model, calculated
-fields, LOD expressions, table calculations, visualizations, filters, and
-interactivity, then consolidates the findings into a single Migration Report. The
-report flags prerequisites and blockers and classifies every feature into an
-automate-vs-manual split anchored to what `/importBI` reports today (✅ Auto /
-⚠️ Auto + workaround / 🔧 Manual), plus an automation-uplift estimate from applying
-UC semantics patterns during migration.
-
-See the [tableau-migration-assessment README](tableau-migration-assessment) for the
-full overview, install steps, and user journey.
+Each skill's `SKILL.md` is the authoritative specification — the READMEs are only
+overviews. If a README ever diverges from `SKILL.md`, `SKILL.md` wins.

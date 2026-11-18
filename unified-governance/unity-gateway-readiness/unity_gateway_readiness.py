@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "6"
+# ///
 # MAGIC %md
 # MAGIC # Unity Gateway Readiness Check
 # MAGIC
@@ -8,8 +12,9 @@
 # MAGIC
 # MAGIC ### How to use
 # MAGIC 1. Set the widgets at the top. `target_models` is the list of models the customer plans to use.
-# MAGIC 2. Run all cells as the identity that will call the gateway in production. Run it interactively for a user, or as a job owned by the service principal to test the SP's real access.
+# MAGIC 2. Run all cells as the identity that will call the gateway in production. Run it interactively for a user, or as a job with **Run as** set to the service principal to test the SP's real access.
 # MAGIC 3. Each section ends with a card of its checks. The dashboard in section 10 shows the verdict, a model-by-check matrix (hover a cell for evidence), blockers with fixes, and the manual checklist.
+# MAGIC 4. Clear outputs before you share the notebook or its export. Outputs include grants, usage, and spend for this workspace.
 # MAGIC
 # MAGIC ### Requirements
 # MAGIC **Role.** Run the notebook as a **workspace admin** who is also a **metastore admin**. Account admin adds the most coverage.
@@ -18,7 +23,11 @@
 # MAGIC
 # MAGIC Run it twice for a full picture:
 # MAGIC 1. As an admin, for the complete inventory, grants, usage, and cost data.
-# MAGIC 2. As the production identity (for example a service principal, through a job it owns), to prove that identity's real access in sections 4 and 7.
+# MAGIC 2. As the production identity, to prove that identity's real access in sections 4 and 7. For a service principal, run a job with **Run as** set to that SP. Setting Run as needs the Service Principal User role on the SP.
+# MAGIC
+# MAGIC Any FAIL blocks READY, and sections 7, 8, and 9 FAIL when the identity cannot read the usage and billing tables.
+# MAGIC So the production-identity pass is READY only if that identity has `USE SCHEMA` and `SELECT` on `system.ai_gateway.usage`, `system.ai_gateway.external_model_spend`, `system.billing.usage`, and `system.billing.list_prices`.
+# MAGIC If you prefer not to grant those, expect FAIL on those reads in the production-identity pass and read the verdict from the other sections.
 # MAGIC
 # MAGIC | Requirement | Needed for | Without it |
 # MAGIC |---|---|---|
@@ -31,7 +40,7 @@
 # MAGIC | `CREATE TABLE` on the target schema | Optional `results_table` write | The final cell fails |
 # MAGIC
 # MAGIC **Platform.** Unity Catalog enabled, a workspace in a Unity Gateway supported region (not AWS GovCloud), and compute that can reach the workspace host over HTTPS.
-# MAGIC **Compute.** Tested on serverless notebook compute, environment version 3. Classic clusters need a runtime that ships `databricks-sdk` with `WorkspaceClient.api_client`.
+# MAGIC **Compute.** Serverless only, environment 6. The notebook pins environment 6 in its header, because the scorecard cell needs Python 3.12.
 # MAGIC
 # MAGIC ### Status values
 # MAGIC | Status | Meaning |
@@ -69,32 +78,32 @@
 # MAGIC ### Widgets
 # MAGIC | Widget | Purpose |
 # MAGIC |---|---|
-# MAGIC | `target_models` | Comma-separated model services. A bare name such as `gpt-6-astra` is read as `system.ai.gpt-6-astra`. Custom services use `catalog.schema.name` |
+# MAGIC | `target_models` | Comma-separated model services. A bare name such as `gpt-6-astra` is read as `system.ai.gpt-6-astra`. Custom services use `catalog.schema.name`. The defaults are examples. Replace them with the models the customer will use, because a target that is not in `system.ai` for this workspace is a FAIL |
 # MAGIC | `principal_to_check` | A group, user, or service principal application id. Section 3 reports its effective grants |
 # MAGIC | `run_invocation_probes` | `no` skips all live calls. Sections 4, 5, and 7 then cannot prove access, and the verdict is `NOT VERIFIED` instead of `READY` |
-# MAGIC | `burst_requests` | Sends N parallel requests per model to surface 429 rate limiting. 0 skips it |
+# MAGIC | `burst_requests` | Sends N parallel requests per model to surface 429 rate limiting. 0 skips it. Maximum 20, because `system.ai` service-level limits are shared by every caller |
 # MAGIC | `test_schema` | `catalog.schema` where the customer will create custom model services. Blank skips section 6 |
 # MAGIC | `create_test_service` | `yes` creates a temporary model service in `test_schema`, queries it, then deletes it |
 # MAGIC | `adi_mode` | `auto` runs section 5 only on Azure. `force` runs it on any cloud (for dry runs). `off` skips it |
-# MAGIC | `target_mcp_services` | Comma-separated MCP services to check and probe with `tools/list`. A bare name such as `web_search` is read as `system.ai.web_search`. Blank skips the per-service checks in section 7 |
+# MAGIC | `target_mcp_services` | Comma-separated MCP services to check and probe with `tools/list`, for example `system.ai.web_search`. A bare name is read as `system.ai.<name>`. Not every workspace has every `system.ai` MCP service. Blank skips the per-service checks in section 7 |
 # MAGIC | `usage_lookback_days` | Window for usage and billing queries in sections 7, 8, and 9 |
 # MAGIC | `usage_wait_seconds` | How long section 8 waits for this run's probe rows to appear in `system.ai_gateway.usage` |
-# MAGIC | `results_table` | Optional Delta table to append results to, for tracking readiness across runs |
+# MAGIC | `results_table` | Optional Delta table (`catalog.schema.table`) to append results to, for tracking readiness across runs |
 
 # COMMAND ----------
 
 dbutils.widgets.text(
     "target_models",
-    "system.ai.claude-opus-5-5,system.ai.claude-fable-5,system.ai.gpt-5-6-sol,system.ai.gpt-6-astra",
+    "system.ai.claude-opus-5-5,system.ai.gpt-5-6-sol,system.ai.gpt-6-astra",
     "01. Target models (comma separated)",
 )
 dbutils.widgets.text("principal_to_check", "", "02. Extra principal to check grants")
 dbutils.widgets.dropdown("run_invocation_probes", "yes", ["yes", "no"], "03. Run live invocation probes")
-dbutils.widgets.text("burst_requests", "0", "04. Parallel burst size per model (0 = skip)")
+dbutils.widgets.text("burst_requests", "0", "04. Parallel burst size per model (0 = skip, max 20)")
 dbutils.widgets.text("test_schema", "", "05. catalog.schema for custom services (blank = skip)")
 dbutils.widgets.dropdown("create_test_service", "no", ["no", "yes"], "06. Create, query, delete a temp model service")
 dbutils.widgets.dropdown("adi_mode", "auto", ["auto", "force", "off"], "07. Azure ADI checks")
-dbutils.widgets.text("target_mcp_services", "system.ai.web_search", "08. Target MCP services (comma separated)")
+dbutils.widgets.text("target_mcp_services", "", "08. Target MCP services (comma separated, blank = skip)")
 dbutils.widgets.text("usage_lookback_days", "7", "09. Usage lookback days")
 dbutils.widgets.text("usage_wait_seconds", "180", "10. Seconds to wait for probe rows in usage")
 dbutils.widgets.text("results_table", "", "11. Delta table to append results (blank = skip)")
@@ -112,6 +121,7 @@ dbutils.widgets.text("results_table", "", "11. Delta table to append results (bl
 
 import html as html_lib
 import json
+import numbers
 import re
 import time
 import uuid
@@ -129,6 +139,9 @@ RUN_TS = datetime.now(timezone.utc)
 
 
 NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+SCHEMA_RE = re.compile(r"^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$")
+TABLE_RE = re.compile(r"^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$")
+MAX_BURST = 20
 
 
 def normalize_model(name):
@@ -138,19 +151,31 @@ def normalize_model(name):
     return name if "." in name else f"system.ai.{name}"
 
 
+def quote_name(name):
+    """Backtick each part of a dotted name, so printed SQL parses for names with '-'."""
+    return ".".join(f"`{p}`" for p in name.split("."))
+
+
 TARGET_MODELS = [normalize_model(m) for m in dbutils.widgets.get("target_models").split(",") if m.strip()]
 if not TARGET_MODELS:
     raise ValueError("target_models is empty. Enter at least one model service, for example system.ai.claude-opus-5-5.")
 PRINCIPAL_TO_CHECK = dbutils.widgets.get("principal_to_check").strip()
 RUN_PROBES = dbutils.widgets.get("run_invocation_probes") == "yes"
 BURST = int(dbutils.widgets.get("burst_requests") or 0)
+if not 0 <= BURST <= MAX_BURST:
+    raise ValueError(f"burst_requests must be between 0 and {MAX_BURST}. system.ai service-level limits are shared by every caller.")
 TEST_SCHEMA = dbutils.widgets.get("test_schema").strip()
+if TEST_SCHEMA and not SCHEMA_RE.match(TEST_SCHEMA):
+    raise ValueError(f"Invalid test_schema {TEST_SCHEMA!r}. Use catalog.schema with letters, digits, '_', and '-' only.")
 CREATE_TEST_SERVICE = dbutils.widgets.get("create_test_service") == "yes"
 ADI_MODE = dbutils.widgets.get("adi_mode")
 TARGET_MCP = [normalize_model(m) for m in dbutils.widgets.get("target_mcp_services").split(",") if m.strip()]
 LOOKBACK_DAYS = int(dbutils.widgets.get("usage_lookback_days") or 7)
 USAGE_WAIT_S = int(dbutils.widgets.get("usage_wait_seconds") or 0)
 RESULTS_TABLE = dbutils.widgets.get("results_table").strip()
+if RESULTS_TABLE and not TABLE_RE.match(RESULTS_TABLE):
+    raise ValueError(f"Invalid results_table {RESULTS_TABLE!r}. Use catalog.schema.table with letters, digits, and '_' only.")
+WORKSPACE_ID = str(w.get_workspace_id())
 REQUEST_TAGS = json.dumps({"tool": "ug_readiness", "readiness_run_id": RUN_ID})
 
 # Ordered (prefix, description) pairs. The first prefix that matches a check name supplies its `about` text.
@@ -165,7 +190,7 @@ CHECK_ABOUT = [
     ("Unity Gateway API reachable", "Lists model services in system.ai. A failure means the gateway control plane is not available to this workspace."),
     ("List model services", "Lists every model service in the target model's schema, with full config."),
     ("Model services visible", "How many model services this identity can see in the target schemas."),
-    ("Model service exists", "The target model has a model service this identity can see, and lists the API formats it accepts. On Azure, ADI models can appear here before ADI is activated, so section 5 relies on the live call."),
+    ("Model service exists", "The target model has a model service this identity can see, and lists the API formats it accepts. On Azure, an ADI model is missing here when ADI Services is not enabled for the workspace."),
     ("Live destination", "The model service routes to at least one destination that is not deleted. A service with only deleted destinations cannot serve traffic."),
     ("Rate limits", "Service-level QPM or TPM limits apply to all callers together. Very low limits throttle production traffic."),
     ("Inference table", "Requests and responses are logged to a Delta table for audit and debugging."),
@@ -177,15 +202,16 @@ CHECK_ABOUT = [
     ("anthropic/v1/messages", "Live call to the native Anthropic Messages API at /ai-gateway/anthropic/v1/messages, used by Anthropic SDK code and Claude Code."),
     ("Client-specific APIs", "API formats used by specific coding agents (Cursor, Codex). They share the same service and grants, so they are listed but not probed."),
     ("streaming, ai_query, burst", "Follow-on probes run only when the basic call succeeds."),
+    ("streaming, burst", "Streaming and burst probes use Chat Completions, so they run only when that API passes."),
+    ("Unprobed APIs", "API formats the service declares that this notebook has no probe for. They share the same service and grants."),
     ("streaming", "Streams a chat completion over server-sent events and measures time to first chunk. Interactive apps and coding agents depend on streaming."),
     ("ai_query", "Runs ai_query() from SQL against the model service. This is the batch inference path. Only usage tracking applies to it, not rate limits or guardrails."),
     ("burst of", "Sends parallel requests to surface HTTP 429 rate limiting before production load does."),
     ("Live probes", "All live invocation probes."),
     ("ADI applies", "On Azure Databricks, OpenAI, Google Gemini, Kimi, GLM, DeepSeek, and TypeSafe AI models are delivered through ADI Services, which must be enabled before they can be used."),
     ("ADI delivery", "Whether this model reaches Azure Databricks through ADI Services or is served natively."),
-    ("ADI activation", "Proves ADI is activated for this model with a live call. Without activation, ADI models show in system.ai but fail when called."),
+    ("ADI activation", "Proves ADI is activated for this model with a live call. Without activation, ADI models are not in system.ai at all."),
     ("ADI toggle", "The Integration with ADI Services toggle in the workspace's account settings. No public API exposes it."),
-    ("ADI cross-geo", "Global-only ADI models, such as some Gemini models, also need cross-geography processing to be allowed. If it is off, the models are missing or unusable."),
     ("ADI TypeSafe", "TypeSafe AI models also need the TypeSafe AI Models preview turned on in the account console."),
     ("ADI HIPAA", "Using ADI Services with PHI means accepting the Databricks Business Associate Agreement unless a separate BAA is in place."),
     ("ADI OpenAI retention", "OpenAI may retain flagged content from coding and routing customers for GPT-5.5 and later models."),
@@ -205,9 +231,8 @@ CHECK_ABOUT = [
     ("Read system.billing.usage", "Reads billed DBUs for model serving and gateway SKUs, which is the source of truth for commit burn-down."),
     ("Probe traffic recorded", "Confirms this run's probes reached the usage table with their request tags. Ingestion can lag by 20 minutes or more, so a timeout here is a WARN, not a FAIL."),
     ("Cross-geography routing", "Account setting that lets requests be processed outside the workspace's geography. Some models in some regions need it."),
-    ("Data retention opt-out", "Claude Fable models need 30-day trust and safety retention."),
     ("Service policies", "Guardrails on request and response content (PII, prompt injection, unsafe content). Beta."),
-    ("Usage dashboard", "The built-in dashboard over system.ai_gateway.usage."),
+    ("Usage dashboard", "The usage dashboard over system.ai_gateway.usage, created by an account admin."),
     ("Client auth model", "How production clients authenticate."),
     ("MCP services visible", "Every MCP service this identity can see in system.ai and in the schemas of the target MCP services."),
     ("List MCP services", "Listing MCP services in a schema failed. This usually means a missing USE SCHEMA grant."),
@@ -277,14 +302,14 @@ def classify_error(status_code, text):
         return (
             "Model not served in this workspace's region",
             "Check model region availability. If the model is marked cross-geo for this region, an account admin enables "
-            "cross-geography routing. Claude Fable models also require the account not to opt out of 30-day data retention.",
+            "cross-geography routing.",
         )
     if status_code == 404:
         return "Model service not found", "Confirm the fully qualified name, and that the model service exists in system.ai for this metastore."
     if status_code in (401, 403):
         return "Caller not authorized", "Grant USE CATALOG on system, USE SCHEMA on system.ai, and EXECUTE on the model service. Confirm the workspace entitlement (Workspace or Consumer access). On Azure, ADI models also fail this way until ADI Services is activated (section 5)."
     if status_code == 429:
-        return "Rate limited", "Review service, user, and group rate limits on the model service, and any budget hard caps."
+        return "Rate limited", "Review service, user, and group rate limits on the model service, and any budget set to block usage."
     if status_code == 400:
         return "Request rejected", "Check the payload against the API type, and any service policy (guardrail) attached to the service."
     return f"HTTP {status_code}", "Inspect the error text. Retry to rule out a transient provider error."
@@ -394,8 +419,11 @@ def render_df(df, title, note=""):
         cells = ""
         for c in cols:
             v = row[c]
-            num = isinstance(v, (int, float)) and not isinstance(v, bool)
-            cells += f'<td class="num">{v:,.0f}</td>' if num and v == v else f"<td>{esc(v)}</td>"
+            num = isinstance(v, numbers.Real) and not isinstance(v, bool)
+            if num and v == v:
+                cells += f'<td class="num">{v:,.0f}</td>' if float(v).is_integer() else f'<td class="num">{v:,.2f}</td>'
+            else:
+                cells += f"<td>{esc(v)}</td>"
         body += f"<tr>{cells}</tr>"
     show(f'<div class="hdr"><h3>{esc(title)}</h3></div>' + (f'<div class="sub">{esc(note)}</div>' if note else "") + f"<table><tr>{head}</tr>{body}</table>")
 
@@ -476,7 +504,7 @@ render_section("1 Platform", "1. Platform prerequisites")
 # MAGIC |---|---|---|
 # MAGIC | Model service exists | Looks up the target by its full name and lists `supported_api_types` | Not exposed for this region, or no access. Section 4 shows the gateway's own error |
 # MAGIC | Live destination | Confirms at least one routing destination is not deleted | Repoint or recreate the service |
-# MAGIC | Rate limits | Shows service-level QPM and TPM limits | WARN: confirm they fit production traffic |
+# MAGIC | Rate limits | Shows QPM and TPM limits | WARN when a service-level limit is set: confirm it fits production traffic. User and group limits are INFO |
 # MAGIC | Inference table | Shows whether payload logging is on | INFO only |
 
 # COMMAND ----------
@@ -527,11 +555,13 @@ for m in TARGET_MODELS:
     else:
         record("2 Catalog", "Live destination", "PASS", "; ".join(f"{d.get('destination_type')} -> {d.get('name')} ({d.get('traffic_percentage', '-')}%)" for d in live), model=m)
     limits = cfg.get("rate_limits", [])
-    if limits:
+    if any(l.get("key") == "RATE_LIMIT_KEY_SERVICE" for l in limits):
         record(
             "2 Catalog", "Rate limits", "WARN", json.dumps(limits),
             "Service-level limits throttle every caller. Confirm they match the expected production QPM and TPM.", model=m,
         )
+    elif limits:
+        record("2 Catalog", "Rate limits", "INFO", json.dumps(limits), model=m)
     else:
         record("2 Catalog", "Rate limits", "INFO", "None configured on the service", model=m)
     if cfg.get("inference_table"):
@@ -580,7 +610,7 @@ def check_principal(principal, label):
             record(
                 "3 Access", f"{label}: {', '.join(sorted(needed))} on {stype} {name}", "WARN",
                 f"Direct or inherited grants: {', '.join(sorted(privs)) or 'none'}. Group-based grants may still apply; section 4 is the authoritative test.",
-                f"GRANT {', '.join(sorted(needed)).replace('_', ' ')} ON {stype.replace('_', ' ').upper()} {name} TO `{principal}`", model=model,
+                f"GRANT {', '.join(sorted(needed)).replace('_', ' ')} ON {stype.replace('_', ' ').upper()} {quote_name(name)} TO `{principal}`", model=model,
             )
 
 
@@ -668,12 +698,19 @@ def probe_stream(model):
 
 
 def probe_ai_query(model):
+    if not model.startswith("system.ai."):
+        record("4 Invocation", "ai_query (SQL batch)", "SKIP", "ai_query supports system.ai model services only", model=model)
+        return
     try:
         out = spark.sql(f"SELECT ai_query('{model}', '{PROMPT}') AS r").collect()[0]["r"]
         record("4 Invocation", "ai_query (SQL batch)", "PASS", f"response: {str(out)[:80]}", model=model)
     except Exception as e:
         msg = str(e).splitlines()[0][:400]
-        record("4 Invocation", "ai_query (SQL batch)", "FAIL", msg, "ai_query supports system.ai model services only. Check the region error and the caller's EXECUTE grant.", model=model)
+        if "not supported for batch inference" in str(e).lower():
+            record("4 Invocation", "ai_query (SQL batch)", "WARN", msg,
+                   "This model does not support batch inference. Gateway calls still work. Use another model for ai_query workloads.", model=model)
+        else:
+            record("4 Invocation", "ai_query (SQL batch)", "FAIL", msg, "Check the region error and the caller's EXECUTE grant.", model=model)
 
 
 def probe_burst(model, n):
@@ -687,28 +724,44 @@ def probe_burst(model, n):
 
         codes = list(ex.map(one, range(n)))
     summary = {c: codes.count(c) for c in set(codes)}
-    status = "PASS" if summary.get(200) == n else ("WARN" if 429 in summary else "FAIL")
+    ok = summary.get(200, 0)
+    # A few transient non-200s, or 429s from rate limits, are review items. FAIL only when most calls fail for other reasons.
+    if ok == n:
+        status = "PASS"
+    elif ok * 2 >= n or ok + summary.get(429, 0) == n:
+        status = "WARN"
+    else:
+        status = "FAIL"
     record("4 Invocation", f"burst of {n} parallel requests", status, f"status counts {summary}", "429s indicate service, user, or group rate limits, or a budget cap." if status != "PASS" else "", model=model)
 
 
 if not RUN_PROBES:
     record("4 Invocation", "Live probes", "SKIP", "run_invocation_probes = no")
 else:
+    CHAT = "mlflow/v1/chat/completions"
     for m in TARGET_MODELS:
         s = SERVICES.get(m)
-        api_types = [a for a in s.get("supported_api_types", []) if a in API_PROBES] if s else []
-        api_types = api_types or ["mlflow/v1/chat/completions"]
-        skipped = [a for a in (s or {}).get("supported_api_types", []) if a in CLIENT_SPECIFIC]
-        codes = [probe(m, a) for a in api_types]
-        if skipped:
-            record("4 Invocation", "Client-specific APIs", "INFO", f"{', '.join(skipped)} are exercised by Cursor and Codex clients, not probed here", model=m)
-        if 200 in codes:
+        declared = s.get("supported_api_types", []) if s else []
+        # A service missing from section 2 still gets a chat call, so the gateway's own error shows here.
+        api_types = [a for a in declared if a in API_PROBES] if s else [CHAT]
+        client = [a for a in declared if a in CLIENT_SPECIFIC]
+        unprobed = [a for a in declared if a not in API_PROBES and a not in CLIENT_SPECIFIC]
+        codes = {a: probe(m, a) for a in api_types}
+        if client:
+            record("4 Invocation", "Client-specific APIs", "INFO", f"{', '.join(client)} are exercised by Cursor and Codex clients, not probed here", model=m)
+        if unprobed:
+            record("4 Invocation", "Unprobed APIs", "INFO", f"Declared by the service but not probed by this notebook: {', '.join(unprobed)}", model=m)
+        if 200 not in codes.values():
+            reason = "the basic call failed" if codes else "the service declares no API type this notebook probes"
+            record("4 Invocation", "streaming, ai_query, burst", "SKIP", f"Skipped because {reason}", model=m)
+            continue
+        probe_ai_query(m)
+        if codes.get(CHAT) == 200:
             probe_stream(m)
-            probe_ai_query(m)
             if BURST > 0:
                 probe_burst(m, BURST)
         else:
-            record("4 Invocation", "streaming, ai_query, burst", "SKIP", "Skipped because the basic call failed", model=m)
+            record("4 Invocation", "streaming, burst", "SKIP", "Streaming and burst use Chat Completions, which this service does not declare or did not pass", model=m)
 
 render_section("4 Invocation", "4. Live invocation probes")
 
@@ -720,8 +773,8 @@ render_section("4 Invocation", "4. Live invocation probes")
 # MAGIC Today that covers OpenAI GPT, Google Gemini, Moonshot Kimi, Zhipu GLM, DeepSeek, and TypeSafe AI models. Claude and the other natively served models do not go through ADI.
 # MAGIC See [docs.databricks.com/adi](https://docs.databricks.com/adi) for the current model list and terms.
 # MAGIC
-# MAGIC **Why a live call is required:** ADI models appear in `system.ai`, and pass section 2, even when ADI is not activated. They only fail when called.
-# MAGIC So this section uses the section 4 results as proof of activation.
+# MAGIC **How activation shows up:** when ADI Services is not enabled for the workspace, the ADI models are not in `system.ai` at all, so section 2 reports them as missing.
+# MAGIC A model that is listed is proven active only by a live call, so this section uses the section 4 results as proof of activation.
 # MAGIC
 # MAGIC **Activation:** access requires ADI Services eligibility and enablement. The Azure Databricks account team confirms eligibility.
 # MAGIC An admin then turns on **Integration with ADI Services** in the account settings of the workspace. Standard data residency settings apply to ADI Services.
@@ -730,8 +783,8 @@ render_section("4 Invocation", "4. Live invocation probes")
 # MAGIC |---|---|---|
 # MAGIC | ADI applies | Detects Azure from the metastore (or `adi_mode = force`) | n/a |
 # MAGIC | ADI delivery | Classifies each target as ADI-delivered or native, by model family | n/a |
-# MAGIC | ADI activation | PASS if the model answered a live call in section 4 | Activate ADI: confirm eligibility, then turn on the toggle. Global-only models also need cross-geo processing |
-# MAGIC | ADI toggle, cross-geo, TypeSafe, HIPAA, OpenAI retention | MANUAL items with no public API | Confirm in workspace settings, the account console, or with the account team |
+# MAGIC | ADI activation | PASS if the model answered a live call in section 4 | Activate ADI: confirm eligibility, then turn on the toggle |
+# MAGIC | ADI toggle, TypeSafe, HIPAA, OpenAI retention | MANUAL items with no public API | Confirm in workspace settings, the account console, or with the account team |
 
 # COMMAND ----------
 
@@ -743,7 +796,8 @@ def adi_family(model):
     """Return the ADI family prefix for a model service, using its destination model when it is a custom service."""
     names = [model.rsplit(".", 1)[-1]]
     for d in (SERVICES.get(model) or {}).get("config", {}).get("routing", {}).get("destinations", []):
-        names.append(d.get("name", "").rsplit(".", 1)[-1].removeprefix("databricks-"))
+        # The destination name is a free label on custom services, so read the routed model instead.
+        names.append(((d.get("pay_per_token_config") or {}).get("model") or "").rsplit(".", 1)[-1].removeprefix("databricks-"))
     for n in names:
         if n.startswith(NOT_ADI):
             return None
@@ -777,16 +831,12 @@ else:
                 "Enable ADI Services: confirm eligibility with the Azure Databricks account team, then turn on "
                 "Integration with ADI Services in the account settings of the workspace."
             )
-            if fam == "gemini":
-                fix += " Global-only Gemini models also need cross-geography processing allowed."
             if m not in SERVICES:
-                fix += " The model service is missing entirely, which points to cross-geo or regional availability rather than the toggle."
+                fix += " The model service is missing from system.ai, which is what a workspace without ADI Services enabled shows. Enable ADI first, then re-run."
             record("5 Azure ADI", "ADI activation", "FAIL", err, fix, model=m)
 
     families = {fam for _, fam in adi_targets}
     record("5 Azure ADI", "ADI toggle", "MANUAL", "Integration with ADI Services is on in the account settings of the workspace. Repeat for every workspace that will call ADI models.")
-    if "gemini" in families:
-        record("5 Azure ADI", "ADI cross-geo", "MANUAL", "Global-only Gemini models need cross-geography processing allowed. If it is off, they are missing or unusable.")
     if "typesafeai" in families:
         record("5 Azure ADI", "ADI TypeSafe", "MANUAL", "An account admin turns on the TypeSafe AI Models preview in the account console. TypeSafe AI's own terms apply.")
     record("5 Azure ADI", "ADI HIPAA", "MANUAL", "If PHI will flow through ADI models, using ADI Services means accepting the Databricks BAA unless a separate BAA is in place.")
@@ -825,7 +875,7 @@ else:
     else:
         record(
             "6 Custom services", f"CREATE SERVICE on {TEST_SCHEMA}", "WARN", f"Visible privileges: {', '.join(sorted(have)) or 'none'} {err_c or ''} {err_s or ''}",
-            f"GRANT USE CATALOG ON CATALOG {cat}, and USE SCHEMA, CREATE SERVICE ON SCHEMA {TEST_SCHEMA} to the team that owns custom services.",
+            f"GRANT USE CATALOG ON CATALOG {quote_name(cat)}, and USE SCHEMA, CREATE SERVICE ON SCHEMA {quote_name(TEST_SCHEMA)} to the team that owns custom services.",
         )
 
     for kind, path in [("model provider services", "model-provider-services"), ("MCP services", "mcp-services"), ("model services", "model-services")]:
@@ -838,12 +888,15 @@ else:
             record("6 Custom services", f"Inventory of {kind} in {TEST_SCHEMA}", "WARN", resp)
 
     if CREATE_TEST_SERVICE:
-        working = [p["model"] for p in PROBE_ROWS if p["status_code"] == 200 and p["model"] in SERVICES]
-        if not working:
-            record("6 Custom services", "Temp model service round trip", "SKIP", "No target model passed section 4 to use as a destination")
+        # The temp service is queried with Chat Completions, so its destination must have passed that API.
+        working = [p["model"] for p in PROBE_ROWS if p["status_code"] == 200 and p["api_type"] == "mlflow/v1/chat/completions" and p["model"] in SERVICES]
+        dest = working[0] if working else None
+        dest_cfg = next((d for d in SERVICES[dest]["config"]["routing"]["destinations"] if not d.get("is_deleted")), None) if dest else None
+        if not dest:
+            record("6 Custom services", "Temp model service round trip", "SKIP", "No target model passed Chat Completions in section 4 to use as a destination")
+        elif not (dest_cfg or {}).get("pay_per_token_config"):
+            record("6 Custom services", "Temp model service round trip", "SKIP", f"The live destination of {dest} has no pay_per_token_config to copy")
         else:
-            dest = working[0]
-            dest_cfg = next(d for d in SERVICES[dest]["config"]["routing"]["destinations"] if not d.get("is_deleted"))
             svc_id = f"ug_readiness_{RUN_ID}"
             fqn = f"{TEST_SCHEMA}.{svc_id}"
             body = {
@@ -855,26 +908,34 @@ else:
                     "traffic_percentage": 100,
                 }]}},
             }
-            ok, resp = api("POST", "/api/2.1/unity-catalog/model-services", query={"parent": f"schemas/{TEST_SCHEMA}", "model_service_id": svc_id}, body=body)
-            if not ok:
-                record("6 Custom services", "Create temp model service", "FAIL", resp, "Requires CREATE SERVICE on the schema and EXECUTE on the destination model.")
-            else:
-                record("6 Custom services", "Create temp model service", "PASS", f"{fqn} -> {dest}")
-                try:
+            # None means the create call did not return (for example an interrupt), so the service may exist and is deleted anyway.
+            created = None
+            try:
+                created, resp = api("POST", "/api/2.1/unity-catalog/model-services", query={"parent": f"schemas/{TEST_SCHEMA}", "model_service_id": svc_id}, body=body)
+                if not created:
+                    record("6 Custom services", "Create temp model service", "FAIL", resp, "Requires CREATE SERVICE on the schema and EXECUTE on the destination model.")
+                else:
+                    record("6 Custom services", "Create temp model service", "PASS", f"{fqn} -> {dest}")
+                    path, body_fn, _ = API_PROBES["mlflow/v1/chat/completions"]
                     code, text = None, ""
                     for attempt in range(12):
-                        path, body_fn, _ = API_PROBES["mlflow/v1/chat/completions"]
-                        r = gateway_post(path, body_fn(fqn))
-                        code, text = r.status_code, r.text
+                        try:
+                            r = gateway_post(path, body_fn(fqn))
+                            code, text = r.status_code, r.text
+                        except requests.RequestException as e:
+                            code, text = None, str(e)
                         if code == 200:
                             break
                         time.sleep(10)
                     if code == 200:
                         record("6 Custom services", "Query temp model service", "PASS", f"after {attempt + 1} attempt(s)")
+                    elif code is None:
+                        record("6 Custom services", "Query temp model service", "FAIL", text[:300], "Network or client error. Check egress from the compute to the workspace host.")
                     else:
                         what, fix = classify_error(code, text)
                         record("6 Custom services", "Query temp model service", "FAIL", f"{what}: {text[:300]}", fix)
-                finally:
+            finally:
+                if created is not False:
                     ok_d, resp_d = api("DELETE", f"/api/2.1/unity-catalog/model-services/{fqn}")
                     record("6 Custom services", "Delete temp model service", "PASS" if ok_d else "FAIL", fqn if ok_d else resp_d, "" if ok_d else f"Delete {fqn} manually.")
     else:
@@ -1042,7 +1103,7 @@ for fqn in TARGET_MCP:
             record("7 MCP", check, "PASS", ", ".join(sorted(privs)), model=fqn)
         else:
             record("7 MCP", check, "WARN", f"Direct or inherited grants: {', '.join(sorted(privs)) or 'none'}",
-                   f"GRANT EXECUTE ON MCP SERVICE {fqn} TO `{principal}`, plus USE CATALOG and USE SCHEMA on its parents.", model=fqn)
+                   f"GRANT EXECUTE ON MCP SERVICE {quote_name(fqn)} TO `{principal}`, plus USE CATALOG and USE SCHEMA on its parents.", model=fqn)
     if RUN_PROBES:
         probe_mcp(fqn)
     else:
@@ -1052,11 +1113,13 @@ try:
     mcp_usage = spark.sql(f"""
         SELECT service_name, mcp_metadata.json_rpc_method AS method, status_code, count(*) AS requests
         FROM system.ai_gateway.usage
-        WHERE service_type = 'MCP_SERVICE' AND event_time >= current_timestamp() - INTERVAL {LOOKBACK_DAYS} DAYS
+        WHERE workspace_id = '{WORKSPACE_ID}' AND service_type = 'MCP_SERVICE'
+          AND event_time >= current_timestamp() - INTERVAL {LOOKBACK_DAYS} DAYS
+          AND coalesce(request_tags['tool'], '') <> 'ug_readiness'
         GROUP BY ALL ORDER BY requests DESC LIMIT 25""").toPandas()
     record("7 MCP", f"MCP traffic, last {LOOKBACK_DAYS}d", "INFO", f"{int(mcp_usage.requests.sum()) if len(mcp_usage) else 0} request(s) across {mcp_usage.service_name.nunique() if len(mcp_usage) else 0} service(s)")
     if len(mcp_usage):
-        render_df(mcp_usage, f"MCP traffic, last {LOOKBACK_DAYS} days", "From system.ai_gateway.usage where service_type = MCP_SERVICE.")
+        render_df(mcp_usage, f"MCP traffic in this workspace, last {LOOKBACK_DAYS} days", "From system.ai_gateway.usage where service_type = MCP_SERVICE, excluding this notebook's probes.")
 except Exception as e:
     record("7 MCP", f"MCP traffic, last {LOOKBACK_DAYS}d", "FAIL", str(e).splitlines()[0][:400],
            "By default only account and metastore admins can read system.ai_gateway tables.")
@@ -1068,6 +1131,7 @@ render_section("7 MCP", "7. MCP services")
 # MAGIC %md
 # MAGIC ## 8. Observability: usage, spend, and billing tables
 # MAGIC A large commit needs burn-down tracking from day one. This section confirms the tables that track it are readable, and that gateway traffic lands in them.
+# MAGIC The system tables cover the whole account, so every query here and in sections 7 and 9 filters to this workspace's `workspace_id`.
 # MAGIC
 # MAGIC | Check | What it does | If it fails or warns |
 # MAGIC |---|---|---|
@@ -1096,23 +1160,26 @@ usage_recent = sql_check(
     f"""SELECT endpoint_name, status_code, count(*) AS requests, sum(total_tokens) AS total_tokens,
                percentile(latency_ms, 0.5) AS p50_ms, percentile(latency_ms, 0.95) AS p95_ms
         FROM system.ai_gateway.usage
-        WHERE event_time >= current_timestamp() - INTERVAL {LOOKBACK_DAYS} DAYS
+        WHERE workspace_id = '{WORKSPACE_ID}'
+          AND event_time >= current_timestamp() - INTERVAL {LOOKBACK_DAYS} DAYS
           AND endpoint_name IN ({', '.join(repr(m) for m in TARGET_MODELS)})
+          AND coalesce(request_tags['tool'], '') <> 'ug_readiness'
         GROUP BY ALL ORDER BY endpoint_name, status_code""",
     GRANT_FIX,
 )
 if usage_recent is not None and len(usage_recent):
-    render_df(usage_recent, f"Gateway traffic on target models, last {LOOKBACK_DAYS} days", "From system.ai_gateway.usage. Latency in milliseconds.")
+    render_df(usage_recent, f"Gateway traffic on target models in this workspace, last {LOOKBACK_DAYS} days", "From system.ai_gateway.usage, excluding this notebook's probes. Latency in milliseconds.")
     errs = usage_recent[usage_recent.status_code != 200]
     if len(errs):
         record("8 Observability", f"Non-200 traffic on targets, last {LOOKBACK_DAYS}d", "WARN", "; ".join(f"{e.endpoint_name.removeprefix('system.ai.')}: HTTP {e.status_code} x{e.requests}" for e in errs.itertuples()), "Review 4xx and 429 patterns before scaling traffic.")
 
-sql_check("Read system.ai_gateway.external_model_spend", "SELECT * FROM system.ai_gateway.external_model_spend LIMIT 1", GRANT_FIX)
+sql_check("Read system.ai_gateway.external_model_spend", f"SELECT * FROM system.ai_gateway.external_model_spend WHERE workspace_id = '{WORKSPACE_ID}' LIMIT 1", GRANT_FIX)
 sql_check(
     "Read system.billing.usage (serving and gateway SKUs)",
     f"""SELECT sku_name, sum(usage_quantity) AS dbus FROM system.billing.usage
-        WHERE usage_date >= current_date() - INTERVAL {LOOKBACK_DAYS} DAYS
-          AND (sku_name ILIKE '%GATEWAY%' OR sku_name ILIKE '%SERVING%')
+        WHERE workspace_id = '{WORKSPACE_ID}'
+          AND usage_date >= current_date() - INTERVAL {LOOKBACK_DAYS} DAYS
+          AND billing_origin_product IN ('AI_GATEWAY', 'MODEL_SERVING')
         GROUP BY ALL ORDER BY dbus DESC""",
     "Grant SELECT on system.billing.usage to the team that tracks commit burn-down.",
 )
@@ -1167,10 +1234,10 @@ render_section("8 Observability", "8. Observability")
 
 for m in AVAILABLE:
     keys = [str(l.get("key", "")) for l in (SERVICES[m].get("config", {}).get("rate_limits") or [])]
-    has_service = any(k.endswith("_SERVICE") for k in keys)
-    has_user = any("USER" in k for k in keys)
-    custom = [k for k in keys if not k.endswith("_SERVICE") and "USER" not in k]
-    detail = f"service: {'yes' if has_service else 'no'}, per-user: {'yes' if has_user else 'no'}, custom: {len(custom)}"
+    has_service = "RATE_LIMIT_KEY_SERVICE" in keys
+    has_user = "RATE_LIMIT_KEY_USER_DEFAULT" in keys
+    custom = [k for k in keys if k not in ("RATE_LIMIT_KEY_SERVICE", "RATE_LIMIT_KEY_USER_DEFAULT")]
+    detail = f"service: {'yes' if has_service else 'no'}, per-user default: {'yes' if has_user else 'no'}, user and group: {len(custom)}"
     if has_user:
         record("9 Cost controls", "Rate limit coverage", "PASS", detail, model=m)
     else:
@@ -1190,7 +1257,8 @@ try:
                coalesce(sum(token_details.output_reasoning_tokens), 0) AS reasoning_tokens,
                avg(CASE WHEN lower(invocation_metadata.service_tier) = 'priority' THEN 1 ELSE 0 END) AS priority_share
         FROM system.ai_gateway.usage
-        WHERE event_time >= current_timestamp() - INTERVAL {LOOKBACK_DAYS} DAYS
+        WHERE workspace_id = '{WORKSPACE_ID}'
+          AND event_time >= current_timestamp() - INTERVAL {LOOKBACK_DAYS} DAYS
           AND endpoint_name IN ({target_list})
           AND coalesce(request_tags['tool'], '') <> 'ug_readiness'
         GROUP BY endpoint_name""").toPandas()
@@ -1231,11 +1299,11 @@ if eff is not None:
             request_tagged=(eff.request_tagged * 100).round(0),
             priority_share=(eff.priority_share * 100).round(0),
         ).rename(columns={"service_tagged": "service_tagged_pct", "request_tagged": "request_tagged_pct", "priority_share": "priority_pct"})
-        render_df(view, f"Cost signals on target models, last {LOOKBACK_DAYS} days", "From system.ai_gateway.usage, excluding this notebook's probes.")
+        render_df(view, f"Cost signals on target models in this workspace, last {LOOKBACK_DAYS} days", "From system.ai_gateway.usage, excluding this notebook's probes.")
 
 try:
     spend = spark.sql(f"""
-        SELECT u.usage_metadata.ai_gateway.endpoint_name AS model_service,
+        SELECT coalesce(u.usage_metadata.ai_gateway.endpoint_name, u.usage_metadata.endpoint_name) AS model_service,
                u.usage_metadata.ai_gateway.destination_model AS destination_model,
                sum(u.usage_quantity) AS dbus,
                sum(u.usage_quantity * lp.pricing.default) AS list_cost,
@@ -1245,8 +1313,9 @@ try:
           ON u.sku_name = lp.sku_name AND u.cloud = lp.cloud AND u.usage_unit = lp.usage_unit
          AND u.usage_start_time >= lp.price_start_time
          AND (lp.price_end_time IS NULL OR u.usage_start_time < lp.price_end_time)
-        WHERE u.billing_origin_product = 'MODEL_SERVING'
-          AND u.usage_metadata.ai_gateway.endpoint_name IS NOT NULL
+        WHERE u.workspace_id = '{WORKSPACE_ID}'
+          AND u.billing_origin_product IN ('AI_GATEWAY', 'MODEL_SERVING')
+          AND coalesce(u.usage_metadata.ai_gateway.endpoint_name, u.usage_metadata.endpoint_name) IN ({target_list})
           AND u.usage_date >= current_date() - INTERVAL {LOOKBACK_DAYS} DAYS
         GROUP BY ALL ORDER BY dbus DESC LIMIT 25""").toPandas()
     spend[["dbus", "list_cost", "unpriced_dbus"]] = spend[["dbus", "list_cost", "unpriced_dbus"]].astype(float)
@@ -1255,7 +1324,7 @@ try:
            f"{len(spend)} service(s), {float(spend.dbus.sum()) if len(spend) else 0:,.1f} DBUs, {total:,.2f} at list price before discounts"
            + (f", {float(spend.unpriced_dbus.sum()):,.1f} DBUs had no list price match" if len(spend) and spend.unpriced_dbus.sum() else ""))
     if len(spend):
-        render_df(spend, f"Unity Gateway spend by model service, last {LOOKBACK_DAYS} days", "From system.billing.usage joined to system.billing.list_prices. List price, before discounts.")
+        render_df(spend, f"Unity Gateway spend on target models in this workspace, last {LOOKBACK_DAYS} days", "From system.billing.usage joined to system.billing.list_prices. List price, before discounts.")
 except Exception as e:
     record("9 Cost controls", f"Spend by model service, last {LOOKBACK_DAYS}d", "FAIL", str(e).splitlines()[0][:400],
            "Grant SELECT on system.billing.usage and system.billing.list_prices to the team that tracks spend.")
@@ -1264,7 +1333,7 @@ try:
     ext = spark.sql(f"""
         SELECT usage_metadata.endpoint_name AS model_provider_service, sum(usage_quantity) AS usd
         FROM system.ai_gateway.external_model_spend
-        WHERE usage_date >= current_date() - INTERVAL {LOOKBACK_DAYS} DAYS
+        WHERE workspace_id = '{WORKSPACE_ID}' AND usage_date >= current_date() - INTERVAL {LOOKBACK_DAYS} DAYS
         GROUP BY ALL ORDER BY usd DESC LIMIT 10""").toPandas()
     ext["usd"] = ext["usd"].astype(float)
     record("9 Cost controls", f"External model spend, last {LOOKBACK_DAYS}d", "INFO",
@@ -1293,9 +1362,8 @@ render_section("9 Cost controls", "9. Cost controls")
 
 MANUAL = [
     ("Cross-geography routing", "Account console > Settings. Required where a target model is marked cross-geo for this region. Confirm it meets the customer's data residency policy."),
-    ("Data retention opt-out", "Claude Fable models need 30-day trust and safety retention. Accounts that opted out of retention cannot use them."),
     ("Service policies (Beta)", "Workspace admin opts into Unity Gateway Service Policies on the Previews page if PII, prompt-injection, or content guardrails are required."),
-    ("Usage dashboard", "AI Gateway > Usage. Import the built-in usage dashboard for spend and adoption tracking."),
+    ("Usage dashboard", "An account admin creates the usage dashboard from Govern > Create Usage Dashboard, for spend and adoption tracking."),
     ("Client auth model", "Production callers should use service principals with OAuth M2M, not PATs. auth_mode in system.ai_gateway.usage shows what clients use today."),
 ]
 for name, how in MANUAL:
@@ -1395,5 +1463,5 @@ display(results[["status", "section", "model", "check", "detail", "remediation",
 # COMMAND ----------
 
 if RESULTS_TABLE:
-    spark.createDataFrame(results.astype({"model": "string", "detail": "string"})).write.mode("append").option("mergeSchema", "true").saveAsTable(RESULTS_TABLE)
+    spark.createDataFrame(results.astype({"model": "string", "detail": "string"})).write.mode("append").saveAsTable(RESULTS_TABLE)
     show(f'{badge("PASS", "Saved")} Appended {len(results)} rows to <code>{esc(RESULTS_TABLE)}</code> (run {RUN_ID})')

@@ -11,7 +11,9 @@ Each check returns `PASS`, `FAIL`, `WARN`, `INFO`, `MANUAL`, or `SKIP`. Every `F
 Run it twice for a full picture:
 
 1. As an admin, for the complete inventory, grants, usage, and cost data.
-2. As the production identity (for example a service principal, through a job it owns), to prove that identity's real access.
+2. As the production identity, to prove that identity's real access. For a service principal, run a job with **Run as** set to that SP. Setting Run as needs the Service Principal User role on the SP.
+
+Any `FAIL` blocks `READY`, and sections 7, 8, and 9 return `FAIL` when the identity cannot read the usage and billing tables. So the production-identity pass is `READY` only if that identity has `USE SCHEMA` and `SELECT` on `system.ai_gateway.usage`, `system.ai_gateway.external_model_spend`, `system.billing.usage`, and `system.billing.list_prices`. If you prefer not to grant those, expect `FAIL` on those reads in that pass and read the verdict from the other sections.
 
 | Requirement | Needed for |
 |---|---|
@@ -25,15 +27,16 @@ Run it twice for a full picture:
 
 **Platform.** Unity Catalog enabled, a workspace in a Unity Gateway supported region (not AWS GovCloud), and compute that can reach the workspace host over HTTPS.
 
-**Compute.** Tested on serverless notebook compute, environment version 3.
+**Compute.** Serverless only, environment 6. The notebook pins environment 6 in its header, because the scorecard cell needs Python 3.12.
 
 ## How to run
 
 1. Import `unity_gateway_readiness.py` into the workspace (Workspace > Import, or `databricks workspace import --format SOURCE --language PYTHON`).
-2. Attach serverless compute and set the widgets. `target_models` and `target_mcp_services` take comma-separated names. A bare name such as `gpt-6-astra` is read as `system.ai.gpt-6-astra`.
+2. Attach serverless compute and set the widgets. `target_models` and `target_mcp_services` take comma-separated names. A bare name such as `gpt-6-astra` is read as `system.ai.gpt-6-astra`. The default `target_models` are examples. Replace them with the models the customer will use, because a target that is not in `system.ai` for the workspace is a `FAIL`. `target_mcp_services` is blank by default. Not every workspace has every `system.ai` MCP service, for example `system.ai.web_search`.
 3. Run all cells. Each section ends with a card of its checks. Section 10 shows the verdict, a model-by-check matrix, blockers with fixes, and the manual checklist.
+4. Clear outputs before you share the notebook or its export. Outputs include grants, usage, and spend for the workspace.
 
-To test a service principal, run the notebook as a job owned by that principal and pass the widgets as job parameters.
+To test a service principal, run the notebook as a job with **Run as** set to that principal and pass the widgets as job parameters. Anyone with `CAN MANAGE RUN` on the job can change the parameters, and the run uses the SP's privileges, so the notebook validates `results_table`, `test_schema`, and caps `burst_requests` at 20.
 
 ## Sections
 
@@ -59,8 +62,13 @@ To test a service principal, run the notebook as a job owned by that principal a
 
 ## Limitations
 
-- Budgets, cross-geography routing, data retention settings, the ADI Services toggle, and service policies have no workspace API. They are reported as `MANUAL` items.
+- Budgets, cross-geography routing, the ADI Services toggle, and service policies have no workspace API. They are reported as `MANUAL` items.
 - With `run_invocation_probes = no`, nothing proves access, so the verdict is `NOT VERIFIED` instead of `READY`.
+- Usage, spend, and billing queries filter to the running workspace's `workspace_id`, so traffic from other workspaces in the account is not counted.
 - Usage table ingestion can lag 20 minutes or more, so the probe-ingestion check returns `WARN` on timeout, not `FAIL`.
 - Effective-permission reads do not always reflect grants inherited through nested group membership. The live probes are the authoritative access test for the running identity.
 - The cache and reasoning thresholds in section 9 are heuristics for finding the largest cost levers, not limits.
+
+## Disclaimer
+
+This notebook is provided **as-is** for guidance and educational purposes. It is **not an official Databricks tool** or supported product.

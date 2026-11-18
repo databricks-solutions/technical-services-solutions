@@ -150,7 +150,7 @@
 
 - slug: unity-gateway-readiness
   name: "Unity Gateway Readiness Check"
-  kind: "Databricks notebook"
+  kind: "Notebook"
   path: "unified-governance/unity-gateway-readiness"
 
 - slug: genie-agent-scanner

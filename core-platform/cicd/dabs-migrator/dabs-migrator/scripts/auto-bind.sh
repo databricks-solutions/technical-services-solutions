@@ -98,7 +98,21 @@ bind_one() {
   fi
   if   [[ "$count" -eq 1 ]]; then
     echo "  ✅  $type.$key  '$name'  →  $id  (binding …)"
-    databricks bundle deployment bind "$key" "$id" -t "$TARGET" $PROFILE_FLAG --auto-approve
+    local out exit_code=0
+    out=$(databricks bundle deployment bind "$key" "$id" -t "$TARGET" $PROFILE_FLAG --auto-approve 2>&1) || exit_code=$?
+    if [[ $exit_code -ne 0 ]]; then
+      if echo "$out" | grep -qi "already managed"; then
+        # Resource is already tracked in the bundle's workspace state from a prior run.
+        # Treat as a successful skip and record in the audit trail.
+        echo "  ⏭   $type.$key  already managed in bundle state — adding to audit trail"
+      else
+        printf '%s\n' "$out" >&2
+        echo "  ERROR: 'bundle deployment bind' failed for $key (exit $exit_code)." >&2
+        exit 1
+      fi
+    else
+      printf '%s\n' "$out"
+    fi
     BOUND_KEYS+=("$key")
     BOUND_IDS+=("$id")
     ((BIND_COUNT++)) || true
@@ -112,20 +126,22 @@ bind_one() {
 }
 
 # Jobs
+# `databricks jobs list -o json` returns a plain JSON array; each item has .job_id and .settings.name
 while IFS= read -r key; do
   name=$(echo "$BUNDLE_JSON" | jq -r ".resources.jobs.\"$key\".name // empty")
   [[ -z "$name" ]] && continue
-  matches=$(echo "$ALL_JOBS" | jq -c "[.jobs // [] | .[] | select(.settings.name == \"$name\")]")
+  matches=$(echo "$ALL_JOBS" | jq -c "[.[] | select(.settings.name == \"$name\")]")
   count=$(echo "$matches" | jq 'length')
   id=""; [[ "$count" -eq 1 ]] && id=$(echo "$matches" | jq -r '.[0].job_id')
   bind_one "jobs" "$key" "$name" "$count" "$id"
 done < <(echo "$BUNDLE_JSON" | jq -r '.resources.jobs // {} | keys[]' 2>/dev/null || true)
 
 # Pipelines
+# `databricks pipelines list-pipelines -o json` returns a plain JSON array; each item has .pipeline_id and .name
 while IFS= read -r key; do
   name=$(echo "$BUNDLE_JSON" | jq -r ".resources.pipelines.\"$key\".name // empty")
   [[ -z "$name" ]] && continue
-  matches=$(echo "$ALL_PIPELINES" | jq -c "[.statuses // [] | .[] | select(.name == \"$name\")]")
+  matches=$(echo "$ALL_PIPELINES" | jq -c "[.[] | select(.name == \"$name\")]")
   count=$(echo "$matches" | jq 'length')
   id=""; [[ "$count" -eq 1 ]] && id=$(echo "$matches" | jq -r '.[0].pipeline_id')
   bind_one "pipelines" "$key" "$name" "$count" "$id"

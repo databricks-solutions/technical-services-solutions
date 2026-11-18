@@ -203,6 +203,7 @@ CHECK_ABOUT = [
     ("Client-specific APIs", "API formats used by specific coding agents (Cursor, Codex). They share the same service and grants, so they are listed but not probed."),
     ("streaming, ai_query, burst", "Follow-on probes run only when the basic call succeeds."),
     ("streaming, burst", "Streaming and burst probes use Chat Completions, so they run only when that API passes."),
+    ("No probed API type", "The service declares no API format this notebook can probe, so no live call proves access."),
     ("Unprobed APIs", "API formats the service declares that this notebook has no probe for. They share the same service and grants."),
     ("streaming", "Streams a chat completion over server-sent events and measures time to first chunk. Interactive apps and coding agents depend on streaming."),
     ("ai_query", "Runs ai_query() from SQL against the model service. This is the batch inference path. Only usage tracking applies to it, not rate limits or guardrails."),
@@ -644,6 +645,7 @@ render_section("3 Access", "3. Access")
 # COMMAND ----------
 
 PROMPT = "Reply with the single word OK."
+CHAT = "mlflow/v1/chat/completions"
 API_PROBES = {
     "mlflow/v1/chat/completions": ("/ai-gateway/mlflow/v1/chat/completions", lambda m: {"model": m, "messages": [{"role": "user", "content": PROMPT}], "max_tokens": 64}, {}),
     "mlflow/v1/responses": ("/ai-gateway/mlflow/v1/responses", lambda m: {"model": m, "input": PROMPT, "max_output_tokens": 64}, {}),
@@ -678,7 +680,7 @@ def probe(model, api_type):
 
 
 def probe_stream(model):
-    path, body_fn, _ = API_PROBES["mlflow/v1/chat/completions"]
+    path, body_fn, _ = API_PROBES[CHAT]
     body = {**body_fn(model), "stream": True}
     t0 = time.time()
     try:
@@ -706,7 +708,8 @@ def probe_ai_query(model):
         record("4 Invocation", "ai_query (SQL batch)", "PASS", f"response: {str(out)[:80]}", model=model)
     except Exception as e:
         msg = str(e).splitlines()[0][:400]
-        if "not supported for batch inference" in str(e).lower():
+        low = str(e).lower()
+        if "batch inference" in low and "not supported" in low:
             record("4 Invocation", "ai_query (SQL batch)", "WARN", msg,
                    "This model does not support batch inference. Gateway calls still work. Use another model for ai_query workloads.", model=model)
         else:
@@ -714,7 +717,7 @@ def probe_ai_query(model):
 
 
 def probe_burst(model, n):
-    path, body_fn, headers = API_PROBES["mlflow/v1/chat/completions"]
+    path, body_fn, headers = API_PROBES[CHAT]
     with ThreadPoolExecutor(max_workers=n) as ex:
         def one(_):
             try:
@@ -738,7 +741,6 @@ def probe_burst(model, n):
 if not RUN_PROBES:
     record("4 Invocation", "Live probes", "SKIP", "run_invocation_probes = no")
 else:
-    CHAT = "mlflow/v1/chat/completions"
     for m in TARGET_MODELS:
         s = SERVICES.get(m)
         declared = s.get("supported_api_types", []) if s else []
@@ -751,9 +753,12 @@ else:
             record("4 Invocation", "Client-specific APIs", "INFO", f"{', '.join(client)} are exercised by Cursor and Codex clients, not probed here", model=m)
         if unprobed:
             record("4 Invocation", "Unprobed APIs", "INFO", f"Declared by the service but not probed by this notebook: {', '.join(unprobed)}", model=m)
+        if not codes:
+            record("4 Invocation", "No probed API type", "WARN", f"Declared API types: {', '.join(declared) or 'none'}",
+                   "Access is not proven for this target. Call it from a client that uses one of its declared API types.", model=m)
+            continue
         if 200 not in codes.values():
-            reason = "the basic call failed" if codes else "the service declares no API type this notebook probes"
-            record("4 Invocation", "streaming, ai_query, burst", "SKIP", f"Skipped because {reason}", model=m)
+            record("4 Invocation", "streaming, ai_query, burst", "SKIP", "Skipped because the basic call failed", model=m)
             continue
         probe_ai_query(m)
         if codes.get(CHAT) == 200:
@@ -796,8 +801,9 @@ def adi_family(model):
     """Return the ADI family prefix for a model service, using its destination model when it is a custom service."""
     names = [model.rsplit(".", 1)[-1]]
     for d in (SERVICES.get(model) or {}).get("config", {}).get("routing", {}).get("destinations", []):
-        # The destination name is a free label on custom services, so read the routed model instead.
-        names.append(((d.get("pay_per_token_config") or {}).get("model") or "").rsplit(".", 1)[-1].removeprefix("databricks-"))
+        # The destination name is a free label on custom services, so prefer the routed model and fall back to the name.
+        routed = (d.get("pay_per_token_config") or {}).get("model") or d.get("name", "")
+        names.append(routed.rsplit(".", 1)[-1].removeprefix("databricks-"))
     for n in names:
         if n.startswith(NOT_ADI):
             return None
@@ -823,6 +829,9 @@ else:
         rows = [p for p in PROBE_ROWS if p["model"] == m]
         if not RUN_PROBES:
             record("5 Azure ADI", "ADI activation", "WARN", "Live probes are off, so activation cannot be proven", "Re-run with run_invocation_probes = yes.", model=m)
+        elif not rows:
+            record("5 Azure ADI", "ADI activation", "WARN", "No live call was made, because the service declares no API type this notebook probes",
+                   "Call the model from a client that uses one of its declared API types to prove activation.", model=m)
         elif any(p["status_code"] == 200 for p in rows):
             record("5 Azure ADI", "ADI activation", "PASS", "Model answered a live call, so ADI is active for it", model=m)
         else:
@@ -889,14 +898,18 @@ else:
 
     if CREATE_TEST_SERVICE:
         # The temp service is queried with Chat Completions, so its destination must have passed that API.
-        working = [p["model"] for p in PROBE_ROWS if p["status_code"] == 200 and p["api_type"] == "mlflow/v1/chat/completions" and p["model"] in SERVICES]
-        dest = working[0] if working else None
-        dest_cfg = next((d for d in SERVICES[dest]["config"]["routing"]["destinations"] if not d.get("is_deleted")), None) if dest else None
-        if not dest:
+        working = [p["model"] for p in PROBE_ROWS if p["status_code"] == 200 and p["api_type"] == CHAT and p["model"] in SERVICES]
+        candidates = [
+            (m, d) for m in dict.fromkeys(working)
+            for d in SERVICES[m].get("config", {}).get("routing", {}).get("destinations", [])
+            if not d.get("is_deleted") and d.get("pay_per_token_config")
+        ]
+        if not working:
             record("6 Custom services", "Temp model service round trip", "SKIP", "No target model passed Chat Completions in section 4 to use as a destination")
-        elif not (dest_cfg or {}).get("pay_per_token_config"):
-            record("6 Custom services", "Temp model service round trip", "SKIP", f"The live destination of {dest} has no pay_per_token_config to copy")
+        elif not candidates:
+            record("6 Custom services", "Temp model service round trip", "SKIP", "No passing target has a live pay-per-token destination to copy")
         else:
+            dest, dest_cfg = candidates[0]
             svc_id = f"ug_readiness_{RUN_ID}"
             fqn = f"{TEST_SCHEMA}.{svc_id}"
             body = {
@@ -916,7 +929,7 @@ else:
                     record("6 Custom services", "Create temp model service", "FAIL", resp, "Requires CREATE SERVICE on the schema and EXECUTE on the destination model.")
                 else:
                     record("6 Custom services", "Create temp model service", "PASS", f"{fqn} -> {dest}")
-                    path, body_fn, _ = API_PROBES["mlflow/v1/chat/completions"]
+                    path, body_fn, _ = API_PROBES[CHAT]
                     code, text = None, ""
                     for attempt in range(12):
                         try:
@@ -937,7 +950,8 @@ else:
             finally:
                 if created is not False:
                     ok_d, resp_d = api("DELETE", f"/api/2.1/unity-catalog/model-services/{fqn}")
-                    record("6 Custom services", "Delete temp model service", "PASS" if ok_d else "FAIL", fqn if ok_d else resp_d, "" if ok_d else f"Delete {fqn} manually.")
+                    if created:
+                        record("6 Custom services", "Delete temp model service", "PASS" if ok_d else "FAIL", fqn if ok_d else resp_d, "" if ok_d else f"Delete {fqn} manually.")
     else:
         record("6 Custom services", "Temp model service round trip", "SKIP", "create_test_service = no")
 

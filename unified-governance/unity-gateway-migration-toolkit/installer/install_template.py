@@ -1028,8 +1028,11 @@ def run_sql(statement: str) -> str | None:
 WAREHOUSE_NAME = ""
 
 
-def start_warehouse() -> str | None:
-    """Starts the SQL warehouse if it's stopped and waits until it runs. Returns a problem, or None."""
+PREVIEW_WAREHOUSE_STOPPED = "preview: SQL warehouse is stopped"
+
+
+def start_warehouse(allow_start=True) -> str | None:
+    """Check or start the SQL warehouse. Preview reports a stopped one without starting it."""
     global WAREHOUSE_NAME
     try:
         wh = w.warehouses.get(WAREHOUSE_ID)
@@ -1037,6 +1040,8 @@ def start_warehouse() -> str | None:
         return "the SQL warehouse wasn't found: pick one in 2. SQL warehouse"
     WAREHOUSE_NAME = f"{wh.name} ({WAREHOUSE_ID})" if wh.name else WAREHOUSE_ID
     state = wh.state.value if wh.state else "UNKNOWN"
+    if state != "RUNNING" and not allow_start:
+        return PREVIEW_WAREHOUSE_STOPPED
     if state != "RUNNING":
         print(f"starting SQL warehouse {wh.name or WAREHOUSE_ID} (it is {state}); this can take a few minutes...")
         try:
@@ -1200,9 +1205,8 @@ def central_checks(found: list[str]) -> None:
 
 
 def preflight() -> tuple[list[str], list[str], str]:
-    """Checks before anything is created, changed or deleted. Returns (problems, notes, version note), and fills
-    CHECKS. The only writes: the SQL warehouse is started if stopped, and the results schema and the schema for new
-    model services are created as the last checks, when missing and everything else passed (the steps would anyway)."""
+    """Check the install and return (problems, notes, version note), filling CHECKS. Preview only reads. Confirmed
+    execution may start the warehouse and create missing results and model-service schemas as the last checks."""
     found, notes = [], []
     try:
         next(iter(w.apps.list(page_size=1)), None)
@@ -1295,8 +1299,11 @@ def preflight() -> tuple[list[str], list[str], str]:
                                  f"USE SCHEMA, CREATE TABLE, MODIFY ON SCHEMA `{CATALOG}`.`{SCHEMA}` TO `{me}`")
                 else:
                     passed("Results schema", f"{RESULTS} exists and you can write to it")
-        wh_problem = start_warehouse()
-        if wh_problem:
+        wh_problem = start_warehouse(allow_start=not INSTALL_PREVIEW)
+        if wh_problem == PREVIEW_WAREHOUSE_STOPPED:
+            CHECKS.append(("note", "SQL warehouse", f"{WAREHOUSE_NAME or WAREHOUSE_ID} will be started after you set "
+                           "preview=False; the four system-table checks run then"))
+        elif wh_problem:
             found.append(wh_problem)
         else:
             passed("SQL warehouse", f"{WAREHOUSE_NAME or WAREHOUSE_ID} is running")
@@ -1325,14 +1332,17 @@ def preflight() -> tuple[list[str], list[str], str]:
             found.append(problem)
         else:
             passed("Version", f"update {prev} -> {TOOLKIT_VERSION}" if prev else f"new install of {TOOLKIT_VERSION}")
-        if not found and cat is not None and schema is None:  # the probe: create the schema as the last check
-            err = run_sql(f"CREATE SCHEMA IF NOT EXISTS `{CATALOG}`.`{SCHEMA}` COMMENT 'Unity Gateway migration app results "
-                          f"(app: {APP_NAME})'")
-            if err:
-                found.append(f"you can't create {RESULTS} ({err[:200]}). " + create_schema_fix(CATALOG, cat.owner, me))
+        if not found and cat is not None and schema is None:
+            if INSTALL_PREVIEW:
+                CHECKS.append(("note", "Results schema", f"{RESULTS} will be created after you set preview=False"))
             else:
-                passed("Results schema", f"created {RESULTS}")
-        state, TARGET_STATE["state"], detail = target_check(create_now=not found)
+                err = run_sql(f"CREATE SCHEMA IF NOT EXISTS `{CATALOG}`.`{SCHEMA}` COMMENT 'Unity Gateway migration app results "
+                              f"(app: {APP_NAME})'")
+                if err:
+                    found.append(f"you can't create {RESULTS} ({err[:200]}). " + create_schema_fix(CATALOG, cat.owner, me))
+                else:
+                    passed("Results schema", f"created {RESULTS}")
+        state, TARGET_STATE["state"], detail = target_check(create_now=not found and not INSTALL_PREVIEW)
         CHECKS.append((state, "Schema for new model services", detail))
         return found, notes, note
     return found, notes, "uninstall"
@@ -1582,14 +1592,17 @@ print("Checklist:\n" + "\n".join(checklist_lines(CHECKS + [("fix", p, "") for p 
 if PROBLEMS:
     raise ValueError("Nothing was changed. Fix the FIX items in the checklist above, then Run all again:\n- "
                      + "\n- ".join(PROBLEMS))
-print("This install creates or updates:\n" + "\n".join(creates_lines(FOLDER, RESULTS, TARGET, TARGET_STATE["state"],
-                                                                     APP_NAME, JOB_IDENTITY)))
+print(("This install would create or update:" if INSTALL_PREVIEW else "This install creates or updates:") + "\n"
+      + "\n".join(creates_lines(FOLDER, RESULTS, TARGET, TARGET_STATE["state"], APP_NAME, JOB_IDENTITY)))
 print(f"install: {VERSION_NOTE}")
 print(f"The jobs will run as {JOB_IDENTITY}. At the end, the first snapshot starts: it reads account-wide system tables "
       "(legacy endpoints and traffic for every workspace in the account) and writes them to the results schema.")
 if RUN_AS:
     print(f"The checks above ran as you ({me}). Service principal {RUN_AS} needs the same access: SELECT on the system "
           "tables, USE and CREATE on the results schema, and USE CATALOG, USE SCHEMA and CREATE SERVICE on the target schema.")
+if INSTALL_PREVIEW:
+    print("\nNothing was changed. Set preview=False in install(...) and Run all to install.")
+    dbutils.notebook.exit("install preview: nothing changed")
 
 # COMMAND ----------
 

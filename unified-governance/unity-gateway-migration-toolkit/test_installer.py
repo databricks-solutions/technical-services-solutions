@@ -913,8 +913,7 @@ def run_notebook(monkeypatch, ws, widgets=None):
                         "allow_downgrade": vals.get("16_allow_downgrade") == "yes",
                         "second_install": vals.get("17_second_install") == "yes",
                     }
-                    if preview is not None:
-                        kwargs["preview"] = preview
+                    kwargs["preview"] = preview if preview is not None else interactive
                     ns["install"](**kwargs)
                 continue
             exec(compile(cell, f"cell{i}", "exec"), ns)
@@ -1662,6 +1661,35 @@ def test_warehouse_choice_rejects_ambiguity():
     assert not warehouse_id and "several running warehouses" in problem
     warehouse_id, problem = H["warehouse_choice"]("missing", "", warehouses)
     assert not warehouse_id and "wasn't found" in problem
+
+
+def test_interactive_preview_does_not_start_a_warehouse_or_create_schemas(monkeypatch):
+    ws = FakeWS()
+    ws.warehouses[WH_ID]["state"] = "STOPPED"
+    before = snapshot_of(ws)
+    res = run_notebook(monkeypatch, ws, {"__mode__": "install", "__interactive__": True})
+    assert res.status == "exit: install preview: nothing changed", res.status
+    assert snapshot_of(ws) == before
+    assert "Checklist:" in res.text and "This install would create or update:" in res.text
+    assert "preview=False" in res.text and "will be started" in res.text
+
+
+def test_preview_with_service_principal_does_not_grant_results_access(monkeypatch):
+    ws = FakeWS()
+    widgets = install_widgets(run_as=SP_ID, operators=f"{ME},ops@example.com")
+    widgets["__interactive__"] = True
+    res = run_notebook(monkeypatch, ws, widgets)
+    assert res.status == "exit: install preview: nothing changed", res.status
+    assert not ws.tables and not any("SELECT ON SCHEMA" in e[1] for e in ws.log if e[0] == "sql")
+
+
+def test_confirmed_install_executes_and_starts_the_warehouse(monkeypatch):
+    ws = FakeWS()
+    ws.warehouses[WH_ID]["state"] = "STOPPED"
+    res = run_notebook(monkeypatch, ws, {"__mode__": "install", "__interactive__": True, "__preview__": False})
+    assert not res.raised, res.status
+    assert ws.warehouses[WH_ID]["state"] == "RUNNING"
+    assert APP in ws.apps and "main.ug_migration" in ws.schemas and "main.ug_migrated" in ws.schemas
 
 
 # ---------------------------------------------------------------------------------------------------------------------

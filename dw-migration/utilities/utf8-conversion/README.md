@@ -4,7 +4,7 @@ Convert exported legacy code (SQL scripts, SSIS packages, other XML exports) fro
 
 ## Why
 
-Lakebridge and Genie Migrate expect source files in **UTF-8 or ANSI**. UTF-16 ("Unicode") files can fail to load or give wrong analysis results without an error (for example, stored procedures not counted).
+Lakebridge and Genie Migrate work best with source files in **UTF-8 or ANSI**. Converting UTF-16 ("Unicode") exports first gives you consistent, predictable results across the tools.
 
 UTF-16 is common in Windows exports:
 

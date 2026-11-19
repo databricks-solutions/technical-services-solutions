@@ -11,6 +11,7 @@
 set -euo pipefail
 if [ "$#" -ne 2 ]; then echo "Usage: $0 <source_dir> <output_dir>" >&2; exit 1; fi
 src="$(cd "${1%/}" && pwd)"; mkdir -p "${2%/}"; out="$(cd "${2%/}" && pwd)"
+if [ "$src" = "$out" ]; then echo "Error: <output_dir> must be different from <source_dir>." >&2; exit 1; fi
 converted=0; copied=0
 while IFS= read -r -d '' f; do
   rel="${f#"$src"/}"; dest="$out/$rel"
@@ -24,7 +25,7 @@ while IFS= read -r -d '' f; do
       converted=$((converted+1)) ;;
     *) cp "$f" "$dest"; copied=$((copied+1)) ;;
   esac
-done < <(find "$src" \( -path "$out" -o -name '.*' \) -prune -o -type f -print0)
+done < <(find "$src" -mindepth 1 \( -path "$out" -o -name '.*' \) -prune -o -type f -print0)
 echo "Converted: $converted, copied unchanged: $copied -> $out"
 echo "Remaining UTF-16 files in output:"
 find "$out" -type f -exec file --mime-encoding {} + | grep -i 'utf-16' || echo "  none"

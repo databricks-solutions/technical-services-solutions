@@ -16,12 +16,13 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $converted = 0
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
 $outRoot = (Resolve-Path $Out).Path.TrimEnd('\', '/')
+if ($outRoot -eq $srcRoot) { throw "-Out must be different from -Src." }
 Get-ChildItem -Path $srcRoot -File -Recurse |
   Where-Object { -not $_.FullName.StartsWith($outRoot + [IO.Path]::DirectorySeparatorChar) } |
   Where-Object { $_.FullName.Substring($srcRoot.Length) -notmatch '[\\/]\.' } |
   ForEach-Object {
     $rel  = $_.FullName.Substring($srcRoot.Length).TrimStart('\', '/')
-    $dest = Join-Path $Out $rel
+    $dest = Join-Path $outRoot $rel
     New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
     $b = [System.IO.File]::ReadAllBytes($_.FullName)
     $isUtf16 = $b.Length -ge 2 -and (($b[0] -eq 0xFF -and $b[1] -eq 0xFE) -or ($b[0] -eq 0xFE -and $b[1] -eq 0xFF))

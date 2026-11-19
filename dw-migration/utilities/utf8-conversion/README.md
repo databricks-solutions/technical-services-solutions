@@ -58,6 +58,8 @@ iconv -f UTF-16 -t UTF-8 in.sql > out.sql
 
 ```powershell
 .\To-Utf8.ps1 -Src C:\export -Out C:\export_utf8
+# relative paths work too
+.\To-Utf8.ps1 -Src .\export -Out .\export_utf8
 ```
 
 Then upload or analyse the **output** folder.
@@ -73,6 +75,7 @@ Then upload or analyse the **output** folder.
 
 ### Good practice
 
+- The output folder must be **different** from the source folder; both scripts stop with an error otherwise.
 - Put the output folder **outside** the source folder. If it is inside, it is skipped, but any other folder inside the source (for example, the output of an earlier run) is copied as well.
 - Check that the summary count matches the number of files you exported.
 
@@ -97,4 +100,4 @@ If your organisation enforces an execution policy through **Group Policy**, `-Ex
 ## Tested
 
 - **macOS:** 176 SQL Server objects exported by SSMS as UTF-16LE; UTF-16BE files; an SSIS project (`.dtsx`, `.conmgr`, `.params`, `.database`) saved as UTF-16LE with `encoding="utf-16"`. All converted, no BOM, no UTF-16 left, text identical to the source, and XML well-formed and canonically identical to the original.
-- **Windows Server 2022, PowerShell 5.1:** the same SQL files plus UTF-16BE, a UTF-16 `.dtsx`, an ASCII file, hidden files, and an output folder inside the source. All correct.
+- **Windows Server 2022, PowerShell 5.1 and 7.7:** the same SQL files plus UTF-16BE, a UTF-16 `.dtsx`, an ASCII file, hidden files, relative `-Src` / `-Out` paths, a source folder whose name starts with a dot, and an output folder inside the source. All correct. Source = output is rejected and leaves the source unchanged.

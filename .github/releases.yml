@@ -157,3 +157,8 @@
   name: "Snowflake Source Extract"
   kind: "Python script"
   path: "dw-migration/source-extracts/snowflake"
+
+- slug: dw-migration-utf8-conversion
+  name: "DW Migration UTF-8 Conversion"
+  kind: "Bash + PowerShell scripts"
+  path: "dw-migration/utilities/utf8-conversion"

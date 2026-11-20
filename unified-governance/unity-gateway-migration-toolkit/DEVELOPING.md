@@ -42,14 +42,14 @@ The retirement date is one value, and the customer-facing text must agree with i
 
 - `LEGACY_DEADLINE` default in `ug_migration_planner.py` and `ug_migration_account.py` (both read `UGMIG_DEADLINE` first), and `DEADLINE_AS_OF` in both.
 - `LEGACY_DEADLINE` default in `app/backend/main.py` (reads `UGMIG_DEADLINE`).
-- `DEFAULT_DEADLINE` and the `deadline` widget default in `installer/install_template.py`.
+- `DEFAULT_DEADLINE` and the `deadline` argument default in `installer/install_template.py`.
 - The `deadline` variable default in `databricks.yml`.
 - The `deadline` widget help text in `notebook/run_planner.py`, `notebook/run_account.py` and `notebook/run_scan.py`.
 - The date in the Start here section of USER_GUIDE.md, the deadline line in README.md and the deadline in HOW_TO_READ.md (the customer docs state it in these places).
 
 `test_app.py` (`test_app_and_account_agree_on_the_deadline_and_old_wave_names`), `test_installer.py` (the default and `valid_deadline`) and `test_planner.py` / `test_account.py` assert the values. Update them with the date.
 
-The override paths stay the same: the installer widget, the bundle variable, `--deadline` on the planner and account CLIs, the `deadline` notebook widget, and `UGMIG_DEADLINE`. A bad date must fail before any call is made.
+The override paths stay the same: the `deadline` argument to `install(...)`, the bundle variable, `--deadline` on the planner and account CLIs, the `deadline` notebook widget, and `UGMIG_DEADLINE`. A bad date must fail before any call is made.
 
 ## How the app gets the job-side rules
 
@@ -94,7 +94,7 @@ uv run --with pytest --with "databricks-sdk==0.158.0" --with requests --with fas
 - `test_apply.py`: payload builders, fallback mapping, secrets, masking, guardrails (including the real planner output), the Terraform export, the job's run outcome, and the cut-over operations (test call, pause, resume, tracking) against fakes: URLs, bodies, refusals, and that no secret is recorded.
 - `test_store.py`: the app's Delta store helpers, rollback protection, credential scrubbing, rate-limit caps, the verify builders' bound parameters and the cut-over lock.
 - `test_app.py`: the FastAPI app with the Databricks clients mocked: identity and operator rules, CSRF, fail-closed run checks, 202/404 polling, 409 conflicts, the target-schema endpoint, the secret allowlist, dry-run fingerprint matching, stale scans, guardrail acknowledgement, exports, the cut-over endpoints (typed words, dry-run match, resume, rollback refusals, traffic and usage reads), and the parity tests above.
-- `test_installer.py`: two kinds of test. The pure helpers in the block between `# HELPERS-BEGIN` and `# HELPERS-END` in `installer/install_template.py` (folders, names, markers, job specs and the parameter contract, the uninstall plan matrix, the rollback pass rule, messages, the deadline check). And notebook-level scenarios: the generated notebook runs cell by cell against `FakeWS`, an in-memory workspace. The scenarios cover fresh installs, reruns, warehouse start and failure, each system-table grant, folder and catalog refusals, bundle jobs and apps, active runs, uninstall preview, rollback order, `NEEDS_ATTENTION` retries, the pass limit, timeouts, drop refusals, shared schemas, reinstall waiting, service principals and the widget labels. Keep the helper block free of `dbutils`, `spark` and `w`: the test runs it without a workspace.
+- `test_installer.py`: two kinds of test. The pure helpers in the block between `# HELPERS-BEGIN` and `# HELPERS-END` in `installer/install_template.py` (folders, names, markers, job specs and the parameter contract, the uninstall plan matrix, the rollback pass rule, messages, the deadline check). And notebook-level scenarios: the generated notebook runs cell by cell against `FakeWS`, an in-memory workspace. The scenarios cover fresh preview-only installs, confirmed installs and updates, legacy notebook-job parameters, warehouse start and failure, each system-table grant, folder and catalog refusals, bundle jobs and apps, active runs, uninstall preview, rollback order, `NEEDS_ATTENTION` retries, the pass limit, timeouts, drop refusals, shared schemas, reinstall waiting, service principals and results-read grants. Keep the helper block free of `dbutils`, `spark` and `w`: the test runs it without a workspace.
 - `test_edge_cases.py`: reviewer-found edge cases across all modules.
 - `test_fixtures.py`: live check, not a pytest file. `UGMIG_TEST_CATALOG=<catalog> UGMIG_TEST_GROUP=<group> python test_fixtures.py --profile <p> setup|teardown` creates and removes throwaway `ugmig_test_` objects: two external-model endpoints (fake keys, never queried), a notebook with legacy calls and fake credentials, a saved query, and, unless `UGMIG_SKIP_EXTRA=1`, an AI Search endpoint and index, an app and a job that name legacy endpoints. **The AI Search endpoint is billed while it exists, so run teardown right after.**
 

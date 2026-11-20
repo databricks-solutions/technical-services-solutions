@@ -1723,6 +1723,25 @@ def test_confirmed_install_executes_and_starts_the_warehouse(monkeypatch):
     assert APP in ws.apps and "main.ug_migration" in ws.schemas and "main.ug_migrated" in ws.schemas
 
 
+def test_preview_and_uninstall_exits_follow_their_output_cells():
+    install_cells = _notebook_text("install").split("\n# COMMAND ----------\n")
+    output = next(i for i, cell in enumerate(install_cells) if "This install would create or update:" in cell)
+    exit_cell = next(i for i, cell in enumerate(install_cells) if 'exit("install preview: nothing changed")' in cell)
+    assert exit_cell > output
+    assert 'exit("install preview: nothing changed")' not in install_cells[output]
+    uninstall_cells = _notebook_text("uninstall").split("\n# COMMAND ----------\n")
+    preview = next(i for i, cell in enumerate(uninstall_cells) if "Uninstall removes:" in cell)
+    preview_exit = next(i for i, cell in enumerate(uninstall_cells) if 'exit("uninstall preview: nothing changed")' in cell)
+    assert preview_exit > preview
+    assert "Uninstall removes:" not in uninstall_cells[preview_exit]
+    done = next(i for i, cell in enumerate(uninstall_cells) if 'print("Done. Kept:' in cell)
+    done_exit = next(i for i, cell in enumerate(uninstall_cells) if 'exit("uninstalled")' in cell)
+    assert done_exit > done
+    assert "Done. Kept:" not in uninstall_cells[done_exit]
+    assert "Toolkit files" in make_installer.PROMPT["install"]
+    assert "Edit install" not in make_installer.PROMPT["install"]
+
+
 def test_no_input_update_ignores_stale_install_widgets(monkeypatch):
     ws = FakeWS()
     ids = seed_install(ws)

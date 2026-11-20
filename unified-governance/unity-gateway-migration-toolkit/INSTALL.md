@@ -26,7 +26,7 @@ The install never changes your endpoints or code. Changes happen later, only whe
 ## Install
 
 1. Download `unity-gateway-migration-toolkit.zip` from the [release page](https://github.com/databricks-solutions/technical-services-solutions/releases/tag/unity-gateway-migration-toolkit-latest) and unzip it. In the workspace, open your home folder, choose **Import**, and import `INSTALL_unity_gateway_migration_toolkit_0_11_0.py` from the zip's top folder.
-2. Open the notebook and click **Run all**. The first run checks the workspace and shows the plan, but changes nothing.
+2. Open the notebook and click **Run all**. The first run checks the workspace and shows the plan under **1. Toolkit files**, followed by `Notebook exited` in the next cell, but changes nothing.
 3. Review the checklist, then set `preview=False` in `install(...)` and click **Run all** again to install. The app link is printed at the end.
 
 The usual settings need no edit:

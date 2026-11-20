@@ -1532,7 +1532,12 @@ if UNINSTALL:
         if blocked:
             print("Remove would stop:\n- " + "\n- ".join(blocked))
         print("\nNothing was changed. Set 1. Action = remove and run again to remove.")
-        dbutils.notebook.exit("uninstall preview: nothing changed")
+
+# COMMAND ----------
+
+if UNINSTALL and PREVIEW:
+    dbutils.notebook.exit("uninstall preview: nothing changed")
+if UNINSTALL:
     if blocked:
         raise ValueError("Nothing was changed. Fix these first:\n- " + "\n- ".join(blocked))
     # 1. Stop the app first, so no new apply run starts while the rollback runs. A run after a stuck uninstall finds it
@@ -1610,6 +1615,10 @@ if UNINSTALL:
     remove, keep, _, _ = uninstall_plan(DROP, REMOVE_LOGS, ROLLBACK, st["pending"], st["logs"], st["unmatched"], RESULTS,
                                         FOLDER, marker_ok)
     print("Done. Kept:\n- " + "\n- ".join(keep) if keep else "Done.")
+
+# COMMAND ----------
+
+if UNINSTALL:
     dbutils.notebook.exit("uninstalled")
 
 # COMMAND ----------
@@ -1628,6 +1637,10 @@ if RUN_AS:
           "tables, USE and CREATE on the results schema, and USE CATALOG, USE SCHEMA and CREATE SERVICE on the target schema.")
 if INSTALL_PREVIEW:
     print("\nNothing was changed. Set preview=False in install(...) and Run all to install.")
+
+# COMMAND ----------
+
+if INSTALL_PREVIEW:
     dbutils.notebook.exit("install preview: nothing changed")
 
 # COMMAND ----------

@@ -111,7 +111,7 @@ The short version, with what the install creates, is in [INSTALL.md](INSTALL.md)
 The installer notebook is the only file you import. It creates everything inside the workspace in about 5 minutes.
 
 1. Download `unity-gateway-migration-toolkit.zip` from the [release page](https://github.com/databricks-solutions/technical-services-solutions/releases/tag/unity-gateway-migration-toolkit-latest) and unzip it. In the workspace, go to your home folder, choose **Import**, and import `INSTALL_unity_gateway_migration_toolkit_0_11_0.py` from the zip's top folder.
-2. Open the notebook and click **Run all**. The first run previews the checklist and plan without changes. Review it, then set `preview=False` in `install(...)` and click **Run all** again to install. The usual defaults are `catalog=None`, `warehouse=None` and `target_schema=None`; the last creates `<catalog>.ug_migrated`. Use a named argument to override one.
+2. Open the notebook and click **Run all**. The first run previews the checklist and plan without changes. The preview output is below **1. Toolkit files**; `Notebook exited` is in the following cell. Review it, then set `preview=False` in `install(...)` and click **Run all** again to install. The usual defaults are `catalog=None`, `warehouse=None` and `target_schema=None`; the last creates `<catalog>.ug_migrated`. Use a named argument to override one.
 
 **The two schemas.** The toolkit keeps its results in `<catalog>.ug_migration`, and Apply creates model services in `<catalog>.ug_migrated`. Callers address a service by its full name (`<catalog>.ug_migrated.<service>`), so the second schema's name ends up in your code: pick it before your first Apply. To use a schema you already have, set `target_schema="catalog.schema"`. To create it yourself, set `create_target=False`; the SQL is printed. If the installer can't create it, the install still finishes: scans work, and Apply shows the SQL and waits until the schema exists.
 
@@ -178,7 +178,7 @@ Import the newer installer and use the same `install(...)` call. Preview the upd
 The install is simpler. The results tables, jobs and app don't change shape; run the new installer to update.
 
 - **Python settings.** `install(...)` replaces the install widget panel. `help(install)` documents advanced keyword arguments. Existing notebook-job parameters remain supported, and jobs execute with `preview=False` so automation doesn't stop at preview.
-- **The first interactive Run all previews.** It shows the checklist and what would change without starting a warehouse, creating a schema, deploying files, granting access, or starting the snapshot. Set `preview=False` after review.
+- **The first interactive Run all previews.** It shows the checklist under **1. Toolkit files**, followed by `Notebook exited` in the next cell, without starting a warehouse, creating a schema, deploying files, granting access, or starting the snapshot. Set `preview=False` after review.
 - **Central mode setup.** `run_as` also takes the service principal's name. The checklist checks `central_secret` (scope, key, and the service principal's READ), says it must be a Databricks OAuth secret, and reminds you of the cross-workspace network policies. A scan or change that Databricks refuses for cross-workspace network policy, or for a secret that isn't a Databricks OAuth secret, now says so and how to fix it.
 - **Uninstall is its own notebook,** `UNINSTALL_unity_gateway_migration_toolkit_0_11_0.py`, with `preview` as its default. The install notebook has no uninstall options any more.
 - **The schema for new model services is created for you,** as `<catalog>.ug_migrated` in the catalog you pick, unless you set `target_schema` to another one. The scan form and Apply prefill it from the install. **Existing installs keep their target** (until now always `ai_gateway.migrated`): an update never moves it, and never creates a schema in another catalog.
@@ -516,7 +516,7 @@ Before you uninstall, decide which Unity Gateway services to keep, usually the o
 
 Uninstall has its own notebook in the zip: import `UNINSTALL_unity_gateway_migration_toolkit_0_11_0.py`. **2. App name** can stay blank when the workspace has one toolkit install.
 
-1. Leave **1. Action** at `preview` and Run all. It prints what would be removed and kept. Nothing changes.
+1. Leave **1. Action** at `preview` and Run all. It prints what would be removed and kept, then `Notebook exited` in the next cell. Nothing changes.
 2. Set **1. Action** to `remove` and Run all again.
 
 Three widgets, all `no` by default, choose what else goes:

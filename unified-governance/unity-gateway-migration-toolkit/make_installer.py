@@ -96,7 +96,7 @@ Model services created by Apply stay unless you set **3** to `yes`. Schemas that
 Uninstall refuses while a toolkit job is running.""",
 }
 TITLE = {"install": "Install the Unity Gateway Migration Toolkit", "uninstall": "Uninstall the Unity Gateway Migration Toolkit"}
-PROMPT = {"install": "Edit install(...) above: preview=True first; set preview=False to install",
+PROMPT = {"install": "Run all to preview; the result is under '1. Toolkit files'. Set preview=False to install",
           "uninstall": "Run all with 1. Action = preview first: it changes nothing"}
 
 

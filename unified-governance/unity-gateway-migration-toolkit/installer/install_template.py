@@ -80,7 +80,7 @@ def install(catalog=None, warehouse=None, target_schema=None, preview=True, app_
 
     catalog: results catalog; None reuses the install's, else uses the workspace default.
     warehouse: SQL warehouse name or ID; None reuses the install's, else uses the only running warehouse.
-    target_schema: catalog.schema for new model services; None = <catalog>.ug_migrated.
+    target_schema: catalog.schema for new model services; None reuses the install's, else <catalog>.ug_migrated.
     preview: True shows checks and the plan without writes; False executes. When run as a notebook job it is always
         False for backward compatibility. All other None values reuse the existing install or the documented default.
     operators, central_workspaces and secret_schemas accept a comma-separated string or a list.
@@ -101,7 +101,7 @@ def install(catalog=None, warehouse=None, target_schema=None, preview=True, app_
 install(
     catalog=None,        # None = workspace default catalog
     warehouse=None,      # None = existing install, else the only running warehouse
-    target_schema=None,  # None = <catalog>.ug_migrated
+    target_schema=None,  # None = the install's, else <catalog>.ug_migrated
     preview=True,        # set False and Run all to install
 )
 
@@ -1025,12 +1025,12 @@ CENTRAL_WORKSPACES, central_problem_list = central_problems(
 CENTRAL_SECRET = pick(CENTRAL_SECRET_RAW, SAVED["central_secret"], "") if CENTRAL_WORKSPACES else ""
 JOB_IDENTITY = f"service principal {RUN_AS}" if RUN_AS else me
 kept = [label for label, raw, saved in (
-    ("operators", OPERATORS_RAW, SAVED_OPERATORS), ("run-as service principal", RUN_AS_RAW, SAVED["run_as"]),
-    ("schema for new model services", TARGET_RAW, SAVED["target"]), ("SQL warehouse", WAREHOUSE_GIVEN, SAVED["warehouse"]),
-    ("secret schemas", SECRET_SCHEMAS_RAW, SAVED["secret_schemas"]), ("deadline", DEADLINE_RAW, SAVED["deadline"]),
-    ("central mode", CENTRAL_WORKSPACES_RAW, SAVED["central_workspaces"])) if not raw.strip() and saved]
+    ("operators", OPERATORS_RAW, SAVED_OPERATORS), ("run_as", RUN_AS_RAW, SAVED["run_as"]),
+    ("target_schema", TARGET_RAW, SAVED["target"]), ("warehouse", WAREHOUSE_GIVEN, SAVED["warehouse"]),
+    ("secret_schemas", SECRET_SCHEMAS_RAW, SAVED["secret_schemas"]), ("deadline", DEADLINE_RAW, SAVED["deadline"]),
+    ("central_workspaces", CENTRAL_WORKSPACES_RAW, SAVED["central_workspaces"])) if not raw.strip() and saved]
 if kept and not UNINSTALL:
-    print("kept from the existing install: " + ", ".join(kept) + " (set advanced arguments to change them; 'none' clears one)")
+    print("kept from the existing install: " + ", ".join(kept) + ". To change one, pass it to install(...); 'none' clears it")
 
 problems = list(FLAG_PROBLEMS)
 if CATALOG == "hive_metastore":

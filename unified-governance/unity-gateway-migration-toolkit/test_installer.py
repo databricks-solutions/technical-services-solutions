@@ -1843,8 +1843,8 @@ def test_an_update_with_no_widgets_set_keeps_every_setting(monkeypatch):
     assert not again.raised, again.status
     assert {r: (j.parameters, j.run_as) for r, j in ((j.tags["role"], j) for j in ws.jobs.values())} == before
     assert _env(ws) == env_before
-    assert "kept from the existing install: operators, run-as service principal, schema for new model services, SQL " \
-           "warehouse, secret schemas, deadline" in again.text
+    assert "kept from the existing install: operators, run_as, target_schema, warehouse, secret_schemas, deadline. " \
+           "To change one, pass it to install(...)" in again.text
 
 
 def test_an_update_from_0_10_keeps_the_old_target_and_doesnt_create_it_elsewhere(monkeypatch):

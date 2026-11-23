@@ -147,7 +147,7 @@ export function describeError(error: string): { title: string; text: string } {
   if (!m) return { title: "Something went wrong", text: error };
   const [, code, text] = m;
   switch (code) {
-    case "401": return { title: "Sign-in needed", text: "Re-run the installer (Install) to turn on user authorization for this app, then reload." };
+    case "401": return { title: "Sign-in needed", text: "Re-run the installer to turn on user authorization for this app, then reload." };
     case "403": return { title: "Not allowed", text: text || "You don't have permission for this." };
     case "404": return { title: "Not found", text: text || "Nothing matches this link." };
     case "409": return { title: "Can't start this yet", text: text || "Another run is already in progress." };

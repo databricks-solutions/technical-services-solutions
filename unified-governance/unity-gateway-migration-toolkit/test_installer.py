@@ -1744,8 +1744,15 @@ def test_preview_and_uninstall_exits_follow_their_output_cells():
     done_exit = next(i for i, cell in enumerate(uninstall_cells) if 'exit("uninstalled")' in cell)
     assert done_exit > done
     assert "Done. Kept:" not in uninstall_cells[done_exit]
-    assert "Toolkit files" in make_installer.PROMPT["install"]
+    assert "Checklist and plan" in make_installer.PROMPT["install"]
     assert "Edit install" not in make_installer.PROMPT["install"]
+    # The heading the prompt points to sits right above the checklist cell (review of 0.11.0: it pointed to
+    # '1. Toolkit files', which comes after the result).
+    heading = next(i for i, cell in enumerate(install_cells) if "# MAGIC %md ## Checklist and plan" in cell)
+    assert "Checklist:" in install_cells[heading + 1]
+    # The uninstall notebook has no install(...) call or install checklist heading.
+    assert not any("# Settings:" in c or "Checklist and plan" in c for c in uninstall_cells)
+    assert not any(re.search(r"^install\(", c, re.M) for c in uninstall_cells)
 
 
 def test_no_input_update_ignores_stale_install_widgets(monkeypatch):

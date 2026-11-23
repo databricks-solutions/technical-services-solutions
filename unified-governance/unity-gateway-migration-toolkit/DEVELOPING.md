@@ -11,11 +11,11 @@ cp dist/INSTALL_unity_gateway_migration_toolkit_*.py .   # commit the regenerate
 python3 check_release.py                      # must pass before a release
 ```
 
-- `package.sh` runs `npm run build` (so `app/frontend/static` is never stale), then `make_installer.py`, which writes `dist/INSTALL_unity_gateway_migration_toolkit_<version>.py` by embedding the runtime files into `installer/install_template.py`, and then writes `dist/unity-gateway-migration-toolkit-<version>.zip`.
-- The zip has one top folder, `unity-gateway-migration-toolkit-<version>/`. It holds the installer, the README, HOW_TO_READ and USER_GUIDE, the three CLI modules and the store, the four notebooks in `notebook/`, `app/` (backend `main.py` and `__init__.py` plus copies of `ug_migration_store.py`, `ug_migration_apply.py` and `ug_migration_planner.py`, the frontend sources and build, `requirements.txt`) and `databricks.yml` without the repo-only sync excludes. This file isn't shipped.
+- `package.sh` runs `npm run build` (so `app/frontend/static` is never stale), then `make_installer.py`, which writes `dist/INSTALL_unity_gateway_migration_toolkit_<version>.py` and `dist/UNINSTALL_unity_gateway_migration_toolkit_<version>.py` by embedding the runtime files into `installer/install_template.py`, and then writes `dist/unity-gateway-migration-toolkit-<version>.zip`.
+- The zip has one top folder, `unity-gateway-migration-toolkit-<version>/`. It holds both notebooks (INSTALL_ and UNINSTALL_), the README, INSTALL.md, HOW_TO_READ and USER_GUIDE, `docs/screenshots/`, the three CLI modules and the store, the four notebooks in `notebook/`, `app/` (backend `main.py` and `__init__.py` plus copies of `ug_migration_store.py`, `ug_migration_apply.py` and `ug_migration_planner.py`, the frontend sources and build, `requirements.txt`) and `databricks.yml` without the repo-only sync excludes. This file isn't shipped.
 - The installer build is deterministic (fixed zip timestamps and permissions). Build with the same Python in CI and locally (3.12).
 
-`check_release.py` (standard library only) rebuilds the installer in a temp folder and byte-compares it with the committed root `INSTALL_unity_gateway_migration_toolkit_<version>.py`. It also checks that the versions agree. Exit 1 on any problem. Until the root installer is rebuilt and committed, it fails.
+`check_release.py` (standard library only) rebuilds the installer in a temp folder and byte-compares both notebooks with the committed root `INSTALL_` and `UNINSTALL_unity_gateway_migration_toolkit_<version>.py`. It also checks that the versions agree. Exit 1 on any problem. Until the root installer is rebuilt and committed, it fails.
 
 ### Version bump
 
@@ -114,4 +114,4 @@ node tools/screenshots/capture.mjs                           # needs the browser
 uv run --with pillow python tools/screenshots/optimize.py docs/screenshots/*.png
 ```
 
-After a regeneration, check that each caption in USER_GUIDE.md still matches its image. `package.sh` copies only the three Markdown guides into the zip, so add `docs/screenshots/` to it before shipping, or the images won't render in the unzipped folder.
+After a regeneration, check that each caption in USER_GUIDE.md still matches its image. `package.sh` copies the Markdown guides and `docs/screenshots/` into the zip, so the images render in the unzipped folder.

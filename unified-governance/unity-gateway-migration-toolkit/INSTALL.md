@@ -26,7 +26,7 @@ The install never changes your endpoints or code. Changes happen later, only whe
 ## Install
 
 1. Download `unity-gateway-migration-toolkit.zip` from the [release page](https://github.com/databricks-solutions/technical-services-solutions/releases/tag/unity-gateway-migration-toolkit-latest) and unzip it. In the workspace, open your home folder, choose **Import**, and import `INSTALL_unity_gateway_migration_toolkit_0_11_0.py` from the zip's top folder.
-2. Open the notebook and click **Run all**. The first run checks the workspace and shows the plan under **1. Toolkit files**, followed by `Notebook exited` in the next cell, but changes nothing.
+2. Open the notebook and click **Run all**. The first run checks the workspace and shows the checklist and plan under **Checklist and plan**, further down the notebook, but changes nothing (the small cell after it says `Notebook exited`).
 3. Review the checklist, then set `preview=False` in `install(...)` and click **Run all** again to install. The app link is printed at the end.
 
 The usual settings need no edit:
@@ -59,7 +59,7 @@ When installation finishes, open the app, wait a few minutes for the first snaps
 
 ## Optional settings
 
-`help(install)` lists every advanced keyword argument. `None` keeps the current install's setting or the documented default.
+`help(install)` lists every advanced keyword argument. `None` keeps the current install's setting or the documented default. To clear a setting the install already has (back to its default), pass `"none"` (or `"off"`); an empty list or string keeps it, like `None`. The yes/no settings (`create_target`, `allow_secret_read`, `adopt_app`, `allow_downgrade`, `second_install`) take `True` or `False` (`"yes"`/`"no"`, `"true"`/`"false"` and `1`/`0` work too); any other value stops the run with a FIX.
 
 | Argument | Use it for |
 |---|---|

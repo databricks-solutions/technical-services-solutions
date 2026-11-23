@@ -428,7 +428,7 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
                 <div className="stack-sm secret-map">
                   {mappingOff ? (
                     <Notice tone="warning" title="Secret mapping is off">
-                      The installer didn't allow any Unity Catalog secret schema, so this app can't map the keys. Re-run the installer (Install) with Allowed secret schemas set, then reload this page.
+                      The installer didn't allow any Unity Catalog secret schema, so this app can't map the keys. Re-run the installer with secret_schemas set in install(...), then reload this page.
                     </Notice>
                   ) : secrets.length === 0 ? (
                     <p className="small muted">The provider services in this plan need no API keys.</p>
@@ -444,7 +444,7 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
               )}
               <label className="choice"><input type="radio" name="secret-mode" checked={secretMode === "create"} disabled={allowedSchemas.length === 0}
                      aria-describedby={allowedSchemas.length ? undefined : "secret-create-reason"} onChange={() => setSecretMode("create")} /> <span>Create Unity Catalog secrets from the workspace secrets</span></label>
-              {allowedSchemas.length === 0 && <p id="secret-create-reason" className="small muted reason">Not available: the installer didn't allow a Unity Catalog secret schema. Run the installer again with 10. Allowed secret schemas set.</p>}
+              {allowedSchemas.length === 0 && <p id="secret-create-reason" className="small muted reason">Not available: the installer didn't allow a Unity Catalog secret schema. Run the installer again with secret_schemas set in install(...).</p>}
               {secretMode === "create" && allowedSchemas.length > 0 && (
                 <div className="stack-sm secret-map">
                   <p className="small muted">The apply job reads each workspace secret with its own identity and stores the value in a new Unity Catalog secret, which the provider service then references. Values are never shown or logged. The dry run checks that each workspace secret can be read; rollback deletes the secrets that run created.</p>

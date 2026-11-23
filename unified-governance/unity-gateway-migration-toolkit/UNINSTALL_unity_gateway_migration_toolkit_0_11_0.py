@@ -14,10 +14,6 @@
 
 # COMMAND ----------
 
-# Legacy cleanup, install helpers and the visible install(...) call all run after %restart_python.
-
-# COMMAND ----------
-
 # MAGIC %md Run all with 1. Action = preview first: it changes nothing
 
 # COMMAND ----------
@@ -52,11 +48,13 @@ def _widget_exists(name):
 
 
 def _in_job():
+    """True in a job run. If the notebook context can't be read, a run that has any of the numbered install parameters
+    is a job (an interactive run removes those widgets first), so a job never silently previews and ignores them."""
     try:
         ctx = _json.loads(dbutils.notebook.entry_point.getDbutils().notebook().getContext().safeToJson())
         return bool((ctx.get("attributes") or ctx).get("jobId"))
-    except Exception:  # noqa: BLE001 (can't tell: treat it as interactive)
-        return False
+    except Exception:  # noqa: BLE001 (can't tell from the context)
+        return MODE == "install" and any(_widget_exists(n) for n in INSTALL_WIDGETS)
 
 
 if not _in_job():
@@ -102,16 +100,6 @@ def install(catalog=None, warehouse=None, target_schema=None, preview=True, app_
     preview = False if _in_job() else preview
     PARAMS.clear()
     PARAMS.update(locals())
-
-# COMMAND ----------
-
-# Settings: Run all to preview, or set preview=False to install. Interactive defaults preview; notebook jobs execute with their parameters.
-install(
-    catalog=None,        # None = workspace default catalog
-    warehouse=None,      # None = existing install, else the only running warehouse
-    target_schema=None,  # None = <catalog>.ug_migrated
-    preview=True,        # set False and Run all to install
-)
 
 # COMMAND ----------
 
@@ -211,7 +199,7 @@ def version_key(v: str) -> tuple:
 
 def downgrade_problem(prev: str, now: str, allow: bool) -> str | None:
     if prev and version_key(prev) > version_key(now) and not allow:
-        return (f"this would downgrade the toolkit from {prev} to {now}: set allow_downgrade = yes to do it anyway")
+        return (f"this would downgrade the toolkit from {prev} to {now}: set allow_downgrade=True to do it anyway")
     return None
 
 
@@ -577,7 +565,7 @@ def parse_target(raw: str) -> tuple[str, str | None]:
     t = (raw or "").replace("`", "").strip()
     if not re.fullmatch(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+", t):
         return t, (f"target_schema must be catalog.schema (letters, digits, _ and -), not {t!r}; "
-                   "leave it blank for <catalog>.ug_migrated")
+                   "leave it None for <catalog>.ug_migrated")
     return t, None
 
 
@@ -733,8 +721,15 @@ SETTING_WIDGETS = {"catalog": "01_catalog", "warehouse": "02_warehouse", "target
                    "adopt_app": "15_adopt_app", "allow_downgrade": "16_allow_downgrade", "second_install": "17_second_install"}
 
 
+FLAG_SETTINGS = ("create_target", "allow_secret_read", "adopt_app", "allow_downgrade", "second_install")
+FLAG_PROBLEMS: list[str] = []
+
+
 def setting(key: str) -> str:
-    """An install() argument, falling back to its old notebook-job parameter only when it wasn't supplied."""
+    """An install() argument, falling back to its old notebook-job parameter only when it wasn't supplied.
+
+    The yes/no settings come back as "yes", "no" or "" (keep): True/False, "yes"/"no", "true"/"false" and 1/0, in any
+    case. Anything else is a FIX (FLAG_PROBLEMS), never a silent no."""
     value = PARAMS.get(key)
     if value is None and _in_job():
         value = widget(SETTING_WIDGETS[key])
@@ -744,7 +739,19 @@ def setting(key: str) -> str:
         return "yes" if value else "no"
     if isinstance(value, (list, tuple)):
         return ",".join(str(v).strip() for v in value if str(v).strip())
-    value = str(value or "").strip()
+    value = str(value if value is not None else "").strip()
+    if key in FLAG_SETTINGS:
+        low = value.lower()
+        if low in ("", "current"):
+            return ""
+        if low in ("yes", "true", "1", "y"):
+            return "yes"
+        if low in ("no", "false", "0", "n"):
+            return "no"
+        if low in CLEAR_WORDS:
+            return low
+        FLAG_PROBLEMS.append(f"{key} must be True or False, not {value!r}")
+        return ""
     return "" if value == "current" else value
 
 
@@ -907,7 +914,11 @@ MINE = [i for i in INSTALLS if i["app"] == APP_NAME]
 EXISTING_APP = get_app()
 SAVED = saved_settings(MINE, {e.name: e.value for e in (EXISTING_APP.active_deployment.env_vars or [])}
                        if EXISTING_APP and EXISTING_APP.active_deployment else {})
-if not UNINSTALL and not CATALOG_PICKED and not next((i["results"] for i in MINE if i["results"]), ""):
+# The workspace default catalog is only for a new install. An app that is already here (even if its jobs were deleted)
+# keeps its results where they are: picking the default would re-point the app and orphan them.
+APP_WITHOUT_JOBS = bool(EXISTING_APP and is_toolkit_app(EXISTING_APP.description)
+                        and not next((i["results"] for i in MINE if i["results"]), ""))
+if not UNINSTALL and not CATALOG_PICKED and not APP_WITHOUT_JOBS and not next((i["results"] for i in MINE if i["results"]), ""):
     excluded = ("system", "samples", "hive_metastore", "__databricks_internal")
     try:
         current = spark.sql("SELECT current_catalog()").collect()[0][0]
@@ -936,8 +947,8 @@ def adopt_existing_locations() -> None:
         rc, rs = results.split(".", 1)
         if not SCHEMA_GIVEN and CATALOG_GIVEN and CATALOG != rc:
             raise ValueError(f"{'6. Results schema' if UNINSTALL else 'catalog'} is {CATALOG}, but app {APP_NAME} already keeps its results in "
-                             f"{results}. Pick catalog {rc} to update it, or choose another App name for a second install "
-                             "(second_install = yes)")
+                             f"{results}. Set catalog to {rc} (or leave it None) to update it, or choose another app_name for a "
+                             "second install (second_install=True)")
         if not SCHEMA_GIVEN:
             CATALOG, SCHEMA = rc, rs
             print("using the results schema of the existing install:", results)
@@ -945,15 +956,16 @@ def adopt_existing_locations() -> None:
             CATALOG = rc
     RESULTS = f"{CATALOG}.{SCHEMA}"
     if results and RESULTS != results:
-        raise ValueError(f"app {APP_NAME} is installed with its results in {results}, not {RESULTS}: leave 9. Results "
-                         "schema blank and pick that catalog to update it, or choose another App name for a second install")
+        raise ValueError(f"app {APP_NAME} is installed with its results in {results}, not {RESULTS}: " + (
+            "leave 6. Results schema blank to remove that install" if UNINSTALL else
+            "leave results_schema and catalog None to update it, or choose another app_name for a second install"))
     if folder:
         if not FOLDER_GIVEN:
             FOLDER = folder
             print("using the install folder of the existing install:", FOLDER)
         elif FOLDER != folder:
-            raise ValueError(f"app {APP_NAME} is installed in {folder}, not {FOLDER}: leave install_folder blank "
-                             "to update it, or choose another App name for a second install")
+            raise ValueError(f"app {APP_NAME} is installed in {folder}, not {FOLDER}: leave install_folder None "
+                             "to update it, or choose another app_name for a second install")
     FILES = f"{FOLDER}/files"
     MARKER = f"{FOLDER}/{MARKER_NAME}"
 
@@ -971,8 +983,11 @@ MARKER_KIND, MARKER_APP = marker_status(read_marker(), APP_NAME)
 SAVED_MARKER = parse_marker(read_marker() or "") if MARKER_KIND == "ours" else {}
 
 # Settle every setting: install(), else what this install already uses, else the documented default.
-WAREHOUSE_ID, warehouse_problem = warehouse_choice(WAREHOUSE_GIVEN, SAVED["warehouse"], [
-    {"id": x.id, "name": x.name, "state": x.state.value if x.state else ""} for x in w.warehouses.list()])
+if UNINSTALL:  # uninstall uses the install's own warehouse; listing them (and possibly failing) isn't needed
+    WAREHOUSE_ID, warehouse_problem = SAVED["warehouse"], None
+else:
+    WAREHOUSE_ID, warehouse_problem = warehouse_choice(WAREHOUSE_GIVEN, SAVED["warehouse"], [
+        {"id": x.id, "name": x.name, "state": x.state.value if x.state else ""} for x in w.warehouses.list()])
 SAVED_OPERATORS = ",".join(SAVED_MARKER.get("operators") or []) or SAVED["operators"]
 OPERATOR_LIST = split_list(pick(OPERATORS_RAW, SAVED_OPERATORS, ""))
 if not OPERATOR_LIST and not IS_SP:
@@ -1013,7 +1028,7 @@ kept = [label for label, raw, saved in (
 if kept and not UNINSTALL:
     print("kept from the existing install: " + ", ".join(kept) + " (set advanced arguments to change them; 'none' clears one)")
 
-problems = []
+problems = list(FLAG_PROBLEMS)
 if CATALOG == "hive_metastore":
     problems.append("catalog hive_metastore isn't supported: choose a Unity Catalog catalog for the toolkit's schemas")
 if CATALOG_GIVEN and not re.fullmatch(NAME, CATALOG):
@@ -1030,7 +1045,10 @@ if not UNINSTALL:
     if target_problem:
         problems.append(target_problem)
     if not CATALOG:
-        problems.append("choose catalog (the toolkit creates its schemas there; you need USE CATALOG and "
+        problems.append(f"app {APP_NAME} is installed here but its jobs are missing, so its results catalog can't be "
+                        "read back: set catalog (and results_schema, if it isn't ug_migration) to where its results "
+                        "are, so the update keeps them" if APP_WITHOUT_JOBS else
+                        "choose catalog (the toolkit creates its schemas there; you need USE CATALOG and "
                         "CREATE SCHEMA on it)")
     if warehouse_problem:
         problems.append(warehouse_problem)
@@ -1179,7 +1197,7 @@ def target_check(create_now: bool) -> tuple[str, str, str]:
         cat_info = w.catalogs.get(cat)
     except DatabricksError:
         return "note", "missing", (f"catalog {cat} doesn't exist or you can't see it, so {TARGET} can't be created. Set "
-                                   "target_schema to a schema in a catalog you can use (blank = "
+                                   "target_schema to a schema in a catalog you can use (None = "
                                    f"<catalog>.{TARGET_SCHEMA_NAME}), or create it. Scans work without it; Apply waits")
     if not create_now:
         return "ok", "will_create", f"{TARGET} doesn't exist: it will be created"
@@ -1256,12 +1274,12 @@ def preflight() -> tuple[list[str], list[str], str]:
                      "installer (left alone): " + ", ".join(unnamed))
     if EXISTING_APP and not is_toolkit_app(EXISTING_APP.description) and not ADOPT:
         found.append(f"an app named {APP_NAME} exists and isn't a toolkit app: " + (
-            "choose another App name, or set adopt_app = yes if it can be replaced" if not UNINSTALL
+            "choose another app_name, or set adopt_app=True if it can be replaced" if not UNINSTALL
             else "uninstall won't delete it (set 7. Also remove an app the installer didn't make = yes to delete it anyway)"))
     bundle_jobs = [j["name"] for j in MINE if bundle_made(j["name"], APP_NAME)]
     if (bundle_jobs or (EXISTING_APP and APP_NAME == BUNDLE_APP)) and not ADOPT:
         found.append(f"the app {APP_NAME} and its jobs were deployed by the bundle (databricks bundle deploy), not by this "
-                     "installer: " + ("set adopt_app = yes to take them over, or choose another App name"
+                     "installer: " + ("set adopt_app=True to take them over, or choose another app_name"
                                       if not UNINSTALL else "set 7. Also remove an app the installer didn't make = yes to remove them here, "
                                       "or remove them with the bundle (databricks bundle destroy)"))
     # Other installs, by app name (jobs and apps), and what they share with this one.
@@ -1525,7 +1543,9 @@ if UNINSTALL:
                                                            st["unmatched"], RESULTS, FOLDER, marker_ok)
     print("Uninstall removes:\n- " + "\n- ".join(remove))
     print("Uninstall keeps:\n- " + "\n- ".join(keep + ["the schemas where Apply created model services (uninstall never "
-                                                     "removes a schema that holds services)"]))
+                                                     "removes a schema that holds services; with 4. Remove results "
+                                                     "tables = yes it removes the schema for new model services only "
+                                                     "if this install created it and it's empty)"]))
     for line in warnings:
         print("WARNING:", line)
     blocked = PROBLEMS + plan_problems
@@ -1616,6 +1636,28 @@ if UNINSTALL:
                 print("kept schema", RESULTS, "(other objects are in it)")
         else:
             print("kept schema", RESULTS, "(the toolkit didn't create it)")
+        # The schema for new model services, when this install created it and it's still empty (no services).
+        if TARGET and TARGET != RESULTS:
+            try:
+                t_cmt = w.schemas.get(TARGET).comment
+            except (NotFound, ResourceDoesNotExist):
+                t_cmt = None
+            if t_cmt == target_comment(APP_NAME):
+                t_cat, t_sch = TARGET.split(".", 1)
+                try:
+                    has_services = next(iter(w.ai_gateway.list_model_services(parent=f"schemas/{TARGET}")), None) is not None
+                except Exception:  # noqa: BLE001 (can't check: keep it)
+                    has_services = None
+                if has_services is None:
+                    print("kept schema", TARGET, "(couldn't check it for model services)")
+                elif has_services:
+                    print("kept schema", TARGET, "(it holds model services)")
+                else:
+                    try:  # RESTRICT: only an empty schema goes
+                        spark.sql(f"DROP SCHEMA IF EXISTS `{t_cat}`.`{t_sch}` RESTRICT")
+                        print("dropped schema", TARGET, "(the installer created it for new model services; it was empty)")
+                    except Exception:
+                        print("kept schema", TARGET, "(other objects are in it)")
     remove, keep, _, _ = uninstall_plan(DROP, REMOVE_LOGS, ROLLBACK, st["pending"], st["logs"], st["unmatched"], RESULTS,
                                         FOLDER, marker_ok)
     print("Done. Kept:\n- " + "\n- ".join(keep) if keep else "Done.")
@@ -1887,9 +1929,13 @@ print(snapshot_note)
 print(f"The weekly snapshot job is paused. To run it every Monday at 06:00 UTC, open Jobs > [{APP_NAME}] Unity Gateway "
       "migration snapshot, and unpause its schedule.")
 print(target_note)
-print("Unity Catalog secret mapping is off. To turn it on, set secret_schemas to the "
-      "catalog.schema that holds the secrets (for example main.secrets) and Run all again; grant the apply job's identity "
-      "READ on them.")
+if SECRET_SCHEMAS:
+    print(f"Unity Catalog secret mapping is on for {', '.join(SECRET_SCHEMAS)}: Apply can create and use secrets there "
+          "(the apply job's identity needs READ on them).")
+else:
+    print("Unity Catalog secret mapping is off. To turn it on, set secret_schemas to the "
+          "catalog.schema that holds the secrets (for example main.secrets) and Run all again; grant the apply job's "
+          "identity READ on them.")
 print(f"Results: {RESULTS}. Operators: {', '.join(OPERATOR_LIST) or '(none)'}. Jobs run as {JOB_IDENTITY}. Version {TOOLKIT_VERSION}. "
       f"The user guide is in {FILES}/USER_GUIDE.md.")
 displayHTML(f"""

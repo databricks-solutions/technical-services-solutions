@@ -96,11 +96,18 @@ Model services created by Apply stay unless you set **3** to `yes`. Schemas that
 Uninstall refuses while a toolkit job is running.""",
 }
 TITLE = {"install": "Install the Unity Gateway Migration Toolkit", "uninstall": "Uninstall the Unity Gateway Migration Toolkit"}
-PROMPT = {"install": "Run all to preview; the result is under '1. Toolkit files'. Set preview=False to install",
+PROMPT = {"install": "Run all to preview: the result is under 'Checklist and plan', further down. Then set "
+                     "preview=False in install(...) and Run all again to install",
           "uninstall": "Run all with 1. Action = preview first: it changes nothing"}
 
 
+INSTALL_ONLY = ("# Settings:", "# MAGIC %md ## Checklist and plan")  # cells the UNINSTALL notebook leaves out
+
+
 def render(tpl: str, mode: str, version: str, payload: str) -> str:
+    if mode == "uninstall":  # no install(...) call or install checklist heading where they'd only confuse
+        sep = "\n# COMMAND ----------\n"
+        tpl = sep.join(c for c in tpl.split(sep) if not any(m in c for m in INSTALL_ONLY))
     intro = "\n".join("# MAGIC" + (" " + line if line else "") for line in INTRO[mode].splitlines())
     return (tpl.replace("__TITLE__", TITLE[mode]).replace("__INTRO__", intro).replace("__PROMPT__", PROMPT[mode])
             .replace("__MODE__", mode).replace("__VERSION__", version).replace("__PAYLOAD__", payload))

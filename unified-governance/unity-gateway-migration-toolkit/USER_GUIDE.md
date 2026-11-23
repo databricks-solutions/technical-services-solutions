@@ -111,13 +111,13 @@ The short version, with what the install creates, is in [INSTALL.md](INSTALL.md)
 The installer notebook is the only file you import. It creates everything inside the workspace in about 5 minutes.
 
 1. Download `unity-gateway-migration-toolkit.zip` from the [release page](https://github.com/databricks-solutions/technical-services-solutions/releases/tag/unity-gateway-migration-toolkit-latest) and unzip it. In the workspace, go to your home folder, choose **Import**, and import `INSTALL_unity_gateway_migration_toolkit_0_11_0.py` from the zip's top folder.
-2. Open the notebook and click **Run all**. The first run previews the checklist and plan without changes. The preview output is below **1. Toolkit files**; `Notebook exited` is in the following cell. Review it, then set `preview=False` in `install(...)` and click **Run all** again to install. The usual defaults are `catalog=None`, `warehouse=None` and `target_schema=None`; the last creates `<catalog>.ug_migrated`. Use a named argument to override one.
+2. Open the notebook and click **Run all**. The first run previews the checklist and plan without changes. The preview output is under the **Checklist and plan** heading, further down; the small cell after it says `Notebook exited`. Review it, then set `preview=False` in `install(...)` and click **Run all** again to install. The usual defaults are `catalog=None`, `warehouse=None` and `target_schema=None`; the last creates `<catalog>.ug_migrated`. Use a named argument to override one.
 
 **The two schemas.** The toolkit keeps its results in `<catalog>.ug_migration`, and Apply creates model services in `<catalog>.ug_migrated`. Callers address a service by its full name (`<catalog>.ug_migrated.<service>`), so the second schema's name ends up in your code: pick it before your first Apply. To use a schema you already have, set `target_schema="catalog.schema"`. To create it yourself, set `create_target=False`; the SQL is printed. If the installer can't create it, the install still finishes: scans work, and Apply shows the SQL and waits until the schema exists.
 
 **One checklist first.** Preview checks Apps, the catalog and schemas, the warehouse, the run-as service principal, other installs, the install folder, running jobs and the version, and prints `OK`, `FIX` and `NOTE`. Preview never starts a warehouse, creates a schema, or runs the four system-table checks when the warehouse is stopped: it says those checks run after confirmation. Each FIX item has the exact `GRANT` or the screen to open. The plan lists what the install creates or updates.
 
-**At the end** it prints the app link (**Compute > Apps > ug-migration-toolkit**), the job links and whether the first snapshot started, the schema for new model services, that the weekly snapshot is paused, and that secret mapping is off.
+**At the end** it prints the app link (**Compute > Apps > ug-migration-toolkit**), the job links and whether the first snapshot started, the schema for new model services, that the weekly snapshot is paused, and whether Unity Catalog secret mapping is on.
 
 **Optional settings.** `help(install)` lists the advanced keyword arguments: app name, operators, the jobs' service principal, central mode, secret mapping and more ([Installer settings](#installer-settings)). Most installs leave them `None`, which keeps the current setting or documented default.
 
@@ -178,7 +178,7 @@ Import the newer installer and use the same `install(...)` call. Preview the upd
 The install is simpler. The results tables, jobs and app don't change shape; run the new installer to update.
 
 - **Python settings.** `install(...)` replaces the install widget panel. `help(install)` documents advanced keyword arguments. Existing notebook-job parameters remain supported, and jobs execute with `preview=False` so automation doesn't stop at preview.
-- **The first interactive Run all previews.** It shows the checklist under **1. Toolkit files**, followed by `Notebook exited` in the next cell, without starting a warehouse, creating a schema, deploying files, granting access, or starting the snapshot. Set `preview=False` after review.
+- **The first interactive Run all previews.** It shows the checklist and plan under **Checklist and plan** (the next cell says `Notebook exited`), without starting a warehouse, creating a schema, deploying files, granting access, or starting the snapshot. Set `preview=False` after review.
 - **Central mode setup.** `run_as` also takes the service principal's name. The checklist checks `central_secret` (scope, key, and the service principal's READ), says it must be a Databricks OAuth secret, and reminds you of the cross-workspace network policies. A scan or change that Databricks refuses for cross-workspace network policy, or for a secret that isn't a Databricks OAuth secret, now says so and how to fix it.
 - **Uninstall is its own notebook,** `UNINSTALL_unity_gateway_migration_toolkit_0_11_0.py`, with `preview` as its default. The install notebook has no uninstall options any more.
 - **The schema for new model services is created for you,** as `<catalog>.ug_migrated` in the catalog you pick, unless you set `target_schema` to another one. The scan form and Apply prefill it from the install. **Existing installs keep their target** (until now always `ai_gateway.migrated`): an update never moves it, and never creates a schema in another catalog.
@@ -694,7 +694,7 @@ For the CLIs the order is `--deadline`, then `UGMIG_DEADLINE`, then the built-in
 
 ### Installer settings
 
-The settings cell calls `install(...)`. `None` keeps the current install's setting or the documented default. Existing notebook-job parameters are used only when the corresponding argument is `None`.
+The settings cell calls `install(...)`. `None` keeps the current install's setting or the documented default. Existing notebook-job parameters are used only when the corresponding argument is `None`. To clear a setting the install already has (back to its default), pass `"none"` (or `"off"`); an empty list or string keeps it, like `None`. The yes/no settings (`create_target`, `allow_secret_read`, `adopt_app`, `allow_downgrade`, `second_install`) take `True` or `False` (`"yes"`/`"no"`, `"true"`/`"false"` and `1`/`0` work too); any other value stops the run with a FIX.
 
 **INSTALL notebook:**
 
@@ -896,7 +896,7 @@ The installer prints one checklist before it changes anything. Each `FIX` line h
 | "run_as: no service principal named ..." or "... are named ..." | The name isn't in this workspace, or several share it | Enter its application ID (Settings > Identity and access > Service principals) |
 | "central_secret: the secret scope ... doesn't exist", "... has no key ...", "... can't read the secret scope ..." | The central mode secret isn't set up | Run the `databricks secrets` command in the message |
 | A red "Nothing was changed" error after the checklist | A FIX item stopped the install, as designed | Fix each FIX line, then Run all again |
-| Old widgets (`results_catalog`, `action`, ...) in the panel | A notebook from 0.10 or earlier, updated in place | Import the new installer as a new notebook, or remove the old widgets once |
+| Old widgets (`results_catalog`, `action`, ...) in the panel | A notebook from 0.10 or earlier, updated in place | Run all once: the new notebook removes them on an interactive run (or import it as a new notebook) |
 
 ### App
 
@@ -933,7 +933,7 @@ The installer prints one checklist before it changes anything. Each `FIX` line h
 | 409 "the dry run is older than 24 hours" (or the job fails with a missing or expired `dry_run_id`) | Dry runs expire after 24 hours, and a job started directly needs the ID of a matching dry run | Run a dry run again, then execute |
 | 403 on a run's details or export | Only the person who started the run, operators and workspace admins can open it | Ask one of them, or an admin |
 | `manual: secret ...` | Secret not mapped | Add it to `--uc-secret-map`, or fill in its row in the app |
-| "must be in an allowed Unity Catalog schema" (400) | The secret's schema isn't in **Allowed secret schemas** | Rerun the installer with the schema added. Nothing changed |
+| "must be in an allowed Unity Catalog schema" (400) | The secret's schema isn't in `secret_schemas` | Rerun the installer with the schema added. Nothing changed |
 | `manual: PT endpoint serves ..., which no longer exists` | Its model was deleted | Retire or redeploy the PT endpoint |
 | "Unity Gateway isn't available in this workspace. Ask your account team ..." | Listing the `system.ai` model services fails with a not-enabled, disabled or 403 error. Apply stops before any write | Ask your account team to enable Unity Gateway for this workspace and account |
 | `already exists with a different configuration` | An object with that name differs from the plan | Rename the target schema, or reconcile by hand |

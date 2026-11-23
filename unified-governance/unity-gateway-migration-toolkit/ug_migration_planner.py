@@ -210,8 +210,8 @@ def remote_workspace_client(target_id: str, allowlist: list[str], url: str, clie
         raise ValueError(f"workspace {target_id} has no usable URL in system.access.workspaces_latest. A workspace "
                          "created in the last few hours may not be in that table yet: try again later")
     if not client_id or not client_secret:
-        raise ValueError("central mode needs the service principal's client ID (Run jobs as service principal) "
-                         "and its OAuth secret (Central mode: service principal OAuth secret)")
+        raise ValueError("central mode needs the service principal's client ID (run_as in the installer) "
+                         "and its OAuth secret (central_secret in the installer)")
     client = (factory or WorkspaceClient)(host=url.rstrip("/"), client_id=client_id, client_secret=client_secret,
                                           auth_type="oauth-m2m")
     try:

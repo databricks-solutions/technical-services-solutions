@@ -22,8 +22,8 @@ output "cluster_id" {
 # =============================================================================
 
 output "nat_gateway_public_ip" {
-  description = "Public IP of the NAT Gateway"
-  value       = azurerm_public_ip.this.ip_address
+  description = "Public IP of the NAT Gateway (null when create_nat_gateway is false)"
+  value       = one(azurerm_public_ip.this[*].ip_address)
 }
 
 output "vnet_id" {
@@ -42,8 +42,8 @@ output "public_subnet_id" {
 }
 
 output "nat_gateway_id" {
-  description = "ID of the NAT Gateway"
-  value       = azurerm_nat_gateway.this.id
+  description = "ID of the NAT Gateway (null when create_nat_gateway is false)"
+  value       = one(azurerm_nat_gateway.this[*].id)
 }
 
 output "security_group_id" {
@@ -56,6 +56,16 @@ output "security_group_id" {
 # =============================================================================
 
 
+output "resource_group_name" {
+  description = "Name of the workspace resource group"
+  value       = local.resource_group_name
+}
+
+output "resource_group_id" {
+  description = "ID of the workspace resource group"
+  value       = local.resource_group_id
+}
+
 output "managed_resource_group_id" {
   description = "ID of the managed resource group"
   value       = azurerm_databricks_workspace.this.managed_resource_group_id
@@ -65,13 +75,27 @@ output "managed_resource_group_id" {
 # Unity Catalog Outputs
 # =============================================================================
 
+output "metastore_id" {
+  description = "ID of the Unity Catalog metastore assigned to the workspace (null when none is assigned by this template)"
+  value       = local.assign_metastore ? local.metastore_id : null
+}
+
 output "external_location_name" {
-  description = "Name of the Unity Catalog external location"
-  value       = databricks_external_location.db_ext_loc.name
+  description = "Name of the Unity Catalog external location (null when new_catalog is false)"
+  value       = one(databricks_external_location.db_ext_loc[*].name)
 }
 
 output "catalog_name" {
-  description = "Name of the user-defined Unity Catalog catalog"
-  value       = databricks_catalog.uc_quickstart_sandbox.name
+  description = "Name of the user-defined Unity Catalog catalog (null when new_catalog is false)"
+  value       = one(databricks_catalog.uc_quickstart_sandbox[*].name)
 }
 
+output "storage_credential_name" {
+  description = "Name of the Unity Catalog storage credential (null when new_catalog is false)"
+  value       = one(databricks_storage_credential.db_uc_storage_cred[*].name)
+}
+
+output "uc_storage_account_name" {
+  description = "Name of the storage account backing the Unity Catalog catalog (null when new_catalog is false)"
+  value       = one(azurerm_storage_account.db_uc_catalog[*].name)
+}

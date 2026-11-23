@@ -1,58 +1,84 @@
 # =============================================================================
-# Azure Configuration
+# Azure
 # =============================================================================
+azure_subscription_id = "00000000-0000-0000-0000-000000000000"
 
-tenant_id             = "xxx"
-azure_subscription_id = "xxx"
-tags = {
-  "Owner" : "Name Of Owner"
-}
+# Workspace resource group (workspace, access connector, catalog storage).
+# true  = create it (location required)
+# false = reuse the existing group named resource_group_name (its region is used)
+create_resource_group = true
+resource_group_name   = "rg-databricks-workspace"
+location              = "eastus2"   # leave empty when create_resource_group = false
 
-# =============================================================================
-# Databricks Workspace Configuration
-# =============================================================================
-
-resource_group_name         = "new-resource-group"
-workspace_name              = "databricks-workspace"
-admin_user                  = "xx@xx.com"
-root_storage_name           = "databricksrootstorage"
-location                    = "westeurope"
-databricks_account_id       = "xxx-xxx"
-managed_resource_group_name = null # optional. If no name is provided, Azure generates one automatically.
-
-# Attach an existing metastore (recommended) or create one (leave existing_metastore_id
-# = "" and set new_metastore_name). Azure allows one metastore per region per account.
-existing_metastore_id = "REPLACE-WITH-EXISTING-METASTORE-UUID"
-new_metastore_name    = ""
+tags = {}
 
 # =============================================================================
-# Unity Catalog (user-defined catalog) Configuration
+# Naming
 # =============================================================================
+# Prefix for resource names, following the Azure CAF pattern <abbreviation>-<prefix>,
+# e.g. vnet-my-databricks, nsg-my-databricks, snet-my-databricks-public.
+# 1-40 characters: a-z, 0-9, -, .
+resource_prefix = "my-databricks"
 
-uc_storage_account_name = "ucrootstorage" # globally unique, 3-24 chars, lowercase alphanumeric
-catalog_name            = "my-catalog"
-storage_credential_name = "my-uc-storage-cred"
-external_location_name  = "my-ext-loc"
-
-# =============================================================================
-# Cluster Configuration (optional)
-# =============================================================================
-create_cluster                  = false
-node_type_id                    = "Standard_DS3_v2"
-cluster_autotermination_minutes = 10
+# Optional. Empty uses a name derived from resource_prefix.
+# workspace_name              = "my-databricks-workspace"   # default: dbw-<resource_prefix>
+# root_storage_name           = "mydbfsrootstorage"         # default: dbfs + prefix; globally unique
+# managed_resource_group_name = "rg-databricks-managed"     # default: mrg-dbw-<resource_prefix>
 
 # =============================================================================
-# Network Configuration
+# Network
 # =============================================================================
+# true  = create the VNet (vnet_cidr required)
+# false = reuse an existing VNet (set vnet_name; it needs free address space for both subnets)
+create_new_vnet = true
+# vnet_name     = "my-existing-vnet"
 
-# create_new_vnet = false reuses an existing VNet (set vnet_name); true ignores vnet_name.
-create_new_vnet          = true
-vnet_name                = "" # required only when create_new_vnet = false
-vnet_resource_group_name = "vnet-resource-group-name"
+# Resource group for the VNet and networking resources. Leave empty to use the workspace
+# resource group. A different name is created (new VNet) or must hold the VNet (reused VNet).
+# vnet_resource_group_name = "rg-databricks-network"
 
-# NAT gateway availability zone (["1"], ["2"], or ["3"]); use [] for non-zonal regions.
-nat_gateway_zones = ["1"]
+vnet_cidr           = "10.0.0.0/20"   # required when create_new_vnet = true
+subnet_public_cidr  = "10.0.0.0/24"
+subnet_private_cidr = "10.0.1.0/24"
 
-cidr                = "10.0.0.0/20" # matches the variable default; subnets below must fit inside it
-subnet_public_cidr  = "10.0.1.0/24"
-subnet_private_cidr = "10.0.2.0/24"
+# NAT gateway for outbound access. This template has no Private Link, so it must stay true
+# (clusters would not launch without it). To deploy without NAT use azure-privatelink-classic.
+create_nat_gateway = true
+nat_gateway_zones  = ["1"]   # at most one zone; [] for regions without zones
+
+# =============================================================================
+# Databricks account
+# =============================================================================
+databricks_account_id = "00000000-0000-0000-0000-000000000000"
+
+# Databricks account user (email) made workspace admin and granted ALL PRIVILEGES on the
+# catalog, external location and storage credential. Required with new_metastore_name,
+# and run Terraform as this user in that case.
+admin_user = "you@company.com"
+
+# =============================================================================
+# Unity Catalog metastore: set ONE of these, or neither to attach one manually.
+# =============================================================================
+# Assign an existing metastore (list with: databricks account metastores list)
+# metastore_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+# ...or create a new one in the workspace region (also needs admin_user):
+new_metastore_name = "my-metastore"
+
+# =============================================================================
+# User-defined catalog (needs a metastore above)
+# =============================================================================
+new_catalog = true
+
+# Optional overrides. Empty defaults are derived from resource_prefix.
+# uc_storage_account_name = ""            # 3-24 lowercase letters/numbers, globally unique
+# uc_container_name       = "uc-catalog"
+# catalog_name            = ""            # default: <resource_prefix>_catalog
+# storage_credential_name = ""            # default: <resource_prefix>-storage-credential
+# external_location_name  = ""            # default: <resource_prefix>-external-location
+
+# =============================================================================
+# Validation cluster (optional, needs a metastore)
+# =============================================================================
+create_cluster = false
+# node_type_id                    = "Standard_DS3_v2"
+# cluster_autotermination_minutes = 10   # minimum 10

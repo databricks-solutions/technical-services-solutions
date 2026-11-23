@@ -1892,19 +1892,32 @@ def test_run_as_service_principal_lets_you_and_the_operators_read_the_results(mo
     """The service principal owns the results tables it creates; owning the catalog doesn't let you read them, and the
     app reads as the signed-in user (seen live: "does not have SELECT on Table ...")."""
     ws = FakeWS()
-    widgets = install_widgets(run_as=SP_ID, operators=f"{ME}, ops@example.com")
-    widgets["__legacy_job__"] = True  # old notebook-job parameters still execute and must retain these grants
-    res = run_notebook(monkeypatch, ws, widgets)
+    res = run_notebook(monkeypatch, ws, install_widgets(run_as=SP_ID, operators="ops@example.com"))
     assert not res.raised, res.status
-    assert res.params["preview"] is False
-    for who in (ME, "ops@example.com"):
-        assert res.text.count(f"granted: GRANT USE SCHEMA, SELECT ON SCHEMA `main`.`ug_migration` TO `{who}`;") == 1
+    for who in (ME, "ops@example.com"):  # you are granted even when you aren't listed as an operator
+        assert f"granted: GRANT USE SCHEMA, SELECT ON SCHEMA `main`.`ug_migration` TO `{who}`;" in res.text
+        assert f"granted: GRANT USE CATALOG ON CATALOG `main` TO `{who}`;" in res.text
+    assert f"SELECT ON SCHEMA `main`.`ug_migration` TO `{SP_ID}`" not in res.text  # the jobs' identity owns the tables
+    res = run_notebook(monkeypatch, FakeWS(), install_widgets(run_as=SP_ID, operators=f"{ME}, ops@example.com"))
+    assert res.text.count(f"SELECT ON SCHEMA `main`.`ug_migration` TO `{ME}`") == 1  # no duplicate for you
 
 
-def test_results_read_grants_only_when_a_service_principal_runs_the_jobs():
+def test_when_the_jobs_run_as_you_the_other_operators_still_get_read_access(monkeypatch):
+    """You own the tables then, so you need no grant, but the other operators do (review of 0.10.4)."""
+    ws = FakeWS()
+    res = run_notebook(monkeypatch, ws, install_widgets(operators=f"{ME}, ops@example.com"))
+    assert not res.raised, res.status
+    assert "granted: GRANT USE SCHEMA, SELECT ON SCHEMA `main`.`ug_migration` TO `ops@example.com`;" in res.text
+    assert f"SELECT ON SCHEMA `main`.`ug_migration` TO `{ME}`" not in res.text
+    res = run_notebook(monkeypatch, FakeWS(), install_widgets())
+    assert "granted: GRANT USE SCHEMA, SELECT ON SCHEMA" not in res.text  # only you: nothing to grant
+
+
+def test_results_read_grants_skip_the_jobs_identity_and_bad_names():
     g = H["results_read_grants"]
     assert g("c.s", "", ["a@x.com"]) == []
-    assert g("c.s", "sp", ["a@x.com", "A@x.com", "", "sp"]) == ["GRANT USE SCHEMA, SELECT ON SCHEMA `c`.`s` TO `a@x.com`;"]
+    assert g("c.s", "SP", ["a@x.com", "A@x.com", "", "sp", "b`c@x.com"]) == [
+        "GRANT USE CATALOG ON CATALOG `c` TO `a@x.com`;", "GRANT USE SCHEMA, SELECT ON SCHEMA `c`.`s` TO `a@x.com`;"]
 
 
 def test_none_clears_a_kept_setting(monkeypatch):

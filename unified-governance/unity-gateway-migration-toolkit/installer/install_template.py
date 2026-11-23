@@ -536,19 +536,23 @@ def target_schema_lines(target: str, who: str) -> list[str]:
     return [f"CREATE SCHEMA IF NOT EXISTS `{c}`.`{sch}`;"] + target_grants(target, who)
 
 
-def results_read_grants(results: str, run_as: str, readers: list[str]) -> list[str]:
-    """When the jobs run as a service principal, it owns the results tables it creates, and owning the catalog or
-    schema doesn't let anyone else read them (seen live, 2026-11: "does not have SELECT on Table ..."). The app reads
-    them as the signed-in user, so the installing user and the operators need read access on the results schema."""
-    if not run_as:
+def results_read_grants(results: str, job_identity: str, readers: list[str]) -> list[str]:
+    """The identity the jobs run as owns the results tables it creates, and owning the catalog or schema doesn't let
+    anyone else read them (seen live, 2026-11: "does not have SELECT on Table ..."). The app reads them as the
+    signed-in user, so everyone who uses the app (you and the operators) needs read access on the results schema,
+    whoever the jobs run as: a service principal, or you (then the other operators). USE CATALOG too, or the schema
+    grant alone isn't enough. Each entry must look like a user (an email) or a service principal application ID."""
+    if not job_identity:
         return []
     c, sch = results.split(".", 1)
-    seen, out = set(), []
+    seen, out = {job_identity.strip().lower()}, []
     for r in readers:
         r = (r or "").strip()
-        if r and r != run_as and r.lower() not in seen:
-            seen.add(r.lower())
-            out.append(f"GRANT USE SCHEMA, SELECT ON SCHEMA `{c}`.`{sch}` TO `{r}`;")
+        if not r or r.lower() in seen or "`" in r:
+            continue
+        seen.add(r.lower())
+        out += [f"GRANT USE CATALOG ON CATALOG `{c}` TO `{r}`;",
+                f"GRANT USE SCHEMA, SELECT ON SCHEMA `{c}`.`{sch}` TO `{r}`;"]
     return out
 
 
@@ -1698,15 +1702,15 @@ try:
     print("results tables ready")
 except Exception as e:  # the jobs add the columns on their first run anyway
     print(f"note: couldn't update the results tables now ({str(e)[:200]}); the jobs do it on their first run")
-# Jobs that run as a service principal own the results tables they create, so you and the operators get read access
-# (the app reads as the signed-in user). A failed grant isn't fatal: printed for an admin.
-for stmt in results_read_grants(RESULTS, RUN_AS, ([] if IS_SP else [me]) + OPERATOR_LIST):
+# The jobs' identity owns the results tables they create, so everyone else who uses the app (you and the operators)
+# gets read access: the app reads as the signed-in user. A failed grant isn't fatal: printed for an admin.
+for stmt in results_read_grants(RESULTS, RUN_AS or me, ([] if IS_SP else [me]) + OPERATOR_LIST):
     try:
         spark.sql(stmt.rstrip(";"))
         print("granted:", stmt)
     except Exception as e:  # not the owner of the schema: printed for an admin
-        print(f"note: couldn't run {stmt} ({str(e)[:160]}); ask the owner of {RESULTS} to run it, or the app can't "
-              "show results to that user")
+        print(f"note: couldn't run {stmt} ({str(e)[:160]}); ask the owner of the catalog or schema to run it, or the "
+              "app can't show results to that user")
 # The schema for new model services: the checks created it if it was missing (and 8 allowed it). When the jobs run as
 # a service principal, it gets what Apply needs there. A failed grant isn't fatal: the apply job reports it.
 if RUN_AS and TARGET_STATE["state"] in ("exists", "created"):

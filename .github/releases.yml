@@ -16,7 +16,7 @@
 - slug: dabs-migrator
   name: "DABs Migrator"
   kind: "Agent skill"
-  path: "core-platform/cicd/dabs-migrator/dabs-migrator"
+  path: "core-platform/cicd/dabs-migrator"
 
 - slug: lakeflow-connectivity-validator
   name: "Lakeflow Connectivity Validator"

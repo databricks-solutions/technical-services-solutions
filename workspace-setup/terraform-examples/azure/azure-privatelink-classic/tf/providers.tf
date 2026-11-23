@@ -1,7 +1,7 @@
 # =============================================================================
 # providers.tf - Azure and Databricks provider configuration
 # =============================================================================
-# Azure RM: subscription via var.az_subscription; auth via Azure CLI or ARM_* env.
+# Azure RM: subscription via var.azure_subscription_id; auth via Azure CLI or ARM_* env.
 # Databricks account: for NCC (serverless private endpoints); requires account_id
 # and Azure auth (same tenant). See variables for databricks_account_id.
 # =============================================================================
@@ -15,7 +15,7 @@
 
 provider "azurerm" {
   features {}
-  subscription_id = var.az_subscription
+  subscription_id = var.azure_subscription_id
 }
 
 provider "azapi" {

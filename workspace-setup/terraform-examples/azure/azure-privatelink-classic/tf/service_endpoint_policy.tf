@@ -17,7 +17,7 @@
 # =============================================================================
 
 resource "azurerm_subnet_service_endpoint_storage_policy" "dp" {
-  name                = "sep-${local.prefix}-dp"
+  name                = "sep-${local.prefix}"
   resource_group_name = local.dp_rg_name
   location            = local.dp_rg_location
   tags                = local.tags

@@ -461,13 +461,27 @@ def _job_identity(w) -> str | None:
         return None
 
 
-def requester_grants(requester: str, job_identity: str | None) -> list[dict]:
-    """EXECUTE for the person who asked for the run, when the job runs as someone else. Empty otherwise, and empty
-    when the job's identity can't be read (no grant on a guess)."""
+REQUESTER_RE = re.compile(r"[^@\s`]+@[^@\s`]+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+
+
+def requester_grants(requester: str, job_identity: str | None) -> tuple[list[dict], str | None]:
+    """(grants, why none). EXECUTE for the person who asked for the run, when the job runs as someone else.
+
+    requested_by is a job parameter, so this is a grant target: the job's identity grants EXECUTE to whoever it
+    names. That is safe because only the job's owner, workspace admins and the app's service principal can start
+    the job, and the app sets requested_by from the signed-in user. Keep it that way: widening who can start the
+    apply job widens who can direct this grant. Only a user (an email) or a service principal (an application ID)
+    is accepted, never a group. No grant when the job's identity can't be read (no grant on a guess)."""
     who = (requester or "").strip()
-    if not who or job_identity is None or who.lower() == job_identity.strip().lower():
-        return []
-    return [{"principal": who, "privileges": ["EXECUTE"]}]
+    if not who:
+        return [], None
+    if job_identity is None:
+        return [], "couldn't read which identity this run acts as, so no EXECUTE grant was made for the requester"
+    if who.lower() == job_identity.strip().lower():
+        return [], None
+    if not REQUESTER_RE.fullmatch(who):
+        return [], f"requested_by {who!r} isn't a user email or a service principal application ID: no grant made"
+    return [{"principal": who, "privileges": ["EXECUTE"]}], None
 
 
 def not_carried_over(ep: planner.LegacyEndpoint, row: planner.PlanRow, grants: bool) -> list[str]:
@@ -780,20 +794,30 @@ class Applier:
     # -- grants ------------------------------------------------------------
 
     def _privileges(self, fqn: str) -> set:
+        """(principal, privilege) pairs on the service. Principals are lowercased: Databricks user names are
+        case-insensitive, and the app lowercases the signed-in user, so Ana@Example.com and ana@example.com match."""
         perms = self.w.grants.get(securable_type="model_service", full_name=fqn).as_dict() or {}
-        return {(a["principal"], p) for a in perms.get("privilege_assignments", []) for p in a.get("privileges", [])}
+        return {(a["principal"].lower(), p) for a in perms.get("privilege_assignments", []) for p in a.get("privileges", [])}
 
     def grant(self, fqn: str, grants: list[dict]) -> None:
         """Add the planned privileges that are missing. Only the privileges added here are recorded (for rollback)."""
         if not grants:
             return
         if not self.execute:
-            self.log(type="grant", name=fqn, action="would_grant", grants=grants)
+            try:  # a read: an existing service (state exists) may already have them
+                have = self._privileges(fqn)
+            except Exception:  # noqa: BLE001 (the service doesn't exist yet, or its grants can't be read)
+                have = set()
+            if all((g["principal"].lower(), p) in have for g in grants for p in g["privileges"]):
+                self.log(type="grant", name=fqn, action="already_granted", grants=grants)
+            else:
+                self.log(type="grant", name=fqn, action="would_grant", grants=grants)
             return
         have = self._privileges(fqn)
-        prior = [{"principal": g["principal"], "privileges": sorted(p for pr, p in have if pr == g["principal"])}
-                 for g in grants]
-        added = [{"principal": g["principal"], "privileges": [p for p in g["privileges"] if (g["principal"], p) not in have]}
+        prior = [{"principal": g["principal"],
+                  "privileges": sorted(p for pr, p in have if pr == g["principal"].lower())} for g in grants]
+        added = [{"principal": g["principal"],
+                  "privileges": [p for p in g["privileges"] if (g["principal"].lower(), p) not in have]}
                  for g in grants]
         added = [a for a in added if a["privileges"]]
         if not added:
@@ -809,7 +833,7 @@ class Applier:
             return []
         have = self._privileges(fqn)
         issues = [f"grant {p} to {g['principal']} missing" for g in grants for p in g["privileges"]
-                  if (g["principal"], p) not in have]
+                  if (g["principal"].lower(), p) not in have]
         self.log(type="verify", name=fqn, action="ok" if not issues else "mismatch", issues=issues, scope="grants")
         return issues
 
@@ -897,7 +921,8 @@ def apply(w: WorkspaceClient, endpoint_names: list[str] | None, target_catalog: 
     missing = set(endpoint_names or []) - {r.legacy_endpoint for r in selected}
     a = Applier(w, execute, log_path, apply_id)
     target = f"{target_catalog}.{target_schema}"
-    requester_grant = requester_grants(requester, _job_identity(w)) if (requester or "").strip() else []
+    requester_grant, requester_note = (requester_grants(requester, _job_identity(w)) if (requester or "").strip()
+                                       else ([], None))
     if execute:
         conflicts = running_in_logs(log_path, target, apply_id, is_active=is_active)
         if conflicts:
@@ -905,6 +930,8 @@ def apply(w: WorkspaceClient, endpoint_names: list[str] | None, target_catalog: 
                               "wait for it to finish, or pass its apply_id to check it")
         a._write({"type": "run", "action": "run_start", "target": target, "apply_id": apply_id, "time": _now_iso()})
     try:
+        if requester_note:
+            a.log(type="grant", name=target, action="note", reason=requester_note)
         for n in sorted(missing):
             reason = "not found" if n not in by_name else f"{by_name[n].kind}: not a create_model_service endpoint"
             a.log(type="endpoint", name=n, action="skipped", reason=reason)
@@ -965,22 +992,26 @@ def apply(w: WorkspaceClient, endpoint_names: list[str] | None, target_catalog: 
                 # Config first; grants only after the service reads back as planned.
                 if a.verify_config(r.target_service, body, ep.fallback_enabled):
                     continue
+                legacy_grant_failed = False
                 if grants and r.grants:
                     try:
                         a.grant(r.target_service, r.grants)
                     except Exception as ge:
+                        legacy_grant_failed = True
                         a.log(type="model_service", name=r.target_service, action="needs_attention",
                               reason=f"the service is in place but its grants failed ({str(ge)[:300]}): grant "
                                      "EXECUTE/MANAGE by hand or re-run the same selection")
-                        continue
-                    a.verify_grants(r.target_service, r.grants)
+                    else:
+                        a.verify_grants(r.target_service, r.grants)
                 if requester_grant:
                     try:
                         a.grant(r.target_service, requester_grant)
                     except Exception as ge:  # the service works; only the requester's access is missing
                         a.log(type="model_service", name=r.target_service, action="needs_attention",
-                              reason=f"the service is in place but granting EXECUTE to {requester} failed "
+                              reason=f"the service is in place but granting EXECUTE to {requester.strip()} failed "
                                      f"({str(ge)[:300]}): grant it by hand")
+                if legacy_grant_failed:
+                    continue
                 if smoke and state == "created":
                     a.smoke(r.target_service, body)
             except Manual as m:
@@ -1211,11 +1242,18 @@ def rollback(w: WorkspaceClient, log_path: str, execute: bool, protect=None, app
     # Grants are never revoked. A deleted service takes its grants with it. A service the rollback keeps (another
     # run uses it, it changed since apply, it existed before, or it couldn't be deleted) keeps every grant, because
     # callers may depend on them now: the privileges this run added are listed so an owner can revoke them by hand.
+    # A grant kept on a service that is kept because another run uses it, or that existed before, carries the same
+    # flag: it isn't a problem of its own, so the rollback still counts as done. Without it, a run that reused
+    # another run's service (and granted on it) could never finish its rollback, and that kept the other run's
+    # service protected for good (each run waiting on the other).
+    service_kept = {r["name"]: r for r in out if r.get("type") == "model_service" and r.get("action") == "kept"}
     for e in grant_entries:
         key = ("model_service", e["name"])
         if key in deleted:
             continue
-        emit({"type": "grant", "name": e["name"], "action": "kept", "grants": e["added"],
+        why = service_kept.get(e["name"], {})
+        flags = {f: True for f in ("other_run", "preexisting") if why.get(f)}
+        emit({"type": "grant", "name": e["name"], "action": "kept", "grants": e["added"], **flags,
               "reason": "the service is kept, so the privileges this run added stay; revoke them by hand if they are "
                         "no longer needed"})
 
@@ -1339,7 +1377,8 @@ def dry_run_gate_error(dry: dict | None, operation: str, fingerprint: str | None
 
     dry is the dry run's row in ug_migration_applies (mode, operation, status, fingerprint, scan_run_id,
     requested_by, started_at as epoch seconds or a UTC string). The job checks this itself, so starting the job directly can't skip the dry run.
-    requested_by must match when the dry run recorded one; it is a consistency check, not an access control.
+    requested_by must match when the dry run recorded one; it is a consistency check, not an access control (but
+    Apply also grants EXECUTE to it when the job runs as someone else: see requester_grants).
     used_by is the apply_id of an execute that already followed this dry run: each dry run is good for one execute."""
     if dry is None:
         return "execute needs dry_run_id: the apply_id of a successful dry run of the same settings"

@@ -488,10 +488,100 @@ def test_requester_gets_execute_when_the_job_runs_as_a_service_principal(tmp_pat
 
 
 def test_no_requester_grant_when_the_job_runs_as_the_requester_or_identity_is_unknown(tmp_path, monkeypatch):
-    for w, who in ((_as(FakeW(), "Ana@example.com"), "ana@example.com"), (FakeW(), "ana@example.com"),
-                   (_as(FakeW(), SP_APP_ID), "")):
+    for w, who in ((_as(FakeW(), "Ana@example.com"), "ana@example.com"), (_as(FakeW(), SP_APP_ID), "")):
         res, _ = _run(monkeypatch, tmp_path, w, [_ep(EXTERNAL)], uc_map=UC_MAP, requester=who)
         assert w.grants.updates == [] and not any(r["type"] == "grant" for r in res)
+    w = FakeW()  # the job's identity can't be read: no grant on a guess, and the run says so
+    res, _ = _run(monkeypatch, tmp_path, w, [_ep(EXTERNAL)], uc_map=UC_MAP, requester="ana@example.com")
+    assert w.grants.updates == [] and not any(r["type"] == "grant" and r["action"] != "note" for r in res)
+    assert any(r["type"] == "grant" and r["action"] == "note" and "couldn't read" in r["reason"] for r in res)
+
+
+def test_requester_must_be_a_user_or_a_service_principal_never_a_group(tmp_path, monkeypatch):
+    """requested_by is a job parameter: someone who starts the job directly must not be able to grant a group."""
+    for who in ("account users", "users", "admins", "x`y@example.com"):
+        grants, why = a.requester_grants(who, SP_APP_ID)
+        assert grants == [] and "no grant made" in why
+    assert a.requester_grants(SP_APP_ID.replace("5e1f", "6e1f"), SP_APP_ID)[0][0]["principal"].startswith("6e1f")
+    w = _as(FakeW(), SP_APP_ID)
+    res, _ = _run(monkeypatch, tmp_path, w, [_ep(EXTERNAL)], uc_map=UC_MAP, requester="account users")
+    assert w.grants.updates == [] and any(r["type"] == "grant" and r["action"] == "note" for r in res)
+
+
+def test_a_mixed_case_user_name_is_not_granted_again(tmp_path, monkeypatch):
+    """The app lowercases the user; Unity Catalog may show the user name in another case. Same person, already
+    granted: already_granted, not a new grant that a rollback would then list as added by this run."""
+    w = _as(FakeW(), SP_APP_ID)
+    eps = [_ep(EXTERNAL)]
+    svc = _target(eps)
+    _run(monkeypatch, tmp_path, w, eps, uc_map=UC_MAP, requester="ana@example.com")
+    w.grants.privs[svc] = {"Ana@Example.com": {"EXECUTE"}}
+    w.grants.updates.clear()
+    log2 = tmp_path / "second"
+    log2.mkdir()
+    monkeypatch.setattr(m, "inventory", lambda _w: eps)
+    sec = a.Secrets(w, UC_MAP, False, dry_run=False, allowed_schemas=["c.s"], read_enabled=False)
+    res = a.apply(w, [e.name for e in eps], "c", "s", True, sec, str(log2 / "a.jsonl"), apply_id="run2",
+                  ack_guardrails=True, requester="ana@example.com")
+    grants = [r["action"] for r in res if r["type"] == "grant"]
+    assert grants == ["already_granted"] and w.grants.updates == []
+
+
+def test_dry_run_says_already_granted_when_the_requester_has_execute(tmp_path, monkeypatch):
+    w = _as(FakeW(), SP_APP_ID)
+    eps = [_ep(EXTERNAL)]
+    _run(monkeypatch, tmp_path, w, eps, uc_map=UC_MAP, requester="ana@example.com")
+    w.grants.updates.clear()
+    res, _ = _run(monkeypatch, tmp_path, w, eps, uc_map=UC_MAP, execute=False, requester="ana@example.com")
+    assert [r["action"] for r in res if r["type"] == "grant"] == ["already_granted"] and w.grants.updates == []
+
+
+def test_reusing_another_runs_service_doesnt_lock_either_rollback(tmp_path, monkeypatch):
+    """Ana's run creates the service; Bob's run reuses it (exists) and gets EXECUTE. Rolling back Bob's run keeps the
+    service for Ana's run, and the grant with it: that is expected, so the rollback must count as done. Before the
+    fix the kept grant counted as a problem, Bob's run never counted as rolled back, and Ana's rollback then kept
+    the service because Bob's run still used it, so neither could ever delete it."""
+    w = _as(FakeW(), SP_APP_ID)
+    eps = [_ep(EXTERNAL)]
+    monkeypatch.setattr(m, "inventory", lambda _w: eps)
+    sec = a.Secrets(w, UC_MAP, False, dry_run=False, allowed_schemas=["c.s"], read_enabled=False)
+    logs = {}
+    for run, who in (("run1", "ana@example.com"), ("run2", "bob@example.com")):
+        d = tmp_path / run
+        d.mkdir()
+        logs[run] = str(d / "a.jsonl")
+        res = a.apply(w, [e.name for e in eps], "c", "s", True, sec, logs[run], apply_id=run, ack_guardrails=True,
+                      requester=who)
+        logs[run + "_res"] = res
+    assert any(r["type"] == "grant" and r["action"] == "granted" for r in logs["run2_res"])
+    runs = [{"apply_id": r, "rolled_back": False, "entries": [dict(e, execute=True) for e in logs[r + "_res"]]}
+            for r in ("run1", "run2")]
+    protect, released = a.protection_from_runs(runs, "run2")
+    rb2 = a.rollback(w, logs["run2"], execute=True, protect=protect, released=released, apply_id="run2",
+                     audit_path=logs["run2"])
+    kept_grant = next(r for r in rb2 if r["type"] == "grant")
+    assert kept_grant["action"] == "kept" and kept_grant.get("other_run")
+    assert a.rollback_summary_done(a.run_outcome(rb2)[1])
+    runs[1]["rolled_back"] = True
+    protect, released = a.protection_from_runs(runs, "run1")
+    rb1 = a.rollback(w, logs["run1"], execute=True, protect=protect, released=released, apply_id="run1",
+                     audit_path=logs["run1"])
+    assert any(r["type"] == "model_service" and r["action"] == "deleted" for r in rb1), rb1
+
+
+def test_a_failed_legacy_grant_doesnt_skip_the_requester_grant(tmp_path, monkeypatch):
+    w = _as(FakeW(), SP_APP_ID)
+    eps = [_ep(EXTERNAL, [{"principal": "data-sci", "principal_type": "group", "levels": ["CAN_QUERY"]}])]
+    real = a.Applier.grant
+
+    def flaky(self, fqn, grants):
+        if grants and grants[0]["principal"] == "data-sci":
+            raise RuntimeError("legacy grant refused")
+        return real(self, fqn, grants)
+    monkeypatch.setattr(a.Applier, "grant", flaky)
+    res, _ = _run(monkeypatch, tmp_path, w, eps, uc_map=UC_MAP, requester="ana@example.com")
+    assert w.grants.privs.get(_target(eps)) == {"ana@example.com": {"EXECUTE"}}
+    assert any(r.get("action") == "needs_attention" and "its grants failed" in r.get("reason", "") for r in res)
 
 
 def test_dry_run_shows_the_requester_grant_without_making_it(tmp_path, monkeypatch):
@@ -1995,3 +2085,22 @@ def test_rollback_gate_refuses_an_empty_requester_on_either_side():
     assert "needs requested_by" in a.rollback_gate_error(ok, APPLY, "")            # mallory with no name
     assert "no recorded requester" in a.rollback_gate_error({**ok, "requested_by": ""}, APPLY, "mallory")
     assert "someone else" in a.rollback_gate_error(ok, APPLY, "mallory")
+
+
+
+@pytest.mark.parametrize("who", ["ana@example.com", ""])
+def test_the_apply_notebook_passes_requested_by_as_the_requester(monkeypatch, who):
+    """The app sets requested_by to the signed-in user; the job must hand it to apply() (review of 0.10.4: dropping
+    it broke no test)."""
+    got = {}
+
+    def fake_apply(w, endpoints, cat, sch, execute, secrets, log_path, **k):
+        got["requester"] = k.get("requester")
+        return []
+    monkeypatch.setattr(a, "apply", fake_apply)
+    params = {"apply_id": APPLY, "results_schema": "c.s", "mode": "dry_run", "endpoints": "ep1",
+              "target_catalog": "c", "target_schema": "s", "scan_run_id": OTHER}
+    if who:
+        params["requested_by"] = who
+    _notebook(monkeypatch, params, CutoverW([]))
+    assert got["requester"] == who

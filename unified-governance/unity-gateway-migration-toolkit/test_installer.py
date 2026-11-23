@@ -1478,3 +1478,35 @@ def test_app_update_errors_surface_and_only_a_missing_api_falls_back(monkeypatch
 def test_update_changes_only_the_fields_the_installer_owns():
     ns = H
     assert ns["APP_UPDATE_MASK"] == "description,resources,user_api_scopes"
+
+
+def test_run_as_service_principal_lets_you_and_the_operators_read_the_results(monkeypatch):
+    """The service principal owns the results tables it creates; owning the catalog doesn't let you read them, and the
+    app reads as the signed-in user (seen live: "does not have SELECT on Table ...")."""
+    ws = FakeWS()
+    res = run_notebook(monkeypatch, ws, install_widgets(run_as=SP_ID, operators="ops@example.com"))
+    assert not res.raised, res.status
+    for who in (ME, "ops@example.com"):  # you are granted even when you aren't listed as an operator
+        assert f"granted: GRANT USE SCHEMA, SELECT ON SCHEMA `main`.`ug_migration` TO `{who}`;" in res.text
+        assert f"granted: GRANT USE CATALOG ON CATALOG `main` TO `{who}`;" in res.text
+    assert f"TO `{SP_ID}`;" not in res.text.split("granted: GRANT USE CATALOG ON CATALOG `main`")[-1].split("\n")[0]
+    res = run_notebook(monkeypatch, FakeWS(), install_widgets(run_as=SP_ID, operators=f"{ME}, ops@example.com"))
+    assert res.text.count(f"SELECT ON SCHEMA `main`.`ug_migration` TO `{ME}`") == 1  # no duplicate for you
+
+
+def test_when_the_jobs_run_as_you_the_other_operators_still_get_read_access(monkeypatch):
+    """You own the tables then, so you need no grant, but the other operators do (review of 0.10.4)."""
+    ws = FakeWS()
+    res = run_notebook(monkeypatch, ws, install_widgets(operators=f"{ME}, ops@example.com"))
+    assert not res.raised, res.status
+    assert "granted: GRANT USE SCHEMA, SELECT ON SCHEMA `main`.`ug_migration` TO `ops@example.com`;" in res.text
+    assert f"SELECT ON SCHEMA `main`.`ug_migration` TO `{ME}`" not in res.text
+    res = run_notebook(monkeypatch, FakeWS(), install_widgets())
+    assert "granted: GRANT USE SCHEMA, SELECT ON SCHEMA" not in res.text  # only you: nothing to grant
+
+
+def test_results_read_grants_skip_the_jobs_identity_and_bad_names():
+    g = H["results_read_grants"]
+    assert g("c.s", "", ["a@x.com"]) == []
+    assert g("c.s", "SP", ["a@x.com", "A@x.com", "", "sp", "b`c@x.com"]) == [
+        "GRANT USE CATALOG ON CATALOG `c` TO `a@x.com`;", "GRANT USE SCHEMA, SELECT ON SCHEMA `c`.`s` TO `a@x.com`;"]

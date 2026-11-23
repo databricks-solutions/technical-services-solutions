@@ -1224,8 +1224,9 @@ def target_check(create_now: bool) -> tuple[str, str, str]:
         cat_info = w.catalogs.get(cat)
     except DatabricksError:
         return "note", "missing", (f"catalog {cat} doesn't exist or you can't see it, so {TARGET} can't be created. Set "
-                                   "target_schema to a schema in a catalog you can use (None = "
-                                   f"<catalog>.{TARGET_SCHEMA_NAME}), or create it. Scans work without it; Apply waits")
+                                   f"target_schema=\"{(CATALOG or '<catalog>')}.{TARGET_SCHEMA_NAME}\" (or another "
+                                   "schema in a catalog you can use) in install(...), or create the catalog. Scans work "
+                                   "without it; Apply waits")
     if not create_now:
         return "ok", "will_create", f"{TARGET} doesn't exist: it will be created"
     err = run_sql(f"CREATE SCHEMA IF NOT EXISTS `{cat}`.`{TARGET.split('.', 1)[1]}` COMMENT '{target_comment(APP_NAME)}'")
@@ -1292,9 +1293,9 @@ def preflight() -> tuple[list[str], list[str], str]:
     passed("Databricks Apps", "you can create apps")
     if OPERATORS_UNKNOWN:  # once, for installs before 0.11.0: never shrink or grow who can start jobs silently
         found.append("the operators of this install (who can start jobs in the app) can't be read back: Databricks "
-                     "doesn't return an app's settings, and installs before 0.11.0 didn't record them. Enter them in "
-                     "operators (your email alone is fine), then Run all again. From "
-                     "then on, updates keep them")
+                     "doesn't return an app's settings, and installs before 0.11.0 didn't record them. Add "
+                     f"operators=[\"{me}\"] to install(...) (and anyone else who should start jobs), then Run all "
+                     "again. From then on, updates keep them")
     unnamed = [j["name"] for j in INSTALLS if not j["app"]]
     if unnamed:
         notes.append(f"{len(unnamed)} toolkit job(s) deployed by the bundle have no app name and aren't managed by this "

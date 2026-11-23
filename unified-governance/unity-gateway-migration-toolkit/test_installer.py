@@ -1998,7 +1998,7 @@ def test_an_update_from_0_10_asks_for_the_operators_once_then_keeps_them(monkeyp
     seed_install(ws, operators=None)
     before = snapshot_of(ws)
     res = run_notebook(monkeypatch, ws, {"__mode__": "install", "02_warehouse": WH_LABEL})
-    assert res.raised and "the operators of this install" in res.status and "Enter them in operators" in res.status
+    assert res.raised and "the operators of this install" in res.status and f"operators=[\"{ME}\"]" in res.status
     assert snapshot_of(ws) == before
     ok = run_notebook(monkeypatch, ws, install_widgets(operators="boss@example.com,ops@example.com"))
     assert not ok.raised, ok.status

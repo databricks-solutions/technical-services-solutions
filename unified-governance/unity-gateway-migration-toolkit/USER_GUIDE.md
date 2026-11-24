@@ -533,7 +533,7 @@ Three widgets, all `no` by default, choose what else goes:
 
 **A rollback that can't finish** stops the uninstall before anything else is removed. Wait for the run to finish (in Jobs), then run uninstall again. The app is left stopped.
 
-**Results kept after uninstall.** Once the app and jobs are gone, the notebook can't find the install any more, so run it with **4. Remove results tables** = `yes` the first time if you want the data gone. To remove kept results later, run it with **6. Results schema** set: it stops with the SQL that drops the six tables and the schema.
+**Results kept after uninstall.** To remove kept results later, run it again with **6. Results schema** set to that schema and **4. Remove results tables** = `yes`: it drops the six tables, the schema, and the schema for new model services if this install created it and it holds no services.
 
 **Services kept after uninstall** keep serving the callers that moved to them. Remove them later with [Rollback after uninstall](#rollback-after-uninstall).
 

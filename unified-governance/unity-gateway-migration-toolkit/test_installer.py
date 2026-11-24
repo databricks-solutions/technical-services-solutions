@@ -1744,6 +1744,9 @@ def test_preview_and_uninstall_exits_follow_their_output_cells():
     done_exit = next(i for i, cell in enumerate(uninstall_cells) if 'exit("uninstalled")' in cell)
     assert done_exit > done
     assert "Done. Kept:" not in uninstall_cells[done_exit]
+    leftover = next(i for i, cell in enumerate(uninstall_cells) if "LEFTOVER_EXIT = \"uninstalled\"" in cell)
+    leftover_exit = next(i for i, cell in enumerate(uninstall_cells) if "dbutils.notebook.exit(LEFTOVER_EXIT)" in cell)
+    assert leftover_exit > leftover and "print(" not in uninstall_cells[leftover_exit]
     assert "Checklist and plan" in make_installer.PROMPT["install"]
     assert "Edit install" not in make_installer.PROMPT["install"]
     # The heading the prompt points to sits right above the checklist cell (review of 0.11.0: it pointed to
@@ -2270,20 +2273,37 @@ def test_the_uninstall_preview_names_the_target_schema_and_whether_it_goes(monke
     assert "the schema for new model services main.mine (this install didn't create it)" in res.text
 
 
-def test_results_kept_by_an_earlier_uninstall_get_the_sql_to_remove_them(monkeypatch):
+def test_results_kept_by_an_earlier_uninstall_can_be_removed_later(monkeypatch):
     """Seen live: uninstall with 4 = no, then again with 4 = yes and 6 set, stopped with only 'no install named'."""
     ws = FakeWS()
     assert not run_notebook(monkeypatch, ws, install_widgets()).raised
     assert not run_notebook(monkeypatch, ws, uninstall_widgets()).raised
-    assert "main.ug_migration" in ws.schemas
+    assert "main.ug_migration" in ws.schemas and "main.ug_migrated" in ws.schemas
     before = snapshot_of(ws)
+    preview = run_notebook(monkeypatch, ws, uninstall_widgets("uninstall: preview", results_schema="main.ug_migration"))
+    assert preview.status == "exit: uninstall preview: nothing changed", preview.status
+    assert "the results tables in main.ug_migration" in preview.text
+    assert "the schema for new model services main.ug_migrated" in preview.text and snapshot_of(ws) == before
+    no_drop = run_notebook(monkeypatch, ws, uninstall_widgets(results_schema="main.ug_migration"))
+    assert no_drop.raised and "4. Remove results tables = yes" in no_drop.status and snapshot_of(ws) == before
     res = run_notebook(monkeypatch, ws, uninstall_widgets(drop_data="yes", results_schema="main.ug_migration"))
-    assert res.raised and "no install named ug-migration-toolkit" in res.status
-    assert "DROP TABLE IF EXISTS `main`.`ug_migration`.ug_migration_scans;" in res.status
-    assert "DROP SCHEMA IF EXISTS `main`.`ug_migration` RESTRICT;" in res.status
-    assert snapshot_of(ws) == before
-    plain = run_notebook(monkeypatch, ws, uninstall_widgets(drop_data="yes"))  # no 6: nothing to point at
-    assert plain.raised and "DROP TABLE" not in plain.status
+    assert res.status == "exit: uninstalled", res.status
+    assert "main.ug_migration" not in ws.schemas and "main.ug_migrated" not in ws.schemas
+    assert not [t for t in ws.tables if t.startswith("main.ug_migration.")]
+
+
+def test_later_cleanup_keeps_schemas_that_arent_the_toolkits_or_hold_services(monkeypatch):
+    ws = FakeWS()
+    assert not run_notebook(monkeypatch, ws, install_widgets()).raised
+    assert not run_notebook(monkeypatch, ws, uninstall_widgets()).raised
+    ws.model_services["main.ug_migrated"] = ["main.ug_migrated.svc"]
+    res = run_notebook(monkeypatch, ws, uninstall_widgets(drop_data="yes", results_schema="main.ug_migration"))
+    assert res.status == "exit: uninstalled" and "main.ug_migrated" in ws.schemas and "(it holds model services)" in res.text
+    ws.schemas["main.other"] = {"owner": ME, "comment": "someone else's"}
+    plain = run_notebook(monkeypatch, ws, uninstall_widgets(drop_data="yes", results_schema="main.other"))
+    assert plain.raised and "no install named" in plain.status and "main.other" in ws.schemas
+    none = run_notebook(monkeypatch, ws, uninstall_widgets(drop_data="yes"))
+    assert none.raised and "no install named" in none.status
 
 
 def test_an_update_says_a_new_snapshot_starts_not_the_first(monkeypatch):

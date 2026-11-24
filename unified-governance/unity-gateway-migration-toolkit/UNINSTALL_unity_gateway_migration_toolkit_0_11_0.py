@@ -256,12 +256,6 @@ def schema_made_by_toolkit(comment: str | None, app_name: str) -> bool:
     return f"(app: {app_name})" in (comment or "")
 
 
-def leftover_results_sql(results: str) -> str:
-    """SQL that removes a results schema an earlier uninstall kept (the uninstall can't, once the install is gone)."""
-    c, s = results.split(".", 1)
-    return "\n      ".join([f"DROP TABLE IF EXISTS `{c}`.`{s}`.ug_migration_{t};" for t in RESULT_TABLES]
-                          + [f"DROP SCHEMA IF EXISTS `{c}`.`{s}` RESTRICT;"])
-
 
 def parse_secret_schemas(raw: str) -> tuple[list[str], str | None]:
     schemas = split_list(raw)
@@ -979,23 +973,81 @@ def adopt_existing_locations() -> None:
 
 
 adopt_existing_locations()
+LEFTOVER, LEFTOVER_EXIT = False, ""  # set when only results kept by an earlier uninstall are left: the next cell exits with it
 if UNINSTALL and not MINE and not EXISTING_APP and not exists(MARKER):
     found = install_names(INSTALLS, toolkit_app_names())
     unnamed = [j["name"] for j in INSTALLS if not j["app"]]
-    leftover = ""
-    if _given and not found:  # an earlier uninstall kept the results: say how to remove them by hand
+    _cmt = None
+    if _given and not found:  # an earlier uninstall kept the results: this run can still remove them
         try:
             _cmt = w.schemas.get(_given).comment
         except DatabricksError:
             _cmt = None
-        if schema_made_by_toolkit(_cmt, APP_NAME):
-            leftover = (f". The app and jobs are already gone, so this notebook can't remove the results it kept in "
-                        f"{_given}. To remove them, run in SQL:\n      {leftover_results_sql(_given)}\n    The schema "
-                        "for new model services (comment ending \"(app: " + APP_NAME + ")\") can be dropped the same "
-                        "way once it holds no services you keep")
-    raise ValueError(f"no install named {APP_NAME}; found: {', '.join(found) or 'no toolkit installs in this workspace'}"
-                     + (f". Also {len(unnamed)} toolkit job(s) deployed by the bundle without an app name (not managed "
-                        "here): " + ", ".join(unnamed) if unnamed else "") + leftover)
+    if not (_given and not found and schema_made_by_toolkit(_cmt, APP_NAME)):
+        raise ValueError(f"no install named {APP_NAME}; found: {', '.join(found) or 'no toolkit installs in this workspace'}"
+                         + (f". Also {len(unnamed)} toolkit job(s) deployed by the bundle without an app name (not "
+                            "managed here): " + ", ".join(unnamed) if unnamed else ""))
+    # The app and jobs are gone (an earlier uninstall kept the results): remove what's left, only the toolkit's.
+    LEFTOVER = True
+    _rc, _rs = _given.split(".", 1)
+    _targets = {f"{_rc}.{TARGET_SCHEMA_NAME}"}
+    try:  # the schemas its apply runs created services in, read before the tables go
+        _targets |= {f"{r[0]}.{r[1]}" for r in spark.sql(
+            f"SELECT DISTINCT target_catalog, target_schema FROM `{_rc}`.`{_rs}`.ug_migration_applies "
+            "WHERE target_catalog IS NOT NULL AND target_schema IS NOT NULL").collect()}
+    except Exception:  # noqa: BLE001 (no applies table: only the default)
+        pass
+    _ours = []
+    for _t in sorted(_targets - {_given}):
+        try:
+            if w.schemas.get(_t).comment == target_comment(APP_NAME):
+                _ours.append(_t)
+        except DatabricksError:
+            pass
+    print(f"No install named {APP_NAME} is left in this workspace (its app and jobs are gone), but results it kept are "
+          f"in {_given}.")
+    print("Uninstall removes:\n- the results tables in " + _given + " and the schema, if nothing else is in it"
+          + "".join(f"\n- the schema for new model services {t}, which this install created, if it holds no services"
+                    for t in _ours))
+    if PREVIEW or not DROP:
+        if not PREVIEW:
+            raise ValueError("Nothing was changed: set 4. Remove results tables = yes to remove them")
+        print("\nNothing was changed. Set 1. Action = remove and 4. Remove results tables = yes, then run again.")
+        LEFTOVER_EXIT = "uninstall preview: nothing changed"
+if LEFTOVER and not LEFTOVER_EXIT:
+    for _tb in RESULT_TABLES:
+        spark.sql(f"DROP TABLE IF EXISTS `{_rc}`.`{_rs}`.ug_migration_{_tb}")
+    print("dropped results tables in", _given)
+    try:
+        spark.sql(f"DROP SCHEMA IF EXISTS `{_rc}`.`{_rs}` RESTRICT")
+        print("dropped schema", _given)
+    except Exception:  # noqa: BLE001
+        print("kept schema", _given, "(other objects are in it)")
+    for _t in _ours:
+        try:
+            _busy = next(iter(w.ai_gateway.list_model_services(parent=f"schemas/{_t}")), None) is not None
+        except Exception:  # noqa: BLE001 (can't check: keep it)
+            _busy = None
+        if _busy is None:
+            print("kept schema", _t, "(couldn't check it for model services)")
+        elif _busy:
+            print("kept schema", _t, "(it holds model services)")
+        else:
+            try:
+                _c, _s = _t.split(".", 1)
+                spark.sql(f"DROP SCHEMA IF EXISTS `{_c}`.`{_s}` RESTRICT")
+                print("dropped schema", _t, "(the installer created it for new model services; it was empty)")
+            except Exception:  # noqa: BLE001
+                print("kept schema", _t, "(other objects are in it)")
+    LEFTOVER_EXIT = "uninstalled"
+
+# COMMAND ----------
+
+if LEFTOVER_EXIT:  # its own cell: an interactive exit replaces the output of the cell it runs in
+    dbutils.notebook.exit(LEFTOVER_EXIT)
+
+# COMMAND ----------
+
 if UNINSTALL and not CATALOG:
     raise ValueError("set 6. Results schema (catalog.schema): this install's results schema isn't recorded in its jobs")
 MARKER_KIND, MARKER_APP = marker_status(read_marker(), APP_NAME)

@@ -1,0 +1,265 @@
+{
+  "schema": 1,
+  "account": "Acme Retail",
+  "physical_tables": [],
+  "documents": [
+    {
+      "path": "docs/kpi-glossary.pdf",
+      "kind": "pdf"
+    }
+  ],
+  "glossary_terms": [
+    {
+      "term": "Comparable Store",
+      "definition": "A store open for at least 13 full fiscal months; used as the denominator for comp-sales growth.",
+      "synonyms": [
+        "comp store",
+        "same-store"
+      ],
+      "domain_hint": "Sales",
+      "source": "docs/kpi-glossary.pdf"
+    },
+    {
+      "term": "Active Customer",
+      "definition": "A customer with at least one completed order in the trailing 90 days.",
+      "synonyms": [
+        "AC"
+      ],
+      "domain_hint": "Customer Orders",
+      "source": "docs/kpi-glossary.pdf"
+    }
+  ],
+  "reports": [
+    {
+      "id": "tableau-sales_overview",
+      "name": "Sales Overview",
+      "tool": "tableau",
+      "kind": "workbook",
+      "fact_tables": [
+        "retail_dm.dm_sales_fct"
+      ],
+      "tables": [
+        "retail_dm.dm_sales_fct"
+      ],
+      "calendar": "retail_dm.clndr",
+      "measures": [
+        {
+          "name": "Net Revenue",
+          "formula": "SUM([net_amt])"
+        },
+        {
+          "name": "Units",
+          "formula": "SUM([units])"
+        },
+        {
+          "name": "Gross Margin",
+          "formula": "SUM([rev])-SUM([cogs])"
+        }
+      ],
+      "pages": 3,
+      "visuals": 12,
+      "params": 0,
+      "text_pct": 0.1,
+      "source": "databricks",
+      "thin": false,
+      "note": ""
+    },
+    {
+      "id": "tableau-regional_sales",
+      "name": "Regional Sales",
+      "tool": "tableau",
+      "kind": "workbook",
+      "fact_tables": [
+        "retail_dm.dm_sales_fct"
+      ],
+      "tables": [
+        "retail_dm.dm_sales_fct"
+      ],
+      "calendar": "retail_dm.clndr",
+      "measures": [
+        {
+          "name": "Net Revenue",
+          "formula": "SUM([gross_amt])-SUM([returns_amt])"
+        },
+        {
+          "name": "Units",
+          "formula": "SUM([units])"
+        }
+      ],
+      "pages": 3,
+      "visuals": 12,
+      "params": 0,
+      "text_pct": 0.1,
+      "source": "databricks",
+      "thin": false,
+      "note": ""
+    },
+    {
+      "id": "tableau-exec_kpis",
+      "name": "Exec KPIs",
+      "tool": "tableau",
+      "kind": "workbook",
+      "fact_tables": [
+        "retail_dm.dm_sales_fct"
+      ],
+      "tables": [
+        "retail_dm.dm_sales_fct"
+      ],
+      "calendar": "retail_dm.clndr",
+      "measures": [
+        {
+          "name": "Net Revenue",
+          "formula": "SUM([net_amt])"
+        },
+        {
+          "name": "Gross Margin",
+          "formula": "(SUM([rev])-SUM([cogs]))/SUM([rev])"
+        }
+      ],
+      "pages": 3,
+      "visuals": 12,
+      "params": 0,
+      "text_pct": 0.1,
+      "source": "databricks",
+      "thin": false,
+      "note": ""
+    },
+    {
+      "id": "tableau-sales_v2_(copy)",
+      "name": "Sales v2 (copy)",
+      "tool": "tableau",
+      "kind": "workbook",
+      "fact_tables": [
+        "retail_dm.dm_sales_fct"
+      ],
+      "tables": [
+        "retail_dm.dm_sales_fct"
+      ],
+      "calendar": "retail_dm.clndr",
+      "measures": [
+        {
+          "name": "Net Revenue",
+          "formula": "SUM([net_amt])"
+        },
+        {
+          "name": "Units",
+          "formula": "SUM([units])"
+        }
+      ],
+      "pages": 3,
+      "visuals": 12,
+      "params": 0,
+      "text_pct": 0.1,
+      "source": "databricks",
+      "thin": false,
+      "note": ""
+    },
+    {
+      "id": "tableau-stock_health",
+      "name": "Stock Health",
+      "tool": "tableau",
+      "kind": "workbook",
+      "fact_tables": [
+        "retail_dm.dm_inventory_fct"
+      ],
+      "tables": [
+        "retail_dm.dm_inventory_fct"
+      ],
+      "calendar": "retail_dm.clndr",
+      "measures": [
+        {
+          "name": "On Hand",
+          "formula": "SUM([on_hand_units])"
+        },
+        {
+          "name": "Weeks of Supply",
+          "formula": "SUM([on_hand_units])/AVG([sell_rate_4wk])"
+        }
+      ],
+      "pages": 3,
+      "visuals": 12,
+      "params": 0,
+      "text_pct": 0.1,
+      "source": "databricks",
+      "thin": false,
+      "note": ""
+    },
+    {
+      "id": "powerbi-inventory_planning",
+      "name": "Inventory Planning",
+      "tool": "powerbi",
+      "kind": "pbit",
+      "fact_tables": [
+        "retail_dm.dm_inventory_fct"
+      ],
+      "tables": [
+        "retail_dm.dm_inventory_fct"
+      ],
+      "calendar": "retail_dm.clndr",
+      "measures": [
+        {
+          "name": "On Hand",
+          "formula": "SUM(inventory[on_hand_units])"
+        },
+        {
+          "name": "Weeks of Supply",
+          "formula": "SUM(inventory[on_hand_units])/AVERAGE(inventory[sell_rate_8wk])"
+        }
+      ],
+      "pages": 3,
+      "visuals": 12,
+      "params": 0,
+      "text_pct": 0.1,
+      "source": "databricks",
+      "thin": false,
+      "note": ""
+    },
+    {
+      "id": "powerbi-customer_360",
+      "name": "Customer 360",
+      "tool": "powerbi",
+      "kind": "pbit",
+      "fact_tables": [
+        "crm.customer_orders_fct"
+      ],
+      "tables": [
+        "crm.customer_orders_fct"
+      ],
+      "calendar": null,
+      "measures": [
+        {
+          "name": "Orders",
+          "formula": "COUNT(orders[order_id])"
+        },
+        {
+          "name": "Active Customers",
+          "formula": "DISTINCTCOUNT(orders[customer_id])"
+        }
+      ],
+      "pages": 3,
+      "visuals": 12,
+      "params": 0,
+      "text_pct": 0.1,
+      "source": "databricks",
+      "thin": false,
+      "note": ""
+    },
+    {
+      "id": "powerbi-loyalty_live",
+      "name": "Loyalty Live",
+      "tool": "powerbi",
+      "kind": "pbix",
+      "fact_tables": [],
+      "tables": [],
+      "calendar": null,
+      "measures": [],
+      "pages": 3,
+      "visuals": 12,
+      "params": 0,
+      "text_pct": 0.1,
+      "source": "databricks",
+      "thin": true,
+      "note": "⚠ thin report — live connection to shared dataset 'Loyalty'; export its .pbit to capture measures."
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+# UC Semantics Migration Map — runtime dependencies.
+# Workspace calls use the Databricks SDK (preinstalled in Genie Code / serverless); parsing is stdlib-only.
+PyYAML>=6.0.0,<7.0.0
+databricks-sdk>=0.40.0

@@ -1,0 +1,719 @@
+# UC Semantics Migration Map — DESIGN (desired state).
+# Edit freely: fields you change are pinned and survive re-runs of design.py.
+# Nothing here touches Databricks until apply.py runs on `approval: approved` objects.
+meta:
+  schema_version: 1
+  account: Acme Retail
+  title: Acme Retail — UC Semantics Migration Map
+  target:
+    catalog: acme_prod
+    schema: semantic
+    warehouse_id: 0123456789abcdef
+    tag_prefix: acme
+  notes: []
+domains:
+- key: dom-crm_customer_orders_fct
+  tag_key: acme_customer_orders
+  parent: null
+  name: Customer Orders
+  subtitle: 1 report(s) · crm.customer_orders_fct
+  source: derived
+  description: 'Business area built on `crm.customer_orders_fct`. Absorbs: Customer 360.'
+  evidence:
+    fact_table: crm.customer_orders_fct
+    reports:
+    - powerbi-customer_360
+  approval: proposed
+  _gen:
+    name: 85b7855a0b84
+    subtitle: 72e3e14702c3
+    description: b7476e84a43b
+  blockers: []
+- key: dom-retail_dm_dm_inventory_fct
+  tag_key: acme_retail_dm/inventory
+  parent: dom-schema-retail_dm
+  name: Inventory
+  subtitle: 2 report(s) · retail_dm.dm_inventory_fct
+  source: derived
+  description: 'Business area built on `retail_dm.dm_inventory_fct`. Absorbs: Inventory Planning, Stock
+    Health.'
+  evidence:
+    fact_table: retail_dm.dm_inventory_fct
+    reports:
+    - powerbi-inventory_planning
+    - tableau-stock_health
+  approval: proposed
+  _gen:
+    name: 1c168a9aed8c
+    subtitle: b9fde758ca0a
+    description: 1e29b0bd1520
+  blockers: []
+- key: dom-retail_dm_dm_sales_fct
+  tag_key: acme_retail_dm/sales
+  parent: dom-schema-retail_dm
+  name: Sales
+  subtitle: 4 report(s) · retail_dm.dm_sales_fct
+  source: derived
+  description: 'Business area built on `retail_dm.dm_sales_fct`. Absorbs: Exec KPIs, Regional Sales, Sales
+    Overview, Sales v2 (copy).'
+  evidence:
+    fact_table: retail_dm.dm_sales_fct
+    reports:
+    - tableau-exec_kpis
+    - tableau-regional_sales
+    - tableau-sales_overview
+    - tableau-sales_v2_(copy)
+  approval: proposed
+  _gen:
+    name: aa7b5a08da2c
+    subtitle: f153c18c177d
+    description: 5c2bf302fbd3
+  blockers: []
+- key: dom-schema-retail_dm
+  tag_key: acme_retail_dm
+  parent: null
+  name: Retail
+  subtitle: 2 subject areas on schema retail_dm
+  description: 'Everything built on schema `retail_dm`: dm_inventory_fct, dm_sales_fct.'
+  evidence:
+    schema: retail_dm
+  source: derived
+  approval: proposed
+  _gen:
+    name: 9e7237a7a74b
+    subtitle: 1dc99756077f
+    description: 741993b23886
+  blockers: []
+concepts:
+- key: cn-retail_dm_dm_inventory_fct-on_hand
+  name: On Hand
+  domain: dom-retail_dm_dm_inventory_fct
+  fact_table: retail_dm.dm_inventory_fct
+  mv: mv-retail_dm_dm_inventory_fct
+  source: derived
+  variants:
+  - formula: SUM([on_hand_units])
+    sql_hint: SUM(source.`on_hand_units`)
+    reports:
+    - powerbi-inventory_planning
+    - tableau-stock_health
+  reports:
+  - powerbi-inventory_planning
+  - tableau-stock_health
+  drift: false
+  need: low
+  patterns:
+  - Semi-additive calculations
+  definition: ''
+  chosen: null
+  evidence:
+    fact_table: retail_dm.dm_inventory_fct
+    metric: On Hand
+  approval: proposed
+  _gen:
+    name: 0d3429f5a79d
+  blockers: []
+- key: cn-retail_dm_dm_inventory_fct-weeks_of_supply
+  name: Weeks of Supply
+  domain: dom-retail_dm_dm_inventory_fct
+  fact_table: retail_dm.dm_inventory_fct
+  mv: mv-retail_dm_dm_inventory_fct
+  source: derived
+  variants:
+  - formula: SUM([on_hand_units])/AVG([sell_rate_4wk])
+    sql_hint: null
+    reports:
+    - tableau-stock_health
+  - formula: SUM(inventory[on_hand_units])/AVERAGE(inventory[sell_rate_8wk])
+    sql_hint: null
+    reports:
+    - powerbi-inventory_planning
+  reports:
+  - powerbi-inventory_planning
+  - tableau-stock_health
+  drift: true
+  need: high
+  patterns:
+  - Semi-additive calculations
+  definition: ''
+  chosen: null
+  evidence:
+    fact_table: retail_dm.dm_inventory_fct
+    metric: Weeks of Supply
+  approval: proposed
+  _gen:
+    name: afe78cb90545
+  blockers: []
+- key: cn-retail_dm_dm_sales_fct-gross_margin
+  name: Gross Margin
+  domain: dom-retail_dm_dm_sales_fct
+  fact_table: retail_dm.dm_sales_fct
+  mv: mv-retail_dm_dm_sales_fct
+  source: derived
+  variants:
+  - formula: (SUM([rev])-SUM([cogs]))/SUM([rev])
+    sql_hint: null
+    reports:
+    - tableau-exec_kpis
+  - formula: SUM([rev])-SUM([cogs])
+    sql_hint: null
+    reports:
+    - tableau-sales_overview
+  reports:
+  - tableau-exec_kpis
+  - tableau-sales_overview
+  drift: true
+  need: high
+  patterns: []
+  definition: ''
+  chosen: null
+  evidence:
+    fact_table: retail_dm.dm_sales_fct
+    metric: Gross Margin
+  approval: proposed
+  _gen:
+    name: b5ef71fb1a19
+  blockers: []
+- key: cn-retail_dm_dm_sales_fct-net_revenue
+  name: Net Revenue
+  domain: dom-retail_dm_dm_sales_fct
+  fact_table: retail_dm.dm_sales_fct
+  mv: mv-retail_dm_dm_sales_fct
+  source: derived
+  variants:
+  - formula: SUM([net_amt])
+    sql_hint: SUM(source.`net_amt`)
+    reports:
+    - tableau-exec_kpis
+    - tableau-sales_overview
+    - tableau-sales_v2_(copy)
+  - formula: SUM([gross_amt])-SUM([returns_amt])
+    sql_hint: null
+    reports:
+    - tableau-regional_sales
+  reports:
+  - tableau-exec_kpis
+  - tableau-regional_sales
+  - tableau-sales_overview
+  - tableau-sales_v2_(copy)
+  drift: true
+  need: high
+  patterns: []
+  definition: ''
+  chosen: null
+  evidence:
+    fact_table: retail_dm.dm_sales_fct
+    metric: Net Revenue
+  approval: proposed
+  _gen:
+    name: 36b95c158304
+  blockers: []
+- key: cn-retail_dm_dm_sales_fct-units
+  name: Units
+  domain: dom-retail_dm_dm_sales_fct
+  fact_table: retail_dm.dm_sales_fct
+  mv: mv-retail_dm_dm_sales_fct
+  source: derived
+  variants:
+  - formula: SUM([units])
+    sql_hint: SUM(source.`units`)
+    reports:
+    - tableau-regional_sales
+    - tableau-sales_overview
+    - tableau-sales_v2_(copy)
+  reports:
+  - tableau-regional_sales
+  - tableau-sales_overview
+  - tableau-sales_v2_(copy)
+  drift: false
+  need: medium
+  patterns: []
+  definition: ''
+  chosen: null
+  evidence:
+    fact_table: retail_dm.dm_sales_fct
+    metric: Units
+  approval: proposed
+  _gen:
+    name: b404dded3524
+  blockers: []
+metric_views:
+- key: mv-retail_dm_dm_inventory_fct
+  title: MV Inventory
+  domain: dom-retail_dm_dm_inventory_fct
+  source: derived
+  fqn: acme_prod.semantic.mv_inventory
+  source_table: acme_prod.retail.inventory_fct
+  grain: One row per inventory record — confirm the true grain.
+  purpose: Single home for 2 concept(s) computed on retail_dm.dm_inventory_fct (1 drift today).
+  time_dimension: retail_dm.clndr
+  concepts:
+  - cn-retail_dm_dm_inventory_fct-on_hand
+  - cn-retail_dm_dm_inventory_fct-weeks_of_supply
+  long_tail: []
+  patterns:
+  - Semi-additive calculations
+  joins: []
+  filter: null
+  absorbs:
+  - powerbi-inventory_planning
+  - tableau-stock_health
+  evidence:
+    fact_table: retail_dm.dm_inventory_fct
+    reports:
+    - powerbi-inventory_planning
+    - tableau-stock_health
+  approval: proposed
+  _gen:
+    title: 7681618a4ad6
+    purpose: 6ed89c8fd412
+    grain: fd09eb890cbf
+  blockers: []
+  comment: Single home for 2 concept(s) computed on retail_dm.dm_inventory_fct (1 drift today).
+  concept_hash: f84afc4dbfee
+  authoring: pending (Stage 2)
+  ready: true
+- key: mv-retail_dm_dm_sales_fct
+  title: MV Sales
+  domain: dom-retail_dm_dm_sales_fct
+  source: derived
+  fqn: acme_prod.semantic.mv_sales
+  source_table: acme_prod.retail.sales_fct
+  grain: One row per sales record — confirm the true grain.
+  purpose: Single home for 3 concept(s) computed on retail_dm.dm_sales_fct (2 drift today).
+  time_dimension: retail_dm.clndr
+  concepts:
+  - cn-retail_dm_dm_sales_fct-gross_margin
+  - cn-retail_dm_dm_sales_fct-net_revenue
+  - cn-retail_dm_dm_sales_fct-units
+  long_tail: []
+  patterns: []
+  joins: []
+  filter: null
+  absorbs:
+  - tableau-exec_kpis
+  - tableau-regional_sales
+  - tableau-sales_overview
+  - tableau-sales_v2_(copy)
+  evidence:
+    fact_table: retail_dm.dm_sales_fct
+    reports:
+    - tableau-exec_kpis
+    - tableau-regional_sales
+    - tableau-sales_overview
+    - tableau-sales_v2_(copy)
+  approval: proposed
+  _gen:
+    title: a419aef06b52
+    purpose: 43d7c6868d6c
+    grain: d91c5b2d93e6
+  blockers: []
+  comment: Single home for 3 concept(s) computed on retail_dm.dm_sales_fct (2 drift today).
+  concept_hash: 8cdcd47d9ff1
+  authoring: pending (Stage 2)
+  ready: true
+pages:
+- key: pg-retail_dm_dm_inventory_fct-on_hand
+  domain: dom-retail_dm_dm_inventory_fct
+  source: derived
+  title: On Hand
+  synonyms: []
+  description: Authoritative definition of On Hand, used by 2 reports.
+  body: '## On Hand
+
+
+    **Status:** _definition to be confirmed by the business owner._
+
+
+    Found 1 variant(s) across 2 report(s):
+
+
+    | Formula | Reports |
+
+    |---|---|
+
+    | `SUM([on_hand_units])` | powerbi-inventory_planning, tableau-stock_health |
+
+    '
+  related:
+  - mv-retail_dm_dm_inventory_fct
+  sources: []
+  evidence:
+    metric: On Hand
+    fact_table: retail_dm.dm_inventory_fct
+  approval: proposed
+  _gen:
+    title: 0d3429f5a79d
+    description: 14bcc050648e
+    body: 4510ed26d1f6
+  blockers: []
+- key: pg-retail_dm_dm_inventory_fct-weeks_of_supply
+  domain: dom-retail_dm_dm_inventory_fct
+  source: derived
+  title: Weeks of Supply
+  synonyms: []
+  description: Authoritative definition of Weeks of Supply — currently defined 2 different ways.
+  body: '## Weeks of Supply
+
+
+    **Status:** _definition to be confirmed by the business owner._
+
+
+    Found 2 variant(s) across 2 report(s):
+
+
+    | Formula | Reports |
+
+    |---|---|
+
+    | `SUM([on_hand_units])/AVG([sell_rate_4wk])` | tableau-stock_health |
+
+    | `SUM(inventory[on_hand_units])/AVERAGE(inventory[sell_rate_8wk])` | powerbi-inventory_planning |
+
+    '
+  related:
+  - mv-retail_dm_dm_inventory_fct
+  sources: []
+  evidence:
+    metric: Weeks of Supply
+    fact_table: retail_dm.dm_inventory_fct
+  approval: proposed
+  _gen:
+    title: afe78cb90545
+    description: 62a17d132315
+    body: e8e31fa0d4bf
+  blockers: []
+- key: pg-retail_dm_dm_sales_fct-gross_margin
+  domain: dom-retail_dm_dm_sales_fct
+  source: derived
+  title: Gross Margin
+  synonyms: []
+  description: Authoritative definition of Gross Margin — currently defined 2 different ways.
+  body: '## Gross Margin
+
+
+    **Status:** _definition to be confirmed by the business owner._
+
+
+    Found 2 variant(s) across 2 report(s):
+
+
+    | Formula | Reports |
+
+    |---|---|
+
+    | `(SUM([rev])-SUM([cogs]))/SUM([rev])` | tableau-exec_kpis |
+
+    | `SUM([rev])-SUM([cogs])` | tableau-sales_overview |
+
+    '
+  related:
+  - mv-retail_dm_dm_sales_fct
+  sources: []
+  evidence:
+    metric: Gross Margin
+    fact_table: retail_dm.dm_sales_fct
+  approval: proposed
+  _gen:
+    title: b5ef71fb1a19
+    description: 9d7a3a960c35
+    body: 81ed2558a5e7
+  blockers: []
+- key: pg-retail_dm_dm_sales_fct-net_revenue
+  domain: dom-retail_dm_dm_sales_fct
+  source: derived
+  title: Net Revenue
+  synonyms: []
+  description: Authoritative definition of Net Revenue — currently defined 2 different ways.
+  body: '## Net Revenue
+
+
+    **Status:** _definition to be confirmed by the business owner._
+
+
+    Found 2 variant(s) across 4 report(s):
+
+
+    | Formula | Reports |
+
+    |---|---|
+
+    | `SUM([net_amt])` | tableau-exec_kpis, tableau-sales_overview, tableau-sales_v2_(copy) |
+
+    | `SUM([gross_amt])-SUM([returns_amt])` | tableau-regional_sales |
+
+    '
+  related:
+  - mv-retail_dm_dm_sales_fct
+  sources: []
+  evidence:
+    metric: Net Revenue
+    fact_table: retail_dm.dm_sales_fct
+  approval: proposed
+  _gen:
+    title: 36b95c158304
+    description: 9aa9311a6cdf
+    body: 70d82eac7880
+  blockers: []
+- key: pg-retail_dm_dm_sales_fct-units
+  domain: dom-retail_dm_dm_sales_fct
+  source: derived
+  title: Units
+  synonyms: []
+  description: Authoritative definition of Units, used by 3 reports.
+  body: '## Units
+
+
+    **Status:** _definition to be confirmed by the business owner._
+
+
+    Found 1 variant(s) across 3 report(s):
+
+
+    | Formula | Reports |
+
+    |---|---|
+
+    | `SUM([units])` | tableau-regional_sales, tableau-sales_overview, tableau-sales_v2_(copy) |
+
+    '
+  related:
+  - mv-retail_dm_dm_sales_fct
+  sources: []
+  evidence:
+    metric: Units
+    fact_table: retail_dm.dm_sales_fct
+  approval: proposed
+  _gen:
+    title: b404dded3524
+    description: d4693bd90a05
+    body: ef9af0805232
+  blockers: []
+- key: pg-term-active_customer
+  domain: dom-crm_customer_orders_fct
+  source: derived
+  title: Active Customer
+  synonyms:
+  - AC
+  description: A customer with at least one completed order in the trailing 90 days.
+  body: '## Active Customer
+
+
+    A customer with at least one completed order in the trailing 90 days.
+
+    '
+  related: []
+  sources:
+  - docs/kpi-glossary.pdf
+  evidence:
+    term: Active Customer
+  approval: proposed
+  _gen:
+    title: 94ff6db5368c
+    description: 2d8b07fb0d48
+    body: c0f1257055bf
+  blockers: []
+- key: pg-term-comparable_store
+  domain: dom-retail_dm_dm_sales_fct
+  source: derived
+  title: Comparable Store
+  synonyms:
+  - comp store
+  - same-store
+  description: A store open for at least 13 full fiscal months; used as the denominator for comp-sales
+    growth.
+  body: '## Comparable Store
+
+
+    A store open for at least 13 full fiscal months; used as the denominator for comp-sales growth.
+
+    '
+  related: []
+  sources:
+  - docs/kpi-glossary.pdf
+  evidence:
+    term: Comparable Store
+  approval: proposed
+  _gen:
+    title: 4d6b155ba66b
+    description: 671fd575045c
+    body: 1bdf5c992b67
+  blockers: []
+wikis:
+- key: wk-retail_dm_dm_inventory_fct
+  table: acme_prod.retail.inventory_fct
+  source: derived
+  body: '# Inventory
+
+
+    Source table behind **MV Inventory**.
+
+
+    **Used by 2 report(s):** Inventory Planning, Stock Health
+
+
+    **Calendar:** retail_dm.clndr
+
+    '
+  evidence:
+    fact_table: retail_dm.dm_inventory_fct
+  approval: proposed
+  _gen:
+    body: 674b9330241f
+  blockers: []
+- key: wk-retail_dm_dm_sales_fct
+  table: acme_prod.retail.sales_fct
+  source: derived
+  body: '# Sales
+
+
+    Source table behind **MV Sales**.
+
+
+    **Used by 4 report(s):** Exec KPIs, Regional Sales, Sales Overview, Sales v2 (copy)
+
+
+    **Calendar:** retail_dm.clndr
+
+    '
+  evidence:
+    fact_table: retail_dm.dm_sales_fct
+  approval: proposed
+  _gen:
+    body: f6d6aa44e3d9
+  blockers: []
+asset_tags:
+- key: at-acme_prod_retail_inventory_fct-acme_retail_dm_inventory
+  securable: table
+  name: acme_prod.retail.inventory_fct
+  tag_key: acme_retail_dm/inventory
+  tag_value: ''
+  domain: dom-retail_dm_dm_inventory_fct
+  source: derived
+  evidence:
+    fact_table: retail_dm.dm_inventory_fct
+  approval: proposed
+  _gen: {}
+  blockers: []
+- key: at-acme_prod_retail_sales_fct-acme_retail_dm_sales
+  securable: table
+  name: acme_prod.retail.sales_fct
+  tag_key: acme_retail_dm/sales
+  tag_value: ''
+  domain: dom-retail_dm_dm_sales_fct
+  source: derived
+  evidence:
+    fact_table: retail_dm.dm_sales_fct
+  approval: proposed
+  _gen: {}
+  blockers: []
+- key: at-acme_prod_semantic_mv_inventory-acme_retail_dm_inventory
+  securable: table
+  name: acme_prod.semantic.mv_inventory
+  tag_key: acme_retail_dm/inventory
+  tag_value: ''
+  domain: dom-retail_dm_dm_inventory_fct
+  source: derived
+  evidence:
+    fact_table: retail_dm.dm_inventory_fct
+  approval: proposed
+  _gen: {}
+  blockers: []
+- key: at-acme_prod_semantic_mv_sales-acme_retail_dm_sales
+  securable: table
+  name: acme_prod.semantic.mv_sales
+  tag_key: acme_retail_dm/sales
+  tag_value: ''
+  domain: dom-retail_dm_dm_sales_fct
+  source: derived
+  evidence:
+    fact_table: retail_dm.dm_sales_fct
+  approval: proposed
+  _gen: {}
+  blockers: []
+report_map:
+- report: powerbi-customer_360
+  name: Customer 360
+  tool: powerbi
+  thin: false
+  note: ''
+  domain: dom-crm_customer_orders_fct
+  metric_view: null
+  n_measures: 2
+  concepts: []
+- report: powerbi-inventory_planning
+  name: Inventory Planning
+  tool: powerbi
+  thin: false
+  note: ''
+  domain: dom-retail_dm_dm_inventory_fct
+  metric_view: mv-retail_dm_dm_inventory_fct
+  n_measures: 2
+  concepts:
+  - On Hand
+  - Weeks of Supply
+- report: powerbi-loyalty_live
+  name: Loyalty Live
+  tool: powerbi
+  thin: true
+  note: ⚠ thin report — live connection to shared dataset 'Loyalty'; export its .pbit to capture measures.
+  domain: null
+  metric_view: null
+  n_measures: 0
+  concepts: []
+- report: tableau-exec_kpis
+  name: Exec KPIs
+  tool: tableau
+  thin: false
+  note: ''
+  domain: dom-retail_dm_dm_sales_fct
+  metric_view: mv-retail_dm_dm_sales_fct
+  n_measures: 2
+  concepts:
+  - Gross Margin
+  - Net Revenue
+- report: tableau-regional_sales
+  name: Regional Sales
+  tool: tableau
+  thin: false
+  note: ''
+  domain: dom-retail_dm_dm_sales_fct
+  metric_view: mv-retail_dm_dm_sales_fct
+  n_measures: 2
+  concepts:
+  - Net Revenue
+  - Units
+- report: tableau-sales_overview
+  name: Sales Overview
+  tool: tableau
+  thin: false
+  note: ''
+  domain: dom-retail_dm_dm_sales_fct
+  metric_view: mv-retail_dm_dm_sales_fct
+  n_measures: 3
+  concepts:
+  - Gross Margin
+  - Net Revenue
+  - Units
+- report: tableau-sales_v2_(copy)
+  name: Sales v2 (copy)
+  tool: tableau
+  thin: false
+  note: ''
+  domain: dom-retail_dm_dm_sales_fct
+  metric_view: mv-retail_dm_dm_sales_fct
+  n_measures: 2
+  concepts:
+  - Net Revenue
+  - Units
+- report: tableau-stock_health
+  name: Stock Health
+  tool: tableau
+  thin: false
+  note: ''
+  domain: dom-retail_dm_dm_inventory_fct
+  metric_view: mv-retail_dm_dm_inventory_fct
+  n_measures: 2
+  concepts:
+  - On Hand
+  - Weeks of Supply

@@ -1,5 +1,7 @@
 # UC Semantics Migration Map
 
+> **⚠️ BETA — still being tested.** This skill is under active development and has not yet been validated against real customer estates or a live Tableau / Power BI MCP connection. Behavior, file formats and the Pages/Wikis APIs it relies on may change. Review every plan and generated Metric View before approving writes, and try it in a non-production workspace first.
+
 Build a governed **Unity Catalog semantic foundation** from a customer's BI estate. The skill reads
 Tableau / Power BI files (or a live Tableau / Power BI MCP connection) plus any documentation,
 finds the business concepts that need one consolidated definition (Net Revenue, Active Customers…),

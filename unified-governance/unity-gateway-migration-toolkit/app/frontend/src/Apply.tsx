@@ -186,11 +186,12 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
   // The target is chosen here, not in the scan: prefilled from the scan (or the default), changeable without a new scan.
   const [tCat, setTCat] = useState("");
   const [tSch, setTSch] = useState("");
+  // Refilled when the app's config arrives, so a scan opened before it loaded doesn't keep the fallback target.
   useEffect(() => {
     if (!meta) return;
     setTCat(meta.target_catalog || config?.default_target?.catalog || DEFAULT_TARGET[0]);
     setTSch(meta.target_schema || config?.default_target?.schema || DEFAULT_TARGET[1]);
-  }, [meta?.run_id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [meta?.run_id, config?.default_target?.catalog, config?.default_target?.schema]); // eslint-disable-line react-hooks/exhaustive-deps
   const targetOk = NAME_RE.test(tCat) && NAME_RE.test(tSch);
   const [checkCat, checkSch] = useDebounced([tCat, tSch], 500);
   const schemaPath = meta && NAME_RE.test(checkCat) && NAME_RE.test(checkSch)
@@ -394,7 +395,7 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
           )}
           {stale && (
             <>
-              <Notice tone="warning" title={`This scan is ${relativeAge(meta.finished_at)} old`} action={<NavButton tab="scans" label="Go to Scans to scan again" />}>
+              <Notice tone="warning" title={`This scan is old: it ran ${relativeAge(meta.finished_at)}`} action={<NavButton tab="scans" label="Go to Scans to scan again" />}>
                 Endpoints, callers and code may have changed since. Scan again first, or apply with this scan anyway (checkbox below).
               </Notice>
               <label className="choice"><input type="checkbox" checked={allowStale} onChange={(e) => setAllowStale(e.target.checked)} /> <span>Apply with this older scan anyway</span></label>

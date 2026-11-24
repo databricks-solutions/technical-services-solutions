@@ -2312,3 +2312,81 @@ def test_an_update_says_a_new_snapshot_starts_not_the_first(monkeypatch):
     assert "the first snapshot starts" in first.text
     again = run_notebook(monkeypatch, ws, install_widgets())
     assert "a new snapshot starts" in again.text and "the first snapshot" not in again.text
+
+
+def test_none_or_off_is_never_used_as_a_name(monkeypatch):
+    """Review of 0.11.0: app_name="none" created an app and jobs named none; results_schema="none" a schema."""
+    ws = FakeWS()
+    res = run_notebook(monkeypatch, ws, install_widgets(app_name="none", results_schema="off", install_folder="none"))
+    assert not res.raised, res.status
+    assert "none" not in ws.apps and APP in ws.apps and "main.ug_migration" in ws.schemas
+    assert not [s for s in ws.schemas if s.endswith(".off") or s.endswith(".none")]
+    again = run_notebook(monkeypatch, ws, install_widgets(warehouse="none", results_catalog="off"))
+    assert not again.raised, again.status
+    assert "SQL warehouse 'none'" not in again.text and "catalog 'off'" not in again.text
+
+
+def test_none_clears_allow_secret_read_back_to_no(monkeypatch):
+    ws = FakeWS()
+    assert not run_notebook(monkeypatch, ws, install_widgets(allow_secret_read="yes")).raised
+    assert _env(ws)["UGMIG_ALLOW_SECRET_READ"] == "true"
+    for word in ("none", "off"):
+        assert not run_notebook(monkeypatch, ws, install_widgets(allow_secret_read="yes")).raised
+        res = run_notebook(monkeypatch, ws, install_widgets(allow_secret_read=word))
+        assert not res.raised, res.status
+        assert _env(ws)["UGMIG_ALLOW_SECRET_READ"] == "false"
+
+
+def test_a_none_in_a_list_setting_is_dropped(monkeypatch):
+    ws = FakeWS()
+    res, _ = _run_call(monkeypatch, ws, dict(catalog="main", operators=[ME, None], preview=False))
+    assert not res.raised, res.status
+    assert _env(ws)["OPERATORS"] == ME
+
+
+def test_a_statement_still_running_after_the_wait_is_polled_not_reported_as_a_missing_grant(monkeypatch):
+    ws = FakeWS()
+    orig = ws.make
+
+    def make():
+        c = orig()
+        real = c.statement_execution.execute_statement
+        polls = []
+
+        def slow(statement, warehouse_id, wait_timeout):
+            if "system.serving.endpoint_usage" in statement:
+                return _ns(statement_id="s-1", status=_ns(state=_state("PENDING"), error=None))
+            return real(statement=statement, warehouse_id=warehouse_id, wait_timeout=wait_timeout)
+
+        def get_statement(sid):
+            polls.append(sid)
+            return _ns(statement_id=sid, status=_ns(state=_state("RUNNING" if len(polls) < 2 else "SUCCEEDED"), error=None))
+        c.statement_execution.execute_statement = slow
+        c.statement_execution.get_statement = get_statement
+        return c
+    monkeypatch.setattr(ws, "make", make)
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    res = run_notebook(monkeypatch, ws, install_widgets())
+    assert not res.raised, res.status
+    assert "can't read system.serving.endpoint_usage" not in res.text
+
+
+def test_a_deploy_that_fails_after_new_operators_keeps_them_for_the_next_update(monkeypatch):
+    """Review of 0.11.0: the marker (the only place operators are read back) was written after the deploy."""
+    ws = FakeWS()
+    assert not run_notebook(monkeypatch, ws, install_widgets(operators=ME)).raised
+    orig = ws.make
+
+    def make():
+        c = orig()
+
+        def deploy_fails(name, deployment):
+            raise RuntimeError("transient: deploy failed")
+        c.apps.deploy_and_wait = deploy_fails
+        return c
+    monkeypatch.setattr(ws, "make", make)
+    assert run_notebook(monkeypatch, ws, install_widgets(operators=f"{ME},other@example.com")).raised
+    monkeypatch.setattr(ws, "make", orig)
+    res = run_notebook(monkeypatch, ws, install_widgets())  # plain update, nothing typed
+    assert not res.raised, res.status
+    assert _env(ws)["OPERATORS"] == f"{ME},other@example.com"

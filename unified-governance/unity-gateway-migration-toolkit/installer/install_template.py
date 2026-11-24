@@ -727,6 +727,7 @@ SETTING_WIDGETS = {"catalog": "01_catalog", "warehouse": "02_warehouse", "target
 
 
 FLAG_SETTINGS = ("create_target", "allow_secret_read", "adopt_app", "allow_downgrade", "second_install")
+NAME_SETTINGS = ("app_name", "catalog", "results_schema", "install_folder", "warehouse")  # 'none'/'off' = the default
 FLAG_PROBLEMS: list[str] = []
 
 
@@ -743,7 +744,7 @@ def setting(key: str) -> str:
     if isinstance(value, bool):
         return "yes" if value else "no"
     if isinstance(value, (list, tuple)):
-        return ",".join(str(v).strip() for v in value if str(v).strip())
+        return ",".join(str(v).strip() for v in value if v is not None and str(v).strip())
     value = str(value if value is not None else "").strip()
     if key in FLAG_SETTINGS:
         low = value.lower()
@@ -757,6 +758,8 @@ def setting(key: str) -> str:
             return low
         FLAG_PROBLEMS.append(f"{key} must be True or False, not {value!r}")
         return ""
+    if key in NAME_SETTINGS and value.lower() in CLEAR_WORDS:
+        return ""  # never a resource named "none": back to the default, the same as None
     return "" if value == "current" else value
 
 
@@ -1086,7 +1089,8 @@ TARGET, target_problem = parse_target(pick(TARGET_RAW, SAVED["target"] or SAVED_
 CREATE_TARGET = pick(CREATE_TARGET_RAW,
                      {True: "yes", False: "no"}.get(SAVED_MARKER.get("create_target"), ""), "yes") == "yes"
 SECRET_SCHEMAS, secret_problem = parse_secret_schemas(pick(SECRET_SCHEMAS_RAW, SAVED["secret_schemas"], ""))
-ALLOW_SECRET_READ = (ALLOW_SECRET_READ_RAW if ALLOW_SECRET_READ_RAW in ("yes", "no") else SAVED["allow_secret_read"]) == "yes"
+ALLOW_SECRET_READ = ("no" if ALLOW_SECRET_READ_RAW in CLEAR_WORDS else ALLOW_SECRET_READ_RAW
+                     if ALLOW_SECRET_READ_RAW in ("yes", "no") else SAVED["allow_secret_read"]) == "yes"
 DEADLINE = pick(DEADLINE_RAW, SAVED["deadline"], DEFAULT_DEADLINE)
 deadline_problem = valid_deadline(DEADLINE)
 _central_off = CENTRAL_WORKSPACES_RAW.strip().lower() in CLEAR_WORDS  # turning central mode off drops its secret too
@@ -1142,6 +1146,11 @@ print(f"{ACTION}: app {APP_NAME}, results {RESULTS}, folder {FOLDER}" + ("" if U
 def run_sql(statement: str) -> str | None:
     """None if the statement succeeds on the chosen warehouse, else the error text."""
     r = w.statement_execution.execute_statement(statement=statement, warehouse_id=WAREHOUSE_ID, wait_timeout="50s")
+    deadline = time.time() + 300
+    while (r.status and r.status.state and r.status.state.value in ("PENDING", "RUNNING") and r.statement_id
+           and time.time() < deadline):  # still running after the wait: poll, never report it as a failure
+        time.sleep(5)
+        r = w.statement_execution.get_statement(r.statement_id)
     if r.status and r.status.state and r.status.state.value == "SUCCEEDED":
         return None
     if r.status and r.status.error:
@@ -1952,16 +1961,17 @@ deployment = apps.AppDeployment(
     command=["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"],
     env_vars=app_env(RESULTS, OPERATOR_LIST, TOOLKIT_VERSION, SECRET_SCHEMAS, ALLOW_SECRET_READ, DEADLINE,
                      CENTRAL_WORKSPACES, HUB_WORKSPACE_ID, TARGET))
+# The install marker records the version and the settings the app can't return (operators). It's written before the
+# deploy, so a deploy that fails after it never makes the next update read back the previous settings.
+w.workspace.upload(MARKER, io.BytesIO(marker_text(APP_NAME, TOOLKIT_VERSION, RESULTS, FOLDER, me, TARGET,
+                                                  CREATE_TARGET, OPERATOR_LIST).encode()),
+                   format=ImportFormat.AUTO, overwrite=True)
 print("deploying app...")
 d = w.apps.deploy_and_wait(APP_NAME, deployment)
 print("deployment:", d.status.state.value if d.status and d.status.state else d.status)
 
 # COMMAND ----------
 
-# The install marker records the version, so the next run can show from -> to and refuse a silent downgrade.
-w.workspace.upload(MARKER, io.BytesIO(marker_text(APP_NAME, TOOLKIT_VERSION, RESULTS, FOLDER, me, TARGET,
-                                                  CREATE_TARGET, OPERATOR_LIST).encode()),
-                   format=ImportFormat.AUTO, overwrite=True)
 print(f"installed {TOOLKIT_VERSION} ({VERSION_NOTE})")
 
 # COMMAND ----------

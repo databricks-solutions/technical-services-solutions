@@ -59,7 +59,7 @@ When installation finishes, open the app, wait a few minutes for the first snaps
 
 ## Optional settings
 
-`help(install)` lists every advanced keyword argument. `None` keeps the current install's setting or the documented default. To clear a setting the install already has (back to its default), pass `"none"` (or `"off"`); an empty list or string keeps it, like `None`. The yes/no settings (`create_target`, `allow_secret_read`, `adopt_app`, `allow_downgrade`, `second_install`) take `True` or `False` (`"yes"`/`"no"`, `"true"`/`"false"` and `1`/`0` work too); any other value stops the run with a FIX.
+`help(install)` lists every advanced keyword argument. `None` keeps the current install's setting or the documented default. To clear a setting the install already has (back to its default), pass `"none"` (or `"off"`); an empty list or string keeps it, like `None`. The yes/no settings (`create_target`, `allow_secret_read`, `adopt_app`, `allow_downgrade`, `second_install`) take `True` or `False` (`"yes"`/`"no"`, `"true"`/`"false"` and `1`/`0` work too, in any case, and `"y"`/`"n"` too); any other value stops the run before anything changes, with a message that names the setting. For the name settings (`app_name`, `catalog`, `results_schema`, `install_folder`, `warehouse`), `"none"` and `"off"` mean the same as `None`.
 
 | Argument | Use it for |
 |---|---|

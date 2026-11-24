@@ -149,7 +149,7 @@ To turn it on, run the installer with:
 2. **Ingress, on each managed workspace:** in Security > Networking > Context-based ingress & egress, on the policy attached to that workspace, clears **Compatibility mode** on the **Ingress** tab, selects **Restrict access to specific source workspaces** and allows the hub's workspace ID. "Allow access from all public IPs" and "all private endpoints" don't cover cross-workspace traffic. A policy named default-policy applies to every workspace without its own policy, so a dedicated policy for the managed workspace is safer than editing it.
 3. **Egress, on the hub:** nothing to do when its policy allows access to all destinations. When egress is restricted, adds each managed workspace under **Allowed Databricks workspace destinations**.
 
-Changes take about 10 to 15 minutes to apply, and dry run mode logs without blocking. Without them, scans and changes in the other workspaces fail with "Cert validation failed. Workspace comparison, snp system trusted, and snp trusted workload checks did not pass" (the job explains this). It isn't a credentials problem. See [cross-workspace access](https://learn.microsoft.com/en-us/azure/databricks/security/network/front-end/cross-workspace-access) (Beta). If you can't change the policies:
+Changes aren't instant: give them a few minutes before you scan again. In the egress policy's dry run mode, violations are logged but not blocked. Without them, scans and changes in the other workspaces fail with "Cert validation failed. Workspace comparison, snp system trusted, and snp trusted workload checks did not pass" (the job explains this). It isn't a credentials problem. See [cross-workspace access](https://learn.microsoft.com/en-us/azure/databricks/security/network/front-end/cross-workspace-access) (Beta). If you can't change the policies:
 
 - **Install the toolkit in each workspace** instead of using central mode, or
 - **Run the scan and apply jobs on classic compute**, which these policies don't govern. In Jobs, open **[app] Unity Gateway migration workspace scan** and **[app] Unity Gateway migration apply**, and change each task's compute from serverless to a job cluster (Standard access mode, Databricks Runtime 15.4 LTS or later, one small node). The cluster needs network access to the other workspaces. Running the installer again puts the jobs back on serverless, so redo it after each update.
@@ -533,7 +533,7 @@ Three widgets, all `no` by default, choose what else goes:
 
 **A rollback that can't finish** stops the uninstall before anything else is removed. Wait for the run to finish (in Jobs), then run uninstall again. The app is left stopped.
 
-**Results kept after uninstall.** To remove kept results later, run it again with **6. Results schema** set to that schema and **4. Remove results tables** = `yes`: it drops the six tables, the schema, and the schema for new model services if this install created it and it holds no services.
+**Results kept after uninstall.** To remove kept results later, run it again with **1. Action** = `remove`, **4. Remove results tables** = `yes` and **6. Results schema** set to that schema (and **2. App name** if the install didn't use the default name): it drops the six tables, the schema, and the schema for new model services if this install created it and it holds no services.
 
 **Services kept after uninstall** keep serving the callers that moved to them. Remove them later with [Rollback after uninstall](#rollback-after-uninstall).
 
@@ -670,6 +670,8 @@ databricks bundle destroy  -t dev --var ...                    # remove app, job
 | `secret_schemas`, `allow_secret_read_enabled` | Same meaning as the `secret_schemas` and `allow_secret_read` arguments to `install(...)` |
 | `deadline` | The legacy deadline, `YYYY-MM-DD`. Default: [the deadline](#the-deadline) |
 
+The bundle has no setting for the schema for new model services: its scan job defaults to `ai_gateway.migrated`. Pick another schema in the scan form or in Apply (the installer defaults to `<catalog>.ug_migrated`).
+
 **Shared install (prod):** deploy while authenticated as a service principal with the [permissions](#before-you-start) above, so the jobs run as that principal. **Update:** unzip, run `databricks bundle plan`, then deploy with the same variables.
 
 **Job tags.** Every toolkit job carries `tool = ug-migration-toolkit`, `Project = unity-gateway-migration-toolkit`, `app` and `role` (`snapshot`, `scan` or `apply`). They are labels only. To list the jobs:
@@ -696,7 +698,7 @@ For the CLIs the order is `--deadline`, then `UGMIG_DEADLINE`, then the built-in
 
 ### Installer settings
 
-The settings cell calls `install(...)`. `None` keeps the current install's setting or the documented default. Existing notebook-job parameters are used only when the corresponding argument is `None`. To clear a setting the install already has (back to its default), pass `"none"` (or `"off"`); an empty list or string keeps it, like `None`. The yes/no settings (`create_target`, `allow_secret_read`, `adopt_app`, `allow_downgrade`, `second_install`) take `True` or `False` (`"yes"`/`"no"`, `"true"`/`"false"` and `1`/`0` work too); any other value stops the run with a FIX.
+The settings cell calls `install(...)`. `None` keeps the current install's setting or the documented default. Existing notebook-job parameters are used only when the corresponding argument is `None`. To clear a setting the install already has (back to its default), pass `"none"` (or `"off"`); an empty list or string keeps it, like `None`. The yes/no settings (`create_target`, `allow_secret_read`, `adopt_app`, `allow_downgrade`, `second_install`) take `True` or `False` (`"yes"`/`"no"`, `"true"`/`"false"` and `1`/`0` work too, in any case, and `"y"`/`"n"` too); any other value stops the run before anything changes, with a message that names the setting. For the name settings (`app_name`, `catalog`, `results_schema`, `install_folder`, `warehouse`), `"none"` and `"off"` mean the same as `None`.
 
 **INSTALL notebook:**
 
@@ -890,7 +892,7 @@ The installer prints one checklist before it changes anything. Each `FIX` line h
 | "another toolkit install exists under app name ..." | Several installs, or a bundle deploy | Set `app_name` to that name to update it, uninstall it, or set `second_install=True` |
 | "this workspace has several toolkit installs" | Blank app name with more than one install | Set `app_name` (or **2. App name** in UNINSTALL) to one of the names listed |
 | "an app named ... isn't a toolkit app" or "deployed by the bundle" | The name belongs to another app or the bundle | Choose another name, or set `adopt_app=True` if it can be replaced |
-| "the SQL warehouse can't read ... system tables" | No `SELECT` on the system tables | An account admin runs the `GRANT` in the message |
+| "the SQL warehouse can't read ... (the snapshot and scans need SELECT on it)" | No `SELECT` on the system tables | An account admin runs the `GRANT` in the message |
 | "the SQL warehouse ... is <state>, not RUNNING" | It didn't start | Start it in SQL Warehouses, or pick another |
 | "you can't write to ..." or "install folder ... has files that aren't the toolkit's" | No privilege on the schema, or a folder that isn't empty | Run the `GRANT` in the message, or choose an empty `install_folder` |
 | "this would downgrade the toolkit" | The installed version is newer | Install the newer version, or set `allow_downgrade=True` |
@@ -919,12 +921,12 @@ The installer prints one checklist before it changes anything. Each `FIX` line h
 | Not `READY` after callers moved | Recent callers are still inside the window | Wait for the window to pass with no requests, or scan with a 7-day window |
 | `unity_gateway_unavailable`: "Unity Gateway isn't available in this workspace" | Listing the `system.ai` model services failed with a not-enabled, disabled or 403 error, so Unity Gateway is off here | Ask your account team to enable Unity Gateway for this workspace and account. Nothing can be migrated until it is |
 | `v2_off_failing_calls`: "v2 calls are already failing in this workspace" | v2 is off for the workspace, so most of its v2 calls fail (HTTP 501 or other errors) | Move those callers first: keep the `/ai-gateway/` route and change the model to the `system.ai` target, then scan again |
-| "This scan is N days old" | Scans older than 14 days need confirmation | Scan again, or tick **Apply with this older scan anyway** after checking callers |
+| "This scan is old" | Scans older than 14 days need confirmation | Scan again, or tick **Apply with this older scan anyway** after checking callers |
 | Deep scan: `can't authenticate` | No credentials for that workspace | Use a service principal assigned to it, or `databricks auth login --host <url>` |
 | App: "Couldn't load ..." with "does not have SELECT on Table '<results catalog>.<results schema>.ug_migration_...'" | The jobs run as a service principal, which owns the results tables; owning the catalog or schema doesn't give read access to tables someone else owns | Run the installer again (it grants you and the operators `USE SCHEMA, SELECT` on the results schema), or run that GRANT for the user |
 | Central mode: "workspace ... has no usable URL in system.access.workspaces_latest" | The workspace was created in the last few hours and isn't in that system table yet | Wait and scan again (it usually appears within a few hours) |
 | Central mode: "Databricks refused this job's call to workspace ...", or "Cert validation failed. Workspace comparison, snp system trusted, and snp trusted workload checks did not pass" | Serverless compute in the hub can't reach the other workspace: cross-workspace network policies don't allow it. Not a credentials problem | An account admin enables the Cross Workspace Network Policy preview and allows the connection on both sides ([Central mode](#central-mode-optional-one-install-for-many-workspaces)), or install the toolkit in that workspace instead |
-| Central mode: "the service principal's secret was refused" | The secret isn't a Databricks OAuth secret of that service principal (for example an Entra ID client secret), or it expired | Generate a Databricks OAuth secret for the service principal and store it in the scope/key in **14** |
+| Central mode: "the service principal's secret was refused" | The secret isn't a Databricks OAuth secret of that service principal (for example an Entra ID client secret), or it expired | Generate a Databricks OAuth secret for the service principal and store it in the scope/key in `central_secret` |
 
 ### Apply
 
@@ -932,7 +934,7 @@ The installer prints one checklist before it changes anything. Each `FIX` line h
 |---|---|---|
 | "Target schema ... doesn't exist", or the app's SQL notice | Schema missing, or no `CREATE SERVICE` | Run the SQL shown. Apply never creates schemas |
 | "Run a dry run with this selection first" (400), or 409 "endpoints or options changed" | Execute needs a dry run of the same selection and options | Run a dry run again |
-| 409 "the dry run is older than 24 hours" (or the job fails with a missing or expired `dry_run_id`) | Dry runs expire after 24 hours, and a job started directly needs the ID of a matching dry run | Run a dry run again, then execute |
+| 409 "That dry run is more than 24 hours old, or its start time can't be read" (or the job fails with a missing or expired `dry_run_id`) | Dry runs expire after 24 hours, and a job started directly needs the ID of a matching dry run | Run a dry run again, then execute |
 | 403 on a run's details or export | Only the person who started the run, operators and workspace admins can open it | Ask one of them, or an admin |
 | `manual: secret ...` | Secret not mapped | Add it to `--uc-secret-map`, or fill in its row in the app |
 | "must be in an allowed Unity Catalog schema" (400) | The secret's schema isn't in `secret_schemas` | Rerun the installer with the schema added. Nothing changed |

@@ -1979,7 +1979,7 @@ def test_uninstall_with_a_blank_name_finds_the_only_install(monkeypatch):
     seed_install(ws, app="unity-gateway-migration", folder="/Workspace/Users/admin@example.com/unity-gateway-migration")
     res = run_notebook(monkeypatch, ws, uninstall_widgets("uninstall: preview"))
     assert res.status == "exit: uninstall preview: nothing changed", res.status
-    assert "removing it" in res.text and "schemas where Apply created model services" in res.text
+    assert "removing it" in res.text and "any schema where Apply created model services" in res.text
 
 
 def test_built_notebooks_are_both_committed_and_the_uninstaller_has_no_payload(tmp_path):
@@ -2252,3 +2252,43 @@ def test_uninstall_keeps_a_target_schema_with_services_or_that_it_didnt_create(m
     assert not run_notebook(monkeypatch, ws, install_widgets(target="main.mine")).raised
     assert not run_notebook(monkeypatch, ws, uninstall_widgets(drop_data="yes")).raised
     assert "main.mine" in ws.schemas
+
+
+def test_the_uninstall_preview_names_the_target_schema_and_whether_it_goes(monkeypatch):
+    ws = FakeWS()
+    assert not run_notebook(monkeypatch, ws, install_widgets()).raised
+    keep = run_notebook(monkeypatch, ws, uninstall_widgets("uninstall: preview"))
+    assert "the schema for new model services main.ug_migrated (this install created it: 4. Remove results tables = " \
+           "yes removes it too" in keep.text
+    drop = run_notebook(monkeypatch, ws, uninstall_widgets("uninstall: preview", drop_data="yes"))
+    removes = drop.text.split("Uninstall removes:")[1].split("Uninstall keeps:")[0]
+    assert "the schema for new model services main.ug_migrated, which this install created" in removes
+    ws = FakeWS()
+    ws.schemas["main.mine"] = {"owner": ME, "comment": "my schema"}
+    assert not run_notebook(monkeypatch, ws, install_widgets(target="main.mine")).raised
+    res = run_notebook(monkeypatch, ws, uninstall_widgets("uninstall: preview", drop_data="yes"))
+    assert "the schema for new model services main.mine (this install didn't create it)" in res.text
+
+
+def test_results_kept_by_an_earlier_uninstall_get_the_sql_to_remove_them(monkeypatch):
+    """Seen live: uninstall with 4 = no, then again with 4 = yes and 6 set, stopped with only 'no install named'."""
+    ws = FakeWS()
+    assert not run_notebook(monkeypatch, ws, install_widgets()).raised
+    assert not run_notebook(monkeypatch, ws, uninstall_widgets()).raised
+    assert "main.ug_migration" in ws.schemas
+    before = snapshot_of(ws)
+    res = run_notebook(monkeypatch, ws, uninstall_widgets(drop_data="yes", results_schema="main.ug_migration"))
+    assert res.raised and "no install named ug-migration-toolkit" in res.status
+    assert "DROP TABLE IF EXISTS `main`.`ug_migration`.ug_migration_scans;" in res.status
+    assert "DROP SCHEMA IF EXISTS `main`.`ug_migration` RESTRICT;" in res.status
+    assert snapshot_of(ws) == before
+    plain = run_notebook(monkeypatch, ws, uninstall_widgets(drop_data="yes"))  # no 6: nothing to point at
+    assert plain.raised and "DROP TABLE" not in plain.status
+
+
+def test_an_update_says_a_new_snapshot_starts_not_the_first(monkeypatch):
+    ws = FakeWS()
+    first = run_notebook(monkeypatch, ws, install_widgets())
+    assert "the first snapshot starts" in first.text
+    again = run_notebook(monkeypatch, ws, install_widgets())
+    assert "a new snapshot starts" in again.text and "the first snapshot" not in again.text

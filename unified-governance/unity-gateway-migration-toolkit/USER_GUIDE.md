@@ -527,11 +527,13 @@ Three widgets, all `no` by default, choose what else goes:
 - **5. Remove apply logs.** `no` keeps `<install folder>/apply_logs`, so kept services can be rolled back later.
 - **3. Roll back services created by apply.** `no` keeps the Unity Gateway services. `yes` rolls back every execute run still in place, before anything else is removed. For each run it first starts a rollback dry run, then the rollback that follows it (both with your user as `requested_by`). A run whose dry run fails, or has problems besides kept objects, stops the uninstall with its id and the reason.
 
-**Always removed:** the app, its three jobs, the toolkit files and the install marker (the marker only when it names this app). **Never removed:** the schema for new model services (it may hold services you keep). **6. Results schema** is only needed when the run asks for it (an install whose jobs don't record it).
+**Always removed:** the app, its three jobs, the toolkit files and the install marker (the marker only when it names this app). **Never removed:** a schema that holds model services. With **4. Remove results tables** = `yes`, the schema for new model services goes too, but only if this install created it and it's empty. **6. Results schema** is only needed when the run asks for it (an install whose jobs don't record it).
 
 **Refused, with nothing changed:** an app name that matches no install; a results schema or files shared with another install; removing apply logs while services are kept; dropping tables while an apply run has no log or still has services; a job with a run in progress; an app that isn't a toolkit app or was deployed by the bundle (set **7. Also remove an app the installer didn't make** to `yes`, or run `databricks bundle destroy`). **Allowed with a warning:** dropping tables while services are kept. The run prints the CLI rollback command for each apply run.
 
 **A rollback that can't finish** stops the uninstall before anything else is removed. Wait for the run to finish (in Jobs), then run uninstall again. The app is left stopped.
+
+**Results kept after uninstall.** Once the app and jobs are gone, the notebook can't find the install any more, so run it with **4. Remove results tables** = `yes` the first time if you want the data gone. To remove kept results later, run it with **6. Results schema** set: it stops with the SQL that drops the six tables and the schema.
 
 **Services kept after uninstall** keep serving the callers that moved to them. Remove them later with [Rollback after uninstall](#rollback-after-uninstall).
 

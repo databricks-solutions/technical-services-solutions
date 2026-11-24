@@ -256,6 +256,13 @@ def schema_made_by_toolkit(comment: str | None, app_name: str) -> bool:
     return f"(app: {app_name})" in (comment or "")
 
 
+def leftover_results_sql(results: str) -> str:
+    """SQL that removes a results schema an earlier uninstall kept (the uninstall can't, once the install is gone)."""
+    c, s = results.split(".", 1)
+    return "\n      ".join([f"DROP TABLE IF EXISTS `{c}`.`{s}`.ug_migration_{t};" for t in RESULT_TABLES]
+                          + [f"DROP SCHEMA IF EXISTS `{c}`.`{s}` RESTRICT;"])
+
+
 def parse_secret_schemas(raw: str) -> tuple[list[str], str | None]:
     schemas = split_list(raw)
     bad = [s for s in schemas if not re.fullmatch(rf"{NAME}\.{NAME}", s)]
@@ -911,6 +918,7 @@ if _app_problem:
 if not valid_app_name(APP_NAME):
     raise ValueError(f"Nothing was changed: the app name must be 2-30 lowercase letters, digits or hyphens (not {APP_NAME!r})")
 MINE = [i for i in INSTALLS if i["app"] == APP_NAME]
+UPDATING = bool(MINE)  # this app's jobs exist: an update, so its snapshot isn't the first
 EXISTING_APP = get_app()
 SAVED = saved_settings(MINE, {e.name: e.value for e in (EXISTING_APP.active_deployment.env_vars or [])}
                        if EXISTING_APP and EXISTING_APP.active_deployment else {})
@@ -974,9 +982,20 @@ adopt_existing_locations()
 if UNINSTALL and not MINE and not EXISTING_APP and not exists(MARKER):
     found = install_names(INSTALLS, toolkit_app_names())
     unnamed = [j["name"] for j in INSTALLS if not j["app"]]
+    leftover = ""
+    if _given and not found:  # an earlier uninstall kept the results: say how to remove them by hand
+        try:
+            _cmt = w.schemas.get(_given).comment
+        except DatabricksError:
+            _cmt = None
+        if schema_made_by_toolkit(_cmt, APP_NAME):
+            leftover = (f". The app and jobs are already gone, so this notebook can't remove the results it kept in "
+                        f"{_given}. To remove them, run in SQL:\n      {leftover_results_sql(_given)}\n    The schema "
+                        "for new model services (comment ending \"(app: " + APP_NAME + ")\") can be dropped the same "
+                        "way once it holds no services you keep")
     raise ValueError(f"no install named {APP_NAME}; found: {', '.join(found) or 'no toolkit installs in this workspace'}"
                      + (f". Also {len(unnamed)} toolkit job(s) deployed by the bundle without an app name (not managed "
-                        "here): " + ", ".join(unnamed) if unnamed else ""))
+                        "here): " + ", ".join(unnamed) if unnamed else "") + leftover)
 if UNINSTALL and not CATALOG:
     raise ValueError("set 6. Results schema (catalog.schema): this install's results schema isn't recorded in its jobs")
 MARKER_KIND, MARKER_APP = marker_status(read_marker(), APP_NAME)
@@ -1542,11 +1561,22 @@ if UNINSTALL:
     marker_ok = MARKER_KIND == "ours"
     remove, keep, plan_problems, warnings = uninstall_plan(DROP, REMOVE_LOGS, ROLLBACK, st["pending"], st["logs"],
                                                            st["unmatched"], RESULTS, FOLDER, marker_ok)
+    try:
+        _target_ours = bool(TARGET) and TARGET != RESULTS and w.schemas.get(TARGET).comment == target_comment(APP_NAME)
+    except DatabricksError:
+        _target_ours = False
+    if _target_ours and DROP:
+        remove = remove + [f"the schema for new model services {TARGET}, which this install created, if it holds no "
+                           "services by then"]
+        target_keep = []
+    elif _target_ours:
+        target_keep = [f"the schema for new model services {TARGET} (this install created it: 4. Remove results "
+                       "tables = yes removes it too, if it holds no services)"]
+    else:
+        target_keep = [f"the schema for new model services {TARGET} (this install didn't create it)"] if TARGET else []
     print("Uninstall removes:\n- " + "\n- ".join(remove))
-    print("Uninstall keeps:\n- " + "\n- ".join(keep + ["the schemas where Apply created model services (uninstall never "
-                                                     "removes a schema that holds services; with 4. Remove results "
-                                                     "tables = yes it removes the schema for new model services only "
-                                                     "if this install created it and it's empty)"]))
+    print("Uninstall keeps:\n- " + "\n- ".join(keep + target_keep + [
+        "any schema where Apply created model services that are still in place (uninstall never removes one)"]))
     for line in warnings:
         print("WARNING:", line)
     blocked = PROBLEMS + plan_problems
@@ -1677,7 +1707,7 @@ if PROBLEMS:
 print(("This install would create or update:" if INSTALL_PREVIEW else "This install creates or updates:") + "\n"
       + "\n".join(creates_lines(FOLDER, RESULTS, TARGET, TARGET_STATE["state"], APP_NAME, JOB_IDENTITY)))
 print(f"install: {VERSION_NOTE}")
-print(f"The jobs will run as {JOB_IDENTITY}. At the end, the first snapshot starts: it reads account-wide system tables "
+print(f"The jobs will run as {JOB_IDENTITY}. At the end, {'a new' if UPDATING else 'the first'} snapshot starts: it reads account-wide system tables "
       "(legacy endpoints and traffic for every workspace in the account) and writes them to the results schema.")
 if RUN_AS:
     print(f"The checks above ran as you ({me}). Service principal {RUN_AS} needs the same access: SELECT on the system "
@@ -1904,13 +1934,13 @@ app = w.apps.get(APP_NAME)
 host = w.config.host.rstrip("/")
 for r, i in JOB_IDS.items():
     print(f"Job ({r}):", f"{host}/jobs/{i}")
-print(f"Starting the first snapshot as {JOB_IDENTITY}. It reads account-wide system tables: legacy endpoints and "
+print(f"Starting {'a new' if UPDATING else 'the first'} snapshot as {JOB_IDENTITY}. It reads account-wide system tables: legacy endpoints and "
       f"traffic for every workspace in the account, not only this one, and writes them to {RESULTS}.")
 try:  # starts the first snapshot without waiting, so the Overview has data in a few minutes
     snap = w.jobs.run_now(job_id=JOB_IDS["snapshot"], job_parameters={"requested_by": me})
-    snapshot_note = f"First snapshot started: {host}/jobs/{JOB_IDS['snapshot']}/runs/{snap.run_id} (Overview fills in within a few minutes)."
+    snapshot_note = f"{'Snapshot' if UPDATING else 'First snapshot'} started: {host}/jobs/{JOB_IDS['snapshot']}/runs/{snap.run_id} (Overview fills in within a few minutes)."
 except DatabricksError as e:
-    snapshot_note = (f"The first snapshot didn't start ({str(e)[:200]}): in the app, open Overview and click Refresh snapshot.")
+    snapshot_note = (f"The {'new' if UPDATING else 'first'} snapshot didn't start ({str(e)[:200]}): in the app, open Overview and click Refresh snapshot.")
 try:
     w.schemas.get(TARGET)
     target_note = (f"New model services go to {TARGET} ({'created by this install' if TARGET_STATE['state'] == 'created' else 'it exists'}). "
@@ -1943,7 +1973,7 @@ displayHTML(f"""
 <h3>Unity Gateway Migration Toolkit is installed</h3>
 <p><b>Open the app:</b> <a href="{app.url}" target="_blank">{app.url}</a> (Compute &gt; Apps &gt; {APP_NAME})</p>
 <p>Jobs: {", ".join(f'<a href="{host}/jobs/{i}" target="_blank">{r}</a>' for r, i in JOB_IDS.items())}</p>
-<p>The first snapshot reads account-wide system tables (every workspace in the account).</p>
+<p>The {'new' if UPDATING else 'first'} snapshot reads account-wide system tables (every workspace in the account).</p>
 <p>First steps: wait for the snapshot (Overview), then <b>Scans</b> &gt; Start scan. {snapshot_note}</p>
 <p>The weekly snapshot job is paused: unpause its schedule in Jobs to run it every Monday.</p>
 <p>{target_note}</p>

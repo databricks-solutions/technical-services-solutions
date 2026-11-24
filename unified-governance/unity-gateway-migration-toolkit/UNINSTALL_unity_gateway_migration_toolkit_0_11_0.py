@@ -449,7 +449,9 @@ def app_update_spec(existing: apps.App, **set_fields) -> apps.App:
 
 
 def rollback_command(folder: str, apply_id: str) -> str:
-    return (f'python ug_migration_apply.py --profile <profile> rollback --log "{folder}/apply_logs/{apply_id}.jsonl"'
+    """The command-line rollback reads a local file, so the log is exported from the workspace first."""
+    return (f'databricks workspace export "{folder}/apply_logs/{apply_id}.jsonl" --file {apply_id}.jsonl '
+            f"--profile <profile> && python ug_migration_apply.py --profile <profile> rollback --log {apply_id}.jsonl"
             " (a dry run; add --execute to roll back)")
 
 
@@ -842,7 +844,7 @@ def wait_app_gone(timeout_s: int = 900) -> None:
     while get_app() is not None:
         if time.time() > deadline:
             raise ValueError(f"app {APP_NAME} is still being deleted after {timeout_s // 60} minutes: wait a few minutes "
-                             "(Compute > Apps), then run the installer again")
+                             "(Compute > Apps), then run " + ("uninstall" if UNINSTALL else "the installer") + " again")
         time.sleep(10)
 
 
@@ -907,6 +909,13 @@ def toolkit_app_names() -> list[str]:
 
 
 INSTALLS = toolkit_installs()  # read once; the checks and steps below use it
+
+
+def _targets_of(install: dict) -> set[str]:
+    """The schema for new model services an install's scan job uses (empty for its other jobs)."""
+    p = install.get("params") or {}
+    return {f"{p['target_catalog']}.{p['target_schema']}"} if install.get("role") == "scan" and p.get("target_catalog") \
+        and p.get("target_schema") else set()
 APP_NAME, _app_note, _app_problem = app_name_for(APP_RAW, install_names(INSTALLS, toolkit_app_names()), UNINSTALL)
 if _app_note:
     print(_app_note)
@@ -976,21 +985,47 @@ def adopt_existing_locations() -> None:
 
 
 adopt_existing_locations()
+def pending_rows(results: str = "") -> list[dict]:
+    """Execute runs in the results schema (default: this install's) whose services are still in place (no finished
+    rollback), newest first."""
+    cat, sch = results.split(".", 1) if results else (CATALOG, SCHEMA)
+    try:
+        rows = spark.sql(f"""
+            SELECT a.apply_id, a.job_run_id, count(i.payload) AS created FROM `{cat}`.`{sch}`.ug_migration_applies a
+            LEFT JOIN `{cat}`.`{sch}`.ug_migration_apply_items i
+              ON i.apply_id = a.apply_id AND get_json_object(i.payload, '$.action') = 'created'
+            WHERE a.mode = 'execute'
+            GROUP BY a.apply_id, a.job_run_id, a.started_at ORDER BY a.started_at DESC""").collect()
+        rolled = spark.sql(f"""
+            SELECT rollback_of, status, summary FROM `{cat}`.`{sch}`.ug_migration_applies
+            WHERE mode = 'rollback' AND rollback_of IS NOT NULL""").collect()
+    except Exception as e:  # no results tables yet: nothing was applied from this install
+        if "TABLE_OR_VIEW_NOT_FOUND" in str(e) or "SCHEMA_NOT_FOUND" in str(e):
+            return []
+        raise
+    done = {r["rollback_of"] for r in rolled if rollback_done(r["status"], r["summary"])}
+    return [{"apply_id": r["apply_id"], "job_run_id": str(r["job_run_id"] or ""), "created": r["created"]}
+            for r in rows if r["created"] and r["apply_id"] not in done]
+
+
 LEFTOVER, LEFTOVER_EXIT = False, ""  # set when only results kept by an earlier uninstall are left: the next cell exits with it
 if UNINSTALL and not MINE and not EXISTING_APP and not exists(MARKER):
     found = install_names(INSTALLS, toolkit_app_names())
     unnamed = [j["name"] for j in INSTALLS if not j["app"]]
     _cmt = None
-    if _given and not found:  # an earlier uninstall kept the results: this run can still remove them
+    if _given and APP_NAME not in found:  # an earlier uninstall kept the results: this run can still remove them
         try:
             _cmt = w.schemas.get(_given).comment
         except DatabricksError:
             _cmt = None
-    if not (_given and not found and schema_made_by_toolkit(_cmt, APP_NAME)):
+    if not (_given and APP_NAME not in found and schema_made_by_toolkit(_cmt, APP_NAME)):
         raise ValueError(f"no install named {APP_NAME}; found: {', '.join(found) or 'no toolkit installs in this workspace'}"
                          + (f". Also {len(unnamed)} toolkit job(s) deployed by the bundle without an app name (not "
-                            "managed here): " + ", ".join(unnamed) if unnamed else ""))
-    # The app and jobs are gone (an earlier uninstall kept the results): remove what's left, only the toolkit's.
+                            "managed here): " + ", ".join(unnamed) if unnamed else "")
+                         + ("" if _given else ". If an earlier uninstall kept its results, set 6. Results schema to "
+                            "that schema (and 2. App name, if it wasn't the default) to remove them"))
+    # The app and jobs are gone (an earlier uninstall kept the results): remove what's left, only the toolkit's, with
+    # the same rules as a normal uninstall for services still in place.
     LEFTOVER = True
     _rc, _rs = _given.split(".", 1)
     _targets = {f"{_rc}.{TARGET_SCHEMA_NAME}"}
@@ -1000,23 +1035,48 @@ if UNINSTALL and not MINE and not EXISTING_APP and not exists(MARKER):
             "WHERE target_catalog IS NOT NULL AND target_schema IS NOT NULL").collect()}
     except Exception:  # noqa: BLE001 (no applies table: only the default)
         pass
-    _ours = []
+    _used_by_others = {t for i in INSTALLS if i["app"] != APP_NAME for t in _targets_of(i)}
+    _ours, _shared = [], []
     for _t in sorted(_targets - {_given}):
         try:
             if w.schemas.get(_t).comment == target_comment(APP_NAME):
-                _ours.append(_t)
+                (_shared if _t in _used_by_others else _ours).append(_t)
         except DatabricksError:
             pass
+    _pending = pending_rows(_given)
+    _logs = {n[: -len(".jsonl")] for n in folder_children(f"{FOLDER}/apply_logs") if re.fullmatch(UUID + r"\.jsonl", n)}
+    _missing = [p["apply_id"] for p in _pending if p["apply_id"] not in _logs]
+    _stop = []
+    if _pending and ROLLBACK:
+        _stop.append(f"{len(_pending)} apply run(s) still have services in place, and the apply job is gone with the "
+                     "app, so they can't be rolled back here. Roll them back with the command line, from the unzipped "
+                     "toolkit download, then run again (or set 3. Roll back services = no to keep them):\n    "
+                     + "\n    ".join(rollback_command(FOLDER, a) for a in _logs & {p["apply_id"] for p in _pending}))
+    elif _missing:
+        _stop.append(f"apply run(s) {', '.join(_missing)} still have services in place and no apply log in "
+                     f"{FOLDER}/apply_logs: the results tables are the only record of them, so they are kept. Delete "
+                     "those services by hand first, or keep the results")
     print(f"No install named {APP_NAME} is left in this workspace (its app and jobs are gone), but results it kept are "
           f"in {_given}.")
     print("Uninstall removes:\n- the results tables in " + _given + " and the schema, if nothing else is in it"
           + "".join(f"\n- the schema for new model services {t}, which this install created, if it holds no services"
                     for t in _ours))
-    if PREVIEW or not DROP:
-        if not PREVIEW:
-            raise ValueError("Nothing was changed: set 4. Remove results tables = yes to remove them")
+    _keeps = [f"the schema for new model services {t}: another install uses it" for t in _shared]
+    if _pending:
+        _keeps.append(f"Unity Gateway services created by {len(_pending)} apply run(s): callers that moved to them keep "
+                      "working. Roll them back later with the command line:\n    "
+                      + "\n    ".join(rollback_command(FOLDER, p["apply_id"]) for p in _pending if p["apply_id"] in _logs))
+    if _keeps:
+        print("Uninstall keeps:\n- " + "\n- ".join(_keeps))
+    if PREVIEW:
+        if _stop:
+            print("Remove would stop:\n- " + "\n- ".join(_stop))
         print("\nNothing was changed. Set 1. Action = remove and 4. Remove results tables = yes, then run again.")
         LEFTOVER_EXIT = "uninstall preview: nothing changed"
+    elif not DROP:
+        raise ValueError("Nothing was changed: set 4. Remove results tables = yes to remove them")
+    elif _stop:
+        raise ValueError("Nothing was changed. Fix these first:\n- " + "\n- ".join(_stop))
 if LEFTOVER and not LEFTOVER_EXIT:
     for _tb in RESULT_TABLES:
         spark.sql(f"DROP TABLE IF EXISTS `{_rc}`.`{_rs}`.ug_migration_{_tb}")
@@ -1487,27 +1547,6 @@ def apply_job_ids() -> list[int]:
     return [i["job_id"] for i in MINE if i["role"] == "apply"]
 
 
-def pending_rows() -> list[dict]:
-    """Execute runs in the results schema whose services are still in place (no finished rollback), newest first."""
-    try:
-        rows = spark.sql(f"""
-            SELECT a.apply_id, a.job_run_id, count(i.payload) AS created FROM `{CATALOG}`.`{SCHEMA}`.ug_migration_applies a
-            LEFT JOIN `{CATALOG}`.`{SCHEMA}`.ug_migration_apply_items i
-              ON i.apply_id = a.apply_id AND get_json_object(i.payload, '$.action') = 'created'
-            WHERE a.mode = 'execute'
-            GROUP BY a.apply_id, a.job_run_id, a.started_at ORDER BY a.started_at DESC""").collect()
-        rolled = spark.sql(f"""
-            SELECT rollback_of, status, summary FROM `{CATALOG}`.`{SCHEMA}`.ug_migration_applies
-            WHERE mode = 'rollback' AND rollback_of IS NOT NULL""").collect()
-    except Exception as e:  # no results tables yet: nothing was applied from this install
-        if "TABLE_OR_VIEW_NOT_FOUND" in str(e) or "SCHEMA_NOT_FOUND" in str(e):
-            return []
-        raise
-    done = {r["rollback_of"] for r in rolled if rollback_done(r["status"], r["summary"])}
-    return [{"apply_id": r["apply_id"], "job_run_id": str(r["job_run_id"] or ""), "created": r["created"]}
-            for r in rows if r["created"] and r["apply_id"] not in done]
-
-
 def log_apply_ids() -> set[str]:
     """Apply ids with a log in this install's apply_logs folder (one <apply_id>.jsonl per execute run)."""
     return {n[: -len(".jsonl")] for n in folder_children(f"{FOLDER}/apply_logs") if re.fullmatch(UUID + r"\.jsonl", n)}
@@ -1626,7 +1665,10 @@ if UNINSTALL:
         _target_ours = bool(TARGET) and TARGET != RESULTS and w.schemas.get(TARGET).comment == target_comment(APP_NAME)
     except DatabricksError:
         _target_ours = False
-    if _target_ours and DROP:
+    _target_shared = any(TARGET in _targets_of(i) for i in INSTALLS if i["app"] != APP_NAME)
+    if _target_ours and _target_shared:
+        target_keep = [f"the schema for new model services {TARGET} (another install uses it)"]
+    elif _target_ours and DROP:
         remove = remove + [f"the schema for new model services {TARGET}, which this install created, if it holds no "
                            "services by then"]
         target_keep = []
@@ -1643,7 +1685,9 @@ if UNINSTALL:
     blocked = PROBLEMS + plan_problems
     if ROLLBACK and st["pending"] and not apply_job_ids():
         blocked.append("the apply job of this app is missing, so its services can't be rolled back here: roll them back "
-                       "with the command line (see the rollback command above) or restore the apply job")
+                       "with the command line, from the unzipped toolkit download, then run uninstall again:\n    "
+                       + "\n    ".join(rollback_command(FOLDER, p["apply_id"]) for p in st["pending"]
+                                       if p["apply_id"] in st["logs"]))
     if PREVIEW:
         if blocked:
             print("Remove would stop:\n- " + "\n- ".join(blocked))
@@ -1734,7 +1778,10 @@ if UNINSTALL:
                 t_cmt = w.schemas.get(TARGET).comment
             except (NotFound, ResourceDoesNotExist):
                 t_cmt = None
-            if t_cmt == target_comment(APP_NAME):
+            if t_cmt == target_comment(APP_NAME) and any(TARGET in _targets_of(i) for i in INSTALLS
+                                                         if i["app"] != APP_NAME):
+                print("kept schema", TARGET, "(another install uses it for new model services)")
+            elif t_cmt == target_comment(APP_NAME):
                 t_cat, t_sch = TARGET.split(".", 1)
                 try:
                     has_services = next(iter(w.ai_gateway.list_model_services(parent=f"schemas/{TARGET}")), None) is not None

@@ -527,13 +527,13 @@ Three widgets, all `no` by default, choose what else goes:
 - **5. Remove apply logs.** `no` keeps `<install folder>/apply_logs`, so kept services can be rolled back later.
 - **3. Roll back services created by apply.** `no` keeps the Unity Gateway services. `yes` rolls back every execute run still in place, before anything else is removed. For each run it first starts a rollback dry run, then the rollback that follows it (both with your user as `requested_by`). A run whose dry run fails, or has problems besides kept objects, stops the uninstall with its id and the reason.
 
-**Always removed:** the app, its three jobs, the toolkit files and the install marker (the marker only when it names this app). **Never removed:** a schema that holds model services. With **4. Remove results tables** = `yes`, the schema for new model services goes too, but only if this install created it and it's empty. **6. Results schema** is only needed when the run asks for it (an install whose jobs don't record it).
+**Always removed:** the app, its three jobs, the toolkit files and the install marker (the marker only when it names this app). **Never removed:** a schema that holds model services. With **4. Remove results tables** = `yes`, the schema for new model services goes too, but only if this install created it, it's empty and no other install uses it. **6. Results schema** is only needed when the run asks for it (an install whose jobs don't record it).
 
 **Refused, with nothing changed:** an app name that matches no install; a results schema or files shared with another install; removing apply logs while services are kept; dropping tables while an apply run has no log or still has services; a job with a run in progress; an app that isn't a toolkit app or was deployed by the bundle (set **7. Also remove an app the installer didn't make** to `yes`, or run `databricks bundle destroy`). **Allowed with a warning:** dropping tables while services are kept. The run prints the CLI rollback command for each apply run.
 
 **A rollback that can't finish** stops the uninstall before anything else is removed. Wait for the run to finish (in Jobs), then run uninstall again. The app is left stopped.
 
-**Results kept after uninstall.** To remove kept results later, run it again with **1. Action** = `remove`, **4. Remove results tables** = `yes` and **6. Results schema** set to that schema (and **2. App name** if the install didn't use the default name): it drops the six tables, the schema, and the schema for new model services if this install created it and it holds no services.
+**Results kept after uninstall.** To remove kept results later, run it again with **1. Action** = `remove`, **4. Remove results tables** = `yes` and **6. Results schema** set to that schema (and **2. App name** if the install didn't use the default name): it drops the six tables, the schema, and the schema for new model services if this install created it, it holds no services and no other install uses it. Services still in place are kept, as in a normal uninstall: it prints their rollback commands, and it stops with nothing changed when a run has no apply log, or with **3. Roll back services** = `yes` (the apply job went with the app, so roll them back with the command line first).
 
 **Services kept after uninstall** keep serving the callers that moved to them. Remove them later with [Rollback after uninstall](#rollback-after-uninstall).
 
@@ -628,10 +628,11 @@ python ug_migration_apply.py --profile <p> rollback --log FILE --execute --force
 
 #### Rollback after uninstall
 
-If uninstall kept the services, it also kept `<install folder>/apply_logs/<apply_id>.jsonl` (unless **Remove apply logs** was `yes`). Unzip the same download and run the rollback with the log's workspace path. Add `--execute` once the dry run looks right.
+If uninstall kept the services, it also kept `<install folder>/apply_logs/<apply_id>.jsonl` (unless **Remove apply logs** was `yes`), and it prints these commands for each run. Unzip the same download, export the log, and run the rollback from the unzipped folder. Add `--execute` once the dry run looks right.
 
 ```bash
-python ug_migration_apply.py --profile <p> rollback --log "/Workspace/Users/<you>/ug-migration-toolkit/apply_logs/<apply_id>.jsonl"
+databricks workspace export "/Workspace/Users/<you>/ug-migration-toolkit/apply_logs/<apply_id>.jsonl" --file <apply_id>.jsonl --profile <p>
+python ug_migration_apply.py --profile <p> rollback --log <apply_id>.jsonl
 ```
 
 ### Terraform

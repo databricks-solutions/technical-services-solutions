@@ -243,7 +243,9 @@ def test_progress_decision():
 
 
 def test_rollback_and_system_fix_messages():
-    assert H["rollback_command"](FOLDER, A1).startswith("python ug_migration_apply.py --profile <profile> rollback --log")
+    assert H["rollback_command"](FOLDER, A1).startswith(f'databricks workspace export "{FOLDER}/apply_logs/{A1}.jsonl" '
+                                                        f"--file {A1}.jsonl --profile <profile> && python ug_migration_apply.py")
+    assert f"rollback --log {A1}.jsonl " in H["rollback_command"](FOLDER, A1)
     assert f"{FOLDER}/apply_logs/{A1}.jsonl" in H["rollback_command"](FOLDER, A1)
     fix = H["system_table_fix"](["system.serving"], ME)
     assert "GRANT USE SCHEMA, SELECT ON SCHEMA system.serving" in fix and "GRANT USE CATALOG ON CATALOG system" in fix
@@ -1437,7 +1439,7 @@ def test_drop_with_services_kept_warns_and_prints_the_rollback_command(monkeypat
     res = run_notebook(monkeypatch, ws, uninstall_widgets(drop_data="yes"))
     assert not res.raised, res.status
     assert "WARNING: the results tables are removed while 1 apply run(s) keep their services" in res.text
-    assert f'rollback --log "{FOLDER}/apply_logs/{A1}.jsonl"' in res.text
+    assert f'databricks workspace export "{FOLDER}/apply_logs/{A1}.jsonl"' in res.text and f"rollback --log {A1}.jsonl" in res.text
     assert "main.ug_migration.ug_migration_applies" not in ws.tables
     assert f"{FOLDER}/apply_logs/{A1}.jsonl" in ws.files  # the log is kept for the later rollback
     assert ws.apps == {}
@@ -2390,3 +2392,78 @@ def test_a_deploy_that_fails_after_new_operators_keeps_them_for_the_next_update(
     res = run_notebook(monkeypatch, ws, install_widgets())  # plain update, nothing typed
     assert not res.raised, res.status
     assert _env(ws)["OPERATORS"] == f"{ME},other@example.com"
+
+
+def _kept_results_with_services(monkeypatch, logs=True):
+    """An uninstall with 4 = no left the results; one apply run still has 2 services in place."""
+    ws = FakeWS()
+    seed_install(ws, pending=[(A1, 2, RUN1)], logs=[A1] if logs else [])
+    assert not run_notebook(monkeypatch, ws, uninstall_widgets(drop_data="no")).raised
+    assert "main.ug_migration.ug_migration_applies" in ws.tables
+    return ws
+
+
+def test_later_cleanup_with_services_in_place_keeps_them_and_prints_the_rollback(monkeypatch):
+    """Review of 0.11.0: the later cleanup dropped the apply history while services were in place, without a word."""
+    ws = _kept_results_with_services(monkeypatch)
+    preview = run_notebook(monkeypatch, ws, uninstall_widgets("uninstall: preview", results_schema="main.ug_migration"))
+    assert "Unity Gateway services created by 1 apply run(s)" in preview.text and f"rollback --log {A1}.jsonl" in preview.text
+    res = run_notebook(monkeypatch, ws, uninstall_widgets(drop_data="yes", results_schema="main.ug_migration"))
+    assert res.status == "exit: uninstalled", res.status
+    assert f"rollback --log {A1}.jsonl" in res.text and "main.ug_migration" not in ws.schemas
+
+
+def test_later_cleanup_with_rollback_yes_stops_because_the_apply_job_is_gone(monkeypatch):
+    ws = _kept_results_with_services(monkeypatch)
+    before = snapshot_of(ws)
+    res = run_notebook(monkeypatch, ws, uninstall_widgets(rollback_services="yes", drop_data="yes",
+                                                          results_schema="main.ug_migration"))
+    assert res.raised and "the apply job is gone" in res.status and f"rollback --log {A1}.jsonl" in res.status
+    assert snapshot_of(ws) == before
+
+
+def test_later_cleanup_keeps_the_results_of_services_that_have_no_log(monkeypatch):
+    ws = _kept_results_with_services(monkeypatch, logs=False)
+    before = snapshot_of(ws)
+    res = run_notebook(monkeypatch, ws, uninstall_widgets(drop_data="yes", results_schema="main.ug_migration"))
+    assert res.raised and f"apply run(s) {A1} still have services in place and no apply log" in res.status
+    assert snapshot_of(ws) == before
+
+
+def test_later_cleanup_works_while_another_install_is_in_the_workspace(monkeypatch):
+    ws = FakeWS()
+    seed_install(ws)
+    ws.schemas["main.ug_b"] = {"owner": ME, "comment": "Unity Gateway migration app results (app: ug-b)"}
+    for t in RESULT_TABLES:
+        ws.tables[f"main.ug_b.ug_migration_{t}"] = []
+    res = run_notebook(monkeypatch, ws, uninstall_widgets(app_name="ug-b", drop_data="yes", results_schema="main.ug_b"))
+    assert res.status == "exit: uninstalled", res.status
+    assert "main.ug_b" not in ws.schemas and "main.ug_migration" in ws.schemas and APP in ws.apps
+
+
+def test_no_install_found_says_how_to_remove_kept_results(monkeypatch):
+    ws = FakeWS()
+    res = run_notebook(monkeypatch, ws, uninstall_widgets(drop_data="yes"))
+    assert res.raised and "set 6. Results schema to that schema" in res.status
+
+
+def test_uninstall_keeps_the_target_schema_another_install_uses(monkeypatch):
+    """Review of 0.11.0: two installs in one catalog share <catalog>.ug_migrated by default."""
+    ws = FakeWS()
+    assert not run_notebook(monkeypatch, ws, install_widgets()).raised
+    assert not run_notebook(monkeypatch, ws, install_widgets(app_name="ug-b", results_schema="ug_b",
+                                                             second_install="yes")).raised
+    preview = run_notebook(monkeypatch, ws, uninstall_widgets("uninstall: preview", app_name=APP, drop_data="yes"))
+    assert "the schema for new model services main.ug_migrated (another install uses it)" in preview.text
+    res = run_notebook(monkeypatch, ws, uninstall_widgets(app_name=APP, drop_data="yes"))
+    assert not res.raised, res.status
+    assert "main.ug_migrated" in ws.schemas and "(another install uses it for new model services)" in res.text
+
+
+def test_rollback_yes_without_the_apply_job_prints_the_command_it_points_to(monkeypatch):
+    ws = FakeWS()
+    ids = seed_install(ws, pending=[(A1, 2, RUN1)], logs=[A1])
+    del ws.jobs[ids["apply"]]
+    res = run_notebook(monkeypatch, ws, uninstall_widgets("uninstall: preview", rollback_services="yes"))
+    stop = res.text.split("Remove would stop:")[1]
+    assert "the apply job of this app is missing" in stop and f"rollback --log {A1}.jsonl" in stop

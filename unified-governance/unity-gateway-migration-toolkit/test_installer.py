@@ -2494,7 +2494,6 @@ def test_every_printed_rollback_command_can_be_pasted_into_a_shell(monkeypatch):
     assert "each command is a dry run: add --execute at the end to roll back" in keep.text
     warn = run_notebook(monkeypatch, ws, uninstall_widgets("uninstall: preview", drop_data="yes"))
     _assert_pasteable(_command_lines(warn.text))
-    ids = seed_install(FakeWS(), pending=[(A1, 2, RUN1)], logs=[A1])
     ws2 = FakeWS()
     ids = seed_install(ws2, pending=[(A1, 2, RUN1)], logs=[A1])
     del ws2.jobs[ids["apply"]]
@@ -2540,3 +2539,26 @@ def test_a_rerun_after_a_stuck_uninstall_reads_the_results_schema_from_the_marke
     assert res.status == "exit: uninstalled", res.status
     assert "using the results schema recorded in the install marker: main.ug_migration" in res.text
     assert "main.ug_migration" not in ws.schemas and f"{FOLDER}/ug_migration_toolkit.marker" not in ws.files
+
+
+def test_later_cleanup_keeps_the_logs_when_the_apply_history_cant_be_read(monkeypatch):
+    """Final review of Kevin's fixes: a partial drop left the schema without ug_migration_applies; the retry read
+    'no services' and deleted logs that kept services still needed."""
+    ws = _kept_results_with_services(monkeypatch)
+    ws.tables.pop("main.ug_migration.ug_migration_applies")
+    ws.tables["main.ug_migration.other_table"] = []  # something else keeps the schema
+    before = snapshot_of(ws)
+    res = run_notebook(monkeypatch, ws, uninstall_widgets(drop_data="yes", remove_logs="yes",
+                                                          results_schema="main.ug_migration"))
+    assert res.raised and "the apply history in main.ug_migration can't be read" in res.status
+    assert snapshot_of(ws) == before and f"{FOLDER}/apply_logs/{A1}.jsonl" in ws.files
+
+
+def test_later_cleanup_says_so_when_there_are_no_logs_in_the_default_folder(monkeypatch):
+    ws = FakeWS()
+    seed_install(ws)
+    assert not run_notebook(monkeypatch, ws, uninstall_widgets(drop_data="no")).raised
+    res = run_notebook(monkeypatch, ws, uninstall_widgets("uninstall: preview", remove_logs="yes",
+                                                          results_schema="main.ug_migration"))
+    assert f"No apply logs in {FOLDER}/apply_logs" in res.text
+    assert "the apply logs in" not in res.text.split("Uninstall removes:")[1].split("Nothing was changed")[0]

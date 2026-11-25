@@ -1001,7 +1001,7 @@ def adopt_existing_locations() -> None:
 
 
 adopt_existing_locations()
-def pending_rows(results: str = "") -> list[dict]:
+def pending_rows(results: str = "", missing_ok: bool = True) -> list[dict]:
     """Execute runs in the results schema (default: this install's) whose services are still in place (no finished
     rollback), newest first."""
     cat, sch = results.split(".", 1) if results else (CATALOG, SCHEMA)
@@ -1016,7 +1016,7 @@ def pending_rows(results: str = "") -> list[dict]:
             SELECT rollback_of, status, summary FROM `{cat}`.`{sch}`.ug_migration_applies
             WHERE mode = 'rollback' AND rollback_of IS NOT NULL""").collect()
     except Exception as e:  # no results tables yet: nothing was applied from this install
-        if "TABLE_OR_VIEW_NOT_FOUND" in str(e) or "SCHEMA_NOT_FOUND" in str(e):
+        if missing_ok and ("TABLE_OR_VIEW_NOT_FOUND" in str(e) or "SCHEMA_NOT_FOUND" in str(e)):
             return []
         raise
     done = {r["rollback_of"] for r in rolled if rollback_done(r["status"], r["summary"])}
@@ -1059,15 +1059,21 @@ if UNINSTALL and not MINE and not EXISTING_APP and not exists(MARKER):
                 (_shared if _t in _used_by_others else _ours).append(_t)
         except DatabricksError:
             pass
-    _pending = pending_rows(_given)
+    try:  # the apply history: without it, nothing can say whether services still need the logs
+        _pending, _history = pending_rows(_given, missing_ok=False), True
+    except Exception:  # noqa: BLE001 (a partial drop left the schema without it)
+        _pending, _history = [], False
     _logs = {n[: -len(".jsonl")] for n in folder_children(f"{FOLDER}/apply_logs") if re.fullmatch(UUID + r"\.jsonl", n)}
     _missing = [p["apply_id"] for p in _pending if p["apply_id"] not in _logs]
     _stop = []
     if _pending and ROLLBACK:
         _stop.append(f"{len(_pending)} apply run(s) still have services in place, and the apply job is gone with the "
                      "app, so they can't be rolled back here. Roll them back with the command line, from the unzipped "
-                     "toolkit download, then run again (or set 3. Roll back services = no to keep them). " + DRY_RUN_NOTE + ":\n    "
+                     "toolkit download, then run again, or set 3. Roll back services = no to keep them (" + DRY_RUN_NOTE + "):\n    "
                      + "\n    ".join(rollback_command(FOLDER, a) for a in _logs & {p["apply_id"] for p in _pending}))
+    elif REMOVE_LOGS and _logs and not _history:
+        _stop.append(f"the apply history in {_given} can't be read, so nothing says whether services from these runs are "
+                     f"still in place: the apply logs in {FOLDER}/apply_logs are kept. Set 5. Remove apply logs = no")
     elif _pending and REMOVE_LOGS:
         _stop.append("the apply logs are needed to roll back the kept services later: set 5. Remove apply logs = no, "
                      "or roll the services back first")
@@ -1081,7 +1087,10 @@ if UNINSTALL and not MINE and not EXISTING_APP and not exists(MARKER):
           + "".join(f"\n- the schema for new model services {t}, which this install created, if it holds no services"
                     for t in _ours)
           + (f"\n- the apply logs in {FOLDER}/apply_logs, and the folder if nothing else is in it"
-             if REMOVE_LOGS and not _pending else ""))
+             if REMOVE_LOGS and _logs and not _pending else ""))
+    if REMOVE_LOGS and not _logs:  # uninstall reads only the default folder once the marker is gone
+        print(f"No apply logs in {FOLDER}/apply_logs. If this install used another folder (install_folder), delete its "
+              "apply_logs folder by hand once no kept services need it.")
     _keeps = [f"the schema for new model services {t}: another install uses it" for t in _shared]
     if _logs and not REMOVE_LOGS:
         _keeps.append(f"the apply logs in {FOLDER}/apply_logs" + ("" if _pending else
@@ -1126,7 +1135,7 @@ if LEFTOVER and not LEFTOVER_EXIT:
                 print("dropped schema", _t, "(the installer created it for new model services; it was empty)")
             except Exception:  # noqa: BLE001
                 print("kept schema", _t, "(other objects are in it)")
-    if REMOVE_LOGS and not _pending:  # only the toolkit's files: the logs and a stray marker, then empty folders
+    if REMOVE_LOGS and _logs and not _pending:  # only the toolkit's files: the logs and a stray marker, then empty folders
         for _n in folder_children(f"{FOLDER}/apply_logs"):
             if _n.endswith(".jsonl") or _n == MARKER_NAME:
                 delete_path(f"{FOLDER}/apply_logs/{_n}")

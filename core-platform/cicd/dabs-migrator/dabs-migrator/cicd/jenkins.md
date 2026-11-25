@@ -9,8 +9,11 @@ Declarative `Jenkinsfile` at repo root. Assumes Jenkins agents have `curl` and `
 Before the first recurring deploy to a staging or prod source workspace, add a temporary `Bind and deploy` stage to the `Jenkinsfile`, run it once (the `input` block requires a manual click), and then remove the stage.
 
 ```groovy
-// Add temporarily to Jenkinsfile — remove after the first successful run.
+// Add temporarily to Jenkinsfile. Remove after the first successful run.
+// The sh step starts with #!/bin/bash so it runs in bash, not /bin/sh (dash on many agents).
+// The agent needs jq installed.
 stage('Bind and deploy (one-time, <source_target>)') {
+  when { branch 'main' }
   environment {
     DATABRICKS_HOST       = credentials('databricks-host')
     DATABRICKS_BUNDLE_ENV = '<source_target>'
@@ -20,30 +23,22 @@ stage('Bind and deploy (one-time, <source_target>)') {
     ok 'Bind and deploy'
   }
   steps {
-    sh '''
+    sh '''#!/bin/bash
       set -euo pipefail
-      bash scripts/auto-bind.sh <source_target>
-      PLAN_JSON=$(databricks bundle plan -t <source_target> -o json 2>plan.err)
-            [[ -s plan.err ]] && cat plan.err >&2
-      printf '%s\n' "$PLAN_JSON" | jq .
-      if echo "$PLAN_JSON" | jq -e '[.plan | to_entries[] | select(.value.action == "recreate" or .value.action == "delete")] | length > 0' &>/dev/null; then
-        echo "ERROR: Plan shows recreate/delete — config mismatch or wrong bind ID."; exit 1
-      fi
-      if [[ -f "bindings/<source_target>.yml" ]]; then
-        while IFS= read -r line; do
-          [[ "$line" =~ ^#.*$ || -z "\\$line" ]] && continue
-          key=$(echo "$line" | cut -d: -f1 | tr -d ' '); [[ -z "$key" ]] && continue
-          if echo "$PLAN_JSON" | jq -e --arg k "$key" '[.plan | to_entries[] | select(.key | endswith("." + $k)) | select(.value.action == "create")] | length > 0' &>/dev/null; then
-            echo "ERROR: Bound resource '$key' plans as 'create' — bind may have failed."; exit 1
-          fi
-        done < "bindings/<source_target>.yml"
-      fi
-      echo "Plan check passed."
+      bash scripts/auto-bind.sh <source_target> || { bash scripts/auto-bind.sh <source_target> --rollback; exit 1; }
+      bash scripts/plan-check.sh <source_target> --first-deploy || { bash scripts/auto-bind.sh <source_target> --rollback; exit 1; }
       databricks bundle deploy -t <source_target>
     '''
   }
+  post {
+    always {
+      archiveArtifacts artifacts: 'plan-<source_target>.json', allowEmptyArchive: true
+    }
+  }
 }
 ```
+
+> The step runs `scripts/auto-bind.sh`, then `scripts/plan-check.sh --first-deploy`, and deploys only if the check passes. If binding or the check fails, `auto-bind.sh --rollback` unbinds the keys this run bound, so nothing stays half-bound. The check blocks any delete or replacement, any create of a bound key, any other create, and changes to `run_as`, schedules, catalog/schema, storage or notifications of an existing asset, unless approved in `plan-allow/<source_target>.txt` (reviewed in a pull request). The full plan is saved as `plan-<source_target>.json`.
 
 > Do **not** add `bundle deployment bind` to the `Validate`, `Deploy staging`, or `Deploy prod` stages. Binding is one-time; repeating it in recurring stages fails on the second run.
 
@@ -91,7 +86,7 @@ pipeline {
         DATABRICKS_BUNDLE_ENV = 'staging'
       }
       steps {
-        sh 'databricks bundle deploy -t staging'
+        sh 'bash scripts/plan-check.sh staging && databricks bundle deploy -t staging'
       }
     }
 
@@ -107,7 +102,7 @@ pipeline {
       }
       steps {
         sh 'databricks bundle validate -t prod --output json'
-        sh 'databricks bundle deploy -t prod'
+        sh 'bash scripts/plan-check.sh prod && databricks bundle deploy -t prod'
       }
     }
   }

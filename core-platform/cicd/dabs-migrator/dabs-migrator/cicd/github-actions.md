@@ -12,7 +12,7 @@ Before the first recurring deploy to a staging or prod source workspace, run a o
 
 ```yaml
 # .github/workflows/bind_and_deploy_<source_target>.yml
-# ONE-TIME: binds migrated resources to their source workspace counterparts, then deploys.
+# ONE-TIME: binds migrated resources to their source workspace counterparts, checks the plan, then deploys.
 # Delete this file after the first successful run.
 name: "Bind and deploy (one-time, <source_target>)"
 on:
@@ -20,22 +20,17 @@ on:
 
 jobs:
   bind-and-deploy:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: <source_target>   # configure required reviewers in repo settings
+    environment: <source_target>   # required reviewers + deployment branch rule (main only) in repo settings
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Databricks CLI
         uses: databricks/setup-cli@main
 
-      - name: Auto-discover and bind migrated resources
-        env:
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
-          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
-        run: bash scripts/auto-bind.sh <source_target>
-
-      - name: Plan — verify bound resources show update, not create/recreate/delete
+      - name: Bind, check the plan, deploy (unbind again if anything fails)
+        shell: bash
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
@@ -43,40 +38,20 @@ jobs:
           DATABRICKS_BUNDLE_ENV: <source_target>
         run: |
           set -euo pipefail
-          PLAN_JSON=$(databricks bundle plan -t <source_target> -o json 2>plan.err)
-            [[ -s plan.err ]] && cat plan.err >&2
-          printf '%s\n' "$PLAN_JSON" | jq .
+          bash scripts/auto-bind.sh <source_target> || { bash scripts/auto-bind.sh <source_target> --rollback; exit 1; }
+          bash scripts/plan-check.sh <source_target> --first-deploy || { bash scripts/auto-bind.sh <source_target> --rollback; exit 1; }
+          databricks bundle deploy -t <source_target>
 
-          # Fail on recreate or delete for any resource
-          if echo "$PLAN_JSON" | jq -e '[.plan | to_entries[] | select(.value.action == "recreate" or .value.action == "delete")] | length > 0' &>/dev/null; then
-            echo "ERROR: Plan shows recreate/delete — config mismatch or wrong bind ID."
-            exit 1
-          fi
-
-          # Fail if any key listed in bindings/<source_target>.yml plans as 'create' (missed bind)
-          if [[ -f "bindings/<source_target>.yml" ]]; then
-            while IFS= read -r line; do
-              [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
-              key=$(echo "$line" | cut -d: -f1 | tr -d ' ')
-              [[ -z "$key" ]] && continue
-              if echo "$PLAN_JSON" | jq -e --arg k "$key" \
-                '[.plan | to_entries[] | select(.key | endswith("." + $k)) | select(.value.action == "create")] | length > 0' &>/dev/null; then
-                echo "ERROR: Bound resource '$key' plans as 'create' — bind may have failed or used the wrong ID."
-                exit 1
-              fi
-            done < "bindings/<source_target>.yml"
-          fi
-
-          echo "Plan check passed — bound resources will update in-place, new resources will be created."
-
-      - name: Deploy bundle
-        env:
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
-          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
-          DATABRICKS_BUNDLE_ENV: <source_target>
-        run: databricks bundle deploy -t <source_target>
+      - name: Upload the plan
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plan-<source_target>
+          path: plan-<source_target>.json
+          if-no-files-found: ignore
 ```
+
+> The step runs `scripts/auto-bind.sh`, then `scripts/plan-check.sh --first-deploy`, and deploys only if the check passes. If binding or the check fails, `auto-bind.sh --rollback` unbinds the keys this run bound, so nothing stays half-bound. The check blocks any delete or replacement, any create of a bound key, any other create, and changes to `run_as`, schedules, catalog/schema, storage or notifications of an existing asset, unless approved in `plan-allow/<source_target>.txt` (reviewed in a pull request). The full plan is saved as `plan-<source_target>.json`.
 
 > Do **not** add `bundle deployment bind` to `pr_validate.yml`, `deploy_to_staging.yml`, or `deploy_to_prod.yml`. Binding is one-time; repeating it in recurring pipelines fails on the second run.
 
@@ -151,7 +126,7 @@ jobs:
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
           DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
           DATABRICKS_BUNDLE_ENV: staging
-        run: databricks bundle deploy -t staging
+        run: bash scripts/plan-check.sh staging && databricks bundle deploy -t staging
 ```
 
 ## `.github/workflows/deploy_to_prod.yml`
@@ -187,7 +162,7 @@ jobs:
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
           DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
           DATABRICKS_BUNDLE_ENV: prod
-        run: databricks bundle deploy -t prod
+        run: bash scripts/plan-check.sh prod && databricks bundle deploy -t prod
 ```
 
 ## Notes

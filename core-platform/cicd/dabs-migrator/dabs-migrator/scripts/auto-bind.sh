@@ -25,8 +25,17 @@
 #     (DATABRICKS_HOST, DATABRICKS_CLIENT_ID, DATABRICKS_CLIENT_SECRET set, or --profile used)
 #   - jq installed (available by default on GitHub Actions, Azure DevOps, GitLab CI runners)
 #
+# Where to run: only from the one-time, environment-gated bind-and-deploy CI workflow
+# (cicd/<tool>.md). Coding agents must never run this script, `bundle deployment bind` or
+# `bundle deployment unbind` against staging or prod (SKILL.md hard rule).
+#
+# Rollback: every key this run binds is recorded in .databricks/auto-bind-<target>.run.
+# If the plan check fails, `--rollback` unbinds exactly those keys, so a failed check
+# leaves the deployment state as it was before this run.
+#
 # Usage:
 #   bash scripts/auto-bind.sh <target> [--profile <name>]
+#   bash scripts/auto-bind.sh <target> --rollback [--profile <name>]
 #   CONFIRM_NAME_FALLBACK=yes bash scripts/auto-bind.sh <target>  # auto-approve name fallbacks in CI
 
 set -euo pipefail
@@ -40,17 +49,20 @@ if [[ "${BASH_VERSINFO[0]}" -lt 4 ]]; then
   exit 1
 fi
 
-TARGET="${1:?Usage: bash scripts/auto-bind.sh <target> [--profile <name>]}"
-PROFILE_FLAG=""
+TARGET="${1:?Usage: bash scripts/auto-bind.sh <target> [--rollback] [--profile <name>]}"
+PROFILE_ARGS=()
+ROLLBACK=0
 shift || true
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --profile) PROFILE_FLAG="--profile $2"; shift 2 ;;
+    --profile) [[ $# -ge 2 ]] || { echo "ERROR: --profile needs a value" >&2; exit 1; }; PROFILE_ARGS=(--profile "$2"); shift 2 ;;
+    --rollback) ROLLBACK=1; shift ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
   esac
 done
 
 BINDINGS_FILE="bindings/${TARGET}.yml"
+RUN_FILE=".databricks/auto-bind-${TARGET}.run"
 
 # --- Guardrails ---
 
@@ -67,6 +79,27 @@ if [[ "$TARGET" == "dev" ]]; then
   exit 1
 fi
 
+# --- Rollback mode: unbind the keys bound by the last run, then stop ---
+
+if [[ $ROLLBACK -eq 1 ]]; then
+  if [[ ! -s "$RUN_FILE" ]]; then
+    echo "Rollback: nothing recorded in $RUN_FILE, nothing to unbind."
+    exit 0
+  fi
+  RB_FAIL=0
+  while IFS= read -r key; do
+    [[ -z "$key" ]] && continue
+    echo "  ↩  unbinding $key"
+    if ! databricks bundle deployment unbind "$key" -t "$TARGET" ${PROFILE_ARGS[@]+"${PROFILE_ARGS[@]}"}; then
+      echo "  ERROR: could not unbind '$key'. Unbind it manually before any deploy:" >&2
+      echo "    databricks bundle deployment unbind $key -t $TARGET" >&2
+      RB_FAIL=1
+    fi
+  done < "$RUN_FILE"
+  [[ $RB_FAIL -eq 0 ]] && rm -f "$RUN_FILE"
+  exit $RB_FAIL
+fi
+
 echo "════════════════════════════════════════════════════════════"
 echo " dabs-migrator: auto-bind — target: $TARGET"
 echo "════════════════════════════════════════════════════════════"
@@ -75,7 +108,7 @@ echo ""
 # --- Step 1: Validate bundle to get resolved resource names ---
 
 echo "▶ 1/3  Validating bundle …"
-BUNDLE_JSON=$(databricks bundle validate -t "$TARGET" $PROFILE_FLAG --output json 2>/dev/null) || {
+BUNDLE_JSON=$(databricks bundle validate -t "$TARGET" ${PROFILE_ARGS[@]+"${PROFILE_ARGS[@]}"} --output json) || {
   echo "ERROR: 'databricks bundle validate' failed. Fix validation errors before binding." >&2
   exit 1
 }
@@ -83,8 +116,17 @@ BUNDLE_JSON=$(databricks bundle validate -t "$TARGET" $PROFILE_FLAG --output jso
 # --- Step 2: Fetch workspace resources for the name-fallback path ---
 
 echo "▶ 2/3  Querying workspace …"
-ALL_JOBS=$(databricks jobs list $PROFILE_FLAG -o json 2>/dev/null)
-ALL_PIPELINES=$(databricks pipelines list-pipelines $PROFILE_FLAG -o json 2>/dev/null)
+ALL_JOBS=$(databricks jobs list ${PROFILE_ARGS[@]+"${PROFILE_ARGS[@]}"} -o json) || {
+  echo "ERROR: 'databricks jobs list' failed (see the error above; check auth for target '$TARGET')." >&2
+  exit 1
+}
+ALL_PIPELINES=$(databricks pipelines list-pipelines ${PROFILE_ARGS[@]+"${PROFILE_ARGS[@]}"} -o json) || {
+  echo "ERROR: 'databricks pipelines list-pipelines' failed (see the error above)." >&2
+  exit 1
+}
+
+mkdir -p .databricks
+: > "$RUN_FILE"
 
 # --- Load explicit IDs from bindings file (primary source) ---
 
@@ -112,22 +154,25 @@ run_bind() {
   local key="$1" bind_id="$2"
   local out exit_code=0
   out=$(databricks bundle deployment bind "$key" "$bind_id" \
-        -t "$TARGET" $PROFILE_FLAG --auto-approve 2>&1) || exit_code=$?
+        -t "$TARGET" ${PROFILE_ARGS[@]+"${PROFILE_ARGS[@]}"} --auto-approve 2>&1) || exit_code=$?
 
   if [[ $exit_code -ne 0 ]]; then
     if echo "$out" | grep -qi "already managed"; then
-      # Resource is already tracked in the bundle's workspace state.
-      # Read the actual bound ID from the local state file (more reliable than the found ID).
-      local state_file=".databricks/bundle/${TARGET}/resources.json"
-      local actual_id="$bind_id"
-      if [[ -f "$state_file" ]]; then
-        local state_id
-        state_id=$(jq -r --arg k "$key" \
-          '.state | to_entries[] | select(.key | endswith("." + $k)) | .value.__id__ // empty' \
-          "$state_file" 2>/dev/null | head -1)
-        [[ -n "$state_id" ]] && actual_id="$state_id"
+      # Already bound in the remote deployment state (for example by an earlier run).
+      # Read the bound ID from the remote state and stop if it is not the ID we asked for.
+      local actual_id
+      actual_id=$(databricks bundle summary -t "$TARGET" ${PROFILE_ARGS[@]+"${PROFILE_ARGS[@]}"} -o json \
+        | jq -r --arg k "$key" '[.resources[]? | .[$k]? | .id? // empty] | first // empty') || actual_id=""
+      if [[ -z "$actual_id" ]]; then
+        echo "  ERROR: '$key' is already managed, but its bound ID could not be read from 'bundle summary'." >&2
+        exit 1
       fi
-      echo "  ⏭   $key  already managed in bundle state (ID: $actual_id)"
+      if [[ "$actual_id" != "$bind_id" ]]; then
+        echo "  ERROR: '$key' is already bound to $actual_id, not $bind_id." >&2
+        echo "    Check which asset is correct. To change it: databricks bundle deployment unbind $key -t $TARGET, then re-run." >&2
+        exit 1
+      fi
+      echo "  ⏭   $key  already bound to $actual_id (matches)"
       RESULT_MAP["$key"]="$actual_id"
     else
       printf '%s\n' "$out" >&2
@@ -137,6 +182,7 @@ run_bind() {
   else
     printf '%s\n' "$out"
     RESULT_MAP["$key"]="$bind_id"
+    printf '%s\n' "$key" >> "$RUN_FILE"   # newly bound by this run; --rollback unbinds these
   fi
   ((BIND_COUNT++)) || true
 }
@@ -163,8 +209,9 @@ name_fallback() {
     echo "     Verify this is the correct asset. To confirm: add  $key: \"$found_id\"  to $BINDINGS_FILE."
 
     local proceed=0
-    if [[ -t 0 ]]; then
-      read -r -p "     Bind now? [y/N] " resp
+    # Ask on the terminal, not stdin: stdin is the key list inside the loops below.
+    if [[ -t 1 ]] && { : < /dev/tty; } 2>/dev/null; then
+      read -r -p "     Bind now? (no = it will be created as a new asset) [y/N] " resp < /dev/tty
       [[ "$resp" =~ ^[Yy]$ ]] && proceed=1
     elif [[ "${CONFIRM_NAME_FALLBACK:-}" == "yes" ]]; then
       echo "     CONFIRM_NAME_FALLBACK=yes — proceeding."
@@ -260,4 +307,4 @@ if [[ $AMBIGUOUS -gt 0 ]]; then
 fi
 
 echo ""
-echo "✅  Done. Next step: databricks bundle plan -t $TARGET -o json"
+echo "✅  Done. Next step: bash scripts/plan-check.sh $TARGET --first-deploy (run --rollback if it fails)"

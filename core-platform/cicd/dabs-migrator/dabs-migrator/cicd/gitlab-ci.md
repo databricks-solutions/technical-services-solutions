@@ -9,40 +9,29 @@ Single `.gitlab-ci.yml` at repo root.
 Before the first recurring deploy to a staging or prod source workspace, add a `bind_and_deploy_<source_target>` job to `.gitlab-ci.yml`, trigger it manually once (via the GitLab UI `when: manual` gate), and then remove the job.
 
 ```yaml
-# Add temporarily to .gitlab-ci.yml — remove after the first successful run.
+# Add temporarily to .gitlab-ci.yml (jq comes from the default before_script). Remove after the first successful run.
 bind_and_deploy_<source_target>:
   stage: deploy
   environment:
-    name: <source_target>
+    name: <source_target>   # protect this environment; only maintainers can run it
   script:
-    - bash scripts/auto-bind.sh <source_target>
-    - |
-      set -euo pipefail
-      PLAN_JSON=$(databricks bundle plan -t <source_target> -o json 2>plan.err)
-            [[ -s plan.err ]] && cat plan.err >&2
-      printf '%s\n' "$PLAN_JSON" | jq .
-      if echo "$PLAN_JSON" | jq -e '[.plan | to_entries[] | select(.value.action == "recreate" or .value.action == "delete")] | length > 0' &>/dev/null; then
-        echo "ERROR: Plan shows recreate/delete — config mismatch or wrong bind ID."; exit 1
-      fi
-      if [[ -f "bindings/<source_target>.yml" ]]; then
-        while IFS= read -r line; do
-          [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
-          key=$(echo "$line" | cut -d: -f1 | tr -d ' '); [[ -z "$key" ]] && continue
-          if echo "$PLAN_JSON" | jq -e --arg k "$key" '[.plan | to_entries[] | select(.key | endswith("." + $k)) | select(.value.action == "create")] | length > 0' &>/dev/null; then
-            echo "ERROR: Bound resource '$key' plans as 'create' — bind may have failed."; exit 1
-          fi
-        done < "bindings/<source_target>.yml"
-      fi
-      echo "Plan check passed."
+    - bash scripts/auto-bind.sh <source_target> || { bash scripts/auto-bind.sh <source_target> --rollback; exit 1; }
+    - bash scripts/plan-check.sh <source_target> --first-deploy || { bash scripts/auto-bind.sh <source_target> --rollback; exit 1; }
     - databricks bundle deploy -t <source_target>
+  artifacts:
+    when: always
+    paths: [plan-<source_target>.json]
   variables:
     DATABRICKS_HOST: $DATABRICKS_HOST
     DATABRICKS_CLIENT_ID: $DATABRICKS_CLIENT_ID
     DATABRICKS_CLIENT_SECRET: $DATABRICKS_CLIENT_SECRET
     DATABRICKS_BUNDLE_ENV: <source_target>
   rules:
-    - when: manual
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
 ```
+
+> The step runs `scripts/auto-bind.sh`, then `scripts/plan-check.sh --first-deploy`, and deploys only if the check passes. If binding or the check fails, `auto-bind.sh --rollback` unbinds the keys this run bound, so nothing stays half-bound. The check blocks any delete or replacement, any create of a bound key, any other create, and changes to `run_as`, schedules, catalog/schema, storage or notifications of an existing asset, unless approved in `plan-allow/<source_target>.txt` (reviewed in a pull request). The full plan is saved as `plan-<source_target>.json`.
 
 > Do **not** add `bundle deployment bind` to `validate`, `deploy_staging`, or `deploy_prod`. Binding is one-time; repeating it in recurring jobs fails on the second run.
 
@@ -62,7 +51,7 @@ stages: [validate, deploy]
 default:
   image: ubuntu:24.04
   before_script:
-    - apt-get update && apt-get install -y curl ca-certificates
+    - apt-get update && apt-get install -y curl ca-certificates jq
     - curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
 
 validate:
@@ -85,7 +74,7 @@ deploy_staging:
     name: staging
   script:
     - databricks bundle validate -t staging --output json
-    - databricks bundle deploy -t staging
+    - bash scripts/plan-check.sh staging && databricks bundle deploy -t staging
   variables:
     DATABRICKS_HOST: $DATABRICKS_HOST
     DATABRICKS_CLIENT_ID: $DATABRICKS_CLIENT_ID
@@ -101,7 +90,7 @@ deploy_prod:
     action: prepare
   script:
     - databricks bundle validate -t prod --output json
-    - databricks bundle deploy -t prod
+    - bash scripts/plan-check.sh prod && databricks bundle deploy -t prod
   variables:
     DATABRICKS_HOST: $DATABRICKS_HOST
     DATABRICKS_CLIENT_ID: $DATABRICKS_CLIENT_ID

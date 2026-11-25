@@ -6,6 +6,27 @@ Entries are reverse-chronological. Each entry: date, what changed, **why** (with
 
 ---
 
+## 2026-11-25: Review fixes for #155 (Andres Garcia review, blockers B1 to B6)
+
+**Change:**
+1. New `scripts/plan-check.sh`, used by every CI tool instead of inline shell. It runs `bundle plan -o json`, prints every planned change with old and new values, saves `plan-<target>.json`, and fails closed:
+   - on unexpected output (not `plan_version` 2 with a `.plan` object), so a jq error can no longer pass the gate (B2);
+   - on any `delete`, `recreate` or `update_id`, unless approved in `plan-allow/<target>.txt`;
+   - on `create` of any key listed in `bindings/<target>.yml` (missed bind);
+   - with `--first-deploy`: on any other `create` (all resource types, not just jobs and pipelines) unless approved (B4), and on changes to `run_as`, schedules/triggers, catalog/schema, storage or notifications of an existing asset unless approved (B5).
+   It runs on bash 3.2, and shows `plan.err` when `bundle plan` itself fails.
+2. `scripts/auto-bind.sh`: records the keys each run binds and adds `--rollback` to unbind them; the one-time workflow rolls back when binding or the plan check fails (B3). "Already managed" now reads the bound ID from `bundle summary` (remote state) and stops if it differs from the requested ID (M1). The name-fallback prompt reads from `/dev/tty`, so it works inside the key loops (M2). CLI errors from `validate`, `jobs list` and `pipelines list-pipelines` are shown instead of hidden, and `--profile` is passed as an array.
+3. `cicd/*.md`: the one-time bind-and-deploy snippets are rewritten to three commands (auto-bind, plan-check, deploy, with rollback), which fixes the invalid YAML in Azure DevOps and Bitbucket (B1). All 14 YAML blocks parse. Recurring staging and prod deploys now run `scripts/plan-check.sh` first (B3). GitLab and Bitbucket install `jq` (M3). Jenkins runs the step under `#!/bin/bash` (M4). The bind job is limited to `main` on GitHub, GitLab, Azure DevOps, CircleCI and Jenkins (m6); Bitbucket documents the deployment branch restriction. The CircleCI bind job no longer re-maps `$VAR` under `environment:`, and the Bitbucket job drops `script_env` and the invalid `trigger: manual` on a first step.
+4. `SKILL.md`: new hard rule and banner item, the agent never runs bind, unbind, `auto-bind.sh`, `plan-check.sh` or a staging/prod deploy itself (B6). Step 5 now writes `bindings/` (and `plan-allow/` for genuinely new assets) and emits the CI workflow. Step 7 copies both scripts and ignores `plan-*.json`.
+
+**Why:** the plan gate could pass on a jq error, allowed creates of unlisted resource types and unseen changes to `run_as` or schedules, and left a bind in place when the check failed; two of the six CI snippets were invalid YAML; and SKILL.md told the agent to bind staging/prod from a laptop.
+
+**Tested:** offline with a stub `databricks` CLI: 25 cases for `plan-check.sh` on bash 3.2 and 17 for `auto-bind.sh` on bash 5 (bind by ID, rollback, name-fallback failure in CI, already-managed match/mismatch, error surfacing, dev refusal, bash 3.2 message). `plan-check.sh` also run against real `bundle plan -o json` output on CLI 1.22.1 (read-only). Not yet tested end to end in a sandbox workspace.
+
+**Left for follow-ups:** destroy protection on every bound resource type (M6), CLI and action pinning (M7, tracked in #118), the older CircleCI/Bitbucket `$VAR` mapping in the recurring pipelines (M5), bind formats for database, synced table, vector search and Postgres types (m2), typed keys in `bindings/` (m3).
+
+---
+
 ## 2026-11-18: Reviewer feedback — bind by ID primary, improved plan check, secret_scopes/experiments
 
 **Changes from reviewer feedback:**

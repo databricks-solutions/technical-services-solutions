@@ -9,7 +9,9 @@
 Before the first recurring deploy to a staging or prod source workspace, add a temporary `bind-and-deploy-<source_target>` job to `.circleci/config.yml`, gate it behind an `approval` job, run it once, and then remove both jobs.
 
 ```yaml
-# Add temporarily to .circleci/config.yml — remove after the first successful run.
+# Add temporarily to .circleci/config.yml. Remove both jobs after the first successful run.
+# DATABRICKS_HOST, DATABRICKS_CLIENT_ID and DATABRICKS_CLIENT_SECRET come from project environment
+# variables or a context. Do not re-map them under `environment:` (CircleCI does not expand $VAR there).
 jobs:
   bind-and-deploy-<source_target>:
     executor: ubuntu
@@ -17,42 +19,34 @@ jobs:
       - checkout
       - install-cli
       - run:
-          name: Bind migrated resources and deploy to <source_target>
+          name: Bind, check the plan, deploy (unbind again if anything fails)
           environment:
-            DATABRICKS_HOST: $DATABRICKS_HOST
-            DATABRICKS_CLIENT_ID: $DATABRICKS_CLIENT_ID
-            DATABRICKS_CLIENT_SECRET: $DATABRICKS_CLIENT_SECRET
             DATABRICKS_BUNDLE_ENV: <source_target>
           command: |
             set -euo pipefail
-            bash scripts/auto-bind.sh <source_target>
-            PLAN_JSON=$(databricks bundle plan -t <source_target> -o json 2>plan.err)
-            [[ -s plan.err ]] && cat plan.err >&2
-            printf '%s\n' "$PLAN_JSON" | jq .
-            if echo "$PLAN_JSON" | jq -e '[.plan | to_entries[] | select(.value.action == "recreate" or .value.action == "delete")] | length > 0' &>/dev/null; then
-              echo "ERROR: Plan shows recreate/delete — config mismatch or wrong bind ID."; exit 1
-            fi
-            if [[ -f "bindings/<source_target>.yml" ]]; then
-              while IFS= read -r line; do
-                [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
-                key=$(echo "$line" | cut -d: -f1 | tr -d ' '); [[ -z "$key" ]] && continue
-                if echo "$PLAN_JSON" | jq -e --arg k "$key" '[.plan | to_entries[] | select(.key | endswith("." + $k)) | select(.value.action == "create")] | length > 0' &>/dev/null; then
-                  echo "ERROR: Bound resource '$key' plans as 'create' — bind may have failed."; exit 1
-                fi
-              done < "bindings/<source_target>.yml"
-            fi
-            echo "Plan check passed."
+            bash scripts/auto-bind.sh <source_target> || { bash scripts/auto-bind.sh <source_target> --rollback; exit 1; }
+            bash scripts/plan-check.sh <source_target> --first-deploy || { bash scripts/auto-bind.sh <source_target> --rollback; exit 1; }
             databricks bundle deploy -t <source_target>
+      - store_artifacts:
+          path: plan-<source_target>.json
 
-# Gate it behind a manual approval in the workflow:
 workflows:
   bind-and-deploy-once:
     jobs:
       - hold-bind:
           type: approval
+          filters:
+            branches:
+              only: main
       - bind-and-deploy-<source_target>:
           requires: [hold-bind]
+          # context: databricks-<source_target>   # if the credentials live in a context
+          filters:
+            branches:
+              only: main
 ```
+
+> The step runs `scripts/auto-bind.sh`, then `scripts/plan-check.sh --first-deploy`, and deploys only if the check passes. If binding or the check fails, `auto-bind.sh --rollback` unbinds the keys this run bound, so nothing stays half-bound. The check blocks any delete or replacement, any create of a bound key, any other create, and changes to `run_as`, schedules, catalog/schema, storage or notifications of an existing asset, unless approved in `plan-allow/<source_target>.txt` (reviewed in a pull request). The full plan is saved as `plan-<source_target>.json`.
 
 > Do **not** add `bundle deployment bind` to the `validate`, `deploy-staging`, or `deploy-prod` jobs. Binding is one-time; repeating it in recurring jobs fails on the second run.
 
@@ -111,7 +105,7 @@ jobs:
             DATABRICKS_BUNDLE_ENV: staging
           command: |
             databricks bundle validate -t staging --output json
-            databricks bundle deploy -t staging
+            bash scripts/plan-check.sh staging && databricks bundle deploy -t staging
 
   deploy-prod:
     executor: ubuntu
@@ -126,7 +120,7 @@ jobs:
             DATABRICKS_BUNDLE_ENV: prod
           command: |
             databricks bundle validate -t prod --output json
-            databricks bundle deploy -t prod
+            bash scripts/plan-check.sh prod && databricks bundle deploy -t prod
 
 workflows:
   validate-and-deploy:

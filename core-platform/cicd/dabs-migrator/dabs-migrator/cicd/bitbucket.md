@@ -9,44 +9,28 @@ Single `bitbucket-pipelines.yml` at repo root.
 Before the first recurring deploy to a staging or prod source workspace, add a custom pipeline to `bitbucket-pipelines.yml`, trigger it manually once from the Bitbucket UI (Pipelines → Run pipeline → custom), and then remove the step.
 
 ```yaml
-# Add temporarily under pipelines.custom in bitbucket-pipelines.yml.
-# Remove after the first successful run.
+# Add temporarily under pipelines.custom in bitbucket-pipelines.yml. Remove after the first successful run.
+# Custom pipelines are started manually (Pipelines > Run pipeline). Restrict the <source_target>
+# deployment environment to the main branch in Repository settings > Deployments.
+# DATABRICKS_HOST, DATABRICKS_CLIENT_ID and DATABRICKS_CLIENT_SECRET come from the deployment variables.
 pipelines:
   custom:
     bind-and-deploy-<source_target>:
       - step:
           name: "Bind and deploy (one-time, <source_target>)"
           deployment: <source_target>
-          trigger: manual
           script:
-            - apt-get update && apt-get install -y curl ca-certificates
+            - apt-get update && apt-get install -y curl ca-certificates jq
             - curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
-            - bash scripts/auto-bind.sh <source_target>
-            - |
-              set -euo pipefail
-              PLAN_JSON=$(databricks bundle plan -t <source_target> -o json 2>plan.err)
-            [[ -s plan.err ]] && cat plan.err >&2
-              printf '%s\n' "$PLAN_JSON" | jq .
-              if echo "$PLAN_JSON" | jq -e '[.plan | to_entries[] | select(.value.action == "recreate" or .value.action == "delete")] | length > 0' &>/dev/null; then
-                echo "ERROR: Plan shows recreate/delete — config mismatch or wrong bind ID."; exit 1
-              fi
-              if [[ -f "bindings/<source_target>.yml" ]]; then
-                while IFS= read -r line; do
-                  [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
-                  key=$(echo "$line" | cut -d: -f1 | tr -d ' '); [[ -z "$key" ]] && continue
-                  if echo "$PLAN_JSON" | jq -e --arg k "$key" '[.plan | to_entries[] | select(.key | endswith("." + $k)) | select(.value.action == "create")] | length > 0' &>/dev/null; then
-                    echo "ERROR: Bound resource '$key' plans as 'create' — bind may have failed."; exit 1
-                  fi
-                done < "bindings/<source_target>.yml"
-              fi
-              echo "Plan check passed."
+            - export DATABRICKS_BUNDLE_ENV=<source_target>
+            - bash scripts/auto-bind.sh <source_target> || { bash scripts/auto-bind.sh <source_target> --rollback; exit 1; }
+            - bash scripts/plan-check.sh <source_target> --first-deploy || { bash scripts/auto-bind.sh <source_target> --rollback; exit 1; }
             - databricks bundle deploy -t <source_target>
-          script_env:
-            DATABRICKS_HOST: $DATABRICKS_HOST
-            DATABRICKS_CLIENT_ID: $DATABRICKS_CLIENT_ID
-            DATABRICKS_CLIENT_SECRET: $DATABRICKS_CLIENT_SECRET
-            DATABRICKS_BUNDLE_ENV: <source_target>
+          artifacts:
+            - plan-<source_target>.json
 ```
+
+> The step runs `scripts/auto-bind.sh`, then `scripts/plan-check.sh --first-deploy`, and deploys only if the check passes. If binding or the check fails, `auto-bind.sh --rollback` unbinds the keys this run bound, so nothing stays half-bound. The check blocks any delete or replacement, any create of a bound key, any other create, and changes to `run_as`, schedules, catalog/schema, storage or notifications of an existing asset, unless approved in `plan-allow/<source_target>.txt` (reviewed in a pull request). The full plan is saved as `plan-<source_target>.json`.
 
 > Do **not** add `bundle deployment bind` to the pull-request, `main`, or `v*` tag pipelines. Binding is one-time; repeating it in recurring steps fails on the second run.
 
@@ -68,13 +52,13 @@ definitions:
     - step: &install-cli
         name: Install Databricks CLI
         script:
-          - apt-get update && apt-get install -y curl ca-certificates
+          - apt-get update && apt-get install -y curl ca-certificates jq
           - curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
 
     - step: &validate
         name: Validate bundle
         script:
-          - apt-get update && apt-get install -y curl ca-certificates
+          - apt-get update && apt-get install -y curl ca-certificates jq
           - curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
           - export DATABRICKS_HOST=$DATABRICKS_HOST
           - export DATABRICKS_CLIENT_ID=$DATABRICKS_CLIENT_ID
@@ -96,14 +80,14 @@ pipelines:
           name: Deploy to staging
           deployment: staging
           script:
-            - apt-get update && apt-get install -y curl ca-certificates
+            - apt-get update && apt-get install -y curl ca-certificates jq
             - curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
             - export DATABRICKS_HOST=$DATABRICKS_HOST
             - export DATABRICKS_CLIENT_ID=$DATABRICKS_CLIENT_ID
             - export DATABRICKS_CLIENT_SECRET=$DATABRICKS_CLIENT_SECRET
             - export DATABRICKS_BUNDLE_ENV=staging
             - databricks bundle validate -t staging --output json
-            - databricks bundle deploy -t staging
+            - bash scripts/plan-check.sh staging && databricks bundle deploy -t staging
 
   tags:
     "v*":
@@ -112,14 +96,14 @@ pipelines:
           deployment: production
           trigger: manual
           script:
-            - apt-get update && apt-get install -y curl ca-certificates
+            - apt-get update && apt-get install -y curl ca-certificates jq
             - curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
             - export DATABRICKS_HOST=$DATABRICKS_HOST
             - export DATABRICKS_CLIENT_ID=$DATABRICKS_CLIENT_ID
             - export DATABRICKS_CLIENT_SECRET=$DATABRICKS_CLIENT_SECRET
             - export DATABRICKS_BUNDLE_ENV=prod
             - databricks bundle validate -t prod --output json
-            - databricks bundle deploy -t prod
+            - bash scripts/plan-check.sh prod && databricks bundle deploy -t prod
 ```
 
 ## Notes

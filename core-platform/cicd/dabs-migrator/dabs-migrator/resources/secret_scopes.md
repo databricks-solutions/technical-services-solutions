@@ -24,7 +24,7 @@ resources:
 
 To intentionally delete a bound scope: set `prevent_destroy: false`, run `databricks bundle deploy`, then `databricks bundle destroy`.
 
-To remove a scope from bundle management without deleting it: set `prevent_destroy: false`, `bundle deploy`, then `databricks bundle deployment unbind <key> -t <target>`, remove the YAML key, and `bundle deploy` again.
+To remove a scope from bundle management without deleting it: `databricks bundle deployment unbind <key> -t <target>`, remove the YAML key, then `bundle deploy`.
 
 > ⚠️ **Never rename a bound resource's key.** A key rename is treated as delete + create by the bundle.
 

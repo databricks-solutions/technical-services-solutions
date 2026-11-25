@@ -6,7 +6,10 @@
 #
 # PRIMARY path: binds by explicit ID from bindings/<target>.yml (populated during migration step 4).
 # FALLBACK: for resources not listed in bindings/<target>.yml, searches by name.
-#   - 1 match  → prompts for confirmation (interactive), or requires CONFIRM_NAME_FALLBACK=yes (CI).
+#   - 1 match, interactive  → prompts for confirmation.
+#   - 1 match, CI (no TTY)  → FAILS unless CONFIRM_NAME_FALLBACK=yes is set.
+#     Skipping would silently create a duplicate on the next deploy; failing is safer.
+#   - 1 match, CONFIRM_NAME_FALLBACK=yes → binds automatically (dangerous: verify the ID first).
 #   - 0 matches → skips; the first `bundle deploy` will create a new resource.
 #   - 2+ matches → fails with instructions to add the correct ID to bindings/<target>.yml manually.
 #
@@ -27,6 +30,15 @@
 #   CONFIRM_NAME_FALLBACK=yes bash scripts/auto-bind.sh <target>  # auto-approve name fallbacks in CI
 
 set -euo pipefail
+
+# Require bash 4+ for associative arrays (declare -A).
+# macOS ships bash 3.2 — install a newer shell with: brew install bash
+if [[ "${BASH_VERSINFO[0]}" -lt 4 ]]; then
+  echo "ERROR: bash 4+ is required (current: $BASH_VERSION)." >&2
+  echo "  macOS: brew install bash" >&2
+  echo "  Then run: /opt/homebrew/bin/bash scripts/auto-bind.sh $*" >&2
+  exit 1
+fi
 
 TARGET="${1:?Usage: bash scripts/auto-bind.sh <target> [--profile <name>]}"
 PROFILE_FLAG=""
@@ -153,19 +165,28 @@ name_fallback() {
     local proceed=0
     if [[ -t 0 ]]; then
       read -r -p "     Bind now? [y/N] " resp
-      [[ "${resp,,}" == "y" ]] && proceed=1
+      [[ "$resp" =~ ^[Yy]$ ]] && proceed=1
     elif [[ "${CONFIRM_NAME_FALLBACK:-}" == "yes" ]]; then
       echo "     CONFIRM_NAME_FALLBACK=yes — proceeding."
       proceed=1
     else
-      echo "     Non-interactive: skipped. Add ID to $BINDINGS_FILE or set CONFIRM_NAME_FALLBACK=yes."
+      # Non-interactive without CONFIRM_NAME_FALLBACK=yes: fail rather than skip.
+      # Skipping would let bundle deploy create a duplicate resource in staging/prod,
+      # and the plan check wouldn't catch it (the key isn't in bindings/).
+      echo "" >&2
+      echo "ERROR: '$key' was found by name but is not listed in $BINDINGS_FILE." >&2
+      echo "  In non-interactive mode this is an error — skipping would create a duplicate" >&2
+      echo "  on the next deploy, and the plan check would not catch it." >&2
+      echo "  Fix: add   $key: \"$found_id\"   to $BINDINGS_FILE and re-run." >&2
+      echo "  Or set CONFIRM_NAME_FALLBACK=yes to auto-approve (verify the ID is correct first)." >&2
+      exit 1
     fi
 
     if [[ $proceed -eq 1 ]]; then
       echo "  ✅  $type.$key  →  $found_id  (name fallback)"
       run_bind "$key" "$found_id"
     else
-      echo "  ↩  $type.$key  skipped — will be created as a new resource."
+      echo "  ↩  $type.$key  skipped."
       ((NEW_COUNT++)) || true
     fi
 

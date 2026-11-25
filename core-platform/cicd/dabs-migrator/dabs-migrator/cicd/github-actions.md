@@ -43,7 +43,8 @@ jobs:
           DATABRICKS_BUNDLE_ENV: <source_target>
         run: |
           set -euo pipefail
-          PLAN_JSON=$(databricks bundle plan -t <source_target> -o json 2>&1)
+          PLAN_JSON=$(databricks bundle plan -t <source_target> -o json 2>plan.err)
+            [[ -s plan.err ]] && cat plan.err >&2
           printf '%s\n' "$PLAN_JSON" | jq .
 
           # Fail on recreate or delete for any resource

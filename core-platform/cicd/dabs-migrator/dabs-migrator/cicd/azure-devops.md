@@ -41,7 +41,8 @@ stages:
                     DATABRICKS_CLIENT_SECRET: $(DATABRICKS_CLIENT_SECRET)
                 - script: |
                     set -euo pipefail
-                    PLAN_JSON=$(databricks bundle plan -t <source_target> -o json 2>&1)
+                    PLAN_JSON=$(databricks bundle plan -t <source_target> -o json 2>plan.err)
+            [[ -s plan.err ]] && cat plan.err >&2
                     printf '%s\n' "$PLAN_JSON" | jq .
                     if echo "$PLAN_JSON" | jq -e '[.plan | to_entries[] | select(.value.action == "recreate" or .value.action == "delete")] | length > 0' &>/dev/null; then
                       echo "ERROR: Plan shows recreate/delete — config mismatch or wrong bind ID."; exit 1

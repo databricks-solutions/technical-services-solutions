@@ -1,0 +1,11 @@
+# design.yaml — where the semantic layer will live. Everything optional except target.catalog before apply.
+target:
+  catalog: acme_prod          # Metric Views are created in <catalog>.<schema>
+  schema: semantic
+  warehouse_id: 0123456789abcdef   # optional — a running/serverless warehouse is auto-picked (DBR 17.3+ for metric views)
+  tag_prefix: acme            # namespace for governed domain tags — essential in shared accounts
+# Map each source-tool table to its Unity Catalog name (default: <catalog>.<source schema>.<table>)
+table_map:
+  retail_dm.dm_sales_fct: acme_prod.retail.sales_fct
+  retail_dm.dm_inventory_fct: acme_prod.retail.inventory_fct
+  crm.customer_orders_fct: acme_prod.crm.customer_orders_fct

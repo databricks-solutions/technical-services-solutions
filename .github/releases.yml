@@ -138,6 +138,11 @@
   kind: "Agent skill"
   path: "aibi-migration/aibi-migration-map"
 
+- slug: uc-semantics-migration-map
+  name: "UC Semantics Migration Map"
+  kind: "Agent skill"
+  path: "aibi-migration/uc-semantics-migration-map"
+
 - slug: mlops-readiness-scorecard
   name: "MLOps Readiness Scorecard"
   kind: "Databricks notebook"

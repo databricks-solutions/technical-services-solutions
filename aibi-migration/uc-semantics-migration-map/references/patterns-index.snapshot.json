@@ -1,0 +1,108 @@
+{
+ "repo": "databricks-solutions/uc-semantics-patterns",
+ "commit": "279f4ec1064d3f7df0ca82defed71b681086f26a",
+ "source": "snapshot",
+ "patterns": [
+  {
+   "folder": "ABC classification",
+   "files": [
+    "ABC_classification.yml",
+    "README.md"
+   ],
+   "summary": "ABC classification answers the \"where should we focus?\" question by ranking entities on how much they contribute to a total. It rests on the **Pareto principle**: a small share of entities usually drives most of the value. A typical example is **inventory and assortment management**: products are so"
+  },
+  {
+   "folder": "Calendars/Fiscal Calendar",
+   "files": [
+    "Fiscal Calendar.yml",
+    "README.md"
+   ],
+   "summary": "Many organizations run their budget and reporting on a **fiscal year** that doesn't start on January 1 \u2014 governments, universities, and companies whose business is seasonal often start it in April, July, or October. Reporting on calendar quarters then cuts across the planning cycle:"
+  },
+  {
+   "folder": "Calendars/Retail Calendar",
+   "files": [
+    "README.md",
+    "Retail Calendar.yml"
+   ],
+   "summary": "Retail sales are **weekly-seasonal** \u2014 weekends spike, weekdays dip \u2014 so a fair comparison must hold the number of Saturdays and trading days constant. The Gregorian calendar can't do that:"
+  },
+  {
+   "folder": "Currency conversion",
+   "files": [
+    "Multiple exchange rate types.yml",
+    "Multiple source currencies.yml",
+    "README.md",
+    "Single source currency.yml",
+    "currency-conversion.sql"
+   ],
+   "summary": "Multinational businesses record transactions in many currencies but need to report them in a single, comparable currency chosen by whoever is looking at the report. Sales booked in euros, pounds, and yen all have to be restated into, say, US dollars before they can be summed into a meaningful total,"
+  },
+  {
+   "folder": "Dynamic segmentation",
+   "files": [
+    "Dynamic_segmentation.yml",
+    "README.md"
+   ],
+   "summary": "The Dynamic segmentation pattern is useful for classifying entities based on measures. A typical example is a **loyalty program**: members are graded into tiers based on spend, and the grading is re-run continuously. The clustering is dynamic, so that the categorization considers the filters and gro"
+  },
+  {
+   "folder": "Ranking",
+   "files": [
+    "README.md",
+    "Ranking.yml"
+   ],
+   "summary": "Ranking answers the \"who's on top?\" questions that leaders ask constantly: *Who are our biggest customers? Who leads within each year?* A rank turns a raw measure, e.g., order count, into a position (1st, 2nd, 3rd, \u2026) or a relative standing (top half, percentile), making it easy to spot leaders, lag"
+  },
+  {
+   "folder": "Semi-additive calculations",
+   "files": [
+    "README.md",
+    "Semi-additive calculations.yml"
+   ],
+   "summary": "Most numbers in business reports add up cleanly. If you sold 100 items in January, 100 in February, and 100 in March, your quarter total is 300. But some numbers don't work this way. Stock inventory is the classic example \u2014 if your warehouse held 100 items each month, you don't have 300 items at qua"
+  },
+  {
+   "folder": "Static segmentation",
+   "files": [
+    "README.md",
+    "Static_segmentation.yml",
+    "Static_segmentation_config.sql",
+    "Static_segmentation_config.yml"
+   ],
+   "summary": "The static segmentation pattern classifies numerical values into ranges. A typical example is the analysis of orders by price range: rather than reasoning about every individual order value \u2014 too many distinct values to be useful on their own \u2014 you group orders into a handful of **named ranges** (*v"
+  },
+  {
+   "folder": "Time Intelligence/Moving calculations",
+   "files": [
+    "Moving_calculations.yml",
+    "README.md"
+   ],
+   "summary": "A \"moving calculation\" aggregates nearby values with a specific function over a rolling window, like a \"moving average\" does by averaging nearby values over a rolling window. It matters because it smooths out noisy data to estimate real progress against a meaningful window: the week, month, quarter,"
+  },
+  {
+   "folder": "Time Intelligence/Period-over-period growth",
+   "files": [
+    "Period-over-period growth.yml",
+    "README.md"
+   ],
+   "summary": "\"Period-over-period growth\" measures how a metric changes relative to the same type of period in the past \u2014 such as comparing this month's sales to last month's (month-over-month, MoM), this quarter's to last quarter's (quarter-over-quarter, QoQ), or this year's to last year's (year-over-year, YoY)."
+  },
+  {
+   "folder": "Time Intelligence/Period-to-date growth",
+   "files": [
+    "Period-to-date growth.yml",
+    "README.md"
+   ],
+   "summary": "Period-to-date growth compares cumulative totals within a period to the same point in a prior period. Unlike simple period-over-period growth (which compares complete periods), period-to-date growth enables **fair comparisons** for incomplete periods. For example, comparing August 15th's year-to-dat"
+  },
+  {
+   "folder": "Time Intelligence/Period-to-date totals",
+   "files": [
+    "Period-to-date totals.yml",
+    "README.md"
+   ],
+   "summary": "A \"period-to-date total\" adds up activity from the start of a period up to today \u2014 like \"total sales this year so far\" (year-to-date). It matters because it shows real progress against a meaningful boundary: the week, month, quarter, or year. Leaders use it to track pace toward targets, compare agai"
+  }
+ ]
+}

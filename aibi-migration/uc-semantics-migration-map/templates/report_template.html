@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>__TITLE__</title>
+<style>
+:root{--navy:#1B3139;--lava:#FF3621;--coral:#FF5F46;--oat:#F9F7F4;--oat2:#EEEDE9;--ink:#3A3838;--soft:#5A5755;--mute:#8A8580;--line:#E4E2DD;--green:#00875C;--amber:#B57A00;--maroon:#98102A;--card:#fff;--sh:0 1px 3px rgba(27,49,57,.10),0 4px 14px rgba(27,49,57,.06)}
+@media(prefers-color-scheme:dark){:root{--oat:#12212a;--oat2:#1b3139;--ink:#e6e3df;--soft:#b9c6cb;--mute:#8da0a7;--line:#2b434d;--card:#182c35;--navy:#f4f1ed;--sh:0 1px 3px rgba(0,0,0,.4)}}
+*{box-sizing:border-box}body{margin:0;font:15px/1.5 "DM Sans",system-ui,-apple-system,Segoe UI,sans-serif;background:var(--oat);color:var(--ink)}
+header{background:#1B3139;color:#fff;padding:28px 40px 0}
+header h1{margin:0;font-size:28px;letter-spacing:-.02em}header .sub{color:#B9C6CB;margin-top:4px;max-width:900px}
+.eyebrow{font-size:12px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:#FFC9BF}
+nav{display:flex;gap:4px;margin-top:22px;flex-wrap:wrap}
+nav button{background:none;border:0;color:#B9C6CB;padding:12px 18px;font:600 14px inherit;font-family:inherit;cursor:pointer;border-bottom:3px solid transparent}
+nav button.on{color:#fff;border-color:var(--lava)}nav button .n{opacity:.6;font-weight:500;margin-left:4px}
+main{padding:28px 40px 120px;max-width:1280px;margin:0 auto}
+.tab{display:none}.tab.on{display:block}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:24px}
+.kpi{background:var(--card);border-radius:12px;box-shadow:var(--sh);padding:16px 18px}.kpi b{display:block;font-size:34px;letter-spacing:-.02em;color:var(--navy)}.kpi span{color:var(--mute);font-size:13px;font-weight:600}
+.card{background:var(--card);border-radius:12px;box-shadow:var(--sh);padding:18px 20px;margin-bottom:14px;border-left:4px solid var(--line)}
+.card.approved{border-left-color:var(--green)}.card.rejected{border-left-color:var(--maroon);opacity:.65}.card.change{border-left-color:var(--amber)}.card.orphaned{border-style:dashed;opacity:.7}
+.row{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap}
+h2{font-size:20px;margin:26px 0 12px;color:var(--navy)}h3{margin:0;font-size:18px;color:var(--navy)}
+.tag{display:inline-block;font:600 11px/1 inherit;font-family:inherit;letter-spacing:.06em;text-transform:uppercase;padding:4px 8px;border-radius:99px;background:var(--oat2);color:var(--soft);margin-right:6px}
+.tag.red{background:rgba(255,54,33,.12);color:var(--lava)}.tag.green{background:rgba(0,169,114,.14);color:var(--green)}.tag.amber{background:rgba(255,171,0,.2);color:var(--amber)}
+.mono{font-family:"DM Mono",ui-monospace,Menlo,monospace;font-size:12.5px;color:var(--soft)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}.seg button{border:0;background:var(--card);padding:6px 11px;font:600 12.5px inherit;font-family:inherit;color:var(--soft);cursor:pointer}
+.seg button.on.a{background:var(--green);color:#fff}.seg button.on.c{background:#FFAB00;color:#1B3139}.seg button.on.r{background:var(--maroon);color:#fff}
+[contenteditable]{outline:0;border-bottom:1px dashed transparent;border-radius:3px}[contenteditable]:hover,[contenteditable]:focus{border-bottom-color:var(--coral);background:rgba(255,95,70,.06)}
+textarea,input[type=text],input[type=search]{width:100%;font:inherit;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)}
+textarea{min-height:44px;resize:vertical}
+table{border-collapse:collapse;width:100%;margin-top:10px}th{background:var(--coral);color:#fff;text-align:left;padding:8px 12px;font-size:13px}th:first-child{border-radius:8px 0 0 0}th:last-child{border-radius:0 8px 0 0}
+td{padding:8px 12px;border-bottom:1px solid var(--line);vertical-align:top;font-size:14px}td input{font-family:"DM Mono",ui-monospace,monospace;font-size:12.5px}
+.drift{background:rgba(255,171,0,.12);border-radius:8px;padding:8px 12px;margin-top:8px;font-size:13px}
+.tree{margin-left:22px;border-left:2px solid var(--line);padding-left:16px}
+details summary{cursor:pointer;color:var(--soft);font-weight:600;font-size:13px;margin-top:8px}
+pre{background:var(--oat2);padding:10px 12px;border-radius:8px;overflow:auto;font-size:12px;margin:6px 0}
+.flow{display:grid;grid-template-columns:1fr 40px 1fr 40px 1fr;gap:6px;align-items:center;margin:8px 0 24px}
+.flow .box{background:var(--card);box-shadow:var(--sh);border-radius:12px;padding:16px;text-align:center}.flow .box b{font-size:26px;display:block;color:var(--navy)}.flow .ar{color:var(--coral);font-size:26px;text-align:center;font-weight:700}
+.bar{position:fixed;left:0;right:0;bottom:0;background:#1B3139;color:#fff;padding:12px 40px;display:flex;gap:16px;align-items:center;z-index:9}
+.bar button{background:var(--lava);color:#fff;border:0;border-radius:8px;padding:9px 16px;font:700 14px inherit;font-family:inherit;cursor:pointer}.bar button.g{background:#2b434d}
+.bar .spacer{flex:1}.bar .hint{color:#B9C6CB;font-size:13px}
+.warn{background:rgba(255,54,33,.08);border-left:4px solid var(--lava);padding:10px 14px;border-radius:8px;margin:8px 0;font-size:14px}
+.ok{color:var(--green);font-weight:700}.bad{color:var(--maroon);font-weight:700}
+.search{max-width:360px;margin-bottom:14px}
+@media(max-width:800px){main,header{padding-left:16px;padding-right:16px}.flow{grid-template-columns:1fr}.flow .ar{display:none}.bar{padding:10px 16px}}
+</style></head><body>
+<header>
+  <div class="eyebrow">Assessment · UC Semantics Migration Map</div>
+  <h1 id="ttl"></h1>
+  <div class="sub">A design for the Unity Catalog semantic foundation — domains, metric views, pages and wikis. <b>Nothing has been created.</b> Review, edit and approve below, then download your decisions; the Implementation step builds only what you approved.</div>
+  <nav id="nav"></nav>
+</header>
+<main id="main"></main>
+<div class="bar"><span id="stat"></span><span class="spacer"></span><span class="hint">Your edits are saved in this browser.</span><button class="g" id="reset">Reset</button><button id="dl">Download decisions.json</button></div>
+<script id="data" type="application/json">__DATA__</script>
+<script>
+const D=JSON.parse(document.getElementById('data').textContent), M=D.map, PLAN=D.plan||[];
+const KEY='ucsm:'+(M.meta.account||'')+':'+(D.fingerprint||'');
+let S=JSON.parse(localStorage.getItem(KEY)||'{}');           // {kind/key:{approval,note,set:{}}}
+const save=()=>{localStorage.setItem(KEY,JSON.stringify(S));stat()};
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const $=(h)=>{const t=document.createElement('template');t.innerHTML=h.trim();return t.content.firstChild};
+const dec=(k,key)=>S[k+'/'+key]||(S[k+'/'+key]={});
+const state=(k,o)=>{const d=S[k+'/'+o.key]||{};return d.approval||o.approval||'proposed'};
+const KINDS=['domains','concepts','metric_views','pages','wikis','asset_tags'];
+const TABS=[['overview','Overview'],['domains','Domains'],['concepts','Concepts'],['metric_views','Metric Views'],['pages','Pages & Wikis'],['reports','Reports → map'],['apply','Apply preview']];
+document.getElementById('ttl').textContent=M.meta.title;
+const nav=document.getElementById('nav'),main=document.getElementById('main');
+const count=k=>(M[k]||[]).filter(o=>o.status!=='orphaned').length;
+TABS.forEach(([id,l],i)=>{const b=$(`<button data-t="${id}">${l}${['domains','concepts','metric_views'].includes(id)?`<span class="n">${count(id)}</span>`:id==='pages'?`<span class="n">${count('pages')+count('wikis')}</span>`:''}</button>`);b.onclick=()=>show(id);nav.appendChild(b)});
+function show(id){nav.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.t===id));main.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.id==='t-'+id));history.replaceState(null,'','#'+id)}
+const tab=id=>{const t=$(`<section class="tab" id="t-${id}"></section>`);main.appendChild(t);return t};
+
+function badges(k,o){let b='';
+  if(o.status==='orphaned')b+='<span class="tag">orphaned — input disappeared</span>';
+  if(o.source==='manual')b+='<span class="tag">manual</span>';
+  if(o.approval==='approved'&&o.approved_hash&&o._stale)b+='<span class="tag amber">changed since approval</span>';
+  (o.blockers||[]).forEach(x=>b+=`<span class="tag red">blocked: ${esc(x)}</span>`);return b}
+function control(k,o,card){const st=state(k,o);card.className='card '+({approved:'approved',rejected:'rejected','needs-change':'change'}[st]||'')+(o.status==='orphaned'?' orphaned':'');
+  const seg=$(`<div class="seg"><button class="a ${st==='approved'?'on a':''}">Approve</button><button class="c ${st==='needs-change'?'on c':''}">Needs change</button><button class="r ${st==='rejected'?'on r':''}">Reject</button></div>`);
+  const [a,c,r]=seg.children;const set=v=>{dec(k,o.key).approval=v;save();rerender()};a.onclick=()=>set('approved');c.onclick=()=>set('needs-change');r.onclick=()=>set('rejected');return seg}
+function note(k,o){const t=$(`<textarea placeholder="Note for the team (optional)…"></textarea>`);t.value=(S[k+'/'+o.key]||{}).note??o.note??'';t.oninput=()=>{dec(k,o.key).note=t.value;save()};return t}
+function editable(k,o,field,tag='span',cls=''){const e=$(`<${tag} class="${cls}" contenteditable spellcheck="false"></${tag}>`);const cur=((S[k+'/'+o.key]||{}).set||{})[field]??o[field]??'';e.textContent=cur;e.onblur=()=>{const v=e.textContent.trim();if(v!==(o[field]??'')){const d=dec(k,o.key);(d.set=d.set||{})[field]=v}else if(S[k+'/'+o.key]&&S[k+'/'+o.key].set){delete S[k+'/'+o.key].set[field]}save()};return e}
+
+/* ---------- overview ---------- */
+(function(){const t=tab('overview');const R=M.report_map||[];const thin=R.filter(r=>r.thin);const mvs=M.metric_views.filter(m=>m.status!=='orphaned');
+ const cons=M.concepts.filter(c=>c.status!=='orphaned'),drift=cons.filter(c=>c.drift);
+ t.innerHTML=`<div class="kpis">
+ <div class="kpi"><b>${R.length}</b><span>reports analysed</span></div><div class="kpi"><b>${count('domains')}</b><span>domains / subdomains</span></div>
+ <div class="kpi"><b>${cons.length}</b><span>concepts to consolidate</span></div><div class="kpi"><b>${drift.length}</b><span>defined inconsistently today</span></div>
+ <div class="kpi"><b>${mvs.length}</b><span>metric views (shells)</span></div><div class="kpi"><b>${count('pages')}</b><span>pages · ${count('wikis')} wikis</span></div></div>
+ <div class="flow"><div class="box"><b>${R.length}</b>reports &amp; documents<div class="mono">${[...new Set(R.map(r=>r.tool))].join(' · ')||'—'}</div></div><div class="ar">→</div>
+ <div class="box"><b>${cons.length}</b>concepts, one home each<div class="mono">Net Revenue, Active Customer, …</div></div><div class="ar">→</div>
+ <div class="box"><b>${count('domains')} · ${mvs.length} · ${count('pages')}</b>domains · metric views · pages<div class="mono">the governed semantic layer</div></div></div>
+ ${thin.length?`<div class="warn"><b>${thin.length} thin report(s)</b> have no readable model, so their semantics are missing: ${thin.map(r=>esc(r.name)).join(', ')}. Export the dataset's .pbit / model and re-run the assessment.</div>`:''}
+ ${drift.some(c=>!(c.chosen||c.definition)&&!((S['concepts/'+c.key]||{}).set||{}).chosen)?`<div class="warn"><b>${drift.length} concept(s) are defined more than one way.</b> Open <b>Concepts</b> and pick the definition that should win — the Metric View is authored from that choice.</div>`:''}
+ <h2>How this works</h2>
+ <div class="card"><b>1 · Assessment (this page)</b> — read-only. It identifies the <i>concepts</i> that need one definition (a metric used by several reports, or defined several ways) and proposes where they live: a domain, a Metric View shell, a Page. <b>No Metric View YAML is written yet.</b><br>
+ <b>2 · Your decisions</b> — approve, rename, and for every drifting concept choose the winning definition. Download <code>decisions.json</code>, or just tell the assistant in chat.<br>
+ <b>3 · Implementation</b> — the assistant authors each Metric View's YAML against the real tables, following the live <a href="https://github.com/databricks-solutions/uc-semantics-patterns">uc-semantics-patterns</a> repo, validates it on your workspace, shows it to you, and only then creates the approved objects. Re-running changes nothing unless the design changed.</div>`})();
+
+/* ---------- domains ---------- */
+(function(){const t=tab('domains');t.innerHTML='<input class="search" type="search" placeholder="Filter domains…"><div id="dtree"></div>';
+ const by={};M.domains.forEach(d=>(by[d.parent||'']=by[d.parent||'']||[]).push(d));
+ const mvOf={};M.metric_views.forEach(m=>(mvOf[m.domain]=mvOf[m.domain]||[]).push(m));
+ const node=(d,host)=>{const c=$('<div class="card"></div>');
+  const hd=$('<div class="row"></div>');const l=$('<div></div>');const h=$('<h3></h3>');h.appendChild(editable('domains',d,'name'));l.appendChild(h);
+  l.appendChild($(`<div class="mono">tag <b>${esc(d.tag_key)}</b> · ${(d.evidence||{}).reports?d.evidence.reports.length+' report(s)':''} ${(mvOf[d.key]||[]).map(m=>'· '+esc(m.title)).join(' ')}</div>`));
+  l.appendChild($(`<div style="margin-top:6px">${badges('domains',d)}</div>`));hd.appendChild(l);hd.appendChild(control('domains',d,c));c.appendChild(hd);
+  const ds=$('<div style="margin-top:8px;color:var(--soft)"></div>');ds.appendChild(editable('domains',d,'description','div'));c.appendChild(ds);c.appendChild(note('domains',d));host.appendChild(c);
+  const kids=by[d.key]||[];if(kids.length){const tr=$('<div class="tree"></div>');kids.forEach(k=>node(k,tr));host.appendChild(tr)}};
+ (by['']||[]).forEach(d=>node(d,t.querySelector('#dtree')));
+ t.querySelector('.search').oninput=e=>{const q=e.target.value.toLowerCase();t.querySelectorAll('#dtree .card').forEach(c=>c.style.display=c.textContent.toLowerCase().includes(q)?'':'none')};
+ t.appendChild($('<div class="mono" style="margin-top:14px">Display names are for the review only — the Domains API takes the governed tag, so renames are applied by hand in Discover (listed in the Apply preview).</div>'))})();
+
+/* ---------- concepts ---------- */
+(function(){const t=tab('concepts');t.innerHTML='<input class="search" type="search" placeholder="Filter concepts…"><div id="cns"></div>';
+ const dn={};M.domains.forEach(d=>dn[d.key]=d.name);const rep={};(M.report_map||[]).forEach(r=>rep[r.report]=r.name);
+ const order={high:0,medium:1,low:2};
+ [...M.concepts].sort((a,b)=>(order[a.need]-order[b.need])||a.name.localeCompare(b.name)).forEach(c=>{const card=$('<div class="card"></div>');const hd=$('<div class="row"></div>');const l=$('<div></div>');
+  const h=$('<h3></h3>');h.appendChild(editable('concepts',c,'name'));l.appendChild(h);
+  l.appendChild($(`<div style="margin-top:6px"><span class="tag ${c.need==='high'?'red':c.need==='medium'?'amber':''}">${c.need} consolidation need</span><span class="tag">domain: ${esc(dn[c.domain]||c.domain)}</span><span class="tag">${c.reports.length} report(s)</span>${c.drift?`<span class="tag red">${c.variants.length} definitions in use</span>`:'<span class="tag green">one definition</span>'}${badges('concepts',c)}</div>`));
+  hd.appendChild(l);hd.appendChild(control('concepts',c,card));card.appendChild(hd);
+  const cur=((S['concepts/'+c.key]||{}).set||{});const chosen=cur.chosen??c.chosen;
+  const tb=$('<table><thead><tr><th style="width:46px">Use</th><th>Definition found in the estate</th><th style="width:34%">Reports</th></tr></thead><tbody></tbody></table>');
+  c.variants.forEach((v,i)=>{const tr=$('<tr></tr>');const r=$(`<input type="radio" name="r-${esc(c.key)}">`);r.checked=(chosen===v.formula)||(!chosen&&c.variants.length===1);
+   r.onchange=()=>{const d=dec('concepts',c.key);d.set=d.set||{};d.set.chosen=v.formula;save();rerender()};const td0=$('<td></td>');td0.appendChild(r);tr.appendChild(td0);
+   tr.appendChild($(`<td><span class="mono" style="color:var(--ink)">${esc(v.formula)}</span>${v.sql_hint?`<div class="mono">→ ${esc(v.sql_hint)}</div>`:''}</td>`));
+   tr.appendChild($(`<td class="mono">${v.reports.map(x=>esc(rep[x]||x)).join(', ')}</td>`));tb.querySelector('tbody').appendChild(tr)});card.appendChild(tb);
+  const dd=$('<div style="margin-top:10px"></div>');dd.appendChild($('<div class="mono">Business definition (optional — becomes the Page text and guides the Metric View)</div>'));
+  const ta=$('<textarea placeholder="e.g. Revenue net of returns and discounts, excluding tax, recognised at shipment."></textarea>');ta.value=cur.definition??c.definition??'';
+  ta.oninput=()=>{const d=dec('concepts',c.key);d.set=d.set||{};if(ta.value.trim())d.set.definition=ta.value.trim();else delete d.set.definition;save()};dd.appendChild(ta);card.appendChild(dd);
+  if((c.patterns||[]).length)card.appendChild($(`<div style="margin-top:10px"><span class="mono">Best-practice patterns for this concept:</span> ${c.patterns.map(p=>`<a class="tag" style="text-decoration:none" target="_blank" href="https://github.com/databricks-solutions/uc-semantics-patterns/tree/main/${encodeURI(p)}">${esc(p)}</a>`).join('')}</div>`));
+  card.appendChild(note('concepts',c));t.querySelector('#cns').appendChild(card)});
+ if(!M.concepts.length)t.querySelector('#cns').appendChild($('<div class="card">No concept needs consolidation: no metric is used by more than one report or defined more than one way.</div>'));
+ t.querySelector('.search').oninput=e=>{const q=e.target.value.toLowerCase();t.querySelectorAll('#cns .card').forEach(c=>c.style.display=c.textContent.toLowerCase().includes(q)?'':'none')}})();
+
+/* ---------- metric views (shells) ---------- */
+(function(){const t=tab('metric_views');t.innerHTML='<div class="mono" style="margin-bottom:12px">Shells only. The YAML is authored in Implementation, against the real source table, following the live uc-semantics-patterns repo.</div><div id="mvs"></div>';
+ const dn={},cn={};M.domains.forEach(d=>dn[d.key]=d.name);M.concepts.forEach(c=>cn[c.key]=c);
+ M.metric_views.forEach(m=>{const c=$('<div class="card"></div>');const hd=$('<div class="row"></div>');const l=$('<div></div>');const h=$('<h3></h3>');h.appendChild(editable('metric_views',m,'title'));l.appendChild(h);
+  l.appendChild($(`<div class="mono">${esc(m.fqn)} ← ${esc(m.source_table)}</div>`));
+  l.appendChild($(`<div style="margin-top:6px"><span class="tag">domain: ${esc(dn[m.domain]||m.domain)}</span><span class="tag ${(m.authoring||'').startsWith('approved')?'green':'amber'}">YAML: ${esc(m.authoring||'pending (Stage 2)')}</span><span class="tag">${(m.absorbs||[]).length} report(s) absorbed</span>${badges('metric_views',m)}</div>`));
+  hd.appendChild(l);hd.appendChild(control('metric_views',m,c));c.appendChild(hd);
+  const p=$('<div style="margin-top:8px;color:var(--soft)"></div>');p.appendChild(editable('metric_views',m,'purpose','div'));c.appendChild(p);
+  c.appendChild($(`<div style="margin-top:10px"><div class="mono">Will consolidate</div>${m.concepts.map(k=>cn[k]?`<span class="tag ${cn[k].drift?'red':''}">${esc(cn[k].name)}</span>`:'').join('')}</div>`));
+  if((m.long_tail||[]).length)c.appendChild($(`<details><summary>${m.long_tail.length} one-off metric(s) left in their reports for now</summary><div class="mono" style="margin-top:6px">${m.long_tail.map(esc).join(', ')}</div></details>`));
+  c.appendChild($(`<details><summary>Grain, time dimension, reports absorbed</summary><div class="mono" style="margin-top:6px">grain: ${esc(m.grain)}<br>time: ${esc(m.time_dimension||'—')}<br>absorbs: ${(m.absorbs||[]).map(esc).join(', ')}</div></details>`));
+  c.appendChild(note('metric_views',m));t.querySelector('#mvs').appendChild(c)});
+ if(!M.metric_views.length)t.querySelector('#mvs').appendChild($('<div class="card">No Metric View shells — no concept needs consolidation yet.</div>'))})();
+
+/* ---------- pages & wikis ---------- */
+(function(){const t=tab('pages');const dn={general:'General'};M.domains.forEach(d=>dn[d.key]=d.name);
+ t.appendChild($('<h2 style="margin-top:0">Pages <span class="mono">— authoritative definitions of business concepts</span></h2>'));
+ M.pages.forEach(p=>{const c=$('<div class="card"></div>');const hd=$('<div class="row"></div>');const l=$('<div></div>');const h=$('<h3></h3>');h.appendChild(editable('pages',p,'title'));l.appendChild(h);
+  l.appendChild($(`<div style="margin-top:4px"><span class="tag">domain: ${esc(dn[p.domain]||p.domain)}</span>${p.evidence&&p.evidence.metric?'<span class="tag amber">from metric drift</span>':'<span class="tag">from glossary</span>'}${badges('pages',p)}</div>`));
+  hd.appendChild(l);hd.appendChild(control('pages',p,c));c.appendChild(hd);const d=$('<div style="margin-top:8px;color:var(--soft)"></div>');d.appendChild(editable('pages',p,'description','div'));c.appendChild(d);
+  c.appendChild($(`<details><summary>Page body (markdown)</summary><pre>${esc(p.body)}</pre></details>`));c.appendChild(note('pages',p));t.appendChild(c)});
+ if(!M.pages.length)t.appendChild($('<div class="card">No pages proposed — add glossary terms (from your documents) to <code>glossary.yaml</code> and re-run.</div>'));
+ t.appendChild($('<h2>Wikis <span class="mono">— one per documented table (Beta)</span></h2>'));
+ M.wikis.forEach(w=>{const c=$('<div class="card"></div>');const hd=$('<div class="row"></div>');const l=$('<div></div>');l.appendChild($(`<h3>${esc(w.table)}</h3>`));l.appendChild($(`<div style="margin-top:4px">${badges('wikis',w)}</div>`));hd.appendChild(l);hd.appendChild(control('wikis',w,c));c.appendChild(hd);
+  c.appendChild($(`<details><summary>Wiki body (markdown)</summary><pre>${esc(w.body)}</pre></details>`));t.appendChild(c)})})();
+
+/* ---------- reports map ---------- */
+(function(){const t=tab('reports');const dn={},mn={};M.domains.forEach(d=>dn[d.key]=d.name);M.metric_views.forEach(m=>mn[m.key]=m.title);
+ t.innerHTML=`<table><thead><tr><th>Report</th><th>Source</th><th>Domain</th><th>Becomes part of</th><th>Concepts it uses</th></tr></thead><tbody>${(M.report_map||[]).map(r=>`<tr><td><b>${esc(r.name)}</b>${r.thin?`<div class="mono" style="color:var(--lava)">${esc(r.note)}</div>`:''}</td><td>${esc(r.tool)}</td><td>${esc(dn[r.domain]||'— (no fact table found)')}</td><td>${esc(mn[r.metric_view]||'—')}</td><td>${(r.concepts||[]).map(esc).join(', ')||'—'}</td></tr>`).join('')}</tbody></table>`})();
+
+/* ---------- apply preview ---------- */
+(function(){const t=tab('apply');
+ const need=[['Governed tags','Permission to create governed tags (account admin)'],['Domains & subdomains','MANAGE DISCOVER at account level — account/workspace admins have it by default'],['Metric views','USE CATALOG + USE SCHEMA + CREATE TABLE on the target schema · SELECT on each source table · CAN USE on a SQL warehouse (DBR 17.3+) — each YAML is validated on a throw-away view first'],['Domain tags on assets','APPLY TAG on the tagged tables + ASSIGN on the governed tag'],['Pages','MANAGE PAGES (default: all account users) · MANAGE DOMAIN/DISCOVER to publish'],['Wikis (Beta)','Write access on each documented table']];
+ t.innerHTML=`<h2 style="margin-top:0">What the Implementation step needs</h2><div class="card">${need.map(n=>`<div style="padding:6px 0;border-bottom:1px solid var(--line)"><b>${n[0]}</b><div class="mono">${esc(n[1])}</div></div>`).join('')}</div>
+ <h2>Guarantees</h2><div class="card">Dry-run by default · only <i>approved</i> objects (a metric view also needs its authored YAML approved), and only while unchanged since approval · domains &amp; pages created as <b>drafts</b> · never deletes unless <code>--prune</code> · re-running changes nothing unless the design changed.</div>
+ <h2>Manual steps the API cannot do</h2><div class="card">• Domain <b>display names</b> and Discover-page <b>sections</b> (UI only today) · • publishing drafts · • governed tag creation if that API is unavailable on your release.</div>
+ <h2>Latest plan ${PLAN.length?'':'<span class="mono">(not generated yet — run apply.py to dry-run)</span>'}</h2>${PLAN.length?`<table><thead><tr><th>Object</th><th>Action</th><th>Why</th></tr></thead><tbody>${PLAN.map(o=>`<tr><td>${esc(o.kind)} · ${esc(o.name||o.key)}</td><td><b>${esc(o.action)}</b></td><td class="mono">${esc(o.reason)}</td></tr>`).join('')}</tbody></table>`:''}`})();
+
+function stat(){const all=KINDS.flatMap(k=>(M[k]||[]).map(o=>[k,o]));const c={approved:0,'needs-change':0,rejected:0,proposed:0};all.forEach(([k,o])=>{if(o.status==='orphaned')return;c[state(k,o)]=(c[state(k,o)]||0)+1});
+ document.getElementById('stat').innerHTML=`<b>${c.approved}</b> approved · <b>${c['needs-change']}</b> need change · <b>${c.rejected}</b> rejected · <b>${c.proposed}</b> to review`}
+function build(){const out=[];Object.entries(S).forEach(([ik,d])=>{const [k,...r]=ik.split('/');const key=r.join('/');const o=(M[k]||[]).find(x=>x.key===key);if(!o)return;
+ const e={kind:k,key};if(d.approval&&d.approval!=='proposed')e.approval=d.approval==='needs-change'?'proposed':d.approval;
+ if(d.set&&Object.keys(d.set).length)e.set=d.set;if(d.note)e.note=d.note;
+ if(Object.keys(e).length>2)out.push(e)});return {schema:1,decisions:out}}
+document.getElementById('dl').onclick=()=>{const b=new Blob([JSON.stringify(build(),null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='decisions.json';a.click()};
+document.getElementById('reset').onclick=()=>{if(confirm('Discard all edits made in this browser?')){S={};save();location.reload()}};
+function rerender(){sessionStorage.setItem('y',scrollY);location.reload()}
+addEventListener('load',()=>{const y=sessionStorage.getItem('y');if(y){scrollTo(0,+y);sessionStorage.removeItem('y')}});
+stat();show((location.hash||'#overview').slice(1)||'overview');
+</script></body></html>

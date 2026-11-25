@@ -33,7 +33,7 @@ from urllib.parse import urlsplit
 
 from databricks.sdk import WorkspaceClient
 
-__version__ = "0.10.4"
+__version__ = "0.11.0"
 DISCLAIMER = ("Prototype from Databricks Shared Technical Services, provided as is. It only reads unless you run apply or "
               "rollback, or snapshots; review results before acting.")
 
@@ -207,16 +207,48 @@ def remote_workspace_client(target_id: str, allowlist: list[str], url: str, clie
     if target_id not in allowlist:
         raise PermissionError(f"workspace {target_id} isn't in the central-mode allowlist")
     if not WORKSPACE_URL_RE.fullmatch(url or ""):
-        raise ValueError(f"workspace {target_id} has no usable URL in system.access.workspaces_latest")
+        raise ValueError(f"workspace {target_id} has no usable URL in system.access.workspaces_latest. A workspace "
+                         "created in the last few hours may not be in that table yet: try again later")
     if not client_id or not client_secret:
-        raise ValueError("central mode needs the service principal's client ID (Run jobs as service principal) "
-                         "and its OAuth secret (Central mode: service principal OAuth secret)")
+        raise ValueError("central mode needs the service principal's client ID (run_as in the installer) "
+                         "and its OAuth secret (central_secret in the installer)")
     client = (factory or WorkspaceClient)(host=url.rstrip("/"), client_id=client_id, client_secret=client_secret,
                                           auth_type="oauth-m2m")
-    got = workspace_id_of(client)
+    try:
+        got = workspace_id_of(client)
+    except Exception as e:  # the first call signs in: say what a known failure means, keep the original
+        hint = remote_signin_hint(str(e), target_id)
+        if hint:
+            raise PermissionError(hint) from e
+        raise
     if str(got) != target_id:
         raise ValueError(f"{url} answers as workspace {got}, not {target_id}")
     return client
+
+
+# Seen live (Azure, 2026-11): a serverless job in one workspace calling another workspace is refused with this text
+# unless cross-workspace network policies allow it. It is not a credentials problem.
+CROSS_WORKSPACE_DENIED_RE = re.compile(r"cert validation failed|trusted workload checks did not pass", re.I)
+# Signs in, but the secret isn't valid for this service principal (an Entra ID secret, a typo, or an expired one).
+BAD_CLIENT_SECRET_RE = re.compile(r"invalid_client|invalid client secret|client authentication failed", re.I)
+
+
+def remote_signin_hint(error: str, target_id: str) -> str | None:
+    """A plain explanation, with the fix, for a known central-mode sign-in failure; None for anything else."""
+    if CROSS_WORKSPACE_DENIED_RE.search(error or ""):
+        return (f"Databricks refused this job's call to workspace {target_id}: serverless compute in one workspace can "
+                "only reach another workspace when cross-workspace network policies allow it (this isn't a credentials "
+                "problem). An account admin enables the Cross Workspace Network Policy preview, then, in the account "
+                f"console (Security > Networking), on the ingress policy of workspace {target_id}, clears Compatibility "
+                "mode and allows this workspace (\"allow access from all public IPs\" doesn't cover it); this "
+                "workspace's egress policy must allow that workspace (it does if it allows all destinations). Or "
+                f"install the toolkit in workspace {target_id} itself, or run the scan and apply jobs on classic "
+                "compute, which these policies don't govern. Details: " + error[:300])
+    if BAD_CLIENT_SECRET_RE.search(error or ""):
+        return ("the service principal's secret was refused. Central mode needs a Databricks OAuth secret (generated "
+                "in Databricks: Settings > Identity and access > Service principals > the service principal > Secrets), "
+                "not an Entra ID client secret, stored in a Databricks secret scope. Details: " + error[:300])
+    return None
 
 
 SECRET_REF_RE = re.compile(r"[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+")
@@ -244,8 +276,10 @@ def central_target(spark, hub_client: WorkspaceClient, target_id: str, allowlist
     url = (rows[0]["workspace_url"] if rows else "") or ""
     url = url if url.startswith("http") else (f"https://{url}" if url else "")
     scope, key = ref.split("/", 1)
-    client = remote_workspace_client(target_id, allowlist, url, str(client_id or "").strip(), secret_get(scope, key),
-                                     factory=factory)
+    # Strip: a secret piped into `databricks secrets put-secret` keeps the trailing newline, and sign-in then fails
+    # with invalid_client (seen live, Azure, 2026-11). OAuth secrets never contain whitespace.
+    client = remote_workspace_client(target_id, allowlist, url, str(client_id or "").strip(),
+                                     (secret_get(scope, key) or "").strip(), factory=factory)
     return client, target_id, True
 
 

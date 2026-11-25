@@ -1,4 +1,4 @@
-# Unity Gateway Migration Toolkit (prototype, v0.10.4)
+# Unity Gateway Migration Toolkit (prototype, v0.11.0)
 
 Moves legacy model serving endpoints (v1, and v2 workspace-bound endpoints) to Unity Gateway. Planning and scans only read. Writes happen only when you start them: apply, rollback, usage tracking, pause and resume, test calls, and snapshots.
 
@@ -8,13 +8,13 @@ Moves legacy model serving endpoints (v1, and v2 workspace-bound endpoints) to U
 
 ## Quick start (about 5 minutes, inside the workspace)
 
-1. Download `unity-gateway-migration-toolkit.zip` from the [release page](https://github.com/databricks-solutions/technical-services-solutions/releases/tag/unity-gateway-migration-toolkit-latest) and unzip it. In the workspace, import `INSTALL_unity_gateway_migration_toolkit_0_10_4.py` from the zip's top folder.
-2. Open the notebook. Set **Install: Results catalog** and **Install: SQL warehouse**. Leave the other widgets.
-3. Click **Run all**. The last cell prints the app link.
-4. Open **Compute > Apps > ug-migration-toolkit**.
-5. Work through the tabs in order: **Overview** (refresh the snapshot), **Scans** (scan this workspace), **Apply** (dry run, then execute), **Verify & cut over** (a status strip, then traffic, tracking, pause, test call and the Enforce checklist, one step at a time). The target schema for new services is chosen in Apply.
+1. Download `unity-gateway-migration-toolkit.zip` from the [release page](https://github.com/databricks-solutions/technical-services-solutions/releases/tag/unity-gateway-migration-toolkit-latest) and unzip it. In the workspace, import `INSTALL_unity_gateway_migration_toolkit_0_11_0.py` from the zip's top folder.
+2. Open the notebook and click **Run all**. The first run previews the checklist and plan without changes. Review it, set `preview=False` in `install(...)`, then click **Run all** again to install. The app link is printed near the end (the last cell just says `Notebook exited`).
+3. In the app, work through the tabs in order: **Overview**, **Scans**, **Apply** (dry run, then execute), **Verify & cut over**.
 
-Run the installer as a workspace admin with system table access. By default the jobs run as you, so operators who start them from the app act with your permissions. For anything beyond a trial, set **Advanced: Run jobs as service principal** to a service principal with only the access the toolkit needs ([Who the jobs run as](USER_GUIDE.md#1-install)). The first snapshot reads account-wide system tables, so it covers every workspace in the account. Many workspaces? One install can also scan the others ([Central mode](USER_GUIDE.md#central-mode-optional-one-install-for-many-workspaces), optional). If the installer says the target schema `ai_gateway.migrated` is missing, create it first. The installer prints the SQL.
+**[INSTALL.md](INSTALL.md)** has what you need, what the install creates, the checklist, optional settings, central mode, updates and uninstall, on one page.
+
+Run the installer as someone who can create Databricks Apps and jobs (usually a workspace admin), with access to the system tables. The toolkit creates two schemas in the catalog you pick: `ug_migration` for its results, and `ug_migrated` for the model services Apply creates (the service names end up in your callers' code, so you can name an existing schema instead). By default the jobs run as you; for anything beyond a trial, set `run_as` in `install(...)` to run them as a service principal ([Who the jobs run as](USER_GUIDE.md#1-install)). The first snapshot reads account-wide system tables, so it covers every workspace in the account. Many workspaces? One install can also scan the others ([Central mode](USER_GUIDE.md#central-mode-optional-one-install-for-many-workspaces), optional).
 
 ![Account overview with headline counts, the deadline countdown, a trend chart and workspaces by wave](docs/screenshots/overview.png)
 
@@ -31,6 +31,7 @@ Job tags: the toolkit's jobs carry `tool = ug-migration-toolkit`, `Project = uni
 
 ## Documentation
 
+- [INSTALL.md](INSTALL.md): install, update and uninstall, on one page.
 - [USER_GUIDE.md](USER_GUIDE.md): the full journey, from install to uninstall, then reference, troubleshooting, limitations and FAQ.
 - [HOW_TO_READ.md](HOW_TO_READ.md): what each output file contains.
 

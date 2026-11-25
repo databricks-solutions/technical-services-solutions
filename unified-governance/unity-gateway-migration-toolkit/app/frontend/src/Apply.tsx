@@ -131,7 +131,7 @@ function secretError(v: string, allowed: string[]): string | null {
   return null;
 }
 
-const DEFAULT_TARGET = ["ai_gateway", "migrated"];
+const DEFAULT_TARGET = ["ai_gateway", "migrated"];  // before 0.11.0 and the bundle; the installer sets config.default_target
 const NAME_RE = /^[A-Za-z0-9_-]{1,255}$/;
 
 /** value, once it has stopped changing for ms (so typing a schema name doesn't query on every key). */
@@ -186,11 +186,12 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
   // The target is chosen here, not in the scan: prefilled from the scan (or the default), changeable without a new scan.
   const [tCat, setTCat] = useState("");
   const [tSch, setTSch] = useState("");
+  // Refilled when the app's config arrives, so a scan opened before it loaded doesn't keep the fallback target.
   useEffect(() => {
     if (!meta) return;
-    setTCat(meta.target_catalog || DEFAULT_TARGET[0]);
-    setTSch(meta.target_schema || DEFAULT_TARGET[1]);
-  }, [meta?.run_id]); // eslint-disable-line react-hooks/exhaustive-deps
+    setTCat(meta.target_catalog || config?.default_target?.catalog || DEFAULT_TARGET[0]);
+    setTSch(meta.target_schema || config?.default_target?.schema || DEFAULT_TARGET[1]);
+  }, [meta?.run_id, config?.default_target?.catalog, config?.default_target?.schema]); // eslint-disable-line react-hooks/exhaustive-deps
   const targetOk = NAME_RE.test(tCat) && NAME_RE.test(tSch);
   const [checkCat, checkSch] = useDebounced([tCat, tSch], 500);
   const schemaPath = meta && NAME_RE.test(checkCat) && NAME_RE.test(checkSch)
@@ -394,7 +395,7 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
           )}
           {stale && (
             <>
-              <Notice tone="warning" title={`This scan is ${relativeAge(meta.finished_at)} old`} action={<NavButton tab="scans" label="Go to Scans to scan again" />}>
+              <Notice tone="warning" title={`This scan is old: it ran ${relativeAge(meta.finished_at)}`} action={<NavButton tab="scans" label="Go to Scans to scan again" />}>
                 Endpoints, callers and code may have changed since. Scan again first, or apply with this scan anyway (checkbox below).
               </Notice>
               <label className="choice"><input type="checkbox" checked={allowStale} onChange={(e) => setAllowStale(e.target.checked)} /> <span>Apply with this older scan anyway</span></label>
@@ -428,7 +429,7 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
                 <div className="stack-sm secret-map">
                   {mappingOff ? (
                     <Notice tone="warning" title="Secret mapping is off">
-                      The installer didn't allow any Unity Catalog secret schema, so this app can't map the keys. Re-run the installer (Install) with Allowed secret schemas set, then reload this page.
+                      The installer didn't allow any Unity Catalog secret schema, so this app can't map the keys. Re-run the installer with secret_schemas set in install(...), then reload this page.
                     </Notice>
                   ) : secrets.length === 0 ? (
                     <p className="small muted">The provider services in this plan need no API keys.</p>
@@ -444,7 +445,7 @@ function Planner({ scanRunId, onStarted, onDone, operator, config, maxAge, histo
               )}
               <label className="choice"><input type="radio" name="secret-mode" checked={secretMode === "create"} disabled={allowedSchemas.length === 0}
                      aria-describedby={allowedSchemas.length ? undefined : "secret-create-reason"} onChange={() => setSecretMode("create")} /> <span>Create Unity Catalog secrets from the workspace secrets</span></label>
-              {allowedSchemas.length === 0 && <p id="secret-create-reason" className="small muted reason">Not available: the installer didn't allow a Unity Catalog secret schema. Re-run the installer with Advanced: Allowed secret schemas set.</p>}
+              {allowedSchemas.length === 0 && <p id="secret-create-reason" className="small muted reason">Not available: the installer didn't allow a Unity Catalog secret schema. Run the installer again with secret_schemas set in install(...).</p>}
               {secretMode === "create" && allowedSchemas.length > 0 && (
                 <div className="stack-sm secret-map">
                   <p className="small muted">The apply job reads each workspace secret with its own identity and stores the value in a new Unity Catalog secret, which the provider service then references. Values are never shown or logged. The dry run checks that each workspace secret can be read; rollback deletes the secrets that run created.</p>

@@ -21,7 +21,14 @@ export default function Scans({ onApply, operator, workspace = null }: { onApply
   const host = String(config.data?.workspace_url || "").replace(/^https?:\/\//, "").replace(/\/$/, "");
   const [selected, setSelected] = useState<string | null>(null);
   const [focusNew, setFocusNew] = useState(false);
-  const [form, setForm] = useState({ days: 30, scan_roots: "", target_catalog: "ai_gateway", target_schema: "migrated" });
+  const [form, setForm] = useState({ days: 30, scan_roots: "", target_catalog: "", target_schema: "" });
+  // The install's default target (set by the installer); filled in once the config loads, unless already typed.
+  const defaultTarget = `${config.data?.default_target?.catalog || "ai_gateway"}.${config.data?.default_target?.schema || "migrated"}`;
+  useEffect(() => {
+    if (!config.data && !config.error) return;  // still loading; a failed load falls back to the earlier default
+    const [cat, sch] = defaultTarget.split(".");
+    setForm((f) => (f.target_catalog || f.target_schema ? f : { ...f, target_catalog: cat, target_schema: sch }));
+  }, [defaultTarget, !!config.data, !!config.error]); // eslint-disable-line react-hooks/exhaustive-deps
   const [submitted, setSubmitted] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
   const [startErr, setStartErr] = useState<string | null>(null);
@@ -110,7 +117,7 @@ export default function Scans({ onApply, operator, workspace = null }: { onApply
           </div>
           <details className="advanced" open={!NAME_OK.test(form.target_catalog) || !NAME_OK.test(form.target_schema) || undefined}>
             <summary>Advanced: target schema for the proposed names</summary>
-            <p className="small muted">Optional. You choose the target in Apply and can change it there without scanning again. This only sets the service names the scan reports (default <code>ai_gateway.migrated</code>).</p>
+            <p className="small muted">Optional. You choose the target in Apply and can change it there without scanning again. This only sets the service names the scan reports (default <code>{defaultTarget}</code>, set at install).</p>
           <div className="field-group">
             <label className="field" htmlFor="scan-catalog">Target catalog (Unity Catalog)</label>
             <input id="scan-catalog" required ref={(el) => { fieldRefs.current["scan-catalog"] = el; }}

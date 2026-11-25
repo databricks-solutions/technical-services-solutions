@@ -67,8 +67,20 @@ except ValueError:
     CENTRAL_WORKSPACES = []
 _HUB_ID: dict[str, str] = {"id": os.environ.get("UGMIG_HUB_WORKSPACE_ID", "").strip()}
 NOT_ALLOWLISTED = ("Workspace {ws} isn't in this app's central-mode allowlist. Re-run the installer with it in "
-                   "Advanced: Central mode: workspaces to manage.")
+                   "central_workspaces in install(...).")
 MAX_SCAN_AGE_DAYS = int(os.environ.get("UGMIG_MAX_SCAN_AGE_DAYS") or 14)
+
+
+def _default_target(raw: str) -> tuple[str, str]:
+    """The install's default target schema for new model services (catalog, schema). The installer sets it; installs
+    from before 0.11.0, the bundle and local runs fall back to ai_gateway.migrated, the earlier fixed default."""
+    cat, _, sch = (raw or "").strip().partition(".")
+    if re.fullmatch(r"[A-Za-z0-9_-]+", cat) and re.fullmatch(r"[A-Za-z0-9_-]+", sch):
+        return cat, sch
+    return "ai_gateway", "migrated"
+
+
+DEFAULT_TARGET_CATALOG, DEFAULT_TARGET_SCHEMA = _default_target(os.environ.get("UGMIG_DEFAULT_TARGET", ""))
 EXPORT_ROW_LIMIT = 200_000
 IDENTITY_TTL_S = 300
 NAME_RE = re.compile(r"[A-Za-z0-9_\-]+")
@@ -474,6 +486,8 @@ def config() -> dict:
             "secret_schemas": sorted(SECRET_SCHEMAS), "allow_secret_read": ALLOW_SECRET_READ,
             "max_scan_age_days": MAX_SCAN_AGE_DAYS, "export_row_limit": EXPORT_ROW_LIMIT,
             "deadline": LEGACY_DEADLINE, "deadline_as_of": DEADLINE_AS_OF,
+            # Where new model services go unless an operator picks another schema (the scan form and Apply prefill it).
+            "default_target": {"catalog": DEFAULT_TARGET_CATALOG, "schema": DEFAULT_TARGET_SCHEMA},
             # The app's name, so a second install (any name but the default) is labelled in the header.
             "app_name": APP_NAME, "default_app_name": DEFAULT_APP_NAME,
             # Scans, apply and the test call run as the jobs' identity, not as the signed-in user.
@@ -778,8 +792,8 @@ def refresh_snapshot(request: Request) -> dict:
 class ScanRequest(BaseModel):
     days: int = Field(30, ge=1, le=365)
     scan_roots: str = Field("", max_length=2000)
-    target_catalog: str = "ai_gateway"
-    target_schema: str = "migrated"
+    target_catalog: str = DEFAULT_TARGET_CATALOG
+    target_schema: str = DEFAULT_TARGET_SCHEMA
     target_workspace_id: str = Field("", max_length=20)  # central mode: an allowlisted workspace; blank = this one
 
 
@@ -1195,7 +1209,7 @@ def start_apply(body: ApplyRequest, request: Request) -> dict:
                                          "values into the provider services.")
             if not SECRET_SCHEMAS:
                 raise HTTPException(400, "Creating Unity Catalog secrets needs an allowed secret schema. Re-run the "
-                                         "installer with Advanced: Allowed secret schemas set.")
+                                         "installer with secret_schemas set in install(...).")
         for k, v in body.uc_secret_map.items():
             m = SECRET_REF_RE.fullmatch(str(v))
             if not SECRET_KEY_RE.fullmatch(k) or not m:

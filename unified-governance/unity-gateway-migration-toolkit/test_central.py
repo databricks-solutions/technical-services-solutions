@@ -62,6 +62,40 @@ def test_remote_client_refuses_a_url_that_answers_as_another_workspace(monkeypat
         planner.remote_workspace_client(REMOTE, [REMOTE], "https://adb-2.net", SP_ID, "s", factory=FakeRemote)
 
 
+# The error a customer hit live (Azure, serverless hub calling another workspace), with the IDs made up.
+CROSS_WS_ERROR = ("Cert validation failed. Workspace comparison, snp system trusted, and snp trusted workload checks did "
+                  "not pass. [ReqId: 00000000-0000-0000-0000-000000000000]. Config: host=https://adb-2.azuredatabricks.net, "
+                  f"client_id={SP_ID}, client_secret=***, auth_type=oauth-m2m")
+
+
+@pytest.mark.parametrize("error, expect, absent", [
+    (CROSS_WS_ERROR, ["cross-workspace network policies", "isn't a credentials problem", "Cross Workspace Network Policy",
+                      "egress policy", "ingress policy", "Compatibility mode", "classic compute",
+                      f"install the toolkit in workspace {REMOTE}"], ["Entra"]),
+    ("invalid_client: Client authentication failed", ["Databricks OAuth secret", "not an Entra ID client secret",
+                                                       "Databricks secret scope"], ["network"]),
+])
+def test_known_sign_in_failures_say_what_they_mean_and_how_to_fix_them(monkeypatch, error, expect, absent):
+    def refuse(c):
+        raise RuntimeError(error)
+    monkeypatch.setattr(planner, "workspace_id_of", refuse)
+    with pytest.raises(PermissionError) as e:
+        planner.remote_workspace_client(REMOTE, [REMOTE], "https://adb-2.net", SP_ID, SECRET_VALUE, factory=FakeRemote)
+    msg = str(e.value)
+    assert all(x in msg for x in expect), msg
+    assert not any(x in msg for x in absent), msg
+    assert SECRET_VALUE not in msg
+    assert isinstance(e.value.__cause__, RuntimeError)  # the original error is kept
+
+
+def test_other_sign_in_failures_are_left_as_they_are(monkeypatch):
+    def refuse(c):
+        raise ConnectionError("timed out")
+    monkeypatch.setattr(planner, "workspace_id_of", refuse)
+    with pytest.raises(ConnectionError, match="timed out"):
+        planner.remote_workspace_client(REMOTE, [REMOTE], "https://adb-2.net", SP_ID, SECRET_VALUE, factory=FakeRemote)
+
+
 def test_remote_scan_notes_unity_catalog_definitions_as_not_scanned(monkeypatch):
     notes = {}
     scanner = SimpleNamespace(note=lambda k, v: notes.__setitem__(k, v),
@@ -179,7 +213,7 @@ def test_installer_central_mode_is_off_when_blank_and_validated_when_set():
     _, p = H["central_problems"]("adb-1", "scope/key", SP_ID)
     assert any("workspace IDs (numbers)" in x for x in p)
     _, p = H["central_problems"](REMOTE, "scope/key", "")
-    assert any("Run jobs as service principal" in x for x in p)
+    assert any("run_as" in x for x in p)
     _, p = H["central_problems"](REMOTE, "not a ref", SP_ID)
     assert any("scope/key" in x for x in p)
     _, p = H["central_problems"]("", "scope/key", SP_ID)
@@ -234,6 +268,25 @@ def test_central_target_is_the_hub_without_a_target_and_checks_everything_in_ord
         factory=lambda **k: made.append(k) or SimpleNamespace(config=SimpleNamespace(host=k["host"])))
     assert (ws, remote) == (REMOTE, True) and made[0]["host"] == "https://adb-2.cloud.databricks.com"
     assert made[0]["client_id"] == SP_ID and made[0]["auth_type"] == "oauth-m2m"
+    assert made[0]["client_secret"] == SECRET_VALUE
+
+
+def test_central_target_strips_a_trailing_newline_from_the_secret(monkeypatch):
+    """Seen live: `... | databricks secrets put-secret` stores the newline, and sign-in fails with invalid_client."""
+    hub = SimpleNamespace(config=SimpleNamespace(host="https://hub"))
+    monkeypatch.setattr(planner, "workspace_id_of", lambda c: HUB if c is hub else REMOTE)
+    made = []
+    planner.central_target(TargetSpark("adb-2.cloud.databricks.com"), hub, REMOTE, REMOTE, SP_ID, "s/k",
+                           lambda scope, key: f" {SECRET_VALUE}\n",
+                           factory=lambda **k: made.append(k) or SimpleNamespace(config=SimpleNamespace(host=k["host"])))
+    assert made[0]["client_secret"] == SECRET_VALUE
+
+
+def test_a_workspace_missing_from_the_system_table_says_it_may_be_new(monkeypatch):
+    hub = SimpleNamespace(config=SimpleNamespace(host="https://hub"))
+    monkeypatch.setattr(planner, "workspace_id_of", lambda c: HUB if c is hub else REMOTE)
+    with pytest.raises(ValueError, match="last few hours"):
+        planner.central_target(TargetSpark(""), hub, REMOTE, REMOTE, SP_ID, "s/k", lambda s, k: SECRET_VALUE)
 
 
 # ---------- the apply notebook ----------

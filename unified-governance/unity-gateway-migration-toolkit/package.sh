@@ -9,9 +9,9 @@ INSTALLER=$(python3 make_installer.py | cut -d" " -f1)
 NAME="unity-gateway-migration-toolkit-$VERSION"
 rm -rf "dist/$NAME" "dist/$NAME.zip"
 mkdir -p "dist/$NAME/notebook" "dist/$NAME/app/backend" "dist/$NAME/app/frontend"
-cp "$INSTALLER" "dist/$NAME/"
+cp "$INSTALLER" "$(dirname "$INSTALLER")/UN$(basename "$INSTALLER")" "dist/$NAME/"
 cp ug_migration_planner.py ug_migration_apply.py ug_migration_account.py \
-   README.md HOW_TO_READ.md USER_GUIDE.md "dist/$NAME/"
+   README.md INSTALL.md HOW_TO_READ.md USER_GUIDE.md "dist/$NAME/"
 # Screenshots the guides link to (docs/screenshots/*.png); the installer notebook doesn't embed them.
 if [ -d docs/screenshots ]; then mkdir -p "dist/$NAME/docs/screenshots" && cp docs/screenshots/*.png "dist/$NAME/docs/screenshots/"; fi
 # The shipped bundle doesn't need the repo-only sync excludes (they'd only produce validate warnings).
@@ -29,4 +29,4 @@ cp app/frontend/package.json app/frontend/tsconfig.json app/frontend/vite.config
    app/frontend/index.html "dist/$NAME/app/frontend/"
 (cd dist && zip -qr "$NAME.zip" "$NAME")
 rm -rf "dist/$NAME"
-echo "dist/$NAME.zip (includes $(basename "$INSTALLER"))"
+echo "dist/$NAME.zip (includes $(basename "$INSTALLER") and UN$(basename "$INSTALLER"))"

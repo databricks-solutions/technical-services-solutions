@@ -14,7 +14,7 @@ import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FILES = ["ug_migration_planner.py", "ug_migration_apply.py", "ug_migration_account.py",
-         "ug_migration_store.py", "README.md", "USER_GUIDE.md", "HOW_TO_READ.md",
+         "ug_migration_store.py", "README.md", "INSTALL.md", "USER_GUIDE.md", "HOW_TO_READ.md",
          "notebook/run_planner.py", "notebook/run_account.py", "notebook/run_scan.py", "notebook/run_apply.py",
          "app/requirements.txt", "app/backend/__init__.py", "app/backend/main.py"]
 # The app imports these modules (one copy of the rules for the app and the jobs). The app is deployed from app/
@@ -47,11 +47,70 @@ def build(out_dir: str, check_fresh: bool = True) -> str:
                 z.writestr(info, fh.read())
     payload = base64.b64encode(buf.getvalue()).decode()
     tpl = open(os.path.join(HERE, "installer/install_template.py")).read()
-    out = tpl.replace("__VERSION__", version).replace("__PAYLOAD__", payload)
     os.makedirs(out_dir, exist_ok=True)
-    path = os.path.join(out_dir, f"INSTALL_unity_gateway_migration_toolkit_{version.replace('.', '_')}.py")
-    open(path, "w").write(out)
-    return path
+    paths = []
+    for mode in ("install", "uninstall"):
+        path = os.path.join(out_dir, notebook_name(mode, version))
+        open(path, "w").write(render(tpl, mode, version, payload if mode == "install" else ""))
+        paths.append(path)
+    return paths[0]
+
+
+def notebook_name(mode: str, version: str) -> str:
+    return f"{mode.upper()}_unity_gateway_migration_toolkit_{version.replace('.', '_')}.py"
+
+
+INTRO = {
+    "install": """\
+Installs the toolkit in this workspace. No CLI, Git or local setup.
+
+1. Click **Run all**. The first run checks the workspace and shows what it will create, but changes nothing.
+2. Review the checklist and plan, then set `preview=False` in `install(...)` and click **Run all** again to install.
+
+The usual settings need no edit: `catalog=None` uses the workspace default, `warehouse=None` finds an unambiguous running
+warehouse, and `target_schema=None` creates `<catalog>.ug_migrated`. Use `catalog="main"`, `warehouse="Shared"` or
+`target_schema="main.models"` to override them. `help(install)` lists every advanced setting, including central mode and
+secret mapping. Lists or comma-separated strings work for `operators`, `central_workspaces` and `secret_schemas`.
+
+The checklist marks each check OK, FIX or NOTE. A stopped warehouse and missing schemas are created or started only after
+confirmation. FIX stops before any write and names the exact GRANT or setting to fix.
+
+**What it creates after confirmation**
+- In the chosen catalog: results schema `ug_migration` and model-service schema `ug_migrated` (empty until Apply).
+- The toolkit files, three jobs and the **Unity Gateway Migration Toolkit** app. The first snapshot reads account-wide system tables.
+
+**What you need:** permission to create apps and jobs (usually a workspace admin), `USE CATALOG` and `CREATE SCHEMA`
+on the catalog, `CAN USE` on the warehouse, and `SELECT` on the system tables (if it's missing, the checklist prints
+the GRANT to send an account admin).
+
+**To update**, import the newer installer and use the same call. None reuses every existing setting. (From 0.10 or
+earlier it asks once for the operators, who can start jobs in the app: Databricks doesn't return them.) Notebook jobs
+execute with `preview=False` and keep the old parameter names. To remove the toolkit, use the UNINSTALL notebook.""",
+    "uninstall": """\
+Removes a toolkit install from this workspace.
+
+1. Click **Run all**. **1. Action** starts at `preview`: it lists what would be removed and kept, and changes nothing.
+2. Choose what else goes (widgets 3 to 5), set **1. Action** to `remove`, and click Run all again.
+
+Model services created by Apply stay unless you set **3** to `yes`. Schemas that hold services are never removed.
+Uninstall refuses while a toolkit job is running.""",
+}
+TITLE = {"install": "Install the Unity Gateway Migration Toolkit", "uninstall": "Uninstall the Unity Gateway Migration Toolkit"}
+PROMPT = {"install": "Run all to preview: the result is under 'Checklist and plan', further down. Then set "
+                     "preview=False in install(...) and Run all again to install",
+          "uninstall": "Run all with 1. Action = preview first: it changes nothing"}
+
+
+INSTALL_ONLY = ("# Settings:", "# MAGIC %md ## Checklist and plan")  # cells the UNINSTALL notebook leaves out
+
+
+def render(tpl: str, mode: str, version: str, payload: str) -> str:
+    if mode == "uninstall":  # no install(...) call or install checklist heading where they'd only confuse
+        sep = "\n# COMMAND ----------\n"
+        tpl = sep.join(c for c in tpl.split(sep) if not any(m in c for m in INSTALL_ONLY))
+    intro = "\n".join("# MAGIC" + (" " + line if line else "") for line in INTRO[mode].splitlines())
+    return (tpl.replace("__TITLE__", TITLE[mode]).replace("__INTRO__", intro).replace("__PROMPT__", PROMPT[mode])
+            .replace("__MODE__", mode).replace("__VERSION__", version).replace("__PAYLOAD__", payload))
 
 
 def main() -> str:

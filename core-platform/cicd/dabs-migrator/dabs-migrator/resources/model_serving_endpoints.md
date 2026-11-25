@@ -4,6 +4,17 @@ REST endpoints for serving registered models.
 
 Docs: https://docs.databricks.com/aws/en/dev-tools/bundles/resources#model_serving_endpoint
 
+## Migration: environment isolation
+
+Applies the environment-value hard rules in `SKILL.md`. A live read returns the source environment's values. Put them only in the source target's `targets.<target>.variables`; every other target, and `dev` in particular, gets its own value. Never leave a literal from the live read in the fields below.
+
+| Field | Use |
+|---|---|
+| `config.served_entities[].entity_name` | `${var.catalog}.${var.schema}.<model>` |
+| `config.auto_capture_config.catalog_name` / `schema_name`, `ai_gateway.inference_table_config.catalog_name` / `schema_name` | `${var.catalog}`, `${var.schema}`, so dev inference logs never land in the production schema |
+| `email_notifications.*` | `${var.notification_emails}` |
+| `name` | keep, development mode prefixes it in `dev`; confirm with `bundle validate -t dev` |
+
 ## Complete schema reference
 
 Required fields: `name`

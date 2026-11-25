@@ -42,6 +42,15 @@ databricks lakeview get <dashboard_id> -p <profile> -o json 2>/dev/null | jq -r 
 
 Redirect stderr with `2>/dev/null` before `jq` — a proxied CLI banner on stderr otherwise corrupts the piped JSON (`jq: parse error: Invalid numeric literal`). Do **not** fall back to `GET .../dashboards/{id}/datasets` and friends; that is the per-collection tree that produces the invalid `name`s above.
 
+## Migration: environment isolation
+
+Applies the environment-value hard rules in `SKILL.md`. A live read returns the source environment's values. Put them only in the source target's `targets.<target>.variables`; every other target, and `dev` in particular, gets its own value. Never leave a literal from the live read in the fields below.
+
+| Field | Use |
+|---|---|
+| `warehouse_id` | `${var.warehouse_id}` |
+| dataset catalog and schema | `dataset_catalog: ${var.catalog}`, `dataset_schema: ${var.schema}`. These override the catalog and schema of each dataset definition. Fully qualified `catalog.schema.table` names inside dataset SQL may not be rewritten: list them in the report and confirm with a `dev` deploy |
+
 ## Complete schema reference
 
 ```yaml

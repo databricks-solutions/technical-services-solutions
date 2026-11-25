@@ -10,52 +10,69 @@ description: >
 
 # Tableau Migration Assessment Skill
 
-This skill guides a **read-only profiling pass** over one or more Tableau files
-— workbooks (`.twb` / `.twbx`) and data sources (`.tds` / `.tdsx`).
-It produces, for a batch of files, **one single Migration Report**. That one report
-**opens with a Migration Summary Report** (a high-level cross-file roll-up —
-**Template A**) and is **followed by the individual per-file report details**
-(one Individual Workbook Report section per file — **Template B**). The **automation
-estimate is anchored to the `/importBI` migration agent** — the intended execution
-path for Tableau → Databricks AI/BI conversions. Every ✅/⚠️/🔧 classification reflects
-what `/importBI` reports it can handle. The **Automation Uplift** section in each individual
-report section then shows how applying
+This skill runs a **read-only profiling pass** over one or more Tableau files
+— workbooks (`.twb` / `.twbx`) and data sources (`.tds` / `.tdsx`) — and
+produces a concise Migration Assessment Report. Every ✅/⚠️/🔧 classification is
+anchored to what the `/importBI` migration agent reports it can handle; the
+**Automation Uplift** shows how
 [uc-semantics-patterns](https://github.com/databricks-solutions/uc-semantics-patterns)
-recipes during migration can raise the automatable share further.
+recipes can raise the Auto with review share further. Bulk runs (2+ files) open
+with a **Migration Summary Report** followed by one **Individual Report** per
+file (compact for 6+ files). Nothing is converted.
 
-The reports focus on blockers, frictions, and the auto vs. manual split — without
-performing any conversion.
+## Rules
 
-> **CRITICAL — MANDATORY REPORT FORMAT**: You MUST produce the report using the
-> EXACT section headings and table structures defined in the "Report Structure"
-> section below. Do NOT invent your own numbered sections (Part 1, Part 2, 1, 2, 3…),
-> do NOT add sections not in the template, and do NOT omit required sections.
-> The Automation Classification and Automation Uplift sections are MANDATORY in
-> every individual report section. Violation of this format makes the report unusable.
->
-> **ONE REPORT, SUMMARY FIRST**: Produce a SINGLE Migration Report. It MUST begin
-> with ONE **Migration Summary Report** (Template A — the high-level cross-file
-> roll-up), and that is **followed by** one **Individual Workbook Report** section
-> per file (Template B — the detailed per-file analysis). Summary first, then the
-> individual details. Never fold individual detail into the summary, and never make
-> the summary the only output.
->
-> **CONCISENESS RULE**: Reports must be SHORT. Summarize counts by category
-> (e.g. "Simple aggregations (SUM, AVG, etc.) | 18 | ✅ Auto"). NEVER list
-> individual calculated-field names, and NEVER list individual relationships or
-> joins one by one — group and count. The only exception is the optional
-> **🔧 Manual Adjustment Report** (Step 6), produced on user request after the
-> main report.
->
-> **SOURCE-OF-TRUTH RULE — NO HALLUCINATION**: Every ✅/⚠️/🔧 bucket and every
-> "/importBI Behavior", "handling", or "resolution" cell MUST come from what
-> `/importBI` actually returned in the Step 3 profile. Never infer, assume, or
-> invent a `/importBI` capability. If `/importBI` did not state how it handles an
-> item, write `Not stated by /importBI — verify` and classify it 🔧 Manual.
-> The ONLY other allowed source is the
-> [uc-semantics-patterns](https://github.com/databricks-solutions/uc-semantics-patterns)
-> repo, used ONLY in the Automation Uplift section and read live (see
-> Reference Patterns).
+> **CRITICAL** — these rules apply to every run. Breaking them makes the report
+> unusable.
+
+1. **Exact format.** Use the exact headings and tables in
+   [Report Structure](#report-structure). No numbered sections (`## Part 1`,
+   `## 1.`), no extra sections, no omitted sections. Summary first, then the
+   Individual Reports — never only the summary, and never individual detail
+   folded into the summary.
+2. **Mandatory sections.** Automation Classification, Automation Summary, and
+   Automation Uplift (with the Revised Automation Summary when there is an
+   uplift) appear in **every**
+   Individual Report, full or compact — never only at portfolio level. In bulk
+   runs the Migration Summary Report also has its Automation Uplift section.
+3. **`/importBI` is the source of truth — no hallucination.** Every ✅/⚠️/🔧
+   bucket and every handling / behavior / resolution cell comes from the
+   `/importBI` profile. If it did not state how it handles an item, write
+   `Not stated by /importBI — verify` and classify it 🔧. The only other source
+   is uc-semantics-patterns, used only in Automation Uplift (see
+   [Reference Patterns](#reference-patterns)). Facts read from the workbook /
+   data-source XML (field lists, calc formulas and references) are allowed;
+   classifications are not.
+4. **Concise — group and count.** Never list individual calculated-field
+   names, relationships / joins, or LOD formula text in the main report (write
+   "Simple aggregations (SUM, AVG, etc.) | 18 | ✅ Auto"). 🔧 item names appear
+   only in the 🔧 Manual Adjustment Report. Limits: ≤ 300 lines per full
+   Individual Report, ≤ 25 per compact one, ≤ 150 for the Migration Summary
+   Report. Never shorten a report beyond the compact form.
+5. **✅/⚠️/🔧 only** — never ❌. See [Buckets](#buckets).
+6. **One pass.** Profile every file in one turn (in parallel batches where
+   supported — Step 3). Between the Step 1 file count and the final report,
+   print only `Profiled <i>/<n> — <file name>` per file. Never print a profile
+   or a per-file report while profiling, and never stop to ask the user to
+   "continue" or confirm the next file.
+7. **Read-only.** Never convert, create datasets, or create widgets — this
+   applies to every `/importBI` handoff and parallel subagent.
+8. **Counting Rules everywhere.** Calc populations, rates, root 🔧 calcs,
+   calculation families, and shared data sources follow
+   [Counting Rules](#counting-rules).
+9. **Source dependencies.** Never mark a data source unused or omittable if
+   anything references it — a worksheet, a data blend (primary or secondary), a
+   dashboard action, a parameter, or another (published) data source built on
+   it. Only a source referenced by nothing is omittable.
+10. **Checks are mandatory.** Run Step 5 before printing every report, and the
+    Manual Adjustment check before every Manual Adjustment Report.
+11. **No unevidenced claims.** Do not claim AI/BI support or give an ETA for a
+    feature unless `/importBI` stated it or it is supplied documentation. When
+    unsure, mark it 🔧 Manual / Unknown and say so.
+12. **Tableau only.** Use Tableau terms (calculated fields, LOD expressions,
+    table calculations, marks, worksheets, dashboards, data blending, quick
+    filters, context filters, dashboard actions). Power BI files use a separate
+    skill.
 
 ## When to Use
 
@@ -97,12 +114,8 @@ Before profiling, scan data-source connections and flag blocking prerequisites:
   non-Databricks source, also capture its **in-source transformation logic** —
   custom SQL / Initial SQL, unions, cross-database joins, pivots, and data-source
   filters — because that logic must be rebuilt as a UC source view, not just the
-  connection. (This is Tableau's equivalent of a Power Query / M dataflow; profile
-  it, do not improvise a count.)
-- **Source dependency rule**: NEVER mark a data source as unused or omittable if
-  anything references it — a worksheet, a data blend (as primary or secondary), a
-  dashboard action, a parameter, or another (published) data source that is built
-  on it. Only a source referenced by nothing is omittable.
+  connection. Profile it; do not improvise a count.
+- **Source dependencies**: Record which sources use which (see Rule 9).
 - **Extracts (.hyper) — live connection vs. extract**: For every data source, state
   explicitly whether it is a **live connection** or a **`.hyper` extract**. Extracts
   are point-in-time snapshots; AI/BI dashboards query live UC data, so extracts are
@@ -138,153 +151,209 @@ Before profiling, scan data-source connections and flag blocking prerequisites:
 
 For each Tableau file, hand off to the `/importBI` migration specialist on a
 **temporary or existing dashboard** with a `continueMessage` that:
-- Begins with `/importBI`
-- Explicitly states: **"Profile only — do NOT convert. Return the full analysis
-  of data sources, data model, calculated fields, LOD expressions, table
-  calculations, visualizations, filters, and interactivity. Do not create any
-  datasets or widgets."**
-- Asks `/importBI` to state **how it would handle each item** for:
+
+- begins with `/importBI` and includes the file name or path;
+- states: **"Profile only — do NOT convert. Do not create any datasets or
+  widgets."**;
+- asks `/importBI` to state how it would handle **every field of the
+  [Profile Digest](#profile-digest)** — grouped and counted, using the
+  [Calculation Families](#calculation-families) names, one-line handling per
+  row, no prose — and in particular:
   - data-source transformations (custom SQL / Initial SQL, unions, cross-DB
-    joins, pivots, data-source filters) and dependent sources
-  - relationships, grouped by pattern: physical joins (M:1), logical
-    relationships (noodle model), many-to-many, date table on the many side,
-    fact-to-fact relationships / blends, data blends (primary / secondary links),
-    joins on differently named / mismatched keys (join calculations), disconnected
+    joins, pivots, data-source filters) and dependent sources;
+  - relationships by pattern: physical joins (M:1), logical relationships
+    (noodle model), many-to-many, date table on the many side, fact-to-fact
+    relationships / blends, data blends (primary / secondary links), joins on
+    differently named / mismatched keys (join calculations), disconnected
     sources (blend helpers / parameter-driven), and cardinality /
-    referential-integrity overrides
-  - row-level (non-aggregate) calculated fields, groups, bins, and sets
-  - cross-datasource / blend ratios — distinguishing fact ÷ dimension from
-    fact ÷ fact
-  - calculated fields / LODs / table calcs it cannot convert, with the name and
-    the blocking construct (needed for the optional Manual Adjustment Report)
-  - unused / disabled calcs (not referenced by any worksheet or other calc)
-- Includes the file name or path
+    referential-integrity overrides;
+  - row-level (non-aggregate) calculated fields, groups, bins, and sets;
+  - cross-datasource / blend ratios, split fact ÷ dimension vs fact ÷ fact;
+  - every calculated field / LOD / table calc it cannot convert, with its name
+    and the blocking construct;
+  - unused / disabled calcs, display & gating calcs, and calc dependencies
+    (which calcs reference which).
 
-**Parallelize when more than one file is present — if the environment supports
-it.** If the volume (or attachment set) contains **2 or more** files **and Genie
-Code can run concurrent `/importBI` handoffs**, profile them in **parallel batches
-of up to 4 files at a time**: dispatch one profiling task per file (each an
-independent `/importBI` handoff) as concurrent subagents, up to 4 running at once.
-When a batch finishes, start the next batch until all files are profiled. If
-concurrent handoffs are **not** supported in the current environment, **fall back
-to sequential profiling** — one `/importBI` handoff per file, collecting each
-file's analysis before the next (as the Power BI skill does). Either way, every
-file's handoff must carry the same read-only, profile-only `continueMessage` above
-(including the "state how you handle each item" asks), and all results must be
-collected before producing the reports. The profile output is the only source for
-classifications and handling text — keep it.
+If `/importBI` does not return calc dependencies, display & gating calcs, or a
+data source's table list, read them from the workbook / data-source XML —
+facts, not classifications (Rule 3).
 
-If **only one** file is present, profile it directly with a single `/importBI`
-handoff (no batching needed).
+**Parallelize when supported.** With **2+** files, and if Genie Code can run
+concurrent `/importBI` handoffs, profile them in **parallel batches of up to 4
+files**: one profiling task per file as concurrent subagents, then the next
+batch. Otherwise profile sequentially, one handoff per file. A single file is
+profiled directly. Every handoff carries the same read-only `continueMessage`,
+and all of it runs in one turn (Rule 6):
 
-> **Hard constraint**: Do NOT allow any specialist or subagent to create datasets,
-> widgets, or perform any conversion. This is a read-only assessment, whether run
-> sequentially or in parallel.
+1. Hand off the file (or batch).
+2. Immediately reduce each answer to a **Profile Digest** and keep only the
+   digest — not the raw analysis — for the rest of the run.
+3. Print one progress line per file: `Profiled <i>/<n> — <file name>`.
+4. Continue with the next file or batch without waiting for the user.
+
+The digests are the only source for every report — including a full
+Individual Report requested later in Step 6. Never re-profile a file that
+already has a digest.
+
+#### Profile Digest
+
+A fixed-format, internal record per file (target 30–50 lines; never printed).
+Every row is grouped and counted; handling text is copied as one line from the
+`/importBI` answer, or `Not stated by /importBI — verify`. Apply the
+[Counting Rules](#counting-rules) while filling it in.
+
+```text
+FILE: <name> | TYPE: .twb/.twbx/.tds/.tdsx | WORKSHEETS: <n> | DASHBOARDS: <n> | DASHBOARD OBJECTS: <n>
+DATA SOURCES: <name — connection — live/extract — tables (<sorted names>) — calcs <n> (✅ <n> ⚠️ <n> 🔧 <n>)>; …
+CALCS: total <n> | classified <n> | display & gating <n> | row-level <n> | unused/disabled <n> | unused exclusion: applied / not applied (<reason>)
+FAMILIES: <family — population — count — bucket — handling>; …
+GROUPS / BINS / SETS: <n> / <n> / <n> — <bucket — handling> | PARAMETERS: <n> | ALIASES: <n> | HIERARCHIES: <n>
+CONNECTIONS / PARAMETERS: <name — resolved/unresolved>; … | NON-DATABRICKS: <type — count>; …
+SOURCE TABLES: <n> (<schema.table>, …) | CUSTOM SQL MISMATCHES: <n> | ALIAS WHITESPACE ISSUES: <n>
+SOURCE TRANSFORMS: direct <n> | db+custom SQL <n> | non-db <n> | dependent <n> (<source → source>; …) | handling: <…>
+RELATIONSHIPS: <pattern — count — bucket — handling>; …
+VISUALS: <mark type — count — bucket — issue>; …
+FILTERS: distinct fields <n> | worksheet instances <n> | dashboard controls <n> | measure names/values <n>
+INTERACTIVITY: <feature — count — bucket>; … | DYNAMIC ZONE VISIBILITY / SHEET SWAP: <n>
+ENTITLEMENTS: user filters / USERNAME() / ISMEMBEROF calcs <n>
+LAYERS: model ✅ <n> ⚠️ <n> 🔧 <n> | visual ✅ <n> ⚠️ <n> 🔧 <n>
+CALC DEPTH: max <n> levels
+🔧 CALCS: <calc — data source — family — root | dependent of <root> — reason>; …
+DEPENDENTS: <root → <n>: calc, calc 🔧, …>; …
+GATING CALCS: <calc — what it gates>; …
+```
+
+Calc names are kept only in the 🔧 CALCS, DEPENDENTS, and GATING CALCS lines;
+they feed the Manual Adjustment Report and the Readiness Summary.
 
 ### Step 4 — Consolidate
 
-After all files are profiled, consolidate findings into the report structure
-defined below. Before Step 5, read the uc-semantics-patterns repo live to build
-the Automation Uplift section (see Reference Patterns).
+1. **Read the reference patterns** — once per run, before building any
+   report, as described in [Reference Patterns](#reference-patterns). Do not
+   build reports until the pattern status is set.
+2. **Pick the report mode** by file count:
 
-Produce ONE single Migration Report, in this order:
+   | Files | Report |
+   |---|---|
+   | 1 | Template B (full) only — no Migration Summary Report |
+   | 2–5 | Template A, then Template B (full) for every file |
+   | 6+ | Template A, then Template B-compact for every file |
 
-1. **First**, ONE **Migration Summary Report** (Template A) that summarizes every
-   file at a high level (no re-inventory of features).
-2. **Then**, for EACH file, a self-contained **Individual Workbook Report** section
-   (Template B) appended after the summary.
+3. **Per file first.** Build each Individual Report from that file's own
+   digest: Counting Rules, [Complexity Rating](#complexity-rating) score, and
+   an Automation Uplift that matches **that file's** 🔧 items against the
+   pattern list. Compute every percentage from that file's own counts.
+4. **Group shared data sources** (bulk only) — see
+   [Shared and Duplicate Data Sources](#shared-and-duplicate-data-sources).
+5. **Then the portfolio.** Build Template A only by aggregating per-file
+   results — never re-classify at portfolio level. Portfolio calc counts,
+   including calcs reclassified by patterns, are sums over **unique data
+   sources**, so a data source shared by several files is counted once. The
+   portfolio Uplift rolls up the per-file Uplift tables in the same way.
+6. **Detect outliers** (3+ files) using the [Outlier Rules](#outlier-rules).
 
 ### Step 5 — Consistency Check (mandatory, before printing)
 
 Silently verify the drafted report. Fix every mismatch before printing; do not
 print the check itself.
 
-1. The three bucket counts (✅ + ⚠️ + 🔧) **equal the file's classified calc total**
-   — aggregate calculated fields + LOD expressions + table calculations +
-   cross-datasource ratio calcs — **minus** the unused / disabled calcs. Row-level
-   calcs, groups, bins, and sets are NOT part of this total (they are counted in
-   their own block, per check #3).
-2. Every count is **identical everywhere it appears** (the file's header metrics
-   table, Feature Inventory, Feature Classification, Automation Summary, Uplift
-   baseline, and the summary's Per-File roll-up).
-3. **No dimension or plain (non-calculated) field is counted as a calc**, a calc is
-   never double-counted as both a measure and a dimension, and **no row-level calc,
-   group, bin, set, parameter, alias, or hierarchy is counted in the calc %** (they
-   live in their own block or are flagged as model features).
-4. On every run, the **grouped 🔧 counts in the Readiness Summary reconcile with the
-   🔧 rows in the Feature Classification table** (same categories, same counts).
-   **When** the 🔧 Manual Adjustment Report is produced (Step 6), every 🔧 item it
-   names also appears in the Feature Classification table (and vice versa) and its
-   per-group counts match. Do NOT require named items on runs where the Manual
-   Adjustment Report was not produced.
-5. The Uplift **"Calcs (baseline)"** column equals the Automation Summary.
-6. **Portfolio Totals in the summary equal the sum of the per-file counts**, and
-   each Per-File Summary **"Automation %"** equals that file's Template B
-   Automation Summary.
-7. A calc that falls into **several 🔧 categories** is counted **once**, under its
-   primary (most blocking) category, with a note in the Feature Classification
-   row: "n calcs also involve <other category>".
-8. The **Unused / disabled calcs** row appears in the Template B header metrics
-   and in Template A Portfolio Totals — never silently dropped.
-9. Every bucket and every handling / resolution cell **traces to the `/importBI`
-   output**, or (Uplift only) to a cited uc-semantics-patterns folder. Anything
-   else → replace with `Not stated by /importBI — verify` and 🔧.
-10. **Calc-family completeness**: every calculated field is assigned to exactly one
-    calculation family (aggregate / row-level / FIXED LOD / INCLUDE-EXCLUDE LOD /
-    each table-calc family / cross-datasource ratio), and the family counts **sum to
-    the total calculated-field count**. Groups, bins, sets, and parameters are not
-    calculated fields and are reconciled separately. (This completeness check spans
-    all families, including row-level, and is broader than check #1's calc-%
-    denominator.)
+**Per file**
 
-Then return the full report in the chat: the summary first, then the individual
-per-file detail sections.
+1. Classified + display & gating + row-level + unused / disabled calcs = total
+   calculated fields, and every calc is in exactly one population. ✅ + ⚠️ + 🔧
+   = classified calcs; the same holds for display & gating calcs and for the
+   row-level block.
+2. **Calc-family completeness**: every calculated field is in exactly one
+   [calculation family](#calculation-families), and the family counts sum to
+   the total calculated-field count. Groups, bins, sets, and parameters are not
+   calculated fields and are reconciled separately.
+3. Every count is identical wherever it appears — header metrics, Inventory,
+   Feature Classification, Automation Summary, Uplift baseline, and (bulk) the
+   Per-Workbook rows for that file. The Unused / disabled row is never
+   silently dropped.
+4. No dimension or plain field is counted as a calc; no calc is counted as both
+   a measure and a dimension; no parameter, alias, or hierarchy is in the calc
+   %; the unused exclusion is applied only where
+   [Calc Populations](#calc-populations) allows it.
+5. Every family name comes from [Calculation Families](#calculation-families)
+   (or `Other — <name>`). A calc in several 🔧 families is counted **once**,
+   under its primary (most blocking) family, with the note
+   "n calcs also involve <other family>".
+6. Root 🔧 calcs + 🔧 dependents = 🔧 calcs, and every dependent names its root.
+7. The grouped 🔧 counts in the Readiness Summary reconcile with the 🔧 rows in
+   Feature Classification (same families, same counts).
+8. The complexity score equals the sum of the rubric points shown.
+9. Every bucket and handling / resolution cell traces to the `/importBI`
+   output, or (Uplift only) to a cited uc-semantics-patterns folder. Anything
+   else → `Not stated by /importBI — verify` and 🔧.
+10. The pattern status is in every report header, every Uplift section is
+    present, and no "with patterns" or "Uplift (pp)" cell is blank — it holds a
+    value (`+0` when no pattern matches), or `n/a — pattern repo unavailable`.
+    In every row, Uplift (pp) = with patterns − baseline of that same row
+    (including the per-file median row).
 
-### Step 6 — Offer Manual Adjustment Report
+**Bulk runs**
 
-After printing the main report, ask the user:
+11. Every Individual Report has the Rule 2 sections, with percentages from its
+    own counts.
+12. Portfolio counts (✅ / ⚠️ / 🔧, baseline and with patterns, including
+    reclassified calcs) equal the sum over unique data sources. Files that
+    share a data source are listed together in Unique Data Sources and the
+    source is counted once.
+13. "All files" = "Excluding outliers" + each outlier, for every count column.
+
+Then return the full report in the chat.
+
+### Step 6 — Offer Follow-ups
+
+After printing the main report, offer the follow-ups that apply.
+
+**1–5 files** — ask:
 
 > "Do you want a detailed 🔧 Manual Adjustment Report listing the calculated
 > fields / LODs / table calcs that need manual work?"
 
-Only if the user agrees, produce the report using the
-[Manual Adjustment Report Structure](#manual-adjustment-report-structure).
+**6+ files (compact mode)** — list the files (number, name, complexity,
+Auto with review % baseline, outlier flag) and ask:
 
-If the user already requested the Manual Adjustment Report (or a detailed list of
-manual items) in the initial prompt, skip the question and print it directly after
-the main report.
+> "Individual reports are shown in compact form. Do you want:
+> 1. a full Individual Report for a specific file — which one(s)?
+> 2. a detailed 🔧 Manual Adjustment Report — for all files or for the
+>    selected file(s)?"
+
+Suggest starting with flagged outliers and the files with the most root 🔧
+calcs. For each file the user picks, print the full Template B from its
+Profile Digest — do not re-profile. Its numbers must match the compact report
+and the Per-Workbook Automation table.
+
+Produce the [Manual Adjustment Report](#manual-adjustment-report-structure)
+only if the user agrees. If they requested it (or a detailed list of manual
+items) in the first prompt, skip that question and print it directly after the
+main report; in compact mode, still offer the full Individual Report.
 
 ## Deduplication Rules
 
-Each fact or feature appears in exactly ONE place.
+Within each Individual Report, each feature appears in exactly ONE place:
 
-**Within an individual report:**
-1. **Executive Overview** names each complexity driver once with count and brief
-   resolution. No full technical detail — that belongs in the Inventory.
-2. **Feature Inventory** is the single detailed listing. Each feature lives in
-   exactly one sub-section:
-   - Data-source transformations and dependencies → Prerequisites / Data Source
-     Transformations only
-   - Relationships / joins / blends → the grouped Relationships table only
-   - LOD expressions, table calcs, aggregate calcs → Data Modeling only
-   - Row-level calculated fields, groups, bins, sets → Row-level Calculations
-     block only (never in Data Modeling or the calc counts)
-   - Quick filters / filter controls → Filters only (not also Interactivity)
-   - Dashboard actions (filter/highlight/URL/navigation/parameter) → Interactivity only
-3. **Automation Classification** references Inventory rows by feature name and
-   adds the auto/manual column — no re-description.
-
-**Across the report's sections:**
-4. The **Migration Summary Report** (the opening section) contains ONLY high-level
-   cross-file roll-ups and one-line-per-file summaries. It NEVER re-inventories
-   features or repeats an individual report section's tables — it references each
-   file by name.
+- **Executive Overview** names each complexity driver once (count + brief
+  resolution); detail lives in the Inventory.
+- **Inventory** sub-sections: data-source transformations and dependencies →
+  Prerequisites only; relationships / joins / blends → the grouped
+  Relationships table only; LOD expressions, table calcs, aggregate calcs →
+  Data Modeling only; row-level calculated fields, groups, bins, sets → the
+  Row-level block only; quick filters / filter controls → filters only;
+  dashboard actions → interactivity only.
+- **Automation Classification** references Inventory rows by name — no
+  re-description.
+- **Migration Summary Report** only aggregates and lists cross-cutting
+  findings once; it never re-inventories features or repeats an Individual
+  Report's tables.
 
 ## Empty Report Handling
 
 When a file has **0 worksheets/visuals** — a data-source-only or connection-only
 workbook, or any `.tds` / `.tdsx` data source — collapse Visualizations,
-Interactivity, and Filters into one callout in that file's individual report:
+Interactivity, and Filters into one callout in that file's report:
 
 > **Model-only workbook** — this file contains data-source connections and
 > calculated fields with no worksheets, dashboards, filters, or actions. The
@@ -293,60 +362,202 @@ Interactivity, and Filters into one callout in that file's individual report:
 
 Do NOT print empty tables for each section.
 
+## Counting Rules
+
+These rules apply to every report — full, compact, and summary — and to the
+Manual Adjustment Report.
+
+### Buckets
+
+The baseline reflects what `/importBI` reported in Step 3 — not theoretical
+possibility. Only classify ✅ or ⚠️ if `/importBI` stated it handles the item.
+
+- ✅ **Auto** — /importBI stated it converts this with no user intervention.
+- ⚠️ **Auto + workaround** — /importBI stated it converts this by applying a
+  known workaround automatically (source SQL view, precomputed column, window
+  function, decomposition). The user reviews it but builds nothing manually.
+- 🔧 **Manual** — /importBI cannot convert this, or did not state how it would.
+  Must be redesigned after automated conversion completes.
+
+**Cross-datasource / blend ratios** are always split:
+- **Fact ÷ dimension / lookup** — the secondary source is a lookup joinable to
+  the fact on a shared key (rates, targets, attributes). Bucket as reported by
+  `/importBI`.
+- **Fact ÷ fact** — a direct join fans out the rows and gives the wrong ratio.
+  Each side must be **aggregated separately to a shared grain** (a
+  pre-aggregated source view, or two metric views at that grain), **then
+  divided**. Bucket as reported by `/importBI`, **capped at ⚠️** (never ✅); 🔧 if
+  there is no shared conformed dimension. Never advise "just join them in the
+  metric view". Describe the approach only as `/importBI` suggested it;
+  otherwise reference a uc-semantics-patterns recipe in the Uplift section.
+
+### Calc Populations
+
+Every calculated field belongs to exactly one population:
+
+| Population | Definition | In headline rate |
+|---|---|---|
+| Unused / disabled | Not referenced by any worksheet, other calc, action, or dashboard object in the file — **only where the unused exclusion applies** (below) | No |
+| Display & gating | Returns presentation or layout control, not a business value: color / shape / size / label calcs, dynamic-title text, KPI arrows / indicator text, and boolean flags that gate visibility, zones, sheet swapping, or filter actions | No — own buckets and rate |
+| Row-level | Non-aggregate calculated fields (arithmetic, IF/CASE, string/date), reported with groups, bins, and sets | No — own block (Model layer) |
+| Classified | Aggregate calcs, LOD expressions, table calculations, and cross-datasource ratio calcs | Yes |
+
+When a calc fits several, the first match wins: Unused / disabled → Display &
+gating → Row-level → Classified. Display & gating calcs are still assessed for
+readiness, even when simple, and are never dismissed as unused.
+
+**The unused exclusion applies only when** the file has worksheets **and** the
+calc's data source is not shared with another file in the run. For model-only
+files (`.tds` / `.tdsx`, or a workbook with 0 worksheets) and shared data
+sources, a calc that nothing in this file references may still be used by
+other workbooks: keep it in its population and show
+`Not used in this file: <n> (info — not excluded)` instead of an unused count.
+
+### Rates
+
+- **Auto %** = ✅ ÷ classified calcs — converts with no intervention.
+- **Auto with review %** = (✅ + ⚠️) ÷ classified calcs — the **headline
+  rate**; ⚠️ items convert automatically but must be reviewed.
+- **🔧 %** = 🔧 ÷ classified calcs.
+- "With patterns" versions use the counts after the Automation Uplift
+  reclassification (🔧 → ⚠️), so patterns raise Auto with review %, not Auto %.
+- **Uplift (pp)** = Auto with review % (with patterns) − Auto with review %
+  (baseline) **in the same row** — for a file, a portfolio view, or the median
+  row. Never take a median or average of uplift values.
+- **Per-file median row**: each % column is the median of that column's
+  per-file values; its Uplift (pp) is the difference of the two medians shown
+  in that row.
+- **Layer rates** — Auto with review % per layer, each with its item count:
+  - **Model layer** — relationships / joins / blends, data-source
+    transformations, the row-level block (row-level calcs, groups, bins,
+    sets), and model features (parameters, aliases, hierarchies), counted by
+    Inventory rows.
+  - **Calcs** — the headline rate above (classified calcs).
+  - **Visual layer** — visuals / marks, filters, and dashboard actions; `N/A`
+    for model-only files.
+  - **Display & gating calcs** — reported separately; never part of the
+    headline.
+- Show every rate with its denominator in the same row or cell. Mark any rate
+  computed on fewer than 10 items `(small n)`.
+
+### Root and Dependent 🔧 Calcs
+
+- A **root 🔧 calc** is a 🔧 calc whose own formula blocks conversion — not one
+  that is 🔧 only because it references another 🔧 calc.
+- A **dependent** is any calc (✅, ⚠️, or 🔧) that references a root directly or
+  through other calcs. It can only be converted once the root is rebuilt. A
+  dependent of several roots is listed under the root it references most
+  directly.
+- Buckets stay as `/importBI` stated them. Report the number of root 🔧 calcs
+  (the manual effort units), the blocked dependents, and the maximum calc
+  dependency depth.
+- Dependencies come from field references (`[Calc]`) in calc formulas — from
+  `/importBI` or the workbook XML.
+
+### Calculation Families
+
+Assign every calculated field to exactly one family, and use the same names in
+Data Modeling, the Row-level block, Feature Classification, Automation Uplift,
+the Manual Adjustment Report, and every cross-file roll-up. The primary family
+is the most blocking construct. Use `Other — <short name>` only if no family
+fits.
+
+| # | Family | Population |
+|---|---|---|
+| 1 | Simple aggregations (SUM, AVG, etc.) | Classified |
+| 2 | FIXED LODs | Classified |
+| 3 | INCLUDE / EXCLUDE LODs | Classified |
+| 4 | Table calc — constant LOOKUP (fixed offset) | Classified |
+| 5 | Table calc — dynamic LOOKUP (parameter/field-driven offset) | Classified |
+| 6 | Table calc — analytical windows (running / moving / rank / period) | Classified |
+| 7 | Table calc — mark-positioning windows (INDEX/SIZE/FIRST/LAST for layout) | Classified |
+| 8 | Cross-datasource calc — fact ÷ dimension/lookup | Classified |
+| 9 | Cross-datasource calc — fact ÷ fact (blend) | Classified |
+| 10 | Row-level calculated fields (arithmetic, IF/CASE, string/date) | Row-level |
+| 11 | Display calcs (color / shape / label / title / KPI text) | Display & gating |
+| 12 | Gating calcs (visibility / zone / sheet-swap / action flags) | Display & gating |
+
+- **Constant LOOKUP ≠ dynamic LOOKUP**: a fixed-offset `LOOKUP(SUM([x]), -1)`
+  and a parameter-/field-driven offset are different migration risks — never
+  merge them.
+- **Mark-positioning windows ≠ analytics**: `INDEX`, `SIZE`, `FIRST`, `LAST`
+  used to place marks or drive layout are not analytical windows (which map to
+  window measures); they usually need manual redesign.
+- **Parameter-dependent ratios** are ratio calcs (family 8 or 9), **never
+  simple aggregations**, and are distinct from the Parameters model-feature
+  row.
+- Groups, bins, sets, parameters, aliases, and hierarchies are not calculated
+  fields: groups / bins / sets go in the Row-level block; parameters, aliases,
+  and hierarchies are model features — classified for effort, not in the
+  calc %.
+
+### Shared and Duplicate Data Sources
+
+Bulk runs only. Every calc belongs to one data source in the XML. Compare the
+DATA SOURCES lines of the digests:
+
+- **Identical** — same connection, same table list, same calc count.
+- **Variant** — same connection and table list, calc counts within ±10%.
+
+Matching data sources across files — including a `.tds` / `.tdsx` in the run
+and the workbooks that embed or connect to it — form one shared data source.
+Count it through the copy with the most calcs.
+
+- Individual Reports stay per file, with each file's own rates.
+- Portfolio totals, rates, Uplift, and outlier shares count each shared data
+  source once.
+- The unused exclusion does not apply to calcs of a shared data source (see
+  [Calc Populations](#calc-populations)).
+- List every group in the Unique Data Sources table of Template A.
+
 ## Report Structure
 
-**You MUST use the EXACT headings and tables below.** These are not examples
-— they are the mandatory output formats. Copy the heading hierarchy verbatim.
-Do NOT use numbered sections (## Part 1, ## 1. Model Overview, etc.). Do NOT
-add sections like "Fact-Domain Grouping" — those details belong INSIDE the tables
-below. Relationship details go ONLY in the grouped **Relationships** table; do not
-add a separate "Relationship Analysis" narrative section.
+These templates are the mandatory output format — copy the heading hierarchy
+verbatim. Details such as fact-domain grouping go INSIDE the tables, never in
+new sections; relationship details go only in the grouped Relationships table
+(no separate "Relationship Analysis" narrative). Only list rows with a
+count > 0.
 
-**Anti-patterns (DO NOT do these)**:
-- ❌ Listing individual ✅ Auto / ⚠️ workaround calculated-field names (group and count those)
-- ❌ Listing individual relationships/joins one by one
-- ❌ Listing individual LOD expressions with full formula text
-- ❌ Using ✅/⚠️/❌ — use ✅/⚠️/🔧 (Auto / Auto+workaround / Manual)
-- ❌ Writing handling / resolution text that `/importBI` did not state
-- ❌ Producing > 400 lines per individual report
-- ❌ Omitting the Automation Classification or Automation Uplift sections from an individual report section
-- ❌ Skipping the per-file individual detail sections and returning only the summary
-- ❌ Putting the individual detail sections before the Migration Summary Report (summary MUST come first)
+Formatting illustrations (not statements of what `/importBI` supports):
+"Simple aggregations (SUM, AVG, etc.) | 18 | ✅ Auto" · "Relationships (physical
+joins, M:1) | 13 | ✅ Auto | <resolution as stated by /importBI>" ·
+"INCLUDE / EXCLUDE LODs | 6 | 🔧 Manual | <as stated by /importBI>".
 
-**Correct patterns** (formatting illustrations only — not statements of what
-`/importBI` supports):
-- ✅ "Simple aggregations (SUM, AVG, etc.) | 18 | ✅ Auto"
-- ✅ "Relationships (physical joins, M:1) | 13 | ✅ Auto | <resolution as stated by /importBI>"
-- ✅ "INCLUDE/EXCLUDE LODs | 6 | 🔧 Manual | <as stated by /importBI>"
+- **Single file** — one Template B (full).
+- **Bulk (2+ files)** — Template A, then one Template B (full, or compact for
+  6+ files) per file, in the same order as the Per-Workbook Automation table.
 
-### Template A — Migration Summary Report (produce one, FIRST)
+Each report starts with its own `#` title, so section headings are identical
+in single-file and bulk runs.
 
-This is the opening section of the single report. High-level roll-up ONLY.
-Reference each file by name; never re-inventory features or repeat an individual
-report section's detailed tables.
+### Template A — Migration Summary Report (bulk only)
 
 ```markdown
-# Migration Report
+# Migration Summary Report
 
-## Migration Summary Report
+**Date scanned**: <date> | **Files**: <count> | **File type(s)**: <.twb / .twbx / .tds / .tdsx> | **Report mode**: full / compact
+**/importBI**: <version, or "version not reported"> | **Reference patterns**: <read live — n patterns checked / Pattern repo unavailable>
 
-**Date scanned**: <date> | **Files**: <count> | **File type(s)**: <.twb / .twbx / .tds / .tdsx>
-
-### Portfolio Totals
-
-| Metric | Count |
+| Metric | Total |
 |---|---|
-| Workbooks | ... |
-| Worksheets | ... |
-| Dashboards | ... |
-| Data sources | ... |
-| Aggregate calcs | ... |
+| Files (.twb / .twbx / .tds / .tdsx) | ... / ... / ... / ... |
+| Unique data sources | ... |
+| Worksheets / dashboards | ... / ... |
+| Classified calcs (aggregate / LOD / table calc / cross-datasource) | ... (... / ... / ... / ...) |
+| Display & gating calcs (not in headline rate) | ... |
 | Row-level calcs / groups / bins / sets | ... |
-| LOD expressions | ... |
-| Table calculations | ... |
-| Unused / disabled calcs | ... |
+| Unused / disabled calcs (excluded) | ... |
+| Root 🔧 calcs (manual effort units) / blocked dependents | ... / ... |
 
-### Complexity Distribution
+## Unique Data Sources
+
+<"Each file has its own data sources." or:>
+
+| Data Source | Files | Match | Calcs | Counted Through |
+|---|---|---|---|---|
+| <data source> | <file, file> | Identical / Variant (±n calcs) | ... | <file> |
+
+## Complexity Distribution
 
 | Complexity | Workbooks | % of Total |
 |---|---|---|
@@ -356,74 +567,121 @@ report section's detailed tables.
 
 **Overall portfolio complexity**: <Low / Medium / High> — <1–2 sentence rationale>
 
-### Per-File Summary
+## Per-Workbook Automation
 
-One row per file. Automation % is the ✅ + ⚠️ share of that file's **classified
-calc total** (aggregate calcs + LOD expressions + table calculations +
-cross-datasource ratio calcs; excludes unused/disabled calcs and the row-level
-calcs / groups / bins / sets block) — the same denominator as that file's
-Template B Automation Summary **% of Calcs**.
+| # | Workbook | File Type | Complexity (score) | Classified Calcs | Auto % | Auto with review % | 🔧 % | Root 🔧 | Auto with review % (with patterns) | Uplift (pp) | Outlier |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | ... | .twb / .twbx / .tds / .tdsx | High (9) | ... | ...% | ...% | ...% | ... | ...% | +... | — / ⚑ <reason> |
 
-| Workbook | File Type | Complexity | Automation % | Top Drivers | Key Blockers |
-|---|---|---|---|---|---|
-| ... | .twb / .twbx / .tds / .tdsx | Low/Med/High | ...% | ... | ... |
+**Distribution (Auto with review %, baseline)**: <n> files ≥ 80% · <n> files 50–80% · <n> files < 50%
 
-### Cross-Cutting Findings
+## Portfolio Automation Summary
 
-**Common blockers** (🔧 appearing across multiple files):
-- <blocker> — affects <N> workbooks
+| View | Files / Data Sources | Classified Calcs | ✅ | ⚠️ | 🔧 | Root 🔧 | Auto % | Auto with review % (baseline) | Auto with review % (with patterns) | Uplift (pp) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| All files (unique data sources, calc-weighted) | ... / ... | ... | ... | ... | ... | ... | ...% | ...% | ...% | +... |
+| Excluding outliers (calc-weighted) | ... / ... | ... | ... | ... | ... | ... | ...% | ...% | ...% | +... |
+| Per-file median | ... / — | — | — | — | — | — | ...% | ...% | ...% | +... |
 
-**Aggregate data prerequisites** (Unity Catalog):
-- <UC tables/sources required across the portfolio; extracts to re-point>
+## Automation Uplift with Reference Patterns
 
-**Non-Databricks sources across portfolio**:
-- <source type + count per type, or "None">
+Roll-up of the per-file Uplift tables (each shared data source once).
 
-### Recommended Migration Sequence
+| 🔧 Family | Applicable Pattern | Recipe | Files | Calcs Reclassified to ⚠️ |
+|---|---|---|---|---|
+| <family> | <pattern name from repo> | <repo folder / recipe> | <file, file> | <n> |
 
-1. <e.g. Start with Low-complexity, all-Databricks workbooks (quick wins)>
-2. <e.g. Resolve shared prerequisites / source access>
-3. <e.g. Tackle Medium workbooks after ⚠️ workarounds validated>
-4. <e.g. Plan manual redesign effort for High-complexity workbooks>
+> **Portfolio automation uplift**: applying
+> [uc-semantics-patterns](https://github.com/databricks-solutions/uc-semantics-patterns)
+> recipes raises Auto with review % from **<baseline>%** to
+> **<with-patterns>%** (**+<delta>pp**) across all files, and from <x>% to <y>%
+> excluding outliers. Largest gains: <file (+pp)>, <file (+pp)>.
+
+<or the no-match / repo-unavailable line from Reference Patterns>
+
+## Outliers
+
+<"None — no file meets the outlier rules" or, per flagged file:>
+
+| Workbook | Reason | Share of Portfolio Classified Calcs | Classified Calcs | ✅ | ⚠️ | 🔧 | Auto with review % (baseline) | Auto with review % (with patterns) | Effect on Portfolio |
+|---|---|---|---|---|---|---|---|---|---|
+| ... | Size: ...% of calcs / Rate: ±..pp vs. portfolio | ...% | ... | ... | ... | ... | ...% | ...% | Lowers / raises the all-files rate by ...pp |
+
+> **Reading the portfolio rate**: <1–2 sentences — e.g. "The all-files rate of
+> 48% is driven by <outlier>; the remaining <n> files average 79%.">
+
+## Cross-cutting Findings
+
+- **Recurring 🔧 families**: <family — n files, n root 🔧, n 🔧 calcs>
+- **Aggregate data prerequisites** (Unity Catalog): <UC tables/sources required across the portfolio; extracts to re-point>
+- **Non-Databricks sources across portfolio**: <source type + count per type, or "None">
+- **Unresolved connections / parameters across files**: <list or "None">
+
+## Recommended Migration Sequence
+
+| Wave | Workbooks | Why |
+|---|---|---|
+| 1 — Quick wins | ... | High Auto with review %, Low complexity, all-Databricks |
+| 2 | ... | Shared prerequisites resolved, ⚠️ workarounds validated |
+| 3 — Redesign | ... | Outliers / many root 🔧 / High complexity |
 ```
 
-### Template B — Individual Workbook Report (produce one section per file, AFTER the summary)
+### Outlier Rules
 
-One per file, appended after the Migration Summary Report above.
+Apply only when the run has **3+ files**. Flag a file (⚑) when either is true:
+
+1. **Size outlier** — the file holds **> 40%** of the portfolio's classified
+   calcs **and** more than **2×** the average share (100% ÷ number of files).
+2. **Rate outlier** — the file has **≥ 10 classified calcs** and its baseline
+   Auto with review % differs by **more than 20 percentage points** from the
+   calc-weighted rate of all files that are not size outliers. (Find size
+   outliers first, compute that reference rate once, then test each file.)
+
+Files with fewer than 10 classified calcs are never rate outliers; mark their
+rates `(small n)`. Show every flagged file in the **Outliers** table and keep
+it out of the "Excluding outliers" row. Never let an outlier's rate stand in
+for the portfolio: the Reading-the-portfolio-rate line must name it.
+
+### Template B — Individual Report (full)
+
+Used for a single-file run, for every file in a 2–5 file run, and for any file
+the user picks in Step 6.
 
 ```markdown
-## Migration Assessment Report — <Workbook Name>
+# Individual Report — <Workbook Name>
 
 **Date scanned**: <date> | **Source path**: <path> | **File type**: <.twb / .twbx / .tds / .tdsx>
+**/importBI**: <version, or "version not reported"> | **Reference patterns**: <read live — n patterns checked / Pattern repo unavailable>
 
 | Metric | Count |
 |---|---|
-| Worksheets | ... |
-| Dashboards | ... |
-| Data sources | ... |
+| Worksheets / dashboards | ... / ... |
+| Data sources (live / extract) | ... / ... |
 | Physical data connections | ... |
-| Aggregate calcs | ... |
+| Classified calcs (aggregate / LOD / table calc / cross-datasource) | ... (... / ... / ... / ...) |
+| Display & gating calcs | ... |
 | Row-level calcs / groups / bins / sets | ... |
-| LOD expressions | ... |
-| Table calculations | ... |
-| Unused / disabled calcs | ... |
+| Unused / disabled calcs (excluded) — or "Not used in this file (info)" | ... |
+| Root 🔧 calcs / blocked dependents / max calc depth | ... / ... / ... |
+| Parameters | ... |
+| User filters / entitlement calcs (USERNAME / ISMEMBEROF) | ... |
 
-### Prerequisites
+## Prerequisites
 
-#### Connections & Parameters
+### Connections & Parameters
 
 | Connection / Parameter | Status | Action |
 |---|---|---|
 | catalog (workbook parameter) | Unresolved | Resolve to concrete catalog |
 | .hyper extract | Point-in-time | Informational — identify live source |
 
-#### Source Tables
+### Source Tables
 
 | Schema.Table | Used By | Accessible |
 |---|---|---|
 | catalog.schema.table | Orders (data source) | To verify |
 
-#### Data Source Transformations
+### Data Source Transformations
 
 | Source type | Count | Depends on / Used by | /importBI Handling |
 |---|---|---|---|
@@ -432,30 +690,25 @@ One per file, appended after the Migration Summary Report above.
 | Non-Databricks source | ... | ... | <as stated by /importBI> |
 | Dependent source (published source built on another, union, cross-DB join, blend secondary, or referenced by a parameter / action) | ... | <source → source> | <as stated by /importBI> |
 
-A source referenced by anything (worksheet, blend, action, parameter, or dependent
-published source) is never omittable.
-
-#### Non-Databricks Sources
+### Non-Databricks Sources
 
 <source type + count per type, or "None — all sources are Databricks">
 
-### Executive Overview
+## Executive Overview
 
-**Complexity**: <Low / Medium / High>
+**Complexity**: <Low / Medium / High> (score <n>) — <score breakdown, e.g. "root 🔧 2 · calcs 1 · sources 1 · blends 1">
 
 **Rationale**: <2–3 sentences>
 
-#### Complexity Drivers (ranked by impact)
+### Complexity Drivers (ranked by impact)
 
 | # | Driver | Count | Impact | Resolution |
 |---|---|---|---|---|
 | 1 | ... | ... | 🔴/🟠/🟡 | ... |
 
-### Feature Inventory
+## Feature Inventory
 
-Each feature appears ONCE. Only list features that have non-zero occurrences.
-
-#### Data Sources
+### Data Sources
 
 | Connection Type | Count | Databricks? | Migration Impact |
 |---|---|---|---|
@@ -468,9 +721,7 @@ Each feature appears ONCE. Only list features that have non-zero occurrences.
 > groupings** (relationships/noodle model): count physical joins separately from
 > logical relationships.
 
-#### Relationships
-
-Counts only — never list individual joins. Only list patterns with count > 0.
+### Relationships
 
 | Pattern | Count | Bucket | /importBI Resolution |
 |---|---|---|---|
@@ -484,47 +735,34 @@ Counts only — never list individual joins. Only list patterns with count > 0.
 | Disconnected sources (blend helpers / parameter-driven) | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
 | Cardinality / referential-integrity overrides | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
 
-#### Data Modeling
+### Data Modeling
 
-The **calc rows** here — simple aggregations, LOD expressions, table calculations,
-and cross-datasource ratio calcs — are the ones counted in the ✅/⚠️/🔧 **calc
-total** that Step 5 reconciles. The **model-feature rows** (parameters, field/value
-aliases, hierarchies) are classified for migration effort but are **NOT** in the
-calc % — mark each `model feature — not in calc %` in the Note. Row-level calcs,
-groups, bins, and sets go in the next block, also outside the calc %.
+Classified and display & gating calcs by
+[family](#calculation-families), plus model features (classified for effort,
+not in the calc %). Row-level calcs, groups, bins, and sets go in the next
+block.
 
-> **Table calculations are split by family** — never collapse them into one row.
-> **Constant LOOKUP** (fixed offset, e.g. `LOOKUP(SUM([x]), -1)`) and
-> **dynamic LOOKUP** (parameter-/field-driven offset) are different migration risks
-> and must not be conflated. **Analytical windows** (`RUNNING_*`, `WINDOW_*`, `RANK`,
-> moving/period calcs) map to window measures; **mark-positioning windows**
-> (`INDEX`, `SIZE`, `FIRST`, `LAST` used to drive layout/placement, not analytics)
-> usually require manual redesign — they are not ordinary analytics.
-> **Parameter-dependent ratios** are classified as ratio calcs (cross-datasource or
-> complex), **never as simple aggregations**, and are distinct from the Parameters
-> model-feature row below.
+| Feature | Population | Count | Classification | Note |
+|---|---|---|---|---|
+| Simple aggregations (SUM, AVG, etc.) | Classified | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+| FIXED LODs | Classified | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+| INCLUDE / EXCLUDE LODs | Classified | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+| Table calc — constant LOOKUP (fixed offset) | Classified | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+| Table calc — dynamic LOOKUP (parameter/field-driven offset) | Classified | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+| Table calc — analytical windows (running / moving / rank / period) | Classified | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+| Table calc — mark-positioning windows (INDEX/SIZE/FIRST/LAST for layout) | Classified | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+| Cross-datasource calc — fact ÷ dimension/lookup | Classified | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+| Cross-datasource calc — fact ÷ fact (blend) | Classified | ... | ⚠️/🔧 (never ✅) | <as stated by /importBI> |
+| Display calcs (color / shape / label / title / KPI text) | Display & gating | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+| Gating calcs (visibility / zone / sheet-swap / action flags) | Display & gating | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
+| Parameters | Model feature | ... | ✅/⚠️/🔧 | not in calc %; <as stated by /importBI> |
+| Field / value-level aliases | Model feature | ... | ✅/⚠️/🔧 | not in calc %; <as stated by /importBI> |
+| Hierarchies | Model feature | ... | ✅/⚠️/🔧 | not in calc %; <as stated by /importBI> |
 
-| Feature | Count | Classification | Note |
-|---|---|---|---|
-| Simple aggregations (SUM, AVG, etc.) | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
-| FIXED LODs | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
-| INCLUDE / EXCLUDE LODs | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
-| Table calc — constant LOOKUP (fixed offset) | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
-| Table calc — dynamic LOOKUP (parameter/field-driven offset) | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
-| Table calc — analytical windows (running / moving / rank / period) | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
-| Table calc — mark-positioning windows (INDEX/SIZE/FIRST/LAST for layout) | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
-| Cross-datasource calc — fact ÷ dimension/lookup | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
-| Cross-datasource calc — fact ÷ fact (blend) | ... | ⚠️/🔧 (never ✅) | <as stated by /importBI> |
-| Parameters | ... | ✅/⚠️/🔧 | model feature — not in calc %; <as stated by /importBI> |
-| Field / value-level aliases | ... | ✅/⚠️/🔧 | model feature — not in calc %; <as stated by /importBI> |
-| Hierarchies | ... | ✅/⚠️/🔧 | model feature — not in calc %; <as stated by /importBI> |
-| ... only list features with count > 0 ... |
+### Row-level Calculations, Groups, Bins & Sets
 
-#### Row-level Calculations, Groups, Bins & Sets
-
-Row-level (non-aggregate) calculated fields, groups, bins, and sets. These are NOT
-counted in the calc % — they are reported on their own line in the Automation
-Summary.
+Not in the calc % — reported on their own line in the Automation Summary and
+in the Model layer.
 
 | Pattern | Count | Bucket | /importBI Handling |
 |---|---|---|---|
@@ -533,7 +771,7 @@ Summary.
 | Bins | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
 | Sets | ... | ✅/⚠️/🔧 | <as stated by /importBI> |
 
-#### Visualizations
+### Visualizations
 
 | Visual / Mark Type | Count | AI/BI Equivalent | Issues |
 |---|---|---|---|
@@ -546,7 +784,7 @@ Summary.
 
 If model-only: use Empty Report Handling callout.
 
-#### Interactivity & Filters
+### Interactivity & Filters
 
 Report filter volume as **three distinct counts** — do not conflate them: the number
 of **distinct filter fields** (unique fields filtered on), the number of **worksheet
@@ -571,7 +809,7 @@ mechanism, **not a data filter** — and never count it toward the filter totals
 | Highlight actions | ... | ✅/⚠️/🔧 |
 | URL / navigation / drill actions | ... | ✅/⚠️/🔧 |
 | Parameter actions | ... | ✅/⚠️/🔧 |
-| ... only features present, excluding items in Data Modeling ... |
+| Dynamic zone visibility / sheet swapping | ... | ✅/⚠️/🔧 |
 
 > A filter set to "(All)" is **not** necessarily a no-op — check the consumer formula
 > before treating it as "no filter"; it may be read by a calc (e.g. `ISFILTERED` /
@@ -579,57 +817,49 @@ mechanism, **not a data filter** — and never count it toward the filter totals
 
 If model-only: use Empty Report Handling callout.
 
-### Automation Classification
+## Automation Classification
 
-<!-- MANDATORY — do NOT omit this section -->
-Classify every Inventory feature into one of three buckets (see the Automation
-Classification Legend in the skill). **The baseline classification reflects what
-`/importBI` reported in the Step 3 profile** — not theoretical possibility and not
-assumptions. Only classify ✅ or ⚠️ if `/importBI` stated it handles the item;
-otherwise 🔧 Manual with `Not stated by /importBI — verify`.
+Classify every Inventory feature using the [Buckets](#buckets).
 
-#### Feature Classification
+### Feature Classification
 
-| Feature (from Inventory) | Count | Bucket | /importBI Behavior |
-|---|---|---|---|
-| ... | ... | ✅/⚠️/🔧 | One line, as stated by /importBI (or "Not stated by /importBI — verify") |
-
-If a 🔧 calc belongs to several 🔧 categories, it is counted once under its
-primary category, with a note: "n calcs also involve <other category>".
-
-#### Automation Summary
-
-| Bucket | Features | Calculated fields / LODs / table calcs | % of Calcs |
-|---|---|---|---|
-| ✅ Auto | ... | ... | ... |
-| ⚠️ Auto + workaround | ... | ... | ... |
-| 🔧 Manual | ... | ... | ... |
-
-**% of Calcs** = bucket calcs ÷ the classified calc total (aggregate calcs + LOD
-expressions + table calculations + cross-datasource ratio calcs; excludes the two
-lines below). This denominator is the same one the Per-File Summary uses.
-
-**Unused / disabled calcs (excluded)**: <n>
-**Row-level calcs, groups, bins & sets (not in calc %)**: ✅ <n> / ⚠️ <n> / 🔧 <n>
-
-### Automation Uplift with Reference Patterns
-
-<!-- MANDATORY — do NOT omit this section -->
-The baseline above reflects what **`/importBI` reported**. Some 🔧 Manual items
-can be reclassified as ⚠️ Auto + workaround when the migration additionally applies
-documented UC semantics patterns from
-[uc-semantics-patterns](https://github.com/databricks-solutions/uc-semantics-patterns),
-read live at each run. These patterns are UC metric-view recipes (source-agnostic),
-so Tableau LODs, table calculations, and blends map onto them directly. This
-estimates the **additional** automation achievable beyond `/importBI`'s baseline.
-
-| 🔧 Feature | Calcs | Applicable Pattern | Reclassified To | Recipe |
+| Feature (from Inventory) | Population | Count | Bucket | /importBI Behavior |
 |---|---|---|---|---|
-| <🔧 feature from Classification> | <n> | <pattern name from repo> | ⚠️ Auto + workaround | <repo folder / recipe, short description> |
+| ... | Classified / Display & gating / Row-level / Model / Visual | ... | ✅/⚠️/🔧 | One line, as stated by /importBI (or "Not stated by /importBI — verify") |
+
+### Automation Summary
+
+| Bucket | Features | Classified Calcs | % of Classified Calcs |
+|---|---|---|---|
+| ✅ Auto | ... | ... | ...% |
+| ⚠️ Auto + workaround | ... | ... | ...% |
+| 🔧 Manual | ... | ... | ...% |
+
+**Auto %**: <n>% · **Auto with review %**: <n>% (of <n> classified calcs)
+**Root 🔧 calcs**: <n> roots block <n> dependents (<n> of them 🔧); max calc depth <n>
+
+| Layer | Items | ✅ | ⚠️ | 🔧 | Auto with review % |
+|---|---|---|---|---|---|
+| Model layer | ... | ... | ... | ... | ...% |
+| Calcs (classified) | ... | ... | ... | ... | ...% |
+| Visual layer | ... | ... | ... | ... | ...% / N/A |
+| Display & gating calcs | ... | ... | ... | ... | ...% |
+
+**Unused / disabled calcs (excluded)**: <n> — or `Not used in this file: <n> (info — not excluded)`
+**Row-level calcs, groups, bins & sets (Model layer, not in calc %)**: ✅ <n> / ⚠️ <n> / 🔧 <n>
+
+## Automation Uplift with Reference Patterns
+
+| 🔧 Family | Calcs | Applicable Pattern | Reclassified To | Recipe |
+|---|---|---|---|---|
+| <family from Classification> | <n> | <pattern name from repo> | ⚠️ Auto + workaround | <repo folder / recipe, short description> |
+
+<or only the no-match / repo-unavailable line from Reference Patterns — then
+omit the Revised Automation Summary and the callout below>
 
 **Revised Automation Summary (with patterns)**:
 
-| Bucket | Calcs (baseline) | Calcs (with patterns) | % Baseline | % With Patterns |
+| Bucket | Classified Calcs (baseline) | Classified Calcs (with patterns) | % Baseline | % With Patterns |
 |---|---|---|---|---|
 | ✅ Auto | ... | ... | ...% | ...% |
 | ⚠️ Auto + workaround | ... | ... | ...% | ...% |
@@ -637,234 +867,191 @@ estimates the **additional** automation achievable beyond `/importBI`'s baseline
 
 > **Automation uplift**: Applying
 > [uc-semantics-patterns](https://github.com/databricks-solutions/uc-semantics-patterns)
-> recipes during migration can raise the automatable share from **<baseline>%** to
+> recipes during migration can raise Auto with review % from **<baseline>%** to
 > **<with-patterns>%** (a **+<delta>pp** improvement), potentially shifting the
 > complexity from <baseline rating> to <new rating>.
 
-If the pattern repo cannot be read, keep this section with the single line
-"Pattern repo unavailable — uplift not computed; baseline applies." instead of the
-tables above.
+## Readiness Summary
 
-### Readiness Summary
-
-**Primary blockers** (🔧 only):
+**Primary blockers** (root 🔧 calcs, by family):
 - <list>
 
 **Data prerequisites** (Unity Catalog):
 - <UC tables/sources that must exist before conversion; extracts to re-point at live sources>
 
 **Semantic-model remediation** (🔧 only, before conversion):
-- <grouped 🔧 blockers by category with counts — e.g. "EXCLUDE LODs with nested context — 4", "fact ÷ fact blends — 2">
+- <grouped 🔧 blockers by family with counts — e.g. "INCLUDE / EXCLUDE LODs — 4 roots", "fact ÷ fact blends — 2">
 - Names of each 🔧 item are available in the optional 🔧 Manual Adjustment Report (Step 6).
 
 **Dashboard-gating calculations**:
-- Call out boolean / flag calcs that gate what the dashboard shows (e.g. `RM`,
-  `fSite`, `fPlatform` — field/zone visibility, filter actions, or dynamic zone
-  visibility). They control the layout, so they must be assessed for readiness even
-  when simple, and never dismissed as unused.
+- <gating calcs and what they gate — field/zone visibility, filter actions, dynamic
+  zone visibility (e.g. `RM`, `fSite`, `fPlatform`)>. They control the layout, so
+  they must be assessed for readiness even when simple, and never dismissed as unused.
 
 **Visualization / interaction redesign** (🔧 visuals/interaction):
 - <unsupported visuals, custom geocoding, parameter/highlight/URL actions, analytics objects>
 
 **Recommended next steps**:
 1. Resolve prerequisites (connections, parameters, source access, extract → live source)
-2. Complete 🔧 Manual items (semantic redesign)
+2. Rebuild root 🔧 calcs (this unblocks their dependents)
 3. Run /importBI for ✅ and ⚠️ items
-4. Verify ⚠️ workaround results
+4. Review ⚠️ workaround results
 5. Build net-new visuals if model-only workbook
 
-#### Specific Risks
+### Specific Risks
 - <workbook-specific list>
 
-#### Validation Checks
+### Validation Checks
 - <list of things to verify after conversion>
 ```
 
-> **REMINDER**: The markdown above defines the COMPLETE reports. Do NOT add any
-> sections beyond what is shown. The Automation Classification section is a
-> MANDATORY part of EVERY individual report. If you find yourself writing section
-> numbers (## Part 1, ## 1., ## 2.) you are violating the format.
+### Template B-compact — Individual Report (6+ files)
+
+At most **25 lines** per file. Same numbers as the full Template B; inventory
+and prerequisite detail roll up into the Migration Summary Report's
+Cross-cutting Findings. The full report for any file is available in Step 6.
+
+```markdown
+# Individual Report — <Workbook Name>
+
+**Type**: .twb / .twbx / .tds / .tdsx | **Complexity**: <Low / Medium / High> (<score>) | **Outlier**: — / ⚑ <reason>
+**Reference patterns**: <read live — n patterns checked / Pattern repo unavailable>
+
+**Metrics**: <w> worksheets · <d> dashboards · <c> classified + <g> display & gating calcs (+<u> unused) · <r> row-level / groups / bins / sets · <k> root 🔧 blocking <b> · <s> non-Databricks sources · <x> extracts
+
+## Automation Classification
+
+**⚠️ families**: <family (n)>, … | **🔧 families**: <family (n roots / n calcs)>, …
+
+## Automation Summary & Uplift
+
+| Bucket | Classified Calcs (baseline) | % | Classified Calcs (with patterns) | % |
+|---|---|---|---|---|
+| ✅ Auto | ... | ...% | ... | ...% |
+| ⚠️ Auto + workaround | ... | ...% | ... | ...% |
+| 🔧 Manual | ... | ...% | ... | ...% |
+
+**Auto %**: <n>% · **Auto with review %**: <baseline>% → <with patterns>% (+<delta>pp) via <recipe (n calcs)>, … / "No matching pattern — no uplift" / "Pattern repo unavailable"
+
+**Layers** (Auto with review %): Model <x>% (n) · Visual <y>% (n) / N/A · Display & gating <z>% (n)
+
+**Primary blockers** (root 🔧, top 3): <family — n roots>, …
+```
+
+> **REMINDER**: The templates above are the COMPLETE report — see Rules 1–2.
 
 ## Manual Adjustment Report Structure
 
-Produced ONLY after the user accepts the Step 6 offer (or asked for it up front).
-This is the only place where individual 🔧 item names are listed.
+Produced after the main report, when requested in the first prompt or
+accepted in Step 6 — with the same structure and check either way, so the user
+never needs to describe the format. In a bulk run it covers all files, or only
+the file(s) the user selected. This is the only place where individual 🔧 item
+names are listed, and it lists **all** of them — no top-N cap.
 
-- One `###` group per 🔧 feature, using the **same group names and order** as the
-  Feature Classification table and Readiness Summary.
-- Each item appears once, under its primary category (same rule as Step 5 check 7);
-  mention other involved categories in the Reason.
-- Reasons come from the `/importBI` output — the blocking construct it reported.
-- List **all** 🔧 items — there is no top-N cap in this report.
+- Organised by **root 🔧 calcs**; each root lists the calcs it blocks, so the
+  manual effort is the number of roots.
+- One `##` group per [family](#calculation-families), in the same names and
+  order as Feature Classification.
+- A 🔧 calc that is 🔧 only because it references a root is listed under that
+  root (marked 🔧 in the Blocks column), not as its own row.
+- Reasons come from the `/importBI` output — the blocking construct it
+  reported.
 
 ```markdown
 # 🔧 Manual Adjustment Report
 
-## <🔧 Feature group name> — <n> items
+**Root 🔧 calcs**: <n> (manual effort units) | **Blocked dependents**: <n> (of which 🔧: <n>)
 
-| Calculated field / LOD / table calc | Data source | Workbook (multi only) | Reason |
-|---|---|---|---|
-| `Profit Ratio` | Orders | Sales.twbx | Cross-datasource blend (fact ÷ fact) — aggregate each side then divide |
+## <Family> — <n> roots, <n> 🔧 calcs
 
-## <next 🔧 group> — <n> items
+| Root Calc | Data Source | Workbook (bulk only) | Reason | Blocks |
+|---|---|---|---|---|
+| `Profit Ratio` | Orders | Sales.twbx | Cross-datasource blend (fact ÷ fact) — aggregate each side then divide | 2: [Profit Ratio LY] 🔧, [Profit Ratio Δ] |
+
+## <next family> — <n> roots, <n> 🔧 calcs
 ...
 
-**Consistency**: <total> items listed = 🔧 Manual calcs in the Automation Summary
-(<n>); group counts match the Feature Classification table (per file, and in the
-portfolio total for multi-file runs).
+**Per-workbook subtotals** (bulk only): <workbook — n roots, n 🔧 calcs>; …
+
+**Consistency**: <n> roots + <n> 🔧 dependents = <total> 🔧 calcs = 🔧 in the
+Automation Summary and the Row-level / Display & gating lines; family counts
+match the Feature Classification table.
 ```
 
-Before printing, verify that every group count equals the 🔧 count for that feature
-in the main report and that the total equals the 🔧 Manual calc count. If they
-differ, fix the discrepancy (and say which report was corrected) before printing.
+**Manual Adjustment consistency check (mandatory, before printing):**
 
-## Automation Classification Legend
+1. Roots + 🔧 dependents listed = all 🔧 calcs of the file(s) covered
+   (classified, display & gating, and row-level).
+2. Every 🔧 calc appears exactly once — as a root row or as a 🔧 entry in one
+   root's Blocks column — and also appears in Feature Classification.
+3. For every family, the 🔧 count in Feature Classification equals the number
+   of 🔧 calcs of that family in this report, whether listed as a root or as a
+   dependent.
+4. Every root has a data source and a non-empty reason.
+5. Bulk only: each workbook subtotal equals the root and 🔧 counts in that
+   workbook's Individual Report, and the subtotals add up to the total.
 
-Used by the Automation Classification section of every individual report. These are
-bucket **definitions** only — the actual bucket for any feature comes from the
-`/importBI` profile, never from this list.
+If anything differs, fix it before printing and say which report was
+corrected. The final **Consistency** line states the result.
 
-- ✅ **Auto** — /importBI stated it converts this with no user intervention.
-- ⚠️ **Auto + workaround** — /importBI stated it converts this by applying a known
-  workaround automatically (source SQL view, precomputed column, window function,
-  decomposition). User should verify but does not build anything manually.
-- 🔧 **Manual** — /importBI cannot convert this, or did not state how it would.
-  Must be redesigned after automated conversion completes.
+## Complexity Rating
 
-**Cross-datasource / blend ratios** — always split into two cases:
-- **Fact ÷ dimension / lookup** — the secondary source is a lookup joinable to the
-  fact on a shared key (rates, targets, attributes). Bucket as reported by
-  `/importBI`.
-- **Fact ÷ fact** — a direct join fans out the rows and gives the wrong ratio. Each
-  side must be **aggregated separately to a shared grain** (a pre-aggregated source
-  view, or two metric views at that grain), **then divided**. Bucket as reported by
-  `/importBI`, **capped at ⚠️** (never ✅); 🔧 if there is no shared conformed
-  dimension. Never advise "just join them in the metric view". Describe the approach
-  only as `/importBI` suggested it; otherwise reference a uc-semantics-patterns
-  recipe in the Uplift section.
+Score every file with the points below, then show the rating with the score
+(e.g. "High (9)") and a one-line breakdown in the Executive Overview. All
+inputs are counts from the Profile Digest. The rating describes migration
+effort; it does not describe `/importBI` behavior.
 
-## Complexity Rating Criteria
+| Factor | 0 | 1 | 2 | 3 |
+|---|---|---|---|---|
+| Root 🔧 calcs | 0 | 1–5 | 6–15 | 16+ |
+| Classified calcs | < 20 | 20–99 | 100+ | — |
+| Calc dependency depth | < 3 levels | 3+ levels | — | — |
+| Non-Databricks source types or `.hyper` extracts | 0 | 1 | 2+ | — |
+| Data blends / fact-to-fact relationships | None | Present | — | — |
+| INCLUDE / EXCLUDE or nested LODs | None | Present | — | — |
+| Dynamic LOOKUP or mark-positioning windows | None | Present | — | — |
+| Parameter / URL / navigation actions; dynamic zone visibility / sheet swapping | None | One kind | Both | — |
+| User filters / entitlement calcs (USERNAME / ISMEMBEROF) | None | Present | — | — |
+| Worksheets + dashboard objects | < 10 | 10–29 | 30+ | — |
+| Custom geocoding, analytics objects (forecast, cluster, trend), > 3 dual-axis, composite scorecards | None | One kind | 2+ kinds | — |
+| Model or Visual layer Auto with review % below 50% | Neither | One | Both | — |
 
-The "Expected automation" values below are rough guidance for rating complexity —
-they do **not** describe actual `/importBI` behavior.
-
-### Low
-- < 5 calculated fields, all simple aggregations / arithmetic
-- Single Databricks source (live)
-- Standard visuals (bar/line/table), < 3 worksheets, 1 dashboard
-- No LODs, table calcs, blends, or actions
-- **Expected automation**: 90%+ ✅ Auto
-
-### Medium
-- 5–20 calculated fields with FIXED LODs or simple table calcs
-- 2–3 sources, some non-Databricks or extracts
-- A few simple dual-axis charts, context filters, filter/parameter actions
-- **Expected automation**: 50–90% ✅ or ⚠️
-
-### High
-- 20+ calculated fields with INCLUDE/EXCLUDE LODs, nested LODs, or complex
-  table calcs (custom addressing/partitioning)
-- **Deep nested-calculation chains** (calcs referencing calcs several levels deep)
-- Multiple sources needing migration/federation/upload; data blending
-- Parameter/highlight/URL/navigation actions, custom geocoding, analytics
-  objects (forecast, cluster, trend/reference distributions)
-- **High worksheet / widget volume** (many worksheets or dashboard objects to rebuild)
-- **Many dual-axis / combined-axis combinations** (beyond a few simple ones)
-- **Composite scorecards** (dense multi-metric tiles assembled from many sheets)
-- Sheet swapping / **dynamic zone visibility** (and the gating calcs that drive it)
-- **Expected automation**: < 50% ✅ or ⚠️
-
-## Important Guardrails
-
-- **MANDATORY FORMAT**: Use the exact report structures above. Do NOT invent
-  your own sections. Do NOT use numbered headings (## Part 1, ## 1., ## 2.).
-- **ONE REPORT, SUMMARY FIRST**: Always produce a SINGLE Migration Report that
-  OPENS with the Migration Summary Report (Template A) and is FOLLOWED by one
-  Individual Workbook Report section per file (Template B). The Automation
-  Classification and Automation Uplift sections MUST appear in every individual
-  report section.
-- **CONCISE — GROUP, DON'T NAME, IN THE MAIN REPORT**: Never list individual
-  calculated-field names or relationship/join formulas — group and count
-  (e.g. "Simple aggregations | 18 | ✅ Auto"). Individual 🔧 item names appear
-  only in the opt-in **🔧 Manual Adjustment Report** (Step 6). Target < 300 lines
-  per individual report.
-- **SOURCE OF TRUTH — `/importBI`**: Every bucket and every handling / resolution
-  cell comes only from the `/importBI` profile output. When `/importBI` did not
-  state handling, write `Not stated by /importBI — verify` and classify 🔧 Manual.
-  The only exception is uc-semantics-patterns, used in the Automation Uplift
-  section and read live.
-- **CONSISTENCY CHECK IS MANDATORY**: Run the Step 5 consistency check (silently)
-  before printing every report.
-- **ROW-LEVEL CALCS / GROUPS / BINS / SETS AND UNUSED CALCS ARE NOT IN THE CALC %**:
-  keep them in their own block / lines and out of the ✅/⚠️/🔧 calc counts.
-- **CROSS-DATASOURCE RATIOS SPLIT**: Always split fact ÷ dimension from fact ÷ fact;
-  cap fact ÷ fact at ⚠️ (never ✅), 🔧 when there is no shared conformed dimension.
-- **SOURCE DEPENDENCIES**: Capture each non-Databricks source's transformation logic
-  (custom SQL, unions, cross-DB joins, data-source filters) as a source view to
-  rebuild, and never mark a data source omittable if a worksheet, blend, action,
-  parameter, or dependent published source references it.
-- **USE ✅/⚠️/🔧 ONLY**: Do NOT use ❌. The three buckets are:
-  ✅ Auto, ⚠️ Auto + workaround, 🔧 Manual.
-- **Read-only**: Never convert, create datasets, or create widgets — this applies
-  to parallel subagents too.
-- **No duplication**: Each feature in exactly ONE section per Deduplication Rules;
-  the summary never re-inventories features.
-- **No unevidenced claims**: Do not claim AI/BI support or provide an ETA for a
-  feature unless `/importBI` stated it or it is supplied documentation. When
-  unsure, mark it 🔧 Manual / Unknown and say so.
-- **Tableau terminology**: calculated fields, LOD expressions (FIXED/INCLUDE/
-  EXCLUDE), table calculations, marks, worksheets, dashboards, data blending,
-  quick filters, context filters, dashboard actions — not Power BI/DAX terms.
-- **Tableau only**: This skill is for `.twb` / `.twbx` workbooks and
-  `.tds` / `.tdsx` data sources. Power BI files use a different assessment
-  framework (`pbi-migration-assessment`).
-- **Parameters datasource ≠ blend**: The Parameters pseudo-datasource is never a
-  data blend, secondary source, or relationship. Exclude it from the Relationships
-  and Data Source tables.
-- **Constant LOOKUP ≠ dynamic LOOKUP**: A fixed-offset `LOOKUP` and a
-  parameter-/field-driven `LOOKUP` are different table-calc families — classify and
-  count them separately; never merge them.
-- **Mark-positioning windows ≠ ordinary analytics**: Window calcs used to place marks
-  / drive layout (`INDEX`, `SIZE`, `FIRST`, `LAST`) are not analytical window
-  measures. Classify them separately — they usually need manual redesign.
-- **"(All)" ≠ no filter**: Never assume a filter set to "(All)" is a no-op without
-  checking the consumer formula — a calc or view may still depend on it.
-- **Calc-family counts reconcile to the total**: Every calculated field is assigned
-  to exactly one calculation family (aggregate / row-level / FIXED LOD /
-  INCLUDE-EXCLUDE LOD / each table-calc family / cross-datasource ratio), and the
-  family counts **sum to the total calculated-field count** (groups, bins, sets, and
-  parameters are not calculated fields and are counted separately). This completeness
-  check is in addition to the ✅/⚠️/🔧 calc-% reconciliation (Step 5 check #1).
+**Rating**: 0–3 **Low** · 4–7 **Medium** · 8+ **High**.
 
 ## Reference Patterns
 
-Do NOT rely on a remembered or cached pattern list — the repo is updated over time.
-At **each run**, read the
-[uc-semantics-patterns](https://github.com/databricks-solutions/uc-semantics-patterns)
-repository live and match 🔧 items to it by its current content only:
+Read `https://github.com/databricks-solutions/uc-semantics-patterns` live,
+**once per run**, before building any report (Step 4), and reuse that pattern
+list for every file. Never rely on a remembered or cached list — the repo
+changes — and never skip the read because the run is long.
 
-1. Read the root `README.md` of
-   `https://github.com/databricks-solutions/uc-semantics-patterns`.
+1. Read the repo's root `README.md`.
 2. Follow its links to the pattern folders and read the recipe for any pattern
-   that may match a 🔧 item (e.g. period-over-period growth, period-to-date totals,
-   moving calculations, semi-additive calculations, ranking, static segmentation,
-   currency conversion, fact ÷ fact ratios). These are source-agnostic UC
-   metric-view recipes, so Tableau LODs, table calculations, and blends map onto
-   them directly.
-3. Match 🔧 items to patterns only by what the current repo content documents.
-   Cite the folder / recipe name in the Recipe column.
+   that may match a 🔧 item (e.g. period-over-period growth, period-to-date
+   totals, moving calculations, semi-additive calculations, ranking, static
+   segmentation, currency conversion, fact ÷ fact ratios). These are
+   source-agnostic UC metric-view recipes, so Tableau LODs, table
+   calculations, and blends map onto them directly.
+3. Keep a pattern list: pattern name → repo folder / recipe → what it handles,
+   and set the **pattern status** shown in every report header:
+   `read live — <n> patterns checked` or `Pattern repo unavailable`.
 
-If the repo cannot be read, keep the Automation Uplift section with this line
-instead of the table and revised summary:
-"Pattern repo unavailable — uplift not computed; baseline applies."
+Each Automation Uplift section (per file, and the portfolio roll-up):
 
-### How to Use in the Report
+- lists each 🔧 item matched to a pattern **only by what the current repo
+  content documents**, with the reclassified bucket (⚠️) and the cited
+  folder / recipe;
+- when there is an uplift, shows the Revised Automation Summary, the
+  percentage-point uplift, and whether it changes the complexity rating;
+- links to the repo.
 
-In each individual report, after the baseline Automation Summary, always include
-an **Automation Uplift** section that:
-1. Lists each 🔧 item that has a matching pattern from the repo.
-2. States the reclassified bucket and the recipe name.
-3. Shows a revised Automation Summary table (baseline vs. with-patterns).
-4. Calculates the percentage-point uplift and whether it changes the
-   complexity rating.
-5. Links to the repo: `https://github.com/databricks-solutions/uc-semantics-patterns`
+Fallbacks — the section is never omitted:
+
+- **No match (no uplift)**: the section holds only the line
+  "No matching pattern — no uplift; baseline applies." — no tables and no
+  uplift callout. Portfolio, when no file has a match: "No matching pattern in
+  any file — no uplift; baseline applies." In the Per-Workbook and Portfolio
+  tables, "with patterns" equals baseline and Uplift (pp) is `+0`.
+- **Repo unavailable**: write "Pattern repo unavailable — uplift not computed;
+  baseline applies." in every Uplift section instead of the table and revised
+  summary, and `n/a — pattern repo unavailable` in every "with patterns" cell.

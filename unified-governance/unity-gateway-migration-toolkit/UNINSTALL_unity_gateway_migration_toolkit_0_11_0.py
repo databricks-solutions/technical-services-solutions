@@ -451,8 +451,12 @@ def app_update_spec(existing: apps.App, **set_fields) -> apps.App:
 def rollback_command(folder: str, apply_id: str) -> str:
     """The command-line rollback reads a local file, so the log is exported from the workspace first."""
     return (f'databricks workspace export "{folder}/apply_logs/{apply_id}.jsonl" --file {apply_id}.jsonl '
-            f"--profile <profile> && python ug_migration_apply.py --profile <profile> rollback --log {apply_id}.jsonl"
-            " (a dry run; add --execute to roll back)")
+            f"--profile PROFILE && python ug_migration_apply.py --profile PROFILE rollback --log {apply_id}.jsonl")
+
+
+# Never on a command's own line, so the command pastes into a shell as printed (Kevin's review of 0.11.0).
+DRY_RUN_NOTE = ("replace PROFILE with your Databricks CLI profile; each command is a dry run: add --execute at the end "
+                "to roll back")
 
 
 def uninstall_plan(drop: bool, remove_logs: bool, rollback: bool, pending: list[dict], logs: set[str],
@@ -484,10 +488,10 @@ def uninstall_plan(drop: bool, remove_logs: bool, rollback: bool, pending: list[
                             "tables (4. Remove results tables = no)")
         if drop:
             warnings.append(f"the results tables are removed while {len(ids)} apply run(s) keep their services. Roll them "
-                            "back later from the command line: download the same toolkit zip, unzip it, and run:")
+                            "back later from the command line: download the same toolkit zip, unzip it, and run (" + DRY_RUN_NOTE + "):")
             warnings += ["  " + rollback_command(folder, a) for a in ids if a in logs]
         else:
-            keep += ["roll back later: " + rollback_command(folder, a) for a in ids if a in logs]
+            keep += [f"roll back later ({DRY_RUN_NOTE}):\n    " + rollback_command(folder, a) for a in ids if a in logs]
     else:
         keep.append("no Unity Gateway services: no apply run has created any that is still in place")
     if drop and unmatched:
@@ -865,6 +869,14 @@ def read_marker() -> str | None:
         return None
 
 
+def delete_path(path: str) -> None:
+    try:
+        w.workspace.delete(path, recursive=True)
+        print("deleted", path)
+    except (NotFound, ResourceDoesNotExist):
+        pass
+
+
 def folder_children(path: str) -> list[str]:
     try:
         return [o.path.rsplit("/", 1)[-1] for o in w.workspace.list(path)]
@@ -1050,8 +1062,11 @@ if UNINSTALL and not MINE and not EXISTING_APP and not exists(MARKER):
     if _pending and ROLLBACK:
         _stop.append(f"{len(_pending)} apply run(s) still have services in place, and the apply job is gone with the "
                      "app, so they can't be rolled back here. Roll them back with the command line, from the unzipped "
-                     "toolkit download, then run again (or set 3. Roll back services = no to keep them):\n    "
+                     "toolkit download, then run again (or set 3. Roll back services = no to keep them). " + DRY_RUN_NOTE + ":\n    "
                      + "\n    ".join(rollback_command(FOLDER, a) for a in _logs & {p["apply_id"] for p in _pending}))
+    elif _pending and REMOVE_LOGS:
+        _stop.append("the apply logs are needed to roll back the kept services later: set 5. Remove apply logs = no, "
+                     "or roll the services back first")
     elif _missing:
         _stop.append(f"apply run(s) {', '.join(_missing)} still have services in place and no apply log in "
                      f"{FOLDER}/apply_logs: the results tables are the only record of them, so they are kept. Delete "
@@ -1060,11 +1075,16 @@ if UNINSTALL and not MINE and not EXISTING_APP and not exists(MARKER):
           f"in {_given}.")
     print("Uninstall removes:\n- the results tables in " + _given + " and the schema, if nothing else is in it"
           + "".join(f"\n- the schema for new model services {t}, which this install created, if it holds no services"
-                    for t in _ours))
+                    for t in _ours)
+          + (f"\n- the apply logs in {FOLDER}/apply_logs, and the folder if nothing else is in it"
+             if REMOVE_LOGS and not _pending else ""))
     _keeps = [f"the schema for new model services {t}: another install uses it" for t in _shared]
+    if _logs and not REMOVE_LOGS:
+        _keeps.append(f"the apply logs in {FOLDER}/apply_logs" + ("" if _pending else
+                      " (set 5. Remove apply logs = yes to remove them and the folder)"))
     if _pending:
         _keeps.append(f"Unity Gateway services created by {len(_pending)} apply run(s): callers that moved to them keep "
-                      "working. Roll them back later with the command line:\n    "
+                      "working. Roll them back later with the command line (" + DRY_RUN_NOTE + "):\n    "
                       + "\n    ".join(rollback_command(FOLDER, p["apply_id"]) for p in _pending if p["apply_id"] in _logs))
     if _keeps:
         print("Uninstall keeps:\n- " + "\n- ".join(_keeps))
@@ -1102,6 +1122,14 @@ if LEFTOVER and not LEFTOVER_EXIT:
                 print("dropped schema", _t, "(the installer created it for new model services; it was empty)")
             except Exception:  # noqa: BLE001
                 print("kept schema", _t, "(other objects are in it)")
+    if REMOVE_LOGS and not _pending:  # only the toolkit's files: the logs and a stray marker, then empty folders
+        for _n in folder_children(f"{FOLDER}/apply_logs"):
+            if _n.endswith(".jsonl") or _n == MARKER_NAME:
+                delete_path(f"{FOLDER}/apply_logs/{_n}")
+        if not folder_children(f"{FOLDER}/apply_logs"):
+            delete_path(f"{FOLDER}/apply_logs")
+        if exists(FOLDER) and not folder_children(FOLDER):
+            delete_path(FOLDER)
     LEFTOVER_EXIT = "uninstalled"
 
 # COMMAND ----------
@@ -1111,8 +1139,15 @@ if LEFTOVER_EXIT:  # its own cell: an interactive exit replaces the output of th
 
 # COMMAND ----------
 
-if UNINSTALL and not CATALOG:
-    raise ValueError("set 6. Results schema (catalog.schema): this install's results schema isn't recorded in its jobs")
+if UNINSTALL and not CATALOG:  # the jobs are gone (an uninstall that stopped part way): the marker records the schema
+    _marked = parse_marker(read_marker() or "") if marker_status(read_marker(), APP_NAME)[0] == "ours" else {}
+    if re.fullmatch(rf"{NAME}\.{NAME}", str(_marked.get("results", ""))):
+        CATALOG, SCHEMA = _marked["results"].split(".", 1)
+        RESULTS = f"{CATALOG}.{SCHEMA}"
+        print("using the results schema recorded in the install marker:", RESULTS)
+    else:
+        raise ValueError("set 6. Results schema (catalog.schema): this install's results schema isn't recorded in its "
+                         "jobs or its install marker")
 MARKER_KIND, MARKER_APP = marker_status(read_marker(), APP_NAME)
 SAVED_MARKER = parse_marker(read_marker() or "") if MARKER_KIND == "ours" else {}
 
@@ -1637,23 +1672,15 @@ def roll_back_all(st: dict) -> dict:
                 # The app is stopped by now, so its Apply page can't be the first place to look: the job run says why.
                 lines.append(f"- {p['apply_id']}: {s}: see why in the latest run of Jobs > [{APP_NAME}] Unity Gateway "
                              "migration apply (its output names the object it couldn't read or the check that refused "
-                             "it), fix the cause, and run uninstall again. Or roll it back from the command line: "
-                             + rollback_command(FOLDER, p["apply_id"]))
+                             "it), fix the cause, and run uninstall again. Or roll it back from the command line ("
+                             + DRY_RUN_NOTE + "):\n    " + rollback_command(FOLDER, p["apply_id"]))
             else:
                 lines.append(f"- {p['apply_id']}: {s}: open the app's Apply page for this run to see why, fix the cause "
                              "(the message names the grant or object), and run uninstall again. Or roll it back from the "
-                             "command line: " + rollback_command(FOLDER, p["apply_id"]))
+                             "command line (" + DRY_RUN_NOTE + "):\n    " + rollback_command(FOLDER, p["apply_id"]))
         raise ValueError(f"Uninstall stopped: the rollback of {len(st['pending'])} apply run(s) didn't finish ({reason}):\n"
                          + "\n".join(lines) + "\nThe app is stopped (start it again in Compute > Apps if you keep it). "
                          "Nothing else was removed: the app, jobs and files are still there.")
-
-
-def delete_path(path: str) -> None:
-    try:
-        w.workspace.delete(path, recursive=True)
-        print("deleted", path)
-    except (NotFound, ResourceDoesNotExist):
-        pass
 
 
 if UNINSTALL:
@@ -1680,12 +1707,12 @@ if UNINSTALL:
     print("Uninstall removes:\n- " + "\n- ".join(remove))
     print("Uninstall keeps:\n- " + "\n- ".join(keep + target_keep + [
         "any schema where Apply created model services that are still in place (uninstall never removes one)"]))
-    for line in warnings:
-        print("WARNING:", line)
+    for line in warnings:  # a command line (indented) prints as is, so it pastes into a shell
+        print(line if line.startswith("  ") else "WARNING: " + line)
     blocked = PROBLEMS + plan_problems
     if ROLLBACK and st["pending"] and not apply_job_ids():
         blocked.append("the apply job of this app is missing, so its services can't be rolled back here: roll them back "
-                       "with the command line, from the unzipped toolkit download, then run uninstall again:\n    "
+                       "with the command line, from the unzipped toolkit download, then run uninstall again (" + DRY_RUN_NOTE + "):\n    "
                        + "\n    ".join(rollback_command(FOLDER, p["apply_id"]) for p in st["pending"]
                                        if p["apply_id"] in st["logs"]))
     if PREVIEW:

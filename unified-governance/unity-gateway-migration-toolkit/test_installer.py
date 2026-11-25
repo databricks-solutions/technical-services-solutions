@@ -244,8 +244,8 @@ def test_progress_decision():
 
 def test_rollback_and_system_fix_messages():
     assert H["rollback_command"](FOLDER, A1).startswith(f'databricks workspace export "{FOLDER}/apply_logs/{A1}.jsonl" '
-                                                        f"--file {A1}.jsonl --profile <profile> && python ug_migration_apply.py")
-    assert f"rollback --log {A1}.jsonl " in H["rollback_command"](FOLDER, A1)
+                                                        f"--file {A1}.jsonl --profile PROFILE && python ug_migration_apply.py")
+    assert H["rollback_command"](FOLDER, A1).endswith(f"rollback --log {A1}.jsonl")
     assert f"{FOLDER}/apply_logs/{A1}.jsonl" in H["rollback_command"](FOLDER, A1)
     fix = H["system_table_fix"](["system.serving"], ME)
     assert "GRANT USE SCHEMA, SELECT ON SCHEMA system.serving" in fix and "GRANT USE CATALOG ON CATALOG system" in fix
@@ -2467,3 +2467,76 @@ def test_rollback_yes_without_the_apply_job_prints_the_command_it_points_to(monk
     res = run_notebook(monkeypatch, ws, uninstall_widgets("uninstall: preview", rollback_services="yes"))
     stop = res.text.split("Remove would stop:")[1]
     assert "the apply job of this app is missing" in stop and f"rollback --log {A1}.jsonl" in stop
+
+
+def _command_lines(text):
+    return [line.strip() for line in text.splitlines() if "rollback --log" in line]
+
+
+def _assert_pasteable(lines):
+    """Kevin's review of 0.11.0: a note after the command broke it in a shell (syntax error near '(')."""
+    import shutil
+    import subprocess
+    assert lines
+    for line in lines:
+        assert line.startswith("databricks workspace export ") and "(" not in line, line
+        for sh in ("bash", "zsh"):
+            if shutil.which(sh):
+                r = subprocess.run([sh, "-n", "-c", line], capture_output=True, text=True)
+                assert r.returncode == 0, (sh, line, r.stderr)
+
+
+def test_every_printed_rollback_command_can_be_pasted_into_a_shell(monkeypatch):
+    ws = FakeWS()
+    seed_install(ws, pending=[(A1, 2, RUN1)], logs=[A1])
+    keep = run_notebook(monkeypatch, ws, uninstall_widgets("uninstall: preview"))
+    _assert_pasteable(_command_lines(keep.text))
+    assert "each command is a dry run: add --execute at the end to roll back" in keep.text
+    warn = run_notebook(monkeypatch, ws, uninstall_widgets("uninstall: preview", drop_data="yes"))
+    _assert_pasteable(_command_lines(warn.text))
+    ids = seed_install(FakeWS(), pending=[(A1, 2, RUN1)], logs=[A1])
+    ws2 = FakeWS()
+    ids = seed_install(ws2, pending=[(A1, 2, RUN1)], logs=[A1])
+    del ws2.jobs[ids["apply"]]
+    nojob = run_notebook(monkeypatch, ws2, uninstall_widgets("uninstall: preview", rollback_services="yes"))
+    _assert_pasteable(_command_lines(nojob.text))
+    ws3 = _kept_results_with_services(monkeypatch)
+    later = run_notebook(monkeypatch, ws3, uninstall_widgets("uninstall: preview", results_schema="main.ug_migration"))
+    _assert_pasteable(_command_lines(later.text))
+
+
+def test_later_cleanup_with_remove_logs_removes_the_logs_and_the_folder(monkeypatch):
+    """Kevin's review of 0.11.0: the later cleanup ignored 5. Remove apply logs and left the folder."""
+    ws = FakeWS()
+    seed_install(ws, logs=[A1])  # an apply run that was rolled back: no services in place, its log kept
+    assert not run_notebook(monkeypatch, ws, uninstall_widgets(drop_data="no")).raised
+    assert f"{FOLDER}/apply_logs/{A1}.jsonl" in ws.files
+    keep = run_notebook(monkeypatch, ws, uninstall_widgets("uninstall: preview", results_schema="main.ug_migration"))
+    assert "set 5. Remove apply logs = yes to remove them and the folder" in keep.text
+    res = run_notebook(monkeypatch, ws, uninstall_widgets(drop_data="yes", remove_logs="yes",
+                                                          results_schema="main.ug_migration"))
+    assert res.status == "exit: uninstalled", res.status
+    assert not [f for f in ws.files if f.startswith(FOLDER + "/")] and "main.ug_migration" not in ws.schemas
+
+
+def test_later_cleanup_refuses_to_remove_logs_that_kept_services_need(monkeypatch):
+    ws = _kept_results_with_services(monkeypatch)
+    before = snapshot_of(ws)
+    res = run_notebook(monkeypatch, ws, uninstall_widgets(drop_data="yes", remove_logs="yes",
+                                                          results_schema="main.ug_migration"))
+    assert res.raised and "the apply logs are needed to roll back the kept services later" in res.status
+    assert snapshot_of(ws) == before
+
+
+def test_a_rerun_after_a_stuck_uninstall_reads_the_results_schema_from_the_marker(monkeypatch):
+    """Kevin's review of 0.11.0: jobs deleted, app gone after a timeout, marker still there: it asked for 6."""
+    ws = FakeWS()
+    ids = seed_install(ws)
+    for j in list(ids.values()):
+        ws.jobs.pop(j, None)
+    ws.apps.pop(APP, None)
+    assert f"{FOLDER}/ug_migration_toolkit.marker" in ws.files
+    res = run_notebook(monkeypatch, ws, uninstall_widgets(drop_data="yes"))
+    assert res.status == "exit: uninstalled", res.status
+    assert "using the results schema recorded in the install marker: main.ug_migration" in res.text
+    assert "main.ug_migration" not in ws.schemas and f"{FOLDER}/ug_migration_toolkit.marker" not in ws.files

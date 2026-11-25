@@ -1,0 +1,11 @@
+bundle:
+  name: test_auto_bind
+
+include:
+  - resources/jobs/*.yml
+  - resources/pipelines/*.yml
+
+targets:
+  staging:
+    workspace:
+      host: ${var.workspace_host}  # replace with your staging workspace URL, or omit to use the CLI auth profile

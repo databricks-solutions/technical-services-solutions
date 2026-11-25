@@ -2,6 +2,54 @@
 
 `.circleci/config.yml` at repo root.
 
+## Binding (one-time, staging and prod source targets only)
+
+> **Dev source targets do not use this job.** The first `bundle deploy -t dev` intentionally creates a new isolated dev copy — no bind needed. Only generate and run this job when `source_target` is `staging` or `prod`.
+
+Before the first recurring deploy to a staging or prod source workspace, add a temporary `bind-and-deploy-<source_target>` job to `.circleci/config.yml`, gate it behind an `approval` job, run it once, and then remove both jobs.
+
+```yaml
+# Add temporarily to .circleci/config.yml. Remove both jobs after the first successful run.
+# DATABRICKS_HOST, DATABRICKS_CLIENT_ID and DATABRICKS_CLIENT_SECRET come from project environment
+# variables or a context. Do not re-map them under `environment:` (CircleCI does not expand $VAR there).
+jobs:
+  bind-and-deploy-<source_target>:
+    executor: ubuntu
+    steps:
+      - checkout
+      - install-cli
+      - run:
+          name: Bind, check the plan, deploy (unbind again if anything fails)
+          environment:
+            DATABRICKS_BUNDLE_ENV: <source_target>
+          command: |
+            set -euo pipefail
+            bash scripts/auto-bind.sh <source_target> || { bash scripts/auto-bind.sh <source_target> --rollback; exit 1; }
+            bash scripts/plan-check.sh <source_target> --first-deploy || { bash scripts/auto-bind.sh <source_target> --rollback; exit 1; }
+            databricks bundle deploy -t <source_target>
+      - store_artifacts:
+          path: plan-<source_target>.json
+
+workflows:
+  bind-and-deploy-once:
+    jobs:
+      - hold-bind:
+          type: approval
+          filters:
+            branches:
+              only: main
+      - bind-and-deploy-<source_target>:
+          requires: [hold-bind]
+          # context: databricks-<source_target>   # if the credentials live in a context
+          filters:
+            branches:
+              only: main
+```
+
+> The step runs `scripts/auto-bind.sh`, then `scripts/plan-check.sh --first-deploy`, and deploys only if the check passes. If binding or the check fails, `auto-bind.sh --rollback` unbinds the keys this run bound, so nothing stays half-bound. The check blocks any delete or replacement, any create of a bound key, any other create, and changes to `run_as`, schedules, catalog/schema, storage or notifications of an existing asset, unless approved in `plan-allow/<source_target>.txt` (reviewed in a pull request). The full plan is saved as `plan-<source_target>.json`.
+
+> Do **not** add `bundle deployment bind` to the `validate`, `deploy-staging`, or `deploy-prod` jobs. Binding is one-time; repeating it in recurring jobs fails on the second run.
+
 ## Required project environment variables
 
 | Variable |
@@ -57,7 +105,7 @@ jobs:
             DATABRICKS_BUNDLE_ENV: staging
           command: |
             databricks bundle validate -t staging --output json
-            databricks bundle deploy -t staging
+            bash scripts/plan-check.sh staging && databricks bundle deploy -t staging
 
   deploy-prod:
     executor: ubuntu
@@ -72,7 +120,7 @@ jobs:
             DATABRICKS_BUNDLE_ENV: prod
           command: |
             databricks bundle validate -t prod --output json
-            databricks bundle deploy -t prod
+            bash scripts/plan-check.sh prod && databricks bundle deploy -t prod
 
 workflows:
   validate-and-deploy:

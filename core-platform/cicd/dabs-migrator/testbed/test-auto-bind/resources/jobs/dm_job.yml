@@ -1,0 +1,13 @@
+resources:
+  jobs:
+    dm_job:
+      lifecycle:
+        prevent_destroy: true
+      name: dm_job
+      description: Existing job for auto-bind testing.
+      max_concurrent_runs: 1
+      tasks:
+        - task_key: placeholder
+          notebook_task:
+            notebook_path: /placeholder
+            source: WORKSPACE

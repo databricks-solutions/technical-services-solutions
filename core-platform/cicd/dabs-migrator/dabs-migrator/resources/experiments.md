@@ -4,6 +4,25 @@ MLflow experiments.
 
 Docs: https://docs.databricks.com/aws/en/dev-tools/bundles/resources#experiment
 
+## Destroy protection
+
+Always set `lifecycle.prevent_destroy: true` on migrated experiments. Once bound, the bundle owns the experiment — running `databricks bundle destroy`, removing this YAML entry, or renaming the resource key will **delete the original experiment and all its runs and artifacts**.
+
+```yaml
+resources:
+  experiments:
+    my_experiment:
+      lifecycle:
+        prevent_destroy: true
+      # ... rest of config
+```
+
+To intentionally delete a bound experiment: set `prevent_destroy: false`, run `databricks bundle deploy`, then `databricks bundle destroy`.
+
+To remove an experiment from bundle management without deleting it: `databricks bundle deployment unbind <key> -t <target>`, remove the YAML key, then `bundle deploy`.
+
+> ⚠️ **Never rename a bound resource's key.** A key rename is treated as delete + create by the bundle.
+
 ## Complete schema reference
 
 Required fields: `name`

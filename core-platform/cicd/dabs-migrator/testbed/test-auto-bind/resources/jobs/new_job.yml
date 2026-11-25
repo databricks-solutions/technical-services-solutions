@@ -1,0 +1,13 @@
+resources:
+  jobs:
+    new_job:
+      lifecycle:
+        prevent_destroy: true
+      name: test_auto_bind_new_job_xyz_notexists
+      description: Net-new job — should be created on first deploy.
+      max_concurrent_runs: 1
+      tasks:
+        - task_key: placeholder
+          notebook_task:
+            notebook_path: /placeholder
+            source: WORKSPACE

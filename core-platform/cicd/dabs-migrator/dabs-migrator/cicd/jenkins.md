@@ -2,6 +2,46 @@
 
 Declarative `Jenkinsfile` at repo root. Assumes Jenkins agents have `curl` and `bash`.
 
+## Binding (one-time, staging and prod source targets only)
+
+> **Dev source targets do not use this stage.** The first `bundle deploy -t dev` intentionally creates a new isolated dev copy — no bind needed. Only generate and run this stage when `source_target` is `staging` or `prod`.
+
+Before the first recurring deploy to a staging or prod source workspace, add a temporary `Bind and deploy` stage to the `Jenkinsfile`, run it once (the `input` block requires a manual click), and then remove the stage.
+
+```groovy
+// Add temporarily to Jenkinsfile. Remove after the first successful run.
+// The sh step starts with #!/bin/bash so it runs in bash, not /bin/sh (dash on many agents).
+// The agent needs jq installed.
+stage('Bind and deploy (one-time, <source_target>)') {
+  when { branch 'main' }
+  environment {
+    DATABRICKS_HOST       = credentials('databricks-host')
+    DATABRICKS_BUNDLE_ENV = '<source_target>'
+  }
+  input {
+    message 'Bind migrated resources and deploy to <source_target>?'
+    ok 'Bind and deploy'
+  }
+  steps {
+    sh '''#!/bin/bash
+      set -euo pipefail
+      bash scripts/auto-bind.sh <source_target> || { bash scripts/auto-bind.sh <source_target> --rollback; exit 1; }
+      bash scripts/plan-check.sh <source_target> --first-deploy || { bash scripts/auto-bind.sh <source_target> --rollback; exit 1; }
+      databricks bundle deploy -t <source_target>
+    '''
+  }
+  post {
+    always {
+      archiveArtifacts artifacts: 'plan-<source_target>.json', allowEmptyArchive: true
+    }
+  }
+}
+```
+
+> The step runs `scripts/auto-bind.sh`, then `scripts/plan-check.sh --first-deploy`, and deploys only if the check passes. If binding or the check fails, `auto-bind.sh --rollback` unbinds the keys this run bound, so nothing stays half-bound. The check blocks any delete or replacement, any create of a bound key, any other create, and changes to `run_as`, schedules, catalog/schema, storage or notifications of an existing asset, unless approved in `plan-allow/<source_target>.txt` (reviewed in a pull request). The full plan is saved as `plan-<source_target>.json`.
+
+> Do **not** add `bundle deployment bind` to the `Validate`, `Deploy staging`, or `Deploy prod` stages. Binding is one-time; repeating it in recurring stages fails on the second run.
+
 ## Required Jenkins credentials
 
 | ID | Type |
@@ -46,7 +86,7 @@ pipeline {
         DATABRICKS_BUNDLE_ENV = 'staging'
       }
       steps {
-        sh 'databricks bundle deploy -t staging'
+        sh 'bash scripts/plan-check.sh staging && databricks bundle deploy -t staging'
       }
     }
 
@@ -62,7 +102,7 @@ pipeline {
       }
       steps {
         sh 'databricks bundle validate -t prod --output json'
-        sh 'databricks bundle deploy -t prod'
+        sh 'bash scripts/plan-check.sh prod && databricks bundle deploy -t prod'
       }
     }
   }
